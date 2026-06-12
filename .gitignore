@@ -1,1 +1,16 @@
+node_modules/
+dist/
+.env
+*.log
 .DS_Store
+bin/
+tmp/
+.vite/
+.cache/
+.pnpm-store/
+*.tsbuildinfo
+
+# Go
+apps/server/bin/
+apps/server/tmp/
+.dev-pids/

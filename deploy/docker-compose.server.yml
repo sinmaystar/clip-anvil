@@ -1,0 +1,18 @@
+services:
+  backend:
+    build:
+      context: ../apps/server
+      dockerfile: Dockerfile
+    ports: ["8888:8888"]
+    volumes:
+      - ./config-container.yaml:/app/config.yaml
+    depends_on:
+      - postgres
+      - redis
+      - minio
+
+  nginx:
+    depends_on:
+      - backend
+    volumes:
+      - ./nginx/full.conf:/etc/nginx/conf.d/default.conf

@@ -1,0 +1,18 @@
+pre-commit:
+  parallel: true
+  commands:
+    go-fmt:
+      glob: "*.go"
+      root: "apps/server/"
+      run: gofmt -l -w {staged_files} && golangci-lint run --fix {staged_files}
+    ts-lint:
+      glob: "*.{ts,tsx}"
+      run: pnpm eslint --fix {staged_files}
+    ts-format:
+      glob: "*.{ts,tsx,json,css}"
+      run: pnpm prettier --write {staged_files}
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm commitlint --edit {1}

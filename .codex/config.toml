@@ -1,0 +1,11 @@
+[features]
+hooks = true
+
+[[hooks.PostToolUse]]
+matcher = "^(apply_patch|Edit|Write)$"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = '/bin/bash "$(git rev-parse --show-toplevel)/.codex/hooks/format-and-lint.sh"'
+timeout = 600
+statusMessage = "Running gofmt, golangci-lint, and eslint"
