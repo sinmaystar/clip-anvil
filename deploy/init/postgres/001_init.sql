@@ -1,0 +1,2 @@
+-- M0: placeholder init script
+-- Tables will be added in subsequent milestones via migration tool

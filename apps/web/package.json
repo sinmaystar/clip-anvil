@@ -1,0 +1,25 @@
+{
+  "name": "@clip-anvil/web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "react": "^19",
+    "react-dom": "^19",
+    "tldraw": "^5"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "eslint": "^10",
+    "typescript": "^6",
+    "vite": "^8"
+  }
+}
