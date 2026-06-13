@@ -2,9 +2,9 @@
 
 > 这是给 AI Coding Agent（Cursor / Claude Code / Codex / Cline / Aider 等）的**单文件交付契约**。
 > 读完这一份就能复刻整套视觉语言、布局节奏、组件骨架与无限画布交互。
-> 配套源码：`react-vite/src/styles/tokens.css`、`react-vite/src/styles/global.css`、`react-vite/src/styles/hybrid.css`。
+> 当前配套源码：`apps/web/src/main.css`、`apps/web/src/components/`、`apps/web/src/pages/`、`apps/web/src/shapes/`。
 
-最后更新：2026-06-12 · 维护者：设计自治 · 版本：v0.3 (Apple polish)
+最后更新：2026-06-13 · 维护者：设计自治 · 版本：v0.4 (M1 implementation sync)
 
 ---
 
@@ -34,6 +34,8 @@
 ## 2. Design Tokens（唯一真相源）
 
 所有颜色、间距、半径、动效**必须**通过 Token 引用。直接写 hex 等于违约。
+
+当前项目没有独立的 `tokens.css` / `hybrid.css`，M1 的 token 真相源集中在 `apps/web/src/main.css`。后续如拆分样式文件，必须保持 token 名称兼容，避免组件层重写裸色值。
 
 ### 2.1 Seed Tokens（六个种子，覆盖一切）
 
@@ -116,12 +118,12 @@
 ### 2.5 布局变量
 
 ```
---topbar-h:   56px   顶栏高度
---sidebar-w:  256px  左侧资源树宽
---chat-w:     380px  右侧对话面板宽
+--topbar-h:   56px   顶栏高度（M1 仅列表/认证壳使用；Studio 画布页不再叠多层顶栏）
+--sidebar-w:  256px  左侧资源树/媒体侧栏宽
+--chat-w:     380px  右侧对话面板宽（M2 Agent 使用）
 ```
 
-主工作区永远是 `[topbar][sidebar | canvas | chat]` 三列布局。
+目标主工作区是 `[topbar][sidebar | canvas | chat]` 三列布局；M1 Studio 当前使用 `[sidebar | canvas]` 两列专注画布布局，避免用户感知过多工具栏。
 
 ---
 
@@ -205,7 +207,7 @@ font-feature-settings: 'cv11' 1, 'ss01' 1, 'ss03' 1;
 
 ## 5. 按钮系统 · Apple-grade Pills
 
-### 5.1 主 CTA（"预览成片"、"发送"、shadcn primary）
+### 5.1 主 CTA（"预览成片"、"发送"、primary action）
 
 ```css
 .btn-primary {
@@ -534,12 +536,27 @@ SVG 实现：每条边一个 `<path>` + 末端 `<marker>` 箭头。运行中节�
 
 ## 11. 给其他 Coding Agent 的提示词模板
 
-把这份文档放到项目根的 `docs/frontend-design-system.md`，然后给 AI 这样的指令：
+本项目的视觉契约入口是 `docs/design-frontend.md`。如果外部工具硬编码读取 `docs/frontend-design-system.md`，可建立一个转向说明文件，但不要维护两份互相漂移的设计系统。
+
+### 11.1 M1 当前 CSS 命名范围
+
+M1 已落地页面优先使用以下 class 前缀，新增同类组件时沿用现有风格：
+
+| 前缀 | 用途 |
+|---|---|
+| `auth-*` | 登录/注册页 |
+| `app-*` | 应用壳、导航和通用布局 |
+| `workspace-*` | 项目列表、创建项目弹窗 |
+| `studio-*` | Studio 画布页、左侧栏、右键菜单、节点编辑面板 |
+| `media-node-*` | tldraw 自定义媒体节点 |
+| `modal-*` | 弹窗和遮罩 |
+
+把这份文档作为上下文，然后给 AI 这样的指令：
 
 ```
-请阅读 docs/frontend-design-system.md 作为本项目的视觉契约。
+请阅读 docs/design-frontend.md 作为本项目的视觉契约。
 新组件必须：
-1. 仅使用 react-vite/src/styles/tokens.css 中的 CSS 变量，禁止写裸 hex
+1. 仅使用 apps/web/src/main.css 中的 CSS 变量，禁止写裸 hex
 2. 主 CTA 使用 999px pill + Apple-grade 阴影栈（见文档 §5.1）
 3. 边线全部 rgba(255,255,255,0.06) hairline，不准 #2a2a2a
 4. 节点状态变化通过 data-status 属性 + CSS 切换，禁止 7 套类名
@@ -547,10 +564,11 @@ SVG 实现：每条边一个 `<path>` + 末端 `<marker>` 箭头。运行中节�
 6. 任何"高级感"诉求 → 增加 backdrop-filter / 收紧字距 / 减少边框对比，绝不增加颜色饱和度
 
 参考文件：
-- react-vite/src/styles/tokens.css        ← Token 真相源
-- react-vite/src/styles/hybrid.css        ← Apple polish 覆盖层
-- react-vite/src/components/ui/button.jsx ← 按钮 cva variants
-- react-vite/src/components/MediaNode.css ← 节点状态机示例
+- apps/web/src/main.css                   ← Token + 全局视觉真相源
+- apps/web/src/components/Layout.tsx      ← 应用壳
+- apps/web/src/pages/WorkspaceListPage.tsx
+- apps/web/src/pages/WorkspaceDetailPage.tsx
+- apps/web/src/shapes/MediaShapeUtil.tsx
 ```
 
 ---
@@ -559,26 +577,27 @@ SVG 实现：每条边一个 `<path>` + 末端 `<marker>` 箭头。运行中节�
 
 ```
 docs/
-├── frontend-design-system.md      ← 本文档（视觉契约总入口）
+├── design-frontend.md             ← 本文档（视觉契约总入口）
 ├── design-overview.md              架构（4 层）+ 双模式
 ├── design-canvas.md                MediaShape props + 节点尺寸细节
 ├── design-agent-mode.md            Agent 多角色 + Skills YAML + Gate 流程
 └── design-studio-mode.md           Studio 模式三栏 + 属性面板
 
-react-vite/src/
-├── styles/
-│   ├── tokens.css                  Seed + 派生 + 状态色
-│   ├── global.css                  字体 / scrollbar / 关键帧
-│   └── hybrid.css                  Forge×Storyboard×Spatial OS 三层叠加 + Apple polish
+apps/web/src/
+├── main.css                        Seed + 派生 + 状态色 + 页面样式
 ├── components/
-│   ├── Topbar.jsx + .css
-│   ├── ResourceTree.jsx + .css     缩略图优先级 ItemMedia 实现
-│   ├── Canvas.jsx + .css            NODES / EDGES / GROUPS 数据驱动
-│   ├── MediaNode.jsx + .css         data-status 状态机
-│   ├── ChatPanel.jsx + .css         Agent 状态 + 阶段分隔
-│   ├── GateCard.jsx + .css          关卡审批卡 + ShotMini SVG
-│   └── ui/button.jsx + .css         shadcn-style cva variants
-└── App.jsx + App.css                Workspace 三列 grid 主壳
+│   ├── Layout.tsx
+│   ├── CreateWorkspaceDialog.tsx
+│   ├── ProtectedRoute.tsx
+│   └── GuestRoute.tsx
+├── pages/
+│   ├── LoginPage.tsx
+│   ├── RegisterPage.tsx
+│   ├── WorkspaceListPage.tsx
+│   └── WorkspaceDetailPage.tsx
+├── shapes/
+│   └── MediaShapeUtil.tsx
+└── App.tsx                         RouterProvider 路由入口
 ```
 
 ---
@@ -587,7 +606,8 @@ react-vite/src/
 
 - **v0.1** · 初版，Forge Workshop 单一方向，按钮使用 `0 0 16px brand` 外发光
 - **v0.2** · 加入 hybrid.css，叠加 Storyboard（胶片孔）+ Spatial OS（毛玻璃）层
-- **v0.3** · Apple polish，按钮去外发光改投影，pill 化，全局字距收紧，点阵降亮 ← **当前**
+- **v0.3** · Apple polish，按钮去外发光改投影，pill 化，全局字距收紧，点阵降亮
+- **v0.4** · 同步 M1 实际文件结构、Studio 两列画布布局、当前 CSS class 契约 ← **当前**
 
 ---
 

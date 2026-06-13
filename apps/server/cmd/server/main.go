@@ -14,7 +14,10 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/sinmaystar/clip-anvil/internal/api"
+	"github.com/sinmaystar/clip-anvil/internal/auth"
 	"github.com/sinmaystar/clip-anvil/internal/config"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 func main() {
@@ -61,6 +64,12 @@ func main() {
 	slog.Info("minio connected")
 
 	h := server.Default(server.WithHostPorts(fmt.Sprintf(":%d", cfg.Server.Port)))
+	queries := db.New(pgPool)
+	authHandler := api.NewAuthHandler(queries, cfg.JWT.Secret, cfg.JWT.ExpireHours)
+	authMiddleware := auth.Middleware(cfg.JWT.Secret)
+	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
+	canvasHandler := api.NewCanvasHandler(queries)
+	nodeHandler := api.NewNodeHandler(pgPool, queries)
 
 	h.GET("/api/health", func(ctx context.Context, c *app.RequestContext) {
 		pgStatus := "connected"
@@ -92,6 +101,26 @@ func main() {
 			},
 		})
 	})
+
+	authGroup := h.Group("/api/auth")
+	authGroup.POST("/register", authHandler.Register)
+	authGroup.POST("/login", authHandler.Login)
+	authGroup.GET("/me", authMiddleware, authHandler.Me)
+
+	h.POST("/api/workspaces", authMiddleware, workspaceHandler.Create)
+	h.POST("/api/workspaces/", authMiddleware, workspaceHandler.Create)
+	h.GET("/api/workspaces", authMiddleware, workspaceHandler.List)
+	h.GET("/api/workspaces/", authMiddleware, workspaceHandler.List)
+	h.GET("/api/workspaces/:id/canvas", authMiddleware, canvasHandler.GetCanvas)
+	h.PATCH("/api/workspaces/:id/camera", authMiddleware, canvasHandler.UpdateCamera)
+	h.GET("/api/workspaces/:id", authMiddleware, workspaceHandler.Get)
+
+	h.POST("/api/nodes", authMiddleware, nodeHandler.Create)
+	h.POST("/api/nodes/", authMiddleware, nodeHandler.Create)
+	h.PATCH("/api/nodes/batch-position", authMiddleware, nodeHandler.BatchUpdatePosition)
+	h.GET("/api/nodes/:id", authMiddleware, nodeHandler.Get)
+	h.PATCH("/api/nodes/:id", authMiddleware, nodeHandler.Update)
+	h.DELETE("/api/nodes/:id", authMiddleware, nodeHandler.Delete)
 
 	slog.Info("server starting", "port", cfg.Server.Port)
 	h.Spin()

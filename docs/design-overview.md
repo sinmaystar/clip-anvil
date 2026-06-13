@@ -209,23 +209,43 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 
 ## 7. 实施路线
 
-### M0: Studio 画布基础（当前阶段）
+### M0: 工程基建（已完成）
 
-目标：用户可手动创建媒体节点、连线、分组，并提交生成。
+目标：建立 monorepo、前后端骨架、Docker Compose 中间件和基础开发命令。
 
 交付：
-- 自定义 MediaShape（四种类型节点卡片）
-- 自定义 ArrowShape（三种连线类型）
-- 右键菜单创建节点
-- 拖拽连线
-- 左侧资源树
-- 节点内联编辑 + 右侧属性面板
-- 模型供应商集成（至少一个图片/视频生成 API）
-- 版本列表与 winner 切换
+- `apps/web` Vite + React + TypeScript 基础应用
+- `apps/server` Go + Hertz 基础服务
+- PostgreSQL / Redis / MinIO / Nginx compose 配置
+- 根工作区、lint、hooks、基础文档
+
+### M1: Studio 画布基础（当前已落地）
+
+目标：打通注册登录 → Workspace → 文本节点画布 → 坐标/Camera 持久化的前后端链路。
+
+交付：
+- JWT 注册登录和路由守卫
+- Workspace 列表、创建、详情入口
+- tldraw 自定义 MediaShape（M1 仅 text 节点）
+- 画布右键菜单创建文本节点
+- 节点拖拽位置持久化
+- 节点标题/Prompt 单击后在节点下方编辑并自动保存
+- 可折叠左侧栏、明亮/暗夜外观切换
+
+### M1.x: Studio 增量
+
+目标：把 M1 的文本节点画布扩展为完整 Studio DAG 编辑器。
+
+交付：
+- image / video / audio 节点类型
+- ArrowShape（三种连线类型）和 DAG 环检测
+- 分组（MediaGroup）和完整左侧资源树
+- 右侧属性面板和高级模型参数
+- 生成任务、版本列表与 winner 切换
 - WebSocket 事件流
 - 基础自动布局
 
-### M1: Agent 对话基础
+### M2: Agent 对话基础
 
 目标：用户可通过对话让单 Agent 创建节点和生成内容。
 
@@ -237,7 +257,7 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 - 基础 Gate（分镜确认 + 成片预览）
 - Agent 状态指示器
 
-### M2: MultiAgent + Skill
+### M3: MultiAgent + Skill
 
 目标：Agent 可自动完成从需求到成片的全流程。
 
@@ -249,7 +269,7 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 - Sub-Agent 并行生成
 - 对话式修改
 
-### M3: 一致性与质量
+### M4: 一致性与质量
 
 目标：提升生成视频的可用性和可控性。
 

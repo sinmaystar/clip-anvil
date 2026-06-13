@@ -27,6 +27,17 @@
 
 ## 2. 数据库表结构
 
+### 2.0 M1 当前迁移快照
+
+M1 当前 goose 迁移只创建最小闭环所需对象：
+
+- 枚举：`media_type`、`node_status`
+- 表：`account`、`workspace`、`canvas_document`、`media_node`
+- `media_node` 当前不包含 `group_id`、`asset_id`、`model_provider`、`model_name`、`model_params`、`current_version_id`、`sort_order`
+- `canvas_w/canvas_h` 默认值为 `200/120`
+
+下面的完整 schema 是目标态设计，后续 M1.x/M2/M3 会逐步补齐。
+
 ### 2.1 枚举类型
 
 ```sql
@@ -155,6 +166,8 @@ CREATE TABLE media_node (
 ```
 
 **关键设计**：画布坐标（`canvas_x/y/w/h`）直接存在业务节点表上，不存在独立的画布状态表。tldraw 的 MediaShape 从这张表构建，不需要 snapshot。
+
+> M1 当前实现使用精简版 `media_node`，默认尺寸为 `200 × 120`，只支持 `text` 节点。上方完整表结构中的分组、资产、模型和版本字段属于目标态。
 
 - `group_id`：所属分组，一个节点最多属于一个分组
 - `asset_id`：关联的文件资产（Draft 节点此字段为 NULL）
@@ -325,7 +338,7 @@ interface MediaShapeProps {
 type MediaShape = TLBaseShape<'media', MediaShapeProps>
 ```
 
-这是 tldraw shape 需要的最小渲染字段。完整的 Prompt、模型参数、版本历史等通过 `nodeId` 从 API 按需加载，不放在 shape props 里。
+目标态下这是 tldraw shape 需要的最小渲染字段。M1 当前为了节点预览、自动保存和撤销恢复，把 `prompt` 也放入 `MediaShapeProps`，并额外包含 `w/h`。
 
 ### 3.2 从业务数据构建 shape
 
@@ -503,9 +516,10 @@ goose 的 SQL-first 方式与 sqlc 配合最自然——sqlc 直接读迁移文�
 ```bash
 make migrate-up       # 执行所有未应用的迁移
 make migrate-down     # 回滚最近一次迁移
-make migrate-status   # 查看迁移状态
 make migrate-create name=add_xxx   # 创建新迁移文件
 ```
+
+当前 Makefile 暂未提供 `migrate-status`。需要查看状态时可在 `apps/server` 下直接运行 goose CLI。
 
 ### 5.2 类型安全查询：sqlc
 

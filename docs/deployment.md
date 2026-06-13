@@ -6,8 +6,8 @@
                 ┌──────────┐
    浏览器  ───▶ │  nginx   │ ── 静态前端（prod）/ 代理 Vite dev server（dev）
                 │  :80     │ ── /api       ──▶ server :8888
-                │          │ ── /ws/chat   ──▶ server :8888 (WebSocket)
-                │          │ ── /ws/canvas ──▶ server :8888 (WebSocket)
+                │          │ ── /ws/chat   ──▶ server :8888 (WebSocket，M2 目标)
+                │          │ ── /ws/canvas ──▶ server :8888 (WebSocket，M1.x/M2 目标)
                 └──────────┘
 
                   server (Go, 宿主机运行)
@@ -23,7 +23,7 @@ postgres:16       redis:7         minio:latest
 | 服务 | 端口 | 说明 |
 |---|---|---|
 | Nginx | 80 | 统一入口，反代所有请求 |
-| Go Server | 8888 | 后端 API + WebSocket（宿主机运行） |
+| Go Server | 8888 | 后端 REST API（M1）；WebSocket 后续阶段引入 |
 | Vite Dev | 5173 | 前端开发服务器（宿主机运行，仅 dev） |
 | PostgreSQL | 5432 | 数据库 |
 | Redis | 6379 | 缓存 |
@@ -87,7 +87,7 @@ pnpm --filter @clip-anvil/web dev                      # 启动 Vite dev server
 
 ## 容器管理
 
-当前使用 **docker**（后期切换 Docker），compose 文件不使用 Docker 专有特性。
+当前使用 Docker Compose，compose 文件尽量避免绑定某个桌面运行时的专有能力。
 
 ### 常用命令
 

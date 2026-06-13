@@ -40,3 +40,8 @@
 - 数据库迁移工具（goose/golang-migrate）未选定，Makefile `migrate` 为占位
 - Nginx prod 配置（`default.conf`）为占位，未经验证
 - 全局 `core.hooksPath` 与 lefthook 存在冲突提示（不影响功能，lefthook 通过 `--force` 安装）
+
+## 后续状态更新
+
+- M1 已选定 goose 作为数据库迁移工具，并引入 sqlc 生成类型安全查询。
+- M1 已新增 `migrate-up`、`migrate-down`、`migrate-create`、`sqlc-generate` 等 Makefile 目标。
