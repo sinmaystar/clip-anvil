@@ -1,6 +1,6 @@
 # M1 Studio 画布基础 — 里程碑规格
 
-**状态**：📋 待实施
+**状态**：✅ 已落地（2026-06-13，核心验收通过）
 **前置**：M0 基建（✅ 已完成）
 **目标**：打通注册登录 → 项目管理 → 画布渲染 → 节点创建/持久化的完整前后端链路
 
@@ -19,9 +19,16 @@ M1 在 M0 骨架基础上交付 4 个可独立验收的阶段：
 - WebSocket 事件推送
 - image / video / audio 节点类型
 - 连线（MediaEdge）、分组（MediaGroup）
-- 左侧资源树、右侧属性面板、浮动工具栏
+- 完整左侧资源树、右侧属性面板、浮动工具栏
 - 生成任务（GenerationJob）、版本管理（ArtifactVersion）
 - Agent 模式
+
+**M1 实际交互补充**：
+- 画布页已实现轻量左侧栏，用于项目返回、主题切换、媒体节点列表和折叠展开；完整资源树仍留给 M1.x。
+- 已隐藏 tldraw 原生顶部/底部/右侧工具 UI，并禁用绘图类快捷键；保留选择、删除、复制、撤销等必要快捷键。
+- 创建节点入口改为画布右键菜单，不再使用固定“+ 文本节点”导航按钮。
+- 节点编辑改为单击节点后在节点下方显示内联编辑面板，支持标题、引用占位、Prompt 和模型选择；标题/Prompt 自动保存，点击画布其他区域隐藏。
+- 画布支持明亮/暗夜外观切换。
 
 ## 2. 阶段 1：基础设施
 
@@ -298,7 +305,7 @@ interface AuthState {
 
 ### 3.5 前端路由
 
-使用 React Router v6：
+使用 React Router v7：
 
 ```
 /login        — 登录页（未认证时默认页）
@@ -330,7 +337,7 @@ interface AuthState {
 - 提交：POST `/api/auth/register` → 成功：store.login() + navigate('/workspaces') → 失败：表单下方红色错误提示
 - 布局与登录页一致
 
-**样式**：TailwindCSS 手写，不引入 shadcn/ui。表单卡片 `max-w-md mx-auto mt-20 p-6 bg-white rounded-lg shadow`。
+**样式**：遵循 `docs/design-frontend.md` 视觉契约，使用 `apps/web/src/main.css` 中的 token 和 `auth-*` class；不引入 shadcn/ui。
 
 ### 3.7 验收标准
 
@@ -485,7 +492,6 @@ export interface MediaShapeProps {
   title: string
   status: NodeStatus
   prompt: string
-  isAgentCreated: boolean
 }
 ```
 
@@ -493,14 +499,14 @@ export interface MediaShapeProps {
 
 - `extends ShapeUtil<MediaShape>`
 - `static type = 'media'`
-- `getDefaultProps()` — `{ w: 200, h: 120, nodeId: '', nodeType: 'text', title: '', status: 'draft', prompt: '', isAgentCreated: false }`
+- `getDefaultProps()` — `{ w: 200, h: 120, nodeId: '', nodeType: 'text', title: '', status: 'draft', prompt: '' }`
 - `component()` — 渲染节点卡片：
-  - 头部 32px：📝 图标 + 标题文本 + 右侧状态色块（圆点 + 状态颜色）
+  - 头部：文本类型标识 + 标题文本 + 右侧状态色块（圆点 + 状态颜色）
   - 内容区：prompt 文本预览（前 3 行，overflow hidden）
   - 状态色块颜色：draft 灰、ready 灰、running 蓝、succeeded 绿、failed 红、stale 黄
-- `indicator()` — 按 status 返回不同颜色的矩形边框
+- `getIndicatorPath()` — 返回矩形选中边框路径
 - 尺寸固定 200×120（M1 不支持 resize）
-- 不响应 `onDoubleClick` 进入 tldraw 内置编辑模式（M1 用自定义 overlay）
+- 不使用 tldraw 内置文本编辑模式（M1 用节点下方内联编辑面板）
 
 **nodeToShape 映射函数**（`apps/web/src/lib/canvas.ts`）：
 
@@ -519,11 +525,12 @@ function nodeToShape(node: MediaNodeDTO): TLShapePartial<MediaShape> {
       title: node.title,
       status: node.status,
       prompt: node.prompt,
-      isAgentCreated: node.source === 'agent',
     },
   }
 }
 ```
+
+> 说明：API JSON 字段按 Go 项目惯例使用 `snake_case`（如 `canvas_x`、`canvas_w`、`node_type`）。前端 `api.ts` 负责把响应映射成 TypeScript 侧 camelCase DTO，`nodeToShape` 只消费 DTO。
 
 ### 5.3 前端画布页面
 
@@ -531,15 +538,13 @@ function nodeToShape(node: MediaNodeDTO): TLShapePartial<MediaShape> {
 
 布局：
 ```
-┌──────────────────────────────────────────┐
-│  影砧  ·  咖啡广告项目   [← 返回项目列表]  │
-├──────────────────────────────────────────┤
-│                                          │
-│         tldraw 画布（全屏）               │
-│                                          │
-│      [右键菜单: 创建文本节点]              │
-│                                          │
-└──────────────────────────────────────────┘
+┌───────────────┬──────────────────────────┐
+│ Studio 侧栏    │        tldraw 画布        │
+│ 返回项目列表   │                          │
+│ 外观切换       │   [右键菜单: 创建文本节点] │
+│ 媒体节点列表   │                          │
+│ 折叠/展开      │                          │
+└───────────────┴──────────────────────────┘
 ```
 
 **初始加载**：
@@ -549,33 +554,36 @@ function nodeToShape(node: MediaNodeDTO): TLShapePartial<MediaShape> {
 4. `editor.setCamera({ x: camera.x, y: camera.y, z: camera.zoom })`
 
 **创建节点交互**：
-- 右键画布空白处 → 自定义 context menu（覆盖 tldraw 默认菜单）→ "📝 创建文本节点"
+- 右键画布空白处 → 自定义 context menu（覆盖 tldraw 默认菜单）→ "文本节点"
 - 点击 → `POST /api/nodes { workspace_id, node_type: 'text', title: '未命名文本', canvas_x: 右键位置.x, canvas_y: 右键位置.y }`
 - 成功 → `editor.createShape(nodeToShape(response))`
 - 失败 → toast 提示
 
-**编辑标题交互**：
-- 双击节点 → 弹出 input overlay（绝对定位在节点标题位置）
-- 回车或失焦 → `PATCH /api/nodes/:id { title }` → 更新 shape props
-- ESC → 取消
+**编辑标题/Prompt 交互**：
+- 单击节点 → 节点下方显示内联编辑面板
+- 面板上部展示引用资源占位，中部编辑 Prompt，底部选择模型
+- 标题和 Prompt 自动保存：失焦或输入防抖后 `PATCH /api/nodes/:id { title, prompt }`
+- 保存成功后同步 shape props，确保删除后 `Cmd+Z` 撤销能恢复标题和 Prompt
+- 点击画布空白处或选择其他节点时隐藏编辑面板
 
 **删除节点交互**：
 - 选中节点 → 按 Delete/Backspace
-- `DELETE /api/nodes/:id` → 成功 → `editor.deleteShape(shapeId)`
+- tldraw 删除 shape 后触发后端 `DELETE /api/nodes/:id`
+- `Cmd+Z` 恢复节点时重新向后端创建/更新对应节点数据，保持左侧列表、画布和后端一致
 
 ### 5.4 位置持久化
 
 监听 `editor.store.listen('change')`，过滤 MediaShape 的 x/y 变化：
 
 - 收集变化的节点 ID + 新坐标
-- 防抖 2s
+- 短防抖批量提交（当前实现约 500ms）
 - `PATCH /api/nodes/batch-position { positions: [{id, canvas_x, canvas_y}, ...] }`
 - 失败静默重试一次，仍失败忽略
 
 Camera 变更同理：
 
 - 监听 camera 变化
-- 防抖 2s
+- 节流/短间隔持久化（当前实现约 800ms）
 - `PATCH /api/workspaces/:id/camera { x, y, zoom }`
 - 失败忽略
 
@@ -585,8 +593,9 @@ Camera 变更同理：
 
 - `shapeUtils: [MediaShapeUtil]` — 注册自定义 shape
 - `tools: []` — M1 不注册自定义工具
-- `components: { ContextMenu: CustomContextMenu }` — 自定义右键菜单
-- 禁用 tldraw 默认的绘图工具（如果会干扰）
+- 使用 `TLUiComponents` 将原生顶部工具栏、底部工具、右侧样式面板等置空
+- 右键菜单由页面层自定义渲染，位置按画布坐标转换
+- `options={{ enableToolbarKeyboardShortcuts: false }}` 并拦截 D/E 等绘图快捷键，避免用户进入画笔/橡皮模式
 
 ### 5.6 验收标准
 
@@ -794,6 +803,7 @@ apps/web/src/
 │   ├── api.ts                  — fetch 封装，自动注入 Authorization
 │   └── canvas.ts               — nodeToShape 映射
 ├── stores/
+│   ├── appearance.ts           — 明亮/暗夜外观
 │   └── auth.ts                 — Zustand auth store
 ├── components/
 │   ├── ProtectedRoute.tsx
@@ -804,7 +814,7 @@ apps/web/src/
 │   ├── LoginPage.tsx
 │   ├── RegisterPage.tsx
 │   ├── WorkspaceListPage.tsx
-│   └── CanvasPage.tsx          — tldraw + MediaShape + 右键菜单
+│   └── WorkspaceDetailPage.tsx — Studio shell + tldraw + MediaShape + 右键菜单 + 内联编辑
 └── shapes/
     └── MediaShapeUtil.tsx      — 自定义 ShapeUtil
 ```
@@ -824,7 +834,9 @@ apps/web/src/
 
 ## 8. 与现有设计文档的关系
 
-本 Spec 是 [design-overview.md §7 M0 Studio 画布](design-overview.md) 的第一步实施拆解。完成 M1 后，下一步迭代方向：
+本 Spec 是 Studio Canvas 基础链路的第一步实施拆解。当前项目以 [architecture.md](../../architecture.md) 的里程碑表为准：M1 = Studio 画布基础，M1.x = Studio 增量，M2 = Agent 对话基础。
+
+完成 M1 后，下一步迭代方向：
 
 - image/video/audio 节点类型
 - 连线（MediaEdge）+ DAG 环检测
@@ -833,4 +845,4 @@ apps/web/src/
 - 生成任务（GenerationJob）+ 版本管理
 - WebSocket 事件推送
 
-这些内容对应 design-overview.md 中 M0 Studio 画布的完整交付，在 M1 之后作为 M1.x 增量迭代。
+这些内容对应目标 Studio 画布的完整交付，在 M1 之后作为 M1.x 增量迭代。

@@ -18,11 +18,11 @@
 | 构建 | Vite 8 |
 | 框架 | React 19 + TypeScript 6 |
 | 画布 | tldraw v5 + 自定义 Shape/Tool |
-| 样式 | TailwindCSS 4 + shadcn/ui (Radix) |
+| 样式 | TailwindCSS 4 + 自定义设计系统 |
 | 状态 | Zustand（画布外 UI 状态） |
 | 数据 | TanStack Query + Fetch |
-| WebSocket | 原生 + 轻量封装，双通道 |
-| 路由 | React Router v6 |
+| WebSocket | 目标：原生 + 轻量封装，双通道（M1 未启用） |
+| 路由 | React Router v7 |
 
 ### 后端 `apps/server`
 
@@ -31,7 +31,7 @@
 | 语言 | Go 1.26+ |
 | Web 框架 | Hertz (cloudwego/hertz) |
 | DB | pgx v5 + sqlc |
-| 迁移 | goose 或 golang-migrate |
+| 迁移 | goose |
 | 缓存 | go-redis v9 |
 | 对象存储 | minio-go v7 |
 | 沙箱 | OpenSandbox Go SDK（M3 引入） |
@@ -53,36 +53,39 @@
 
 ## 模块边界
 
+### 当前实现快照（M1）
+
+截至 2026-06-13，M1 已落地的是注册登录、Workspace、文本节点画布和坐标/Camera 持久化：
+
+- 前端：登录/注册页、项目列表/创建弹窗、Studio 画布页、可折叠左侧栏、明暗外观切换、tldraw 自定义 `MediaShape`、右键创建文本节点、节点下方标题/Prompt 自动保存编辑面板。
+- 后端：JWT 鉴权、Workspace API、Canvas API、MediaNode API、goose 迁移、sqlc 查询生成。
+- 数据库：`account`、`workspace`、`canvas_document`、`media_node`。
+- 尚未落地：WebSocket、Agent、生成任务、对象存储业务流、连线、分组、image/video/audio 节点、右侧属性面板、完整资源树。
+
 ### `packages/canvas-schema`（核心契约层）
 
 Studio 和 Agent 模式共享的画布定义：
 
-- 媒体节点类型：text / image / video / audio
-- MediaShape props 接口（nodeId、nodeType、status、thumbnailUrl 等）
-- ArrowShape 三种连线类型（dependency / reference / sequence）
-- 节点状态枚举（draft → ready → queued → running → succeeded / failed / stale）
-- WebSocket 事件类型定义（NodeCreated / NodeUpdated / JobProgress 等）
+- 当前 M1：媒体节点类型枚举、节点状态枚举、`MediaShape` 最小 props（`nodeId`、`nodeType`、`title`、`prompt`、`status`、`w`、`h`）。
+- 目标 M1.x/M2：ArrowShape、MediaEdge、MediaGroup、缩略图/进度/评审字段、WebSocket 事件类型。
 
 ### 后端模块
 
 ```
 apps/server/internal/
-├── api/            HTTP/WS handler（REST + WebSocket 双通道）
+├── api/            当前：REST handler；目标：REST + WebSocket 双通道
 ├── auth/           注册/登录 + JWT 签发/校验/中间件
-├── command/        业务命令 API（create_media_node / create_media_edge / submit_generation 等）
-├── production/     生产翻译层：生产级工具 → 业务命令的映射（Agent 模式专用）
-├── agent/          MultiAgent 编排（eino: Producer → Sub-Agents）
-├── skill/          Skill 领域知识加载与匹配
-├── sandbox/        OpenSandbox Go SDK 封装（M3 引入）
-├── media/          对象存储/资产管理
-├── dashscope/      DashScope API 封装（LLM / 文生图 / 图生视频）
 ├── config/         viper 配置加载
-└── store/          sqlc 生成 + 仓储层
+├── store/          sqlc 生成 + 仓储层
+├── agent/          规划中：MultiAgent 编排（eino: Producer → Sub-Agents）
+├── sandbox/        规划中：OpenSandbox Go SDK 封装（M3 引入）
+├── media/          规划中：对象存储/资产管理
+└── dashscope/      规划中：DashScope API 封装（LLM / 文生图 / 图生视频）
 ```
 
 ## 数据流
 
-### Studio 模式
+### Studio 模式（目标态）
 
 ```
 用户操作画布（创建节点 / 连线 / 编辑 Prompt / 提交生成）
@@ -94,7 +97,9 @@ apps/server/internal/
   → /ws/canvas 推送进度和完成状态
 ```
 
-### Agent 模式
+> M1 当前 Studio 数据流是 REST-only：前端创建/更新/删除节点时调用 HTTP API，tldraw 只做本地投影；后端尚不广播 WebSocket 事件。
+
+### Agent 模式（目标态）
 
 ```
 用户对话 → /ws/chat
@@ -109,14 +114,14 @@ apps/server/internal/
 
 详见 [画布设计 — 前后端数据通路](design-canvas.md)。
 
-## WebSocket 双通道设计
+## WebSocket 双通道设计（M2 目标）
 
 | 通道 | 路径 | 用途 | 可靠性要求 |
 |---|---|---|---|
 | 对话通道 | `/ws/chat` | Agent 模式流式文本输出、工具调用状态 | 丢消息影响不大 |
 | 画布通道 | `/ws/canvas` | Shape 增删改、连线变更、节点执行状态 | 不能丢，否则状态不一致 |
 
-前端通过 JWT token 认证 WebSocket 连接（query param 或首帧传递）。
+前端通过 JWT token 认证 WebSocket 连接（query param 或首帧传递）。M1 后端尚未注册 `/ws/chat` 和 `/ws/canvas` 路由。
 
 ## 设计原则
 
@@ -132,9 +137,10 @@ apps/server/internal/
 | 里程碑 | 范围 | 关键交付 |
 |---|---|---|
 | M0 基建 | Monorepo 骨架 + compose + 前后端 hello world | ✅ 已完成 |
-| M0 Studio 画布 | 自定义 MediaShape + 连线 + 资源树 + 属性面板 + 生成 + WebSocket | 用户可手动创建节点、连线、提交生成 |
-| M1 Agent 对话 | 对话面板 + 单 Agent + 生产级工具 + PSS + 画布只读 + Gate | 用户可通过对话让 Agent 创建节点和生成 |
-| M2 MultiAgent + Skill | Producer + 5 Sub-Agent + 内置 Skill + 评审重试 + Stale 传播 | Agent 自动完成需求到成片全流程 |
-| M3 一致性与质量 | 跨镜头一致性 + 多 Skill + 成本管理 + 审计 + 模式切换 | 生成视频可用性和可控性提升 |
+| M1 Studio 画布基础 | 注册登录 + Workspace + 文本节点画布 + 坐标持久化 | 用户可创建项目、创建文本节点、拖拽后刷新保持位置 |
+| M1.x Studio 增量 | image/video/audio 节点 + 连线 + 分组 + 资源树 + 属性面板 + WebSocket | 用户可手动组织完整 Studio DAG |
+| M2 Agent 对话 | 对话面板 + 单 Agent + 生产级工具 + PSS + 画布只读 + Gate | 用户可通过对话让 Agent 创建节点和生成 |
+| M3 MultiAgent + Skill | Producer + 5 Sub-Agent + 内置 Skill + 评审重试 + Stale 传播 | Agent 自动完成需求到成片全流程 |
+| M4 一致性与质量 | 跨镜头一致性 + 多 Skill + 成本管理 + 审计 + 模式切换 | 生成视频可用性和可控性提升 |
 
 详见 [整体业务交互设计 — 实施路线](design-overview.md)。

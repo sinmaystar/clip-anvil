@@ -7,23 +7,26 @@ clip-anvil/
 ├── apps/
 │   ├── web/                          前端应用
 │   │   ├── src/
-│   │   │   ├── App.tsx               主组件（tldraw 画布）
-│   │   │   └── main.tsx              入口
+│   │   │   ├── App.tsx               RouterProvider 路由入口
+│   │   │   ├── main.tsx              入口
+│   │   │   ├── main.css              Tailwind 入口 + 视觉 token + 页面样式
+│   │   │   ├── components/           Layout、路由守卫、弹窗
+│   │   │   ├── pages/                Login/Register/Workspace/Studio 页面
+│   │   │   ├── lib/                  API client、canvas 映射
+│   │   │   ├── shapes/               tldraw 自定义 MediaShape
+│   │   │   └── stores/               auth、appearance 状态
 │   │   ├── package.json              @clip-anvil/web
 │   │   ├── vite.config.ts
 │   │   └── tsconfig.json
 │   └── server/                       后端应用
 │       ├── cmd/server/main.go        Hertz 启动入口
 │       ├── internal/
-│       │   ├── api/                  HTTP/WS handler
+│       │   ├── api/                  当前 REST handler；WS 后续阶段引入
 │       │   ├── auth/                 JWT 鉴权
 │       │   ├── config/              viper 配置加载
-│       │   ├── workflow/            Studio DAG 执行器
-│       │   ├── agent/               Agent 编排 (eino)
-│       │   ├── sandbox/             OpenSandbox 封装
-│       │   ├── media/               对象存储/资产管理
-│       │   ├── dashscope/           DashScope API 封装
 │       │   └── store/               sqlc + 仓储层
+│       ├── migrations/               goose SQL 迁移
+│       ├── sqlc/queries/             sqlc 查询定义
 │       ├── Dockerfile                多阶段构建（容器化部署用）
 │       ├── config.yaml               运行配置
 │       ├── go.mod
@@ -42,6 +45,7 @@ clip-anvil/
 │   ├── dev-start.sh                  一键启动开发环境
 │   └── dev-stop.sh                   一键停止
 ├── docs/                             项目文档
+├── AGENTS.md                         Codex/Agent 项目上下文
 ├── CLAUDE.md                         AI Agent 项目上下文（精简版）
 ├── Makefile                          Go 构建/测试命令
 ├── package.json                      根 package.json（workspaces 配置）
@@ -68,6 +72,10 @@ make server-dev      # go run 启动
 make server-build    # 编译到 bin/server
 make server-test     # 运行单测
 make server-lint     # golangci-lint
+make migrate-up      # 执行 goose 迁移
+make migrate-down    # 回滚最近一次 goose 迁移
+make migrate-create name=add_xxx
+make sqlc-generate   # 重新生成 internal/store/db
 ```
 
 ### 全局
@@ -107,7 +115,7 @@ test: 测试
 
 ### 第 3 层：Claude Code afterEdit hooks
 
-AI Agent 编辑文件后自动触发：
+AI Agent 编辑文件后自动触发。Codex 环境同样遵循根目录 `AGENTS.md` 中的 hooks 约定：
 
 | 文件类型 | 行为 |
 |---|---|
@@ -143,7 +151,7 @@ AI Agent 编辑文件后自动触发：
 ### 前端
 
 - 包管理器：pnpm 11.5.3（`package.json` 中 `packageManager` 字段锁定）
-- Node 要求：>= 26
+- Node 要求：26.x（根 `package.json` 锁定 `>=26 <27`，`.nvmrc` / `.node-version` 提供本地版本提示）
 - workspace 包以 `@clip-anvil/` 为命名空间
 
 ### 后端
@@ -158,6 +166,8 @@ AI Agent 编辑文件后自动触发：
 ```bash
 brew install golangci-lint    # Go 静态分析
 brew install lefthook         # Git hooks 管理
+go install github.com/pressly/goose/v3/cmd/goose@latest
+go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 ```
 
 Node、pnpm、Go 通过各自版本管理器安装。

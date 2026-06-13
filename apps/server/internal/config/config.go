@@ -9,6 +9,7 @@ type Config struct {
 	Postgres PostgresConfig
 	Redis    RedisConfig
 	MinIO    MinIOConfig
+	JWT      JWTConfig
 }
 
 type ServerConfig struct {
@@ -28,6 +29,11 @@ type MinIOConfig struct {
 	AccessKey string `mapstructure:"access_key"`
 	SecretKey string `mapstructure:"secret_key"`
 	UseSSL    bool   `mapstructure:"use_ssl"`
+}
+
+type JWTConfig struct {
+	Secret      string
+	ExpireHours int `mapstructure:"expire_hours"`
 }
 
 func Load() (*Config, error) {

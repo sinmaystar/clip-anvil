@@ -12,3 +12,7 @@ minio:
   access_key: "clipanvil"
   secret_key: "clipanvil_dev"
   use_ssl: false
+
+jwt:
+  secret: "dev-secret-change-in-prod"
+  expire_hours: 72

@@ -23,7 +23,27 @@
 
 ## 2. tldraw 投影层类型
 
+### 2.0 M1 当前实现快照
+
+M1 当前只落地文本节点画布，`packages/canvas-schema` 的 `MediaShapeProps` 为：
+
+```typescript
+interface MediaShapeProps {
+  w: number
+  h: number
+  nodeId: string
+  nodeType: MediaType
+  title: string
+  prompt: string
+  status: NodeStatus
+}
+```
+
+这里把 `prompt` 放入 shape props，是为了支持节点卡片预览、节点下方内联编辑，以及删除后 `Cmd+Z` 撤销恢复时保留标题和 Prompt。缩略图、进度、评分、Agent 来源视觉等字段属于 M1.x/M2 目标态。
+
 ### 2.1 MediaShapeProps
+
+以下是目标态 props 设计，不代表 M1 已全部实现：
 
 ```typescript
 import type { TLBaseShape } from 'tldraw'
@@ -46,7 +66,7 @@ interface MediaShapeProps {
 type MediaShape = TLBaseShape<'media', MediaShapeProps>
 ```
 
-这是 tldraw shape 需要的**最小渲染字段**。Prompt、模型参数、版本历史等通过 `nodeId` 从 API 按需加载，不放在 shape props 里。
+目标态下，Prompt、模型参数、版本历史等通过 `nodeId` 从 API 按需加载，不放在 shape props 里。M1 为了简化自动保存和撤销恢复，临时把 `prompt` 放入 props。
 
 ### 2.2 从业务数据构建 shape
 
@@ -70,6 +90,8 @@ function nodeToShape(node: MediaNodeDTO): MediaShape {
   }
 }
 ```
+
+API JSON 字段使用 Go 后端惯例的 `snake_case`（如 `canvas_x`、`node_type`）。前端 DTO 映射后再使用 camelCase，避免把后端字段风格泄漏到 React 组件里。
 
 ## 3. 节点卡片视觉规格
 
@@ -262,6 +284,8 @@ GET /api/workspaces/:id/canvas
 }
 ```
 
+M1 当前响应只有 `camera` 和 `nodes`。`edges`、`groups` 是 M1.x 目标字段。
+
 前端收到后：
 1. `editor.createShapes(nodes.map(nodeToShape))` — 批量创建节点 shape
 2. 为每条 edge 创建 ArrowShape + Binding
@@ -277,7 +301,7 @@ GET /api/workspaces/:id/canvas
 ```
 用户拖拽节点
   → tldraw 内存立即更新（0ms）→ 画布立即响应
-  → 防抖 2s → PATCH /api/nodes/batch-position [{ id, canvasX, canvasY }, ...]
+  → 短防抖批量提交 → PATCH /api/nodes/batch-position [{ id, canvas_x, canvas_y }, ...]
   → 失败？静默重试一次，仍失败忽略
   → 最坏结果：刷新后位置回退
 ```
@@ -292,15 +316,17 @@ GET /api/workspaces/:id/canvas
   → 失败 → toast 提示"创建失败，请重试"
 ```
 
-**为什么业务操作不做乐观更新**：200ms 延迟在创建节点、建连线这类操作中几乎无感知。乐观更新需要回滚逻辑（删除已渲染的 shape），增加复杂度但收益极低。只有高频交互（拖拽）才需要本地即时响应。
+**目标态原则**：创建节点、建连线、提交生成等业务操作以后端成功为准。M1 当前对标题/Prompt 编辑做了本地即时更新 + 自动保存，用来保证输入体验和 `Cmd+Z` 撤销恢复不丢内容。
 
-### 7.4 通路 ③：后端事件 → WebSocket 推送
+### 7.4 通路 ③：后端事件 → WebSocket 推送（目标态）
 
 Agent 操作、生成任务状态变更等后端事件通过 WebSocket 推送到前端：
 
 ```
 WebSocket /ws/canvas?workspaceId=xxx
 ```
+
+M1 后端尚未实现 WebSocket，画布跨端同步、Agent 推送和生成进度留给 M1.x/M2。
 
 | 事件 | Payload | 前端响应 |
 |---|---|---|
