@@ -34,7 +34,7 @@
 | 迁移 | goose |
 | 缓存 | go-redis v9 |
 | 对象存储 | minio-go v7 |
-| 沙箱 | 规划中：OpenSandbox Go SDK（M3 引入） |
+| 沙箱 | OpenSandbox Go SDK；workspace 级沙箱绑定、执行和产物提交基础已接入 |
 | Agent 编排 | 规划中：eino (cloudwego/eino + eino-ext) |
 | 配置 | viper |
 | 日志 | slog（标准库） |
@@ -49,17 +49,17 @@
 | Redis 7 | 缓存、会话 |
 | MinIO | 对象存储（图片、视频、中间产物） |
 | Nginx | 反向代理、静态托管（prod）、WS 升级 |
-| OpenSandbox | 沙箱执行 ffmpeg 等（M3 引入） |
+| OpenSandbox | workspace 级长生命周期沙箱，执行 ffmpeg 等媒体处理命令 |
 
 ## 模块边界
 
-### 当前实现快照（M1.x）
+### 当前实现快照（M1.x + OpenSandbox 基础）
 
-截至 2026-06-17，当前代码已落地 Studio M1.x 的核心 DAG 编辑能力：
+截至 2026-06-17，当前代码已落地 Studio M1.x 的核心 DAG 编辑能力，并已接入 OpenSandbox 基础设施：
 
 - 前端：登录/注册页、项目列表/创建弹窗、Studio 画布页、可折叠左侧资源树、明暗外观切换、tldraw 自定义 `MediaShape` 和 `GroupContainerShape`、文本/图片/视频/音频节点、节点编辑面板、右侧属性面板、文件拖拽上传、依赖连线、分组、Dagre 自动布局、`/ws/canvas` 连接状态与重连。
-- 后端：JWT 鉴权、Workspace API、Canvas API、MediaNode API、MediaEdge API、MediaGroup API、Upload API、Canvas WebSocket Hub、goose 迁移、sqlc 查询生成、MinIO 上传与预签名访问 URL。
-- 数据库：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`。
+- 后端：JWT 鉴权、Workspace API、Canvas API、MediaNode API、MediaEdge API、MediaGroup API、Upload/Storage API、Canvas WebSocket Hub、goose 迁移、sqlc 查询生成、MinIO 上传与预签名访问 URL、OpenSandbox workspace manager、sandbox exec、artifact submit。
+- 数据库：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`、`workspace_sandbox`。
 - 尚未落地：Agent 模式、生成任务、产物版本、自动评审、`/ws/chat`、reference/sequence 的完整前端配置、模型供应商调用。
 
 ### `packages/canvas-schema`（核心契约层）
@@ -79,8 +79,9 @@ apps/server/internal/
 ├── config/         viper 配置加载
 ├── store/          sqlc 生成 + 仓储层
 ├── agent/          规划中：MultiAgent 编排（eino: Producer → Sub-Agents）
-├── sandbox/        规划中：OpenSandbox Go SDK 封装（M3 引入）
-├── media/          规划中：对象存储/资产管理
+├── sandbox/        OpenSandbox SDK 封装、workspace sandbox、exec、文件预置、artifact submit
+├── storage/        MinIO 上传、预签名 URL、对象访问
+├── media/          规划中：生成产物业务管理
 └── dashscope/      规划中：DashScope API 封装（LLM / 文生图 / 图生视频）
 ```
 
@@ -140,7 +141,8 @@ apps/server/internal/
 | M0 基建 | Monorepo 骨架 + compose + 前后端 hello world | ✅ 已完成 |
 | M1 Studio 画布基础 | 注册登录 + Workspace + 文本节点画布 + 坐标持久化 | 用户可创建项目、创建文本节点、拖拽后刷新保持位置 |
 | M1.x Studio 增量 | image/video/audio 节点 + 连线 + 分组 + 资源树 + 属性面板 + WebSocket + 上传 + 自动布局 | ✅ 已完成核心 DAG 编辑能力；生成/版本仍后续 |
-| M2 Agent 对话 | 对话面板 + 单 Agent + 生产级工具 + PSS + 画布只读 + Gate | 用户可通过对话让 Agent 创建节点和生成 |
+| M2 OpenSandbox 工作区沙箱 | OpenSandbox Server + workspace_sandbox + sandbox exec + MinIO 传输 + artifact submit | ✅ 基础链路已部分落地；端到端 Agent 集成仍后续 |
+| M2.x Agent 对话 | 对话面板 + 单 Agent + 生产级工具 + PSS + 画布只读 + Gate | 用户可通过对话让 Agent 创建节点和生成 |
 | M3 MultiAgent + Skill | Producer + 5 Sub-Agent + 内置 Skill + 评审重试 + Stale 传播 | Agent 自动完成需求到成片全流程 |
 | M4 一致性与质量 | 跨镜头一致性 + 多 Skill + 成本管理 + 审计 + 模式切换 | 生成视频可用性和可控性提升 |
 

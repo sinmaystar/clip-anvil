@@ -12,10 +12,10 @@
 
                   server (Go, 宿主机运行)
                      │
-   ┌─────────────────┼──────────────────┐
-   ▼                 ▼                  ▼
-postgres:16       redis:7         minio:latest
-:5432             :6379           :9000 (API) / :9001 (Console)
+  ┌─────────────────┼──────────────────┬──────────────────┐
+  ▼                 ▼                  ▼                  ▼
+postgres:16       redis:7         minio:latest      opensandbox-server
+:5432             :6379           :9000/:9001       :8080
 ```
 
 ## 端口清单
@@ -29,6 +29,7 @@ postgres:16       redis:7         minio:latest
 | Redis | 6379 | 缓存 |
 | MinIO API | 9000 | 对象存储 API |
 | MinIO Console | 9001 | MinIO Web 管理界面 |
+| OpenSandbox Server | 8080 | workspace sandbox 生命周期和命令执行 |
 
 ## 环境变量
 
@@ -53,7 +54,7 @@ postgres:16       redis:7         minio:latest
 ./scripts/dev-stop.sh      # 停止前后端进程，中间件容器保持运行
 ```
 
-默认 profile 会优先使用 `server:8888`、`web:5173`，并可通过 NGINX `http://localhost` 访问。多个 worktree 或多个 AI Coding Agent 并行时，使用共享中间件 + 多组前后端端口。
+默认 profile 会优先使用 `server:8888`、`web:5173`。只有默认单实例入口适合通过 NGINX `http://localhost` 访问；多个 worktree 或多个 AI Coding Agent 并行时，使用共享中间件 + 多组前后端端口，并优先访问脚本输出的 Vite 地址。
 
 agent 不需要手动判断自己是否在 worktree 中：`./scripts/dev-start.sh` 会根据当前目录、git 分支和路径 hash 自动生成 profile 名，并从 `8888-8999`、`5173-5299` 查找可用端口。需要先查看将使用的环境时：
 
@@ -160,6 +161,7 @@ docker compose -f deploy/docker-compose.yml up -d --force-recreate
 |---|---|
 | `pg_data` | PostgreSQL 数据 |
 | `minio_data` | MinIO 对象存储数据 |
+| `opensandbox_data` | OpenSandbox Server 持久化状态 |
 
 清除数据：`docker compose -f deploy/docker-compose.yml down -v`
 
@@ -171,10 +173,10 @@ docker compose -f deploy/docker-compose.yml up -d --force-recreate
 | `deploy/nginx/full.conf` | 容器化部署 | `backend:8888`（容器） |
 | `deploy/nginx/default.conf` | 生产模式 | `backend:8888`（容器） |
 
-dev/full 模式下前端均代理到宿主机 Vite(:5173)。
+dev/full 模式下前端均代理到宿主机 Vite(:5173)，因此只适合默认单实例入口；多 worktree 并行时以 `dev-start.sh` 输出的 Vite URL 为准。
 
 ## docker 注意事项
 
 - 镜像拉取：如果 Docker Hub 不通，需在 docker machine 中配置镜像加速（如 `docker.m.daocloud.io`）
 - 端口 80：rootless 模式下需设置 `net.ipv4.ip_unprivileged_port_start=80`
-- Socket 路径：OpenSandbox（M3）需要挂载容器 socket，docker 路径为 `$XDG_RUNTIME_DIR/docker/docker.sock`
+- Socket 路径：OpenSandbox Server 当前挂载 `/var/run/docker.sock`，如使用 rootless Docker 需要按本机 docker socket 路径调整 compose 配置。
