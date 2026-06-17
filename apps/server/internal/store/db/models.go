@@ -11,6 +11,49 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type EdgeType string
+
+const (
+	EdgeTypeDependency EdgeType = "dependency"
+	EdgeTypeReference  EdgeType = "reference"
+	EdgeTypeSequence   EdgeType = "sequence"
+)
+
+func (e *EdgeType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = EdgeType(s)
+	case string:
+		*e = EdgeType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for EdgeType: %T", src)
+	}
+	return nil
+}
+
+type NullEdgeType struct {
+	EdgeType EdgeType `json:"edge_type"`
+	Valid    bool     `json:"valid"` // Valid is true if EdgeType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullEdgeType) Scan(value interface{}) error {
+	if value == nil {
+		ns.EdgeType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.EdgeType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullEdgeType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.EdgeType), nil
+}
+
 type MediaType string
 
 const (
@@ -103,6 +146,50 @@ func (ns NullNodeStatus) Value() (driver.Value, error) {
 	return string(ns.NodeStatus), nil
 }
 
+type TransitionType string
+
+const (
+	TransitionTypeCut       TransitionType = "cut"
+	TransitionTypeCrossfade TransitionType = "crossfade"
+	TransitionTypeDissolve  TransitionType = "dissolve"
+	TransitionTypeWipe      TransitionType = "wipe"
+)
+
+func (e *TransitionType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TransitionType(s)
+	case string:
+		*e = TransitionType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TransitionType: %T", src)
+	}
+	return nil
+}
+
+type NullTransitionType struct {
+	TransitionType TransitionType `json:"transition_type"`
+	Valid          bool           `json:"valid"` // Valid is true if TransitionType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTransitionType) Scan(value interface{}) error {
+	if value == nil {
+		ns.TransitionType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TransitionType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTransitionType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TransitionType), nil
+}
+
 type Account struct {
 	ID           pgtype.UUID        `json:"id"`
 	Email        string             `json:"email"`
@@ -123,6 +210,41 @@ type CanvasDocument struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type MediaAsset struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	Type         MediaType          `json:"type"`
+	Mime         string             `json:"mime"`
+	StorageUrl   string             `json:"storage_url"`
+	ThumbnailUrl pgtype.Text        `json:"thumbnail_url"`
+	DurationMs   pgtype.Int4        `json:"duration_ms"`
+	SizeBytes    pgtype.Int8        `json:"size_bytes"`
+	Metadata     []byte             `json:"metadata"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type MediaEdge struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	FromNodeID         pgtype.UUID        `json:"from_node_id"`
+	ToNodeID           pgtype.UUID        `json:"to_node_id"`
+	EdgeType           EdgeType           `json:"edge_type"`
+	TransitionType     NullTransitionType `json:"transition_type"`
+	TransitionDuration pgtype.Float4      `json:"transition_duration"`
+	Source             string             `json:"source"`
+	Metadata           []byte             `json:"metadata"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+type MediaGroup struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Name        string             `json:"name"`
+	SortOrder   int32              `json:"sort_order"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type MediaNode struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -137,6 +259,8 @@ type MediaNode struct {
 	CanvasH     float32            `json:"canvas_h"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	GroupID     pgtype.UUID        `json:"group_id"`
+	AssetID     pgtype.UUID        `json:"asset_id"`
 }
 
 type Workspace struct {

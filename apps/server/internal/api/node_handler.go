@@ -17,10 +17,15 @@ import (
 type NodeHandler struct {
 	pool    *pgxpool.Pool
 	queries *db.Queries
+	hub     *CanvasHub
 }
 
-func NewNodeHandler(pool *pgxpool.Pool, queries *db.Queries) *NodeHandler {
-	return &NodeHandler{pool: pool, queries: queries}
+func NewNodeHandler(pool *pgxpool.Pool, queries *db.Queries, hub ...*CanvasHub) *NodeHandler {
+	handler := &NodeHandler{pool: pool, queries: queries}
+	if len(hub) > 0 {
+		handler.hub = hub[0]
+	}
+	return handler
 }
 
 type createNodeRequest struct {
@@ -30,6 +35,7 @@ type createNodeRequest struct {
 	Title       string  `json:"title"`
 	Prompt      string  `json:"prompt"`
 	Status      string  `json:"status"`
+	AssetID     string  `json:"asset_id"`
 	CanvasX     float32 `json:"canvas_x"`
 	CanvasY     float32 `json:"canvas_y"`
 }
@@ -50,13 +56,14 @@ func (r createNodeRequest) nodeStatus() (db.NodeStatus, bool) {
 }
 
 type updateNodeRequest struct {
-	Title  *string `json:"title"`
-	Prompt *string `json:"prompt"`
-	Status *string `json:"status"`
+	Title   *string `json:"title"`
+	Prompt  *string `json:"prompt"`
+	Status  *string `json:"status"`
+	GroupID *string `json:"group_id"`
 }
 
 func (r updateNodeRequest) hasChanges() bool {
-	return r.Title != nil || r.Prompt != nil || r.Status != nil
+	return r.Title != nil || r.Prompt != nil || r.Status != nil || r.GroupID != nil
 }
 
 type positionRequest struct {
@@ -88,7 +95,7 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	nodeType := db.MediaType(req.NodeType)
-	if !isAllowedM1NodeType(nodeType) {
+	if !isAllowedNodeType(nodeType) {
 		writeError(c, consts.StatusBadRequest, "invalid node type")
 		return
 	}
@@ -104,6 +111,10 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 
 	w, nodeH := defaultNodeSize(nodeType)
 	title := strings.TrimSpace(req.Title)
+	assetID, ok := h.assetIDForCreate(ctx, req.AssetID, workspaceID, nodeType, c)
+	if !ok {
+		return
+	}
 	nodeID, hasNodeID := req.nodeID()
 	if strings.TrimSpace(req.ID) != "" && !hasNodeID {
 		writeError(c, consts.StatusBadRequest, "invalid node id")
@@ -119,6 +130,7 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 			Title:       title,
 			Prompt:      req.Prompt,
 			Status:      status,
+			AssetID:     assetID,
 			CanvasX:     req.CanvasX,
 			CanvasY:     req.CanvasY,
 			CanvasW:     w,
@@ -130,6 +142,7 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 			NodeType:    nodeType,
 			Title:       title,
 			Prompt:      req.Prompt,
+			AssetID:     assetID,
 			CanvasX:     req.CanvasX,
 			CanvasY:     req.CanvasY,
 			CanvasW:     w,
@@ -140,8 +153,40 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusInternalServerError, "failed to create node")
 		return
 	}
+	h.broadcast(node.WorkspaceID, "NodeCreated", map[string]any{"node": node})
 
 	c.JSON(consts.StatusOK, node)
+}
+
+func (h *NodeHandler) assetIDForCreate(
+	ctx context.Context,
+	id string,
+	workspaceID pgtype.UUID,
+	nodeType db.MediaType,
+	c *app.RequestContext,
+) (pgtype.UUID, bool) {
+	if strings.TrimSpace(id) == "" {
+		return pgtype.UUID{}, true
+	}
+	assetID, ok := uuidFromString(id)
+	if !ok {
+		writeError(c, consts.StatusBadRequest, "invalid asset")
+		return pgtype.UUID{}, false
+	}
+	asset, err := h.queries.GetMediaAssetByID(ctx, assetID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(c, consts.StatusNotFound, "asset not found")
+			return pgtype.UUID{}, false
+		}
+		writeError(c, consts.StatusInternalServerError, "failed to load asset")
+		return pgtype.UUID{}, false
+	}
+	if asset.WorkspaceID != workspaceID || asset.Type != nodeType {
+		writeError(c, consts.StatusBadRequest, "invalid asset")
+		return pgtype.UUID{}, false
+	}
+	return asset.ID, true
 }
 
 func (h *NodeHandler) Get(ctx context.Context, c *app.RequestContext) {
@@ -217,8 +262,66 @@ func (h *NodeHandler) Update(ctx context.Context, c *app.RequestContext) {
 			return
 		}
 	}
+	if req.GroupID != nil {
+		groupID := strings.TrimSpace(*req.GroupID)
+		if groupID == "" {
+			node, err = h.queries.ClearMediaNodeGroup(ctx, node.ID)
+			if err != nil {
+				writeError(c, consts.StatusInternalServerError, "failed to update node")
+				return
+			}
+		} else {
+			groupUUID, ok := uuidFromString(groupID)
+			if !ok {
+				writeError(c, consts.StatusBadRequest, "invalid group")
+				return
+			}
+			group, err := h.queries.GetMediaGroupByID(ctx, groupUUID)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeError(c, consts.StatusNotFound, "group not found")
+					return
+				}
+				writeError(c, consts.StatusInternalServerError, "failed to load group")
+				return
+			}
+			if group.WorkspaceID != node.WorkspaceID {
+				writeError(c, consts.StatusBadRequest, "invalid group")
+				return
+			}
+			node, err = h.queries.UpdateMediaNodeGroup(ctx, db.UpdateMediaNodeGroupParams{
+				ID:      node.ID,
+				GroupID: group.ID,
+			})
+			if err != nil {
+				writeError(c, consts.StatusInternalServerError, "failed to update node")
+				return
+			}
+		}
+	}
+	h.broadcast(node.WorkspaceID, "NodeUpdated", map[string]any{"node": node})
 
 	c.JSON(consts.StatusOK, node)
+}
+
+func (h *NodeHandler) Inputs(ctx context.Context, c *app.RequestContext) {
+	accountID, ok := accountIDFromContext(c)
+	if !ok {
+		writeError(c, consts.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	node, ok := h.nodeForAccount(ctx, c.Param("id"), accountID, c)
+	if !ok {
+		return
+	}
+	inputs, err := h.queries.ListUpstreamDependencyNodes(ctx, node.ID)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to load inputs")
+		return
+	}
+
+	c.JSON(consts.StatusOK, inputs)
 }
 
 func (h *NodeHandler) Delete(ctx context.Context, c *app.RequestContext) {
@@ -236,8 +339,16 @@ func (h *NodeHandler) Delete(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusInternalServerError, "failed to delete node")
 		return
 	}
+	h.broadcast(node.WorkspaceID, "NodeDeleted", map[string]any{"node_id": node.ID})
 
 	c.Status(consts.StatusNoContent)
+}
+
+func (h *NodeHandler) broadcast(workspaceID pgtype.UUID, eventType string, payload any) {
+	if h.hub == nil {
+		return
+	}
+	h.hub.Broadcast(workspaceID, CanvasEvent{Type: eventType, Payload: payload})
 }
 
 func (h *NodeHandler) BatchUpdatePosition(ctx context.Context, c *app.RequestContext) {
@@ -345,13 +456,24 @@ func defaultNodeSize(nodeType db.MediaType) (float32, float32) {
 	switch nodeType {
 	case db.MediaTypeText:
 		return 200, 120
+	case db.MediaTypeImage:
+		return 200, 160
+	case db.MediaTypeVideo:
+		return 240, 180
+	case db.MediaTypeAudio:
+		return 200, 80
 	default:
 		return 200, 120
 	}
 }
 
-func isAllowedM1NodeType(nodeType db.MediaType) bool {
-	return nodeType == db.MediaTypeText
+func isAllowedNodeType(nodeType db.MediaType) bool {
+	switch nodeType {
+	case db.MediaTypeText, db.MediaTypeImage, db.MediaTypeVideo, db.MediaTypeAudio:
+		return true
+	default:
+		return false
+	}
 }
 
 func isKnownNodeStatus(status db.NodeStatus) bool {

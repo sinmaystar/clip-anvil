@@ -6,7 +6,7 @@ import {
   type Geometry2d,
   type RecordProps,
 } from "tldraw";
-import { useEffect, useState, type SyntheticEvent } from "react";
+import { useEffect, useState, type PointerEvent, type SyntheticEvent } from "react";
 import {
   MEDIA_SHAPE_TYPE,
   type MediaShape,
@@ -21,6 +21,16 @@ const statusText: Record<MediaShape["props"]["status"], string> = {
   failed: "失败",
   stale: "需更新",
   user_editing: "编辑中",
+};
+
+const nodeTypeMeta: Record<
+  MediaShape["props"]["nodeType"],
+  { icon: string; label: string; emptyTitle: string }
+> = {
+  text: { icon: "T", label: "Text", emptyTitle: "未命名文本" },
+  image: { icon: "I", label: "Image", emptyTitle: "未命名图片" },
+  video: { icon: "V", label: "Video", emptyTitle: "未命名视频" },
+  audio: { icon: "A", label: "Audio", emptyTitle: "未命名音频" },
 };
 
 let activeMediaNodeId: string | null = null;
@@ -43,6 +53,7 @@ export class MediaShapeUtil extends ShapeUtil<MediaShape> {
       "stale",
       "user_editing",
     ),
+    thumbnailUrl: T.optional(T.string),
     w: T.number,
     h: T.number,
   };
@@ -97,7 +108,8 @@ export class MediaShapeUtil extends ShapeUtil<MediaShape> {
 }
 
 function MediaNodeShape({ shape }: { shape: MediaShape }) {
-  const { title, prompt, status, w, h } = shape.props;
+  const { title, prompt, status, nodeType, thumbnailUrl, w, h } = shape.props;
+  const typeMeta = nodeTypeMeta[nodeType];
   const [activeNodeId, setActiveNodeId] = useState(activeMediaNodeId);
   const [titleValue, setTitleValue] = useState(title);
   const [promptValue, setPromptValue] = useState(prompt);
@@ -137,6 +149,30 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
 
   const stopCanvasEvent = (event: SyntheticEvent) => {
     event.stopPropagation();
+  };
+
+  const dispatchConnectionStart = (pointerId: number | null) => {
+    window.dispatchEvent(
+      new CustomEvent("clip-anvil:connection-start", {
+        detail: {
+          fromNodeId: shape.props.nodeId,
+          pointerId,
+        },
+      }),
+    );
+  };
+
+  const startConnectionDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dispatchConnectionStart(event.pointerId);
+  };
+
+  const startConnectionClick = (event: SyntheticEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dispatchConnectionStart(null);
   };
 
   const onTitleChange = (value: string) => {
@@ -190,24 +226,60 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
       <div
         className="media-node-shell"
         data-active={isActive}
+        data-node-id={shape.props.nodeId}
         style={{ width: w }}
       >
         <div
           className="media-node"
           data-status={status}
-          data-type="text"
+          data-type={nodeType}
           style={{ width: w, height: h }}
         >
+          <span
+            aria-label="依赖输入端口"
+            className="media-node-port media-node-port-input"
+            role="img"
+          />
+          <button
+            aria-label={`从 ${titleValue || typeMeta.emptyTitle} 创建依赖连线`}
+            className="media-node-port media-node-port-output"
+            onClick={startConnectionClick}
+            onPointerDown={startConnectionDrag}
+            type="button"
+          />
           <div className="media-node-header">
-            <span className="media-node-icon">T</span>
-            <p className="media-node-title">{titleValue || "未命名文本"}</p>
+            <span className="media-node-icon">{typeMeta.icon}</span>
+            <p className="media-node-title">
+              {titleValue || typeMeta.emptyTitle}
+            </p>
             <span className="media-node-status">{statusText[status]}</span>
           </div>
-          <div className="media-node-content">
-            <p>{promptValue || "等待输入 prompt"}</p>
+          <div className="media-node-content" data-type={nodeType}>
+            {nodeType === "text" ? (
+              <p>{promptValue || "等待输入 prompt"}</p>
+            ) : nodeType === "image" ? (
+              thumbnailUrl ? (
+                <img
+                  alt={titleValue || typeMeta.emptyTitle}
+                  src={thumbnailUrl}
+                />
+              ) : (
+                <div className="media-node-placeholder">图片占位</div>
+              )
+            ) : nodeType === "video" ? (
+              <div className="media-node-placeholder">
+                <span>播放预览</span>
+                <span>0:00</span>
+              </div>
+            ) : (
+              <div className="media-node-placeholder">
+                <span className="media-node-waveform" />
+                <span>0:00</span>
+              </div>
+            )}
           </div>
           <div className="media-node-footer">
-            <span>Text</span>
+            <span>{typeMeta.label}</span>
             <span>Prompt</span>
           </div>
         </div>

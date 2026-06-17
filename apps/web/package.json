@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@clip-anvil/canvas-schema": "workspace:*",
+    "@dagrejs/dagre": "^3.0.0",
     "@tanstack/react-query": "^5.101.0",
     "react": "^19",
     "react-dom": "^19",

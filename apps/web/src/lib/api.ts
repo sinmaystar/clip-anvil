@@ -39,7 +39,10 @@ export interface MediaNode {
   node_type: MediaType;
   title: string;
   prompt: string;
+  asset_id?: string | null;
   asset_url?: string;
+  thumbnail_url?: string;
+  group_id?: string | null;
   status: NodeStatus;
   canvas_x: number;
   canvas_y: number;
@@ -58,6 +61,38 @@ export interface CanvasCamera {
 export interface CanvasPayload {
   camera: CanvasCamera;
   nodes: MediaNode[];
+  edges: MediaEdge[];
+  groups: MediaGroup[];
+}
+
+export interface MediaEdge {
+  id: string;
+  workspace_id: string;
+  from_node_id: string;
+  to_node_id: string;
+  edge_type: "dependency" | "reference" | "sequence";
+  source: string;
+  created_at: string;
+}
+
+export interface MediaGroup {
+  id: string;
+  workspace_id: string;
+  name: string;
+  sort_order: number;
+  node_ids: string[];
+}
+
+export interface MediaAsset {
+  id: string;
+  workspace_id: string;
+  type: Exclude<MediaType, "text">;
+  mime: string;
+  storage_url: string;
+  access_url?: string;
+  thumbnail_url?: string;
+  size_bytes?: number;
+  created_at: string;
 }
 
 const API_BASE = "/api";
@@ -79,7 +114,11 @@ export async function apiFetch<T>(
   const token = useAuthStore.getState().token;
   const headers = new Headers(options.headers);
 
-  if (!headers.has("Content-Type") && options.body) {
+  if (
+    !headers.has("Content-Type") &&
+    options.body &&
+    !(options.body instanceof FormData)
+  ) {
     headers.set("Content-Type", "application/json");
   }
   if (token) {
@@ -153,6 +192,7 @@ export function createMediaNode(input: {
   title: string;
   prompt?: string;
   status?: NodeStatus;
+  asset_id?: string;
   canvas_x: number;
   canvas_y: number;
 }) {
@@ -162,9 +202,19 @@ export function createMediaNode(input: {
   });
 }
 
+export function uploadMediaAsset(workspaceId: string, file: File) {
+  const form = new FormData();
+  form.append("workspace_id", workspaceId);
+  form.append("file", file);
+  return apiFetch<MediaAsset>("/upload", {
+    method: "POST",
+    body: form,
+  });
+}
+
 export function updateMediaNode(
   id: string,
-  input: Partial<Pick<MediaNode, "title" | "prompt" | "status">>,
+  input: Partial<Pick<MediaNode, "title" | "prompt" | "status" | "group_id">>,
 ) {
   return apiFetch<MediaNode>(`/nodes/${id}`, {
     method: "PATCH",
@@ -172,8 +222,69 @@ export function updateMediaNode(
   });
 }
 
+export function createMediaGroup(input: {
+  workspace_id: string;
+  name: string;
+  node_ids?: string[];
+}) {
+  return apiFetch<{ group: Omit<MediaGroup, "node_ids">; node_ids: string[] }>(
+    "/groups",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function updateMediaGroup(
+  id: string,
+  input: Partial<Pick<MediaGroup, "name" | "sort_order">>,
+) {
+  return apiFetch<Omit<MediaGroup, "node_ids">>(`/groups/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteMediaGroup(id: string) {
+  return apiFetch<void>(`/groups/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function replaceMediaGroupNodes(id: string, node_ids: string[]) {
+  return apiFetch<{ group: Omit<MediaGroup, "node_ids">; node_ids: string[] }>(
+    `/groups/${id}/nodes`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ node_ids }),
+    },
+  );
+}
+
+export function fetchNodeInputs(id: string) {
+  return apiFetch<MediaNode[]>(`/nodes/${id}/inputs`);
+}
+
 export function deleteMediaNode(id: string) {
   return apiFetch<void>(`/nodes/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function createMediaEdge(input: {
+  workspace_id: string;
+  from_node_id: string;
+  to_node_id: string;
+}) {
+  return apiFetch<MediaEdge>("/edges", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteMediaEdge(id: string) {
+  return apiFetch<void>(`/edges/${id}`, {
     method: "DELETE",
   });
 }

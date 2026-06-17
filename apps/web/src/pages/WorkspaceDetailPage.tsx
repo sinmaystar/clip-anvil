@@ -9,21 +9,45 @@ import {
 } from "react";
 import { useNavigate, useParams } from "react-router";
 import {
+  ApiError,
   batchUpdateNodePositions,
+  createMediaGroup,
+  createMediaEdge,
   createMediaNode,
+  deleteMediaEdge,
+  deleteMediaGroup,
   deleteMediaNode,
   fetchCanvas,
   fetchWorkspace,
   updateCamera,
   updateMediaNode,
   type CanvasPayload,
+  type MediaEdge,
+  type MediaGroup,
   type MediaNode,
+  type MediaType,
 } from "../lib/api";
+import { AutoLayoutControls } from "../components/AutoLayoutControls";
 import {
+  edgeToArrow,
+  groupToShape,
   isMediaShape,
   nodeToShape,
+  shapeIdForEdge,
+  shapeIdForGroup,
   shapeIdForNode,
 } from "../lib/canvas";
+import { ConnectionStatus } from "../components/ConnectionStatus";
+import { FileDropZone } from "../components/FileDropZone";
+import { PropertyPanel } from "../components/PropertyPanel";
+import { ResourceTree } from "../components/ResourceTree";
+import {
+  connectCanvasSocket,
+  type CanvasConnectionStatus,
+  type CanvasEvent,
+} from "../lib/ws";
+import { computeDagreLayout, type LayoutDirection } from "../lib/layout";
+import { GroupContainerShapeUtil } from "../shapes/GroupContainerShapeUtil";
 import { MediaShapeUtil } from "../shapes/MediaShapeUtil";
 import {
   Tldraw,
@@ -46,6 +70,10 @@ interface SelectNodeEvent {
   nodeId: string;
 }
 
+interface SelectGroupEvent {
+  groupId: string;
+}
+
 interface PromptEvent {
   nodeId: string;
   prompt: string;
@@ -56,18 +84,67 @@ interface TitleEvent {
   title: string;
 }
 
+interface ConnectionStartEvent {
+  fromNodeId: string;
+  pointerId: number | null;
+}
+
+interface PendingConnection {
+  fromNodeId: string;
+  pointerId: number | null;
+}
+
 type NodeDraftPatch = Partial<Pick<MediaNode, "title" | "prompt">>;
+
+const nodeCreateOptions: Array<{
+  type: MediaType;
+  title: string;
+  description: string;
+  icon: string;
+  defaultTitle: string;
+}> = [
+  {
+    type: "text",
+    title: "文本节点",
+    description: "提示词 / 文案 / 旁白",
+    icon: "T",
+    defaultTitle: "未命名文本",
+  },
+  {
+    type: "image",
+    title: "图片节点",
+    description: "参考图 / 产品图 / 画面素材",
+    icon: "I",
+    defaultTitle: "未命名图片",
+  },
+  {
+    type: "video",
+    title: "视频节点",
+    description: "镜头 / 片段 / 成片",
+    icon: "V",
+    defaultTitle: "未命名视频",
+  },
+  {
+    type: "audio",
+    title: "音频节点",
+    description: "配乐 / 旁白 / 音效",
+    icon: "A",
+    defaultTitle: "未命名音频",
+  },
+];
 
 export function WorkspaceDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const queryClient = useQueryClient();
   const editorRef = useRef<Editor | null>(null);
+  const [editor, setEditor] = useState<Editor | null>(null);
   const nodeSnapshotsRef = useRef(new Map<string, MediaNode>());
   const titleSaveTimersRef = useRef(new Map<string, number>());
   const promptSaveTimersRef = useRef(new Map<string, number>());
   const restoringNodeIdsRef = useRef(new Set<string>());
-  const shapeUtils = useMemo(() => [MediaShapeUtil], []);
+  const pendingConnectionRef = useRef<PendingConnection | null>(null);
+  const shapeUtils = useMemo(() => [GroupContainerShapeUtil, MediaShapeUtil], []);
   const tldrawComponents = useMemo<TLUiComponents>(
     () => ({
       ContextMenu: null,
@@ -97,9 +174,20 @@ export function WorkspaceDetailPage() {
   );
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [contextMenu, setContextMenu] = useState<CanvasContextMenu | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [connectionSourceId, setConnectionSourceId] = useState<string | null>(
+    null,
+  );
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] =
+    useState<CanvasConnectionStatus>("offline");
+  const [layoutDirection, setLayoutDirection] =
+    useState<LayoutDirection>("LR");
+  const [isLayouting, setIsLayouting] = useState(false);
   const appearance = useAppearanceStore((state) => state.appearance);
   const toggleAppearance = useAppearanceStore((state) => state.toggleAppearance);
+  const token = useAuthStore((state) => state.token);
   const account = useAuthStore((state) => state.account);
   const logout = useAuthStore((state) => state.logout);
 
@@ -116,6 +204,7 @@ export function WorkspaceDetailPage() {
   });
 
   const nodes = canvasQuery.data?.nodes ?? [];
+  const groups = canvasQuery.data?.groups ?? [];
 
   useEffect(() => {
     for (const node of nodes) {
@@ -124,29 +213,102 @@ export function WorkspaceDetailPage() {
   }, [nodes]);
 
   const selectNode = useCallback((nodeId: string) => {
+    setSelectedGroupId(null);
     setSelectedNodeId(nodeId);
     editorRef.current?.setSelectedShapes([shapeIdForNode(nodeId)]);
     announceActiveNode(nodeId);
   }, []);
 
+  const selectGroup = useCallback((groupId: string) => {
+    setSelectedNodeId(null);
+    setSelectedGroupId(groupId);
+    announceActiveNode(null);
+    editorRef.current?.setSelectedShapes([shapeIdForGroup(groupId)]);
+  }, []);
+
+  const beginDependencyConnection = useCallback((fromNodeId: string) => {
+    pendingConnectionRef.current = {
+      fromNodeId,
+      pointerId: null,
+    };
+    setConnectionSourceId(fromNodeId);
+    setConnectionError("选择目标节点");
+    setContextMenu(null);
+  }, []);
+
   const hideActiveNodeEditor = useCallback(() => {
+    setSelectedGroupId(null);
     setSelectedNodeId(null);
     announceActiveNode(null);
     editorRef.current?.setSelectedShapes([]);
   }, []);
 
+  const createGroupMutation = useMutation({
+    mutationFn: async () => {
+      if (!id || !selectedNodeId) {
+        throw new Error("请选择节点");
+      }
+      return createMediaGroup({
+        workspace_id: id,
+        name: "新建分组",
+        node_ids: [selectedNodeId],
+      });
+    },
+    onSuccess: (response) => {
+      const group = groupResponseToMediaGroup(response);
+      queryClient.setQueryData<CanvasPayload>(
+        ["workspace", id, "canvas"],
+        (current) => appendCanvasGroup(current, group),
+      );
+      const current = queryClient.getQueryData<CanvasPayload>([
+        "workspace",
+        id,
+        "canvas",
+      ]);
+      const editor = editorRef.current;
+      editor?.store.mergeRemoteChanges(() => {
+        editor.createShapes([groupToShape(group, current?.nodes ?? [])]);
+        editor.setSelectedShapes([shapeIdForGroup(group.id)]);
+      });
+      setSelectedGroupId(group.id);
+      setSelectedNodeId(null);
+      announceActiveNode(null);
+    },
+  });
+
+  const deleteGroupMutation = useMutation({
+    mutationFn: deleteMediaGroup,
+    onSuccess: (_, groupId) => {
+      queryClient.setQueryData<CanvasPayload>(
+        ["workspace", id, "canvas"],
+        (current) => removeCanvasGroup(current, groupId),
+      );
+      editorRef.current?.store.mergeRemoteChanges(() => {
+        editorRef.current?.deleteShapes([shapeIdForGroup(groupId)]);
+      });
+      setSelectedGroupId(null);
+    },
+  });
+
   const createNodeMutation = useMutation({
-    mutationFn: async (point?: { x: number; y: number }) => {
+    mutationFn: async (input?: {
+      point?: { x: number; y: number };
+      nodeType?: MediaType;
+    }) => {
       if (!id || !editorRef.current) {
         throw new Error("画布尚未准备好");
       }
 
+      const nodeType = input?.nodeType ?? "text";
+      const option =
+        nodeCreateOptions.find((item) => item.type === nodeType) ??
+        nodeCreateOptions[0];
       const center = editorRef.current.getViewportPageBounds().center;
-      const position = point ?? center;
+      const position = input?.point ?? center;
       return createMediaNode({
         workspace_id: id,
-        node_type: "text",
-        title: "未命名文本",
+        node_type: nodeType,
+        title: option.defaultTitle,
         canvas_x: position.x - 100,
         canvas_y: position.y - 60,
       });
@@ -166,6 +328,182 @@ export function WorkspaceDetailPage() {
       setContextMenu(null);
     },
   });
+
+  const createDependencyEdge = useCallback(
+    (fromNodeId: string, toNodeId: string) => {
+      if (!id || fromNodeId === toNodeId) {
+        return;
+      }
+
+      void createMediaEdge({
+        workspace_id: id,
+        from_node_id: fromNodeId,
+        to_node_id: toNodeId,
+      })
+        .then((edge) => {
+          const current = queryClient.getQueryData<CanvasPayload>([
+            "workspace",
+            id,
+            "canvas",
+          ]);
+          const nodesForArrow = current?.nodes ?? [];
+          queryClient.setQueryData<CanvasPayload>(
+            ["workspace", id, "canvas"],
+            (payload) => appendCanvasEdge(payload, edge),
+          );
+          const record = edgeToArrow(edge, nodesForArrow);
+          if (!record) {
+            return;
+          }
+          const editor = editorRef.current;
+          editor?.store.mergeRemoteChanges(() => {
+            editor.createShapes([record.arrow]);
+            editor.createBindings(record.bindings);
+          });
+        })
+        .catch((error: unknown) => {
+          setConnectionError(
+            error instanceof ApiError && error.status === 422
+              ? "不能形成循环依赖"
+              : "连线失败",
+          );
+        });
+    },
+    [id, queryClient],
+  );
+
+  const appendAssetNodeToCanvas = useCallback(
+    (node: MediaNode) => {
+      nodeSnapshotsRef.current.set(node.id, node);
+      queryClient.setQueryData<CanvasPayload>(
+        ["workspace", id, "canvas"],
+        (current) => appendCanvasNode(current, node),
+      );
+      const canvasEditor = editorRef.current;
+      canvasEditor?.store.mergeRemoteChanges(() => {
+        canvasEditor.createShapes([nodeToShape(node)]);
+        canvasEditor.setSelectedShapes([shapeIdForNode(node.id)]);
+      });
+      selectNode(node.id);
+    },
+    [id, queryClient, selectNode],
+  );
+
+  const applyCanvasEvent = useCallback(
+    (event: CanvasEvent) => {
+      if (!id) {
+        return;
+      }
+      switch (event.type) {
+        case "NodeCreated":
+        case "NodeUpdated":
+        case "NodeDeleted":
+        case "EdgeCreated":
+        case "EdgeDeleted":
+        case "GroupCreated":
+        case "GroupUpdated":
+        case "GroupDeleted":
+          void queryClient.invalidateQueries({
+            queryKey: ["workspace", id, "canvas"],
+          });
+          break;
+      }
+    },
+    [id, queryClient],
+  );
+
+  const runAutoLayout = useCallback(() => {
+    if (!id || !canvasQuery.data || !editorRef.current) {
+      return;
+    }
+    setIsLayouting(true);
+    const result = computeDagreLayout({
+      nodes: canvasQuery.data.nodes,
+      edges: canvasQuery.data.edges,
+      groups: canvasQuery.data.groups,
+      direction: layoutDirection,
+    });
+
+    const editor = editorRef.current;
+    editor.store.mergeRemoteChanges(() => {
+      editor.updateShapes(
+        result.positions.map((position) => ({
+          id: shapeIdForNode(position.id),
+          type: "media",
+          x: position.canvas_x,
+          y: position.canvas_y,
+        })),
+      );
+      editor.updateShapes(
+        result.groupBounds.map((bounds) => ({
+          id: shapeIdForGroup(bounds.groupId),
+          type: "group-container",
+          x: bounds.x,
+          y: bounds.y,
+          props: {
+            w: bounds.w,
+            h: bounds.h,
+          },
+        })),
+      );
+    });
+
+    const positionByID = new Map(
+      result.positions.map((position) => [position.id, position]),
+    );
+    queryClient.setQueryData<CanvasPayload>(
+      ["workspace", id, "canvas"],
+      (current) => {
+        if (!current) {
+          return current;
+        }
+        const nodes = current.nodes.map((node) => {
+          const position = positionByID.get(node.id);
+          return position
+            ? {
+                ...node,
+                canvas_x: position.canvas_x,
+                canvas_y: position.canvas_y,
+              }
+            : node;
+        });
+        for (const node of nodes) {
+          nodeSnapshotsRef.current.set(node.id, node);
+        }
+        return { ...current, nodes };
+      },
+    );
+
+    void batchUpdateNodePositions(result.positions)
+      .catch(() => {
+        void queryClient.invalidateQueries({
+          queryKey: ["workspace", id, "canvas"],
+        });
+      })
+      .finally(() => setIsLayouting(false));
+  }, [canvasQuery.data, id, layoutDirection, queryClient]);
+
+  useEffect(() => {
+    if (!editor || !canvasQuery.data) {
+      return;
+    }
+    syncEditorWithCanvas(editor, canvasQuery.data);
+  }, [canvasQuery.data, editor]);
+
+  const selectOrConnectNode = useCallback(
+    (nodeId: string) => {
+      const fromNodeId =
+        pendingConnectionRef.current?.fromNodeId ?? connectionSourceId;
+      if (fromNodeId && fromNodeId !== nodeId) {
+        pendingConnectionRef.current = null;
+        setConnectionSourceId(null);
+        setConnectionError(null);
+        createDependencyEdge(fromNodeId, nodeId);
+      }
+      selectNode(nodeId);
+    },
+    [connectionSourceId, createDependencyEdge, selectNode],
+  );
 
   const applyNodeDraft = useCallback(
     (nodeId: string, patch: NodeDraftPatch) => {
@@ -298,10 +636,30 @@ export function WorkspaceDetailPage() {
       }
 
       editorRef.current = editor;
-      const shapes = canvasQuery.data.nodes.map(nodeToShape);
+      setEditor(editor);
+      const groupShapes = canvasQuery.data.groups.map((group) =>
+        groupToShape(group, canvasQuery.data.nodes),
+      );
+      const shapes = [
+        ...groupShapes,
+        ...canvasQuery.data.nodes.map(nodeToShape),
+      ];
       if (shapes.length > 0) {
         editor.store.mergeRemoteChanges(() => {
           editor.createShapes(shapes);
+        });
+      }
+      const edgeRecords = canvasQuery.data.edges
+        .map((edge) => edgeToArrow(edge, canvasQuery.data.nodes))
+        .filter((record): record is NonNullable<typeof record> =>
+          Boolean(record),
+        );
+      if (edgeRecords.length > 0) {
+        editor.store.mergeRemoteChanges(() => {
+          editor.createShapes(edgeRecords.map((record) => record.arrow));
+          editor.createBindings(
+            edgeRecords.flatMap((record) => record.bindings),
+          );
         });
       }
       editor.setCurrentTool("select");
@@ -435,6 +793,20 @@ export function WorkspaceDetailPage() {
           }
 
           for (const record of Object.values(entry.changes.removed)) {
+            const edgeId = edgeIdFromRecord(record);
+            if (edgeId) {
+              queryClient.setQueryData<CanvasPayload>(
+                ["workspace", id, "canvas"],
+                (current) => removeCanvasEdge(current, edgeId),
+              );
+              void deleteMediaEdge(edgeId).catch(() => {
+                void queryClient.invalidateQueries({
+                  queryKey: ["workspace", id, "canvas"],
+                });
+              });
+              continue;
+            }
+
             const shape = recordAsMediaShape(record);
             if (shape) {
               window.clearTimeout(
@@ -502,6 +874,7 @@ export function WorkspaceDetailPage() {
         removeStoreListener();
         window.clearInterval(cameraTimer);
         editorRef.current = null;
+        setEditor(null);
       };
     },
     [canvasQuery.data, id, queryClient],
@@ -538,10 +911,28 @@ export function WorkspaceDetailPage() {
   }, []);
 
   useEffect(() => {
+    if (!id || !token) {
+      setConnectionStatus("offline");
+      return;
+    }
+    return connectCanvasSocket({
+      workspaceId: id,
+      token,
+      onEvent: applyCanvasEvent,
+      onReconnect: () => {
+        void queryClient.invalidateQueries({
+          queryKey: ["workspace", id, "canvas"],
+        });
+      },
+      onStatusChange: setConnectionStatus,
+    });
+  }, [applyCanvasEvent, id, queryClient, token]);
+
+  useEffect(() => {
     const onSelectNode = (event: Event) => {
       const detail = (event as CustomEvent<SelectNodeEvent>).detail;
       if (detail?.nodeId) {
-        selectNode(detail.nodeId);
+        selectOrConnectNode(detail.nodeId);
       }
     };
 
@@ -549,7 +940,152 @@ export function WorkspaceDetailPage() {
     return () => {
       window.removeEventListener("clip-anvil:select-node", onSelectNode);
     };
-  }, [selectNode]);
+  }, [selectOrConnectNode]);
+
+  useEffect(() => {
+    const onSelectGroup = (event: Event) => {
+      const detail = (event as CustomEvent<SelectGroupEvent>).detail;
+      if (detail?.groupId) {
+        selectGroup(detail.groupId);
+      }
+    };
+
+    window.addEventListener("clip-anvil:select-group", onSelectGroup);
+    return () => {
+      window.removeEventListener("clip-anvil:select-group", onSelectGroup);
+    };
+  }, [selectGroup]);
+
+  useEffect(() => {
+    const startConnectionFromTarget = (
+      target: EventTarget | null,
+      pointerId: number | null,
+    ) => {
+      if (!(target instanceof HTMLElement)) {
+        return false;
+      }
+      const port = target.closest(".media-node-port-output");
+      if (!(port instanceof HTMLElement)) {
+        return false;
+      }
+      const shell = port.closest(".media-node-shell");
+      if (!(shell instanceof HTMLElement) || !shell.dataset.nodeId) {
+        return false;
+      }
+      beginDependencyConnection(shell.dataset.nodeId);
+      pendingConnectionRef.current = {
+        fromNodeId: shell.dataset.nodeId,
+        pointerId,
+      };
+      return true;
+    };
+
+    const onOutputPortPointerDown = (event: PointerEvent) => {
+      if (startConnectionFromTarget(event.target, event.pointerId)) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
+    };
+
+    const onOutputPortClick = (event: globalThis.MouseEvent) => {
+      if (startConnectionFromTarget(event.target, null)) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
+    };
+
+    const onConnectionTargetClick = (event: globalThis.MouseEvent) => {
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest(".media-node-port-output")
+      ) {
+        return;
+      }
+      const pending = pendingConnectionRef.current;
+      if (!pending || !(event.target instanceof HTMLElement)) {
+        return;
+      }
+      const target = event.target.closest(".media-node-shell");
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const toNodeId = target.dataset.nodeId;
+      if (!toNodeId || toNodeId === pending.fromNodeId) {
+        return;
+      }
+      pendingConnectionRef.current = null;
+      setConnectionSourceId(null);
+      setConnectionError(null);
+      createDependencyEdge(pending.fromNodeId, toNodeId);
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    const onConnectionStart = (event: Event) => {
+      const detail = (event as CustomEvent<ConnectionStartEvent>).detail;
+      if (!detail?.fromNodeId) {
+        return;
+      }
+      pendingConnectionRef.current = {
+        fromNodeId: detail.fromNodeId,
+        pointerId: detail.pointerId,
+      };
+      setConnectionSourceId(detail.fromNodeId);
+      setConnectionError("选择目标节点");
+      setContextMenu(null);
+    };
+
+    const onConnectionEnd = (event: PointerEvent) => {
+      const pending = pendingConnectionRef.current;
+      if (
+        !pending ||
+        (pending.pointerId !== null && pending.pointerId !== event.pointerId)
+      ) {
+        return;
+      }
+      pendingConnectionRef.current = null;
+      setConnectionSourceId(null);
+      const target = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest(".media-node-shell");
+      if (!(target instanceof HTMLElement)) {
+        setConnectionError(null);
+        return;
+      }
+      const toNodeId = target.dataset.nodeId;
+      if (!toNodeId || toNodeId === pending.fromNodeId) {
+        setConnectionError(null);
+        return;
+      }
+      setConnectionError(null);
+      createDependencyEdge(pending.fromNodeId, toNodeId);
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    window.addEventListener("pointerdown", onOutputPortPointerDown, true);
+    window.addEventListener("click", onOutputPortClick, true);
+    window.addEventListener("click", onConnectionTargetClick, true);
+    window.addEventListener(
+      "clip-anvil:connection-start",
+      onConnectionStart,
+    );
+    window.addEventListener("pointerup", onConnectionEnd, true);
+    return () => {
+      window.removeEventListener("pointerdown", onOutputPortPointerDown, true);
+      window.removeEventListener("click", onOutputPortClick, true);
+      window.removeEventListener("click", onConnectionTargetClick, true);
+      window.removeEventListener(
+        "clip-anvil:connection-start",
+        onConnectionStart,
+      );
+      window.removeEventListener("pointerup", onConnectionEnd, true);
+    };
+  }, [beginDependencyConnection, createDependencyEdge]);
 
   useEffect(() => {
     const onTitleChange = (event: Event) => {
@@ -600,7 +1136,7 @@ export function WorkspaceDetailPage() {
       }
       if (
         event.target.closest(
-          ".media-node-shell, .studio-resource-item, .studio-context-menu",
+          ".media-node-shell, .resource-tree, .property-panel, .studio-context-menu",
         )
       ) {
         return;
@@ -642,6 +1178,15 @@ export function WorkspaceDetailPage() {
       announceActiveNode(null);
     }
   }, [nodes, selectedNodeId]);
+
+  useEffect(() => {
+    if (
+      selectedGroupId &&
+      !groups.some((group) => group.id === selectedGroupId)
+    ) {
+      setSelectedGroupId(null);
+    }
+  }, [groups, selectedGroupId]);
 
   useEffect(() => {
     const blockToolShortcuts = (event: KeyboardEvent) => {
@@ -702,6 +1247,7 @@ export function WorkspaceDetailPage() {
               <h1 className="studio-brand-title">
                 {workspaceQuery.data?.name ?? "加载中"}
               </h1>
+              <ConnectionStatus status={connectionStatus} />
             </div>
             <button
               aria-label={isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
@@ -734,35 +1280,21 @@ export function WorkspaceDetailPage() {
             </button>
           </div>
 
-          <div className="mt-5 studio-resource-list">
-            <div className="studio-action-row">
-              <p className="studio-section-label">Media Nodes</p>
-              <span className="studio-node-count text-[11.5px] font-medium text-[var(--fg-tertiary)]">
-                {nodes.length}
-              </span>
-            </div>
+          <div className="mt-5">
             {nodes.length > 0 ? (
-              nodes.map((node) => (
-                <button
-                  className="studio-resource-item"
-                  data-selected={node.id === selectedNodeId}
-                  key={node.id}
-                  onClick={() => selectNode(node.id)}
-                  type="button"
-                >
-                  <span className="studio-resource-thumb">T</span>
-                  <span className="studio-resource-name">
-                    {node.title || "未命名文本"}
-                  </span>
-                  <span
-                    className="studio-resource-status"
-                    data-status={node.status}
-                  />
-                </button>
-              ))
+              <ResourceTree
+                groups={groups}
+                nodes={nodes}
+                selectedGroupId={selectedGroupId}
+                selectedNodeId={selectedNodeId}
+                onCreateGroup={() => createGroupMutation.mutate()}
+                onSelectGroup={selectGroup}
+                onSelectNode={selectOrConnectNode}
+                onStartConnection={beginDependencyConnection}
+              />
             ) : (
               <div className="rounded-[var(--radius-md)] p-3 text-[12px] leading-5 text-[var(--fg-tertiary)]">
-                在画布空白处右键，选择文本节点开始。
+                在画布空白处右键，选择节点类型开始。
               </div>
             )}
           </div>
@@ -815,6 +1347,20 @@ export function WorkspaceDetailPage() {
           </div>
         )}
 
+        {id ? (
+          <FileDropZone
+            editor={editor}
+            onAssetNodeCreated={appendAssetNodeToCanvas}
+            workspaceId={id}
+          />
+        ) : null}
+        <AutoLayoutControls
+          direction={layoutDirection}
+          disabled={isLayouting || nodes.length === 0}
+          onDirectionChange={setLayoutDirection}
+          onRun={runAutoLayout}
+        />
+
         {contextMenu ? (
           <div
             className="studio-context-menu"
@@ -824,25 +1370,28 @@ export function WorkspaceDetailPage() {
               top: contextMenu.screenY,
             }}
           >
-            <button
-              onClick={() =>
-                createNodeMutation.mutate({
-                  x: contextMenu.pageX,
-                  y: contextMenu.pageY,
-                })
-              }
-              type="button"
-            >
-              <span className="studio-menu-icon">T</span>
-              <span>
-                <span className="block text-[13px] font-semibold tracking-[-0.01em]">
-                  文本节点
+            {nodeCreateOptions.map((option) => (
+              <button
+                key={option.type}
+                onClick={() =>
+                  createNodeMutation.mutate({
+                    point: { x: contextMenu.pageX, y: contextMenu.pageY },
+                    nodeType: option.type,
+                  })
+                }
+                type="button"
+              >
+                <span className="studio-menu-icon">{option.icon}</span>
+                <span>
+                  <span className="block text-[13px] font-semibold tracking-[-0.01em]">
+                    {option.title}
+                  </span>
+                  <span className="block text-[11.5px] text-[var(--fg-tertiary)]">
+                    {option.description}
+                  </span>
                 </span>
-                <span className="block text-[11.5px] text-[var(--fg-tertiary)]">
-                  提示词 / 文案 / 旁白
-                </span>
-              </span>
-            </button>
+              </button>
+            ))}
           </div>
         ) : null}
 
@@ -851,8 +1400,20 @@ export function WorkspaceDetailPage() {
             创建节点失败
           </div>
         ) : null}
+        {connectionError ? (
+          <div className="absolute right-4 top-14 rounded-[var(--radius-pill)] bg-[color-mix(in_srgb,var(--color-panel-elevated)_88%,transparent)] px-4 py-2 text-[12px] font-medium text-[var(--fg-secondary)] shadow-[var(--shadow-popover)] backdrop-blur-xl">
+            {connectionError}
+          </div>
+        ) : null}
       </section>
 
+      <PropertyPanel
+        groups={groups}
+        nodes={nodes}
+        selectedGroupId={selectedGroupId}
+        selectedNodeId={selectedNodeId}
+        onDeleteGroup={(groupId) => deleteGroupMutation.mutate(groupId)}
+      />
     </main>
   );
 }
@@ -863,6 +1424,75 @@ function recordAsMediaShape(record: TLRecord) {
   }
 
   return record;
+}
+
+function syncEditorWithCanvas(editor: Editor, canvas: CanvasPayload) {
+  const groupShapes = canvas.groups.map((group) =>
+    groupToShape(group, canvas.nodes),
+  );
+  const nodeShapes = canvas.nodes.map(nodeToShape);
+  const canvasShapes = [...groupShapes, ...nodeShapes];
+  const edgeRecords = canvas.edges
+    .map((edge) => edgeToArrow(edge, canvas.nodes))
+    .filter((record): record is NonNullable<typeof record> => Boolean(record));
+  const desiredShapeIds = new Set([
+    ...canvas.groups.map((group) => shapeIdForGroup(group.id)),
+    ...canvas.nodes.map((node) => shapeIdForNode(node.id)),
+    ...canvas.edges.map((edge) => shapeIdForEdge(edge.id)),
+  ]);
+
+  editor.store.mergeRemoteChanges(() => {
+    const existingPageShapes = editor.getCurrentPageShapes();
+    const staleShapeIds = existingPageShapes
+      .filter((shape) => {
+        if (
+          shape.type !== "media" &&
+          shape.type !== "group-container" &&
+          !edgeIdFromRecord(shape)
+        ) {
+          return false;
+        }
+        return !desiredShapeIds.has(shape.id);
+      })
+      .map((shape) => shape.id);
+
+    if (staleShapeIds.length > 0) {
+      editor.deleteShapes(staleShapeIds);
+    }
+
+    const existingEdgeIds = existingPageShapes
+      .filter((shape) => edgeIdFromRecord(shape))
+      .map((shape) => shape.id);
+    if (existingEdgeIds.length > 0) {
+      editor.deleteShapes(existingEdgeIds);
+    }
+
+    const shapesToCreate = canvasShapes.filter(
+      (shape) => !editor.getShape(shape.id),
+    );
+    const shapesToUpdate = canvasShapes.filter((shape) =>
+      editor.getShape(shape.id),
+    );
+
+    if (shapesToCreate.length > 0) {
+      editor.createShapes(shapesToCreate);
+    }
+    if (shapesToUpdate.length > 0) {
+      editor.updateShapes(shapesToUpdate);
+    }
+    if (edgeRecords.length > 0) {
+      editor.createShapes(edgeRecords.map((record) => record.arrow));
+      editor.createBindings(edgeRecords.flatMap((record) => record.bindings));
+    }
+  });
+}
+
+function edgeIdFromRecord(record: TLRecord) {
+  if (record.typeName !== "shape" || !("meta" in record)) {
+    return null;
+  }
+  const edgeId = (record as { meta?: { edgeId?: unknown } }).meta?.edgeId;
+  return typeof edgeId === "string" ? edgeId : null;
 }
 
 function appendCanvasNode(current: CanvasPayload | undefined, node: MediaNode) {
@@ -882,6 +1512,71 @@ function removeCanvasNode(current: CanvasPayload | undefined, nodeId: string) {
   return {
     ...current,
     nodes: current.nodes.filter((node) => node.id !== nodeId),
+  };
+}
+
+function appendCanvasEdge(current: CanvasPayload | undefined, edge: MediaEdge) {
+  if (!current) {
+    return current;
+  }
+  if (current.edges.some((item) => item.id === edge.id)) {
+    return {
+      ...current,
+      edges: current.edges.map((item) => (item.id === edge.id ? edge : item)),
+    };
+  }
+  return { ...current, edges: [...current.edges, edge] };
+}
+
+function appendCanvasGroup(
+  current: CanvasPayload | undefined,
+  group: MediaGroup,
+) {
+  if (!current) {
+    return current;
+  }
+  const groups = current.groups.some((item) => item.id === group.id)
+    ? current.groups.map((item) => (item.id === group.id ? group : item))
+    : [...current.groups, group];
+  return {
+    ...current,
+    groups,
+    nodes: current.nodes.map((node) =>
+      group.node_ids.includes(node.id) ? { ...node, group_id: group.id } : node,
+    ),
+  };
+}
+
+function removeCanvasGroup(current: CanvasPayload | undefined, groupId: string) {
+  if (!current) {
+    return current;
+  }
+  return {
+    ...current,
+    groups: current.groups.filter((group) => group.id !== groupId),
+    nodes: current.nodes.map((node) =>
+      node.group_id === groupId ? { ...node, group_id: null } : node,
+    ),
+  };
+}
+
+function removeCanvasEdge(current: CanvasPayload | undefined, edgeId: string) {
+  if (!current) {
+    return current;
+  }
+  return {
+    ...current,
+    edges: current.edges.filter((edge) => edge.id !== edgeId),
+  };
+}
+
+function groupResponseToMediaGroup(response: {
+  group: Omit<MediaGroup, "node_ids">;
+  node_ids: string[];
+}): MediaGroup {
+  return {
+    ...response.group,
+    node_ids: response.node_ids,
   };
 }
 

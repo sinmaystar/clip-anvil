@@ -16,12 +16,49 @@ func TestDefaultNodeSizeForText(t *testing.T) {
 	}
 }
 
-func TestIsAllowedM1NodeTypeOnlyAcceptsText(t *testing.T) {
-	if !isAllowedM1NodeType(db.MediaTypeText) {
-		t.Fatal("text should be allowed in M1")
+func TestDefaultNodeSizeForM1xNodeTypes(t *testing.T) {
+	testCases := []struct {
+		nodeType db.MediaType
+		width    float32
+		height   float32
+	}{
+		{nodeType: db.MediaTypeText, width: 200, height: 120},
+		{nodeType: db.MediaTypeImage, width: 200, height: 160},
+		{nodeType: db.MediaTypeVideo, width: 240, height: 180},
+		{nodeType: db.MediaTypeAudio, width: 200, height: 80},
 	}
-	if isAllowedM1NodeType(db.MediaTypeVideo) {
-		t.Fatal("video should not be allowed in M1")
+
+	for _, tc := range testCases {
+		t.Run(string(tc.nodeType), func(t *testing.T) {
+			w, h := defaultNodeSize(tc.nodeType)
+			if w != tc.width {
+				t.Fatalf("width = %v, want %v", w, tc.width)
+			}
+			if h != tc.height {
+				t.Fatalf("height = %v, want %v", h, tc.height)
+			}
+		})
+	}
+}
+
+func TestIsAllowedNodeTypeAcceptsM1xTypes(t *testing.T) {
+	for _, nodeType := range []db.MediaType{
+		db.MediaTypeText,
+		db.MediaTypeImage,
+		db.MediaTypeVideo,
+		db.MediaTypeAudio,
+	} {
+		t.Run(string(nodeType), func(t *testing.T) {
+			if !isAllowedNodeType(nodeType) {
+				t.Fatalf("%s should be allowed in M1.x", nodeType)
+			}
+		})
+	}
+}
+
+func TestIsAllowedNodeTypeRejectsUnknownTypes(t *testing.T) {
+	if isAllowedNodeType(db.MediaType("model")) {
+		t.Fatal("unknown node type should not be allowed")
 	}
 }
 
@@ -34,6 +71,15 @@ func TestNodePatchRequestDetectsProvidedFields(t *testing.T) {
 	}
 	if req.Prompt != nil {
 		t.Fatal("prompt should remain omitted")
+	}
+}
+
+func TestNodePatchRequestDetectsGroupIDField(t *testing.T) {
+	groupID := ""
+	req := updateNodeRequest{GroupID: &groupID}
+
+	if !req.hasChanges() {
+		t.Fatal("expected request with group_id to have changes")
 	}
 }
 

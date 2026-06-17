@@ -1,0 +1,61 @@
+package api
+
+import (
+	"context"
+	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
+)
+
+type fakeDependencyEdgeLister map[pgtype.UUID][]db.MediaEdge
+
+func (f fakeDependencyEdgeLister) ListOutgoingDependencyEdges(_ context.Context, fromNodeID pgtype.UUID) ([]db.MediaEdge, error) {
+	return f[fromNodeID], nil
+}
+
+func TestWouldCreateCycleDetectsReachableSource(t *testing.T) {
+	nodeA := testUUID(0x01)
+	nodeB := testUUID(0x02)
+	nodeC := testUUID(0x03)
+	lister := fakeDependencyEdgeLister{
+		nodeB: {
+			{FromNodeID: nodeB, ToNodeID: nodeC, EdgeType: db.EdgeTypeDependency},
+		},
+		nodeC: {
+			{FromNodeID: nodeC, ToNodeID: nodeA, EdgeType: db.EdgeTypeDependency},
+		},
+	}
+
+	hasCycle, err := wouldCreateCycle(context.Background(), lister, nodeA, nodeB)
+	if err != nil {
+		t.Fatalf("wouldCreateCycle returned error: %v", err)
+	}
+	if !hasCycle {
+		t.Fatal("expected B -> C -> A path to make A -> B a cycle")
+	}
+}
+
+func TestWouldCreateCycleAllowsAcyclicEdge(t *testing.T) {
+	nodeA := testUUID(0x01)
+	nodeB := testUUID(0x02)
+	nodeC := testUUID(0x03)
+	lister := fakeDependencyEdgeLister{
+		nodeB: {
+			{FromNodeID: nodeB, ToNodeID: nodeC, EdgeType: db.EdgeTypeDependency},
+		},
+	}
+
+	hasCycle, err := wouldCreateCycle(context.Background(), lister, nodeA, nodeB)
+	if err != nil {
+		t.Fatalf("wouldCreateCycle returned error: %v", err)
+	}
+	if hasCycle {
+		t.Fatal("did not expect B -> C path to make A -> B a cycle")
+	}
+}
+
+func testUUID(value byte) pgtype.UUID {
+	return pgtype.UUID{Bytes: [16]byte{value}, Valid: true}
+}

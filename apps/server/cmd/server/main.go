@@ -64,12 +64,18 @@ func main() {
 	slog.Info("minio connected")
 
 	h := server.Default(server.WithHostPorts(fmt.Sprintf(":%d", cfg.Server.Port)))
+	h.NoHijackConnPool = true
 	queries := db.New(pgPool)
 	authHandler := api.NewAuthHandler(queries, cfg.JWT.Secret, cfg.JWT.ExpireHours)
 	authMiddleware := auth.Middleware(cfg.JWT.Secret)
+	canvasHub := api.NewCanvasHub()
 	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
 	canvasHandler := api.NewCanvasHandler(queries)
-	nodeHandler := api.NewNodeHandler(pgPool, queries)
+	nodeHandler := api.NewNodeHandler(pgPool, queries, canvasHub)
+	edgeHandler := api.NewEdgeHandler(pgPool, queries, canvasHub)
+	groupHandler := api.NewGroupHandler(pgPool, queries, canvasHub)
+	uploadHandler := api.NewUploadHandler(queries, minioClient)
+	canvasWSHandler := api.NewCanvasWSHandler(queries, canvasHub, cfg.JWT.Secret)
 
 	h.GET("/api/health", func(ctx context.Context, c *app.RequestContext) {
 		pgStatus := "connected"
@@ -118,9 +124,24 @@ func main() {
 	h.POST("/api/nodes", authMiddleware, nodeHandler.Create)
 	h.POST("/api/nodes/", authMiddleware, nodeHandler.Create)
 	h.PATCH("/api/nodes/batch-position", authMiddleware, nodeHandler.BatchUpdatePosition)
+	h.GET("/api/nodes/:id/inputs", authMiddleware, nodeHandler.Inputs)
 	h.GET("/api/nodes/:id", authMiddleware, nodeHandler.Get)
 	h.PATCH("/api/nodes/:id", authMiddleware, nodeHandler.Update)
 	h.DELETE("/api/nodes/:id", authMiddleware, nodeHandler.Delete)
+
+	h.POST("/api/groups", authMiddleware, groupHandler.Create)
+	h.POST("/api/groups/", authMiddleware, groupHandler.Create)
+	h.PATCH("/api/groups/:id", authMiddleware, groupHandler.Update)
+	h.DELETE("/api/groups/:id", authMiddleware, groupHandler.Delete)
+	h.PUT("/api/groups/:id/nodes", authMiddleware, groupHandler.ReplaceNodes)
+
+	h.POST("/api/upload", authMiddleware, uploadHandler.Upload)
+
+	h.POST("/api/edges", authMiddleware, edgeHandler.Create)
+	h.POST("/api/edges/", authMiddleware, edgeHandler.Create)
+	h.DELETE("/api/edges/:id", authMiddleware, edgeHandler.Delete)
+
+	h.GET("/ws/canvas", canvasWSHandler.Canvas)
 
 	slog.Info("server starting", "port", cfg.Server.Port)
 	h.Spin()
