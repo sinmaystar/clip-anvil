@@ -271,3 +271,15 @@ type Workspace struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
+
+type WorkspaceSandbox struct {
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	SandboxID         pgtype.Text        `json:"sandbox_id"`
+	VolumeName        string             `json:"volume_name"`
+	Status            string             `json:"status"`
+	LastHealthCheckAt pgtype.Timestamptz `json:"last_health_check_at"`
+	LastSeenAt        pgtype.Timestamptz `json:"last_seen_at"`
+	ErrorMessage      pgtype.Text        `json:"error_message"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}

@@ -30,6 +30,23 @@ INSERT INTO media_node (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
+-- name: CreateAgentMediaNode :one
+INSERT INTO media_node (
+    workspace_id,
+    node_type,
+    title,
+    prompt,
+    status,
+    source,
+    asset_id,
+    canvas_x,
+    canvas_y,
+    canvas_w,
+    canvas_h
+)
+VALUES ($1, $2, $3, $4, 'succeeded', 'agent', $5, $6, $7, $8, $9)
+RETURNING *;
+
 -- name: ListMediaNodesByWorkspace :many
 SELECT *
 FROM media_node

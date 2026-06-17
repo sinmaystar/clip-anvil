@@ -13,8 +13,8 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/minio/minio-go/v7"
 
+	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -22,7 +22,7 @@ const maxUploadBytes = 100 << 20
 
 type UploadHandler struct {
 	queries *db.Queries
-	minio   *minio.Client
+	storage *storage.Service
 }
 
 type assetResponse struct {
@@ -30,8 +30,8 @@ type assetResponse struct {
 	AccessURL string `json:"access_url"`
 }
 
-func NewUploadHandler(queries *db.Queries, minioClient *minio.Client) *UploadHandler {
-	return &UploadHandler{queries: queries, minio: minioClient}
+func NewUploadHandler(queries *db.Queries, storageService *storage.Service) *UploadHandler {
+	return &UploadHandler{queries: queries, storage: storageService}
 }
 
 func (h *UploadHandler) Upload(ctx context.Context, c *app.RequestContext) {
@@ -76,13 +76,9 @@ func (h *UploadHandler) Upload(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	bucketName := "workspace-" + uuidToString(workspaceID)
-	if err := h.ensureBucket(ctx, bucketName); err != nil {
-		writeError(c, consts.StatusInternalServerError, "failed to store asset")
-		return
-	}
 	objectName := fmt.Sprintf("assets/%d/%s", time.Now().UnixNano(), safeFilename(header.Filename))
-	if _, err := h.minio.PutObject(ctx, bucketName, objectName, file, header.Size, minio.PutObjectOptions{ContentType: mime}); err != nil {
+	object, err := h.storage.Upload(ctx, workspaceID, objectName, file, header.Size, mime)
+	if err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to store asset")
 		return
 	}
@@ -91,7 +87,7 @@ func (h *UploadHandler) Upload(ctx context.Context, c *app.RequestContext) {
 		WorkspaceID: workspaceID,
 		Type:        mediaType,
 		Mime:        mime,
-		StorageUrl:  bucketName + "/" + objectName,
+		StorageUrl:  object.StorageURL,
 		SizeBytes:   pgtype.Int8{Int64: header.Size, Valid: true},
 		Metadata:    []byte("{}"),
 	})
@@ -99,7 +95,7 @@ func (h *UploadHandler) Upload(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusInternalServerError, "failed to create asset")
 		return
 	}
-	accessURL, err := h.presignedURL(ctx, bucketName, objectName)
+	accessURL, err := h.storage.PresignedGetURL(ctx, workspaceID, objectName, 15*time.Minute)
 	if err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to create asset")
 		return
@@ -133,25 +129,6 @@ func detectMultipartMIME(file multipart.File) (string, error) {
 		}
 	}
 	return http.DetectContentType(head[:n]), nil
-}
-
-func (h *UploadHandler) ensureBucket(ctx context.Context, bucketName string) error {
-	exists, err := h.minio.BucketExists(ctx, bucketName)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	return h.minio.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
-}
-
-func (h *UploadHandler) presignedURL(ctx context.Context, bucketName string, objectName string) (string, error) {
-	url, err := h.minio.PresignedGetObject(ctx, bucketName, objectName, 15*time.Minute, nil)
-	if err != nil {
-		return "", err
-	}
-	return url.String(), nil
 }
 
 func safeFilename(name string) string {

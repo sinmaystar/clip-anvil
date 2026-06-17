@@ -9,6 +9,7 @@ redis:
 
 minio:
   endpoint: "localhost:9000"
+  sandbox_endpoint: "host.docker.internal:9000"
   access_key: "clipanvil"
   secret_key: "clipanvil_dev"
   use_ssl: false
@@ -16,3 +17,14 @@ minio:
 jwt:
   secret: "dev-secret-change-in-prod"
   expire_hours: 72
+
+sandbox:
+  endpoint: "http://localhost:8080/v1"
+  api_key: "clipanvil-dev-sandbox-key"
+  image: "clipanvil-sandbox:dev"
+  timeout_seconds: 1800
+  workdir: "/workspace"
+  use_server_proxy: true
+  resource_limits:
+    cpu: "2"
+    memory: "4Gi"
