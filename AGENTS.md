@@ -153,46 +153,17 @@ git diff --check
 
 ## GitHub PR Flow
 
-用户要求“提 PR”时，按下面路线执行，不要跳过 scope 检查：
+用户要求“提 PR”时，走这条最短路线：
 
-1. 先确认当前状态和范围：
-
-   ```bash
-   git status --short --branch
-   git diff --stat
-   git diff --name-only
-   git ls-files --others --exclude-standard
-   ```
-
-   如果工作区包含明显无关改动，先向用户确认哪些文件进 PR；不要默认 `git add -A`。
-
-2. 处理分支：
-
-   - 如果当前是 detached HEAD 或在默认分支，先创建 `codex/<short-topic>` 分支。
-   - Codex worktree 的实际 `.git` 可能在桌面 checkout，例如 `/Users/wanwan/Desktop/clip-anvil/.git`。创建分支、stage、commit 等写 git metadata 的操作如果被 sandbox 拒绝，使用提权重跑同一条 git 命令。
-
-3. Stage 和 commit：
-
-   - 用显式文件列表 stage 这次 PR 需要的文件。
-   - 提交前至少确认 `git diff --cached --stat`。
-   - commit message 用简短英文，例如 `polish canvas groups and connections`；如果项目钩子要求 Conventional Commits，再使用 `feat:` / `fix:` / `docs:` 等前缀。
-
-4. 推送分支：
+1. 查清范围：`git status --short --branch`、`git diff --stat`、`git ls-files --others --exclude-standard`。有无关改动就先问用户，不要直接 `git add -A`。
+2. 建分支并提交：detached HEAD 或默认分支上先建 `codex/<short-topic>`；显式 `git add <files>`，确认 `git diff --cached --stat`，再 commit。
+3. 推送分支：
 
    ```bash
    git push -u origin <branch>
    ```
 
-   如果沙箱里出现 `Could not resolve host: github.com`，这是网络权限问题，使用提权重跑同一条 push。
-
-5. 创建 draft PR：
-
-   - 优先尝试 GitHub App / connector 创建 PR。
-   - 如果 GitHub App 返回 `403 Resource not accessible by integration`，改用 `gh pr create` fallback。
-   - `gh auth status` 在受限沙箱里可能显示 token invalid 或 API 连接失败；实际 `gh pr create` 仍可能在提权后读取本机有效凭据。遇到网络/API 失败时，先提权重跑 `gh pr create`，不要直接放弃。
-   - PR 默认创建 draft，除非用户明确要求 ready for review。
-
-   推荐命令：
+4. 创建 draft PR：优先用 GitHub App；如果返回 `403 Resource not accessible by integration`，改用 `gh pr create`：
 
    ```bash
    gh pr create \
@@ -203,11 +174,4 @@ git diff --check
      --body-file /tmp/<repo>-pr-body.md
    ```
 
-   PR body 至少包含 `Summary` 和 `Validation`，必要时补 `Root Cause Notes`。
-
-6. 完成后汇报：
-
-   - PR URL 和编号。
-   - 分支名、commit SHA。
-   - 本地 `git status --short --branch` 是否干净。
-   - 已运行的验证命令。
+注意：如果写 `.git` 或访问 GitHub 被 sandbox 拒绝，提权重跑同一条命令。`gh auth status` 在 sandbox 中可能显示 token invalid；实际 `gh pr create` 提权后仍可能成功。完成后只汇报 PR URL、分支、commit、验证结果和本地状态。
