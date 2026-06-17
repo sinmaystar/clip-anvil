@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noEmit": false,
+    "outDir": "dist-test",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist-test/tsconfig.test.tsbuildinfo"
+  },
+  "include": ["src/lib/connectionGeometry.ts"]
+}

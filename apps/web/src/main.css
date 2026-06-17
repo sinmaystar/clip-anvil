@@ -1016,6 +1016,79 @@ textarea {
   inset: 0;
 }
 
+.connection-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.connection-overlay-path-shadow,
+.connection-overlay-preview-shadow {
+  fill: none;
+  stroke: color-mix(in srgb, var(--status-running) 22%, transparent);
+  stroke-linecap: round;
+  stroke-width: 12px;
+}
+
+.connection-overlay-path,
+.connection-overlay-preview {
+  fill: none;
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--status-running) 28%, transparent));
+  stroke: url(#connection-overlay-gradient);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.connection-overlay-path {
+  stroke-width: 4px;
+}
+
+.connection-overlay-preview {
+  stroke-dasharray: 12 10;
+  stroke-width: 4.5px;
+}
+
+.connection-overlay-flow,
+.connection-overlay-preview-flow {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.82);
+  stroke-dasharray: 24 88;
+  stroke-linecap: round;
+  stroke-width: 2.25px;
+  animation: connection-flow 1.15s linear infinite;
+}
+
+.connection-overlay-preview-flow {
+  stroke: color-mix(in srgb, var(--accent-amber) 88%, white 12%);
+  stroke-dasharray: 18 54;
+  stroke-width: 2.5px;
+}
+
+.connection-overlay-target {
+  fill: color-mix(in srgb, var(--status-running) 14%, transparent);
+  stroke: color-mix(in srgb, var(--status-running) 68%, white 10%);
+  stroke-dasharray: 3 5;
+  stroke-width: 1.5px;
+  opacity: 0.58;
+  transform-origin: center;
+}
+
+.connection-overlay-target[data-active="true"] {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  stroke: var(--accent-amber);
+  stroke-dasharray: none;
+  stroke-width: 2.5px;
+  opacity: 1;
+}
+
+@keyframes connection-flow {
+  to {
+    stroke-dashoffset: -112;
+  }
+}
+
 .file-drop-zone {
   position: absolute;
   inset: 0;

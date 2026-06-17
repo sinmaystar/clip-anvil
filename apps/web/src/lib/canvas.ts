@@ -104,7 +104,7 @@ export function edgeToArrow(
         font: "draw",
         start,
         end,
-        bend: 0,
+        bend: 84,
         richText: toRichText(""),
         labelPosition: 0.5,
         scale: 1,

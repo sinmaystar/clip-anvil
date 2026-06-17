@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:connections": "tsc -p tsconfig.test.json && node --test src/lib/connectionGeometry.test.mjs"
   },
   "dependencies": {
     "@clip-anvil/canvas-schema": "workspace:*",

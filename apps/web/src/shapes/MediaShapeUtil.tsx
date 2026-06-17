@@ -151,10 +151,15 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
     event.stopPropagation();
   };
 
-  const dispatchConnectionStart = (pointerId: number | null) => {
+  const dispatchConnectionStart = (
+    pointerId: number | null,
+    point?: { clientX: number; clientY: number },
+  ) => {
     window.dispatchEvent(
       new CustomEvent("clip-anvil:connection-start", {
         detail: {
+          clientX: point?.clientX,
+          clientY: point?.clientY,
           fromNodeId: shape.props.nodeId,
           pointerId,
         },
@@ -166,7 +171,10 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    dispatchConnectionStart(event.pointerId);
+    dispatchConnectionStart(event.pointerId, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
   };
 
   const startConnectionClick = (event: SyntheticEvent) => {

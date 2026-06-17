@@ -38,6 +38,10 @@ import {
   shapeIdForNode,
 } from "../lib/canvas";
 import { ConnectionStatus } from "../components/ConnectionStatus";
+import {
+  ConnectionOverlay,
+  type DragConnection,
+} from "../components/ConnectionOverlay";
 import { FileDropZone } from "../components/FileDropZone";
 import { PropertyPanel } from "../components/PropertyPanel";
 import { ResourceTree } from "../components/ResourceTree";
@@ -85,6 +89,8 @@ interface TitleEvent {
 }
 
 interface ConnectionStartEvent {
+  clientX?: number;
+  clientY?: number;
   fromNodeId: string;
   pointerId: number | null;
 }
@@ -179,6 +185,10 @@ export function WorkspaceDetailPage() {
   const [connectionSourceId, setConnectionSourceId] = useState<string | null>(
     null,
   );
+  const [dragConnection, setDragConnection] =
+    useState<DragConnection | null>(null);
+  const [hoveredConnectionTargetId, setHoveredConnectionTargetId] =
+    useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] =
     useState<CanvasConnectionStatus>("offline");
@@ -226,15 +236,36 @@ export function WorkspaceDetailPage() {
     editorRef.current?.setSelectedShapes([shapeIdForGroup(groupId)]);
   }, []);
 
-  const beginDependencyConnection = useCallback((fromNodeId: string) => {
-    pendingConnectionRef.current = {
-      fromNodeId,
-      pointerId: null,
-    };
-    setConnectionSourceId(fromNodeId);
-    setConnectionError("选择目标节点");
-    setContextMenu(null);
-  }, []);
+  const beginDependencyConnection = useCallback(
+    (
+      fromNodeId: string,
+      pointer?: { clientX: number; clientY: number; pointerId: number | null },
+    ) => {
+      pendingConnectionRef.current = {
+        fromNodeId,
+        pointerId: pointer?.pointerId ?? null,
+      };
+      setConnectionSourceId(fromNodeId);
+      setHoveredConnectionTargetId(null);
+      setContextMenu(null);
+
+      if (pointer && editorRef.current) {
+        setConnectionError(null);
+        setDragConnection({
+          fromNodeId,
+          pointerPagePoint: editorRef.current.screenToPage({
+            x: pointer.clientX,
+            y: pointer.clientY,
+          }),
+        });
+        return;
+      }
+
+      setDragConnection(null);
+      setConnectionError("选择目标节点");
+    },
+    [],
+  );
 
   const hideActiveNodeEditor = useCallback(() => {
     setSelectedGroupId(null);
@@ -497,6 +528,8 @@ export function WorkspaceDetailPage() {
       if (fromNodeId && fromNodeId !== nodeId) {
         pendingConnectionRef.current = null;
         setConnectionSourceId(null);
+        setDragConnection(null);
+        setHoveredConnectionTargetId(null);
         setConnectionError(null);
         createDependencyEdge(fromNodeId, nodeId);
       }
@@ -960,6 +993,8 @@ export function WorkspaceDetailPage() {
     const startConnectionFromTarget = (
       target: EventTarget | null,
       pointerId: number | null,
+      clientX?: number,
+      clientY?: number,
     ) => {
       if (!(target instanceof HTMLElement)) {
         return false;
@@ -972,16 +1007,27 @@ export function WorkspaceDetailPage() {
       if (!(shell instanceof HTMLElement) || !shell.dataset.nodeId) {
         return false;
       }
-      beginDependencyConnection(shell.dataset.nodeId);
-      pendingConnectionRef.current = {
-        fromNodeId: shell.dataset.nodeId,
-        pointerId,
-      };
+      if (pointerId !== null && clientX !== undefined && clientY !== undefined) {
+        beginDependencyConnection(shell.dataset.nodeId, {
+          clientX,
+          clientY,
+          pointerId,
+        });
+      } else {
+        beginDependencyConnection(shell.dataset.nodeId);
+      }
       return true;
     };
 
     const onOutputPortPointerDown = (event: PointerEvent) => {
-      if (startConnectionFromTarget(event.target, event.pointerId)) {
+      if (
+        startConnectionFromTarget(
+          event.target,
+          event.pointerId,
+          event.clientX,
+          event.clientY,
+        )
+      ) {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
@@ -1017,6 +1063,8 @@ export function WorkspaceDetailPage() {
       }
       pendingConnectionRef.current = null;
       setConnectionSourceId(null);
+      setDragConnection(null);
+      setHoveredConnectionTargetId(null);
       setConnectionError(null);
       createDependencyEdge(pending.fromNodeId, toNodeId);
       event.preventDefault();
@@ -1024,30 +1072,83 @@ export function WorkspaceDetailPage() {
       event.stopImmediatePropagation();
     };
 
+    const updateHoveredConnectionTarget = (
+      clientX: number,
+      clientY: number,
+      fromNodeId: string,
+    ) => {
+      const target = document
+        .elementFromPoint(clientX, clientY)
+        ?.closest(".media-node-shell");
+      if (!(target instanceof HTMLElement)) {
+        setHoveredConnectionTargetId(null);
+        return;
+      }
+      const toNodeId = target.dataset.nodeId;
+      setHoveredConnectionTargetId(
+        toNodeId && toNodeId !== fromNodeId ? toNodeId : null,
+      );
+    };
+
     const onConnectionStart = (event: Event) => {
       const detail = (event as CustomEvent<ConnectionStartEvent>).detail;
       if (!detail?.fromNodeId) {
         return;
       }
-      pendingConnectionRef.current = {
-        fromNodeId: detail.fromNodeId,
-        pointerId: detail.pointerId,
-      };
-      setConnectionSourceId(detail.fromNodeId);
-      setConnectionError("选择目标节点");
-      setContextMenu(null);
+      if (
+        detail.pointerId !== null &&
+        detail.clientX !== undefined &&
+        detail.clientY !== undefined
+      ) {
+        beginDependencyConnection(detail.fromNodeId, {
+          clientX: detail.clientX,
+          clientY: detail.clientY,
+          pointerId: detail.pointerId,
+        });
+        return;
+      }
+      beginDependencyConnection(detail.fromNodeId);
+    };
+
+    const onConnectionMove = (event: PointerEvent) => {
+      const pending = pendingConnectionRef.current;
+      const editor = editorRef.current;
+      if (
+        !pending ||
+        pending.pointerId === null ||
+        pending.pointerId !== event.pointerId ||
+        !editor
+      ) {
+        return;
+      }
+      setDragConnection({
+        fromNodeId: pending.fromNodeId,
+        pointerPagePoint: editor.screenToPage({
+          x: event.clientX,
+          y: event.clientY,
+        }),
+      });
+      updateHoveredConnectionTarget(
+        event.clientX,
+        event.clientY,
+        pending.fromNodeId,
+      );
+      event.preventDefault();
     };
 
     const onConnectionEnd = (event: PointerEvent) => {
       const pending = pendingConnectionRef.current;
       if (
         !pending ||
-        (pending.pointerId !== null && pending.pointerId !== event.pointerId)
+        pending.pointerId === null ||
+        pending.pointerId !== event.pointerId
       ) {
         return;
       }
       pendingConnectionRef.current = null;
       setConnectionSourceId(null);
+      setDragConnection(null);
+      setHoveredConnectionTargetId(null);
       const target = document
         .elementFromPoint(event.clientX, event.clientY)
         ?.closest(".media-node-shell");
@@ -1074,6 +1175,7 @@ export function WorkspaceDetailPage() {
       "clip-anvil:connection-start",
       onConnectionStart,
     );
+    window.addEventListener("pointermove", onConnectionMove, true);
     window.addEventListener("pointerup", onConnectionEnd, true);
     return () => {
       window.removeEventListener("pointerdown", onOutputPortPointerDown, true);
@@ -1083,6 +1185,7 @@ export function WorkspaceDetailPage() {
         "clip-anvil:connection-start",
         onConnectionStart,
       );
+      window.removeEventListener("pointermove", onConnectionMove, true);
       window.removeEventListener("pointerup", onConnectionEnd, true);
     };
   }, [beginDependencyConnection, createDependencyEdge]);
@@ -1346,6 +1449,14 @@ export function WorkspaceDetailPage() {
             正在加载画布
           </div>
         )}
+
+        <ConnectionOverlay
+          dragConnection={dragConnection}
+          editor={editor}
+          edges={canvasQuery.data?.edges ?? []}
+          hoveredTargetNodeId={hoveredConnectionTargetId}
+          nodes={nodes}
+        />
 
         {id ? (
           <FileDropZone
