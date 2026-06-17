@@ -162,6 +162,6 @@ pnpm --filter @clip-anvil/web... build
 ## 7. 关联文档
 
 - [M1 Studio 画布基础](./2026-06-12-m1-studio-canvas-design.md)
-- [画布设计](../../design-canvas.md)
-- [Studio 模式设计](../../design-studio-mode.md)
-- [数据库设计](../../database-design.md)
+- [画布设计](../../../design/canvas.md)
+- [Studio 模式设计](../../../design/studio-mode.md)
+- [数据库设计](../../../engineering/database.md)

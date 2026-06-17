@@ -619,7 +619,7 @@ Agent: [select_version] "已切换到 v2。成片需要重新拼接，要现在�
 
 ## 相关文档
 
-- [整体设计](design-overview.md) — 架构、原则、路线图
-- [画布设计](design-canvas.md) — 节点/连线/分组视觉规格、数据通路
-- [Studio 模式](design-studio-mode.md) — 用户主导的创作交互
-- [数据库设计](database-design.md) — schema 和迁移
+- [整体设计](overview.md) — 架构、原则、路线图
+- [画布设计](canvas.md) — 节点/连线/分组视觉规格、数据通路
+- [Studio 模式](studio-mode.md) — 用户主导的创作交互
+- [数据库设计](../engineering/database.md) — schema 和迁移

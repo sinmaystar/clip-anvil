@@ -2,7 +2,27 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PID_DIR="$ROOT_DIR/.dev-pids"
+
+sanitize() {
+  tr -cs '[:alnum:]_.-' '-' | sed 's/^-//; s/-$//'
+}
+
+default_profile_name() {
+  local base branch checksum suffix
+  base="$(basename "$ROOT_DIR" | sanitize)"
+  branch="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null | sanitize)"
+  if [[ -z "$branch" ]]; then
+    branch="detached"
+  fi
+  checksum="$(printf '%s' "$ROOT_DIR" | cksum)"
+  checksum="${checksum%% *}"
+  suffix="$(printf '%04d' "$((checksum % 10000))")"
+  echo "$base-$branch-$suffix"
+}
+
+default_name="$(default_profile_name)"
+DEV_NAME="${CLIPANVIL_DEV_NAME:-$default_name}"
+PID_DIR="$ROOT_DIR/.dev-pids/$DEV_NAME"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,7 +34,7 @@ warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 
 echo ""
 echo "========================================="
-echo "  ClipAnvil 影砧 - 开发环境停止"
+echo "  ClipAnvil 影砧 - 开发环境停止 ($DEV_NAME)"
 echo "========================================="
 echo ""
 
@@ -47,6 +67,7 @@ else
 fi
 
 rmdir "$PID_DIR" 2>/dev/null || true
+rmdir "$ROOT_DIR/.dev-pids" 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}前后端已停止。${NC}中间件容器保持运行。"

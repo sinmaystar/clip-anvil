@@ -319,6 +319,6 @@ pnpm --filter @clip-anvil/web... build
 ## 9. 关联文档
 
 - [M1.x-B Studio 连线与 DAG](./2026-06-13-m1x-b-studio-dag-edges-design.md)
-- [画布设计](../../design-canvas.md)
-- [Studio 模式设计](../../design-studio-mode.md)
-- [数据库设计](../../database-design.md)
+- [画布设计](../../../design/canvas.md)
+- [Studio 模式设计](../../../design/studio-mode.md)
+- [数据库设计](../../../engineering/database.md)

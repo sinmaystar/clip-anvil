@@ -10,10 +10,10 @@ clip-anvil/
 │   │   │   ├── App.tsx               RouterProvider 路由入口
 │   │   │   ├── main.tsx              入口
 │   │   │   ├── main.css              Tailwind 入口 + 视觉 token + 页面样式
-│   │   │   ├── components/           Layout、路由守卫、弹窗
+│   │   │   ├── components/           Layout、路由守卫、资源树、属性面板、上传、自动布局控件
 │   │   │   ├── pages/                Login/Register/Workspace/Studio 页面
-│   │   │   ├── lib/                  API client、canvas 映射
-│   │   │   ├── shapes/               tldraw 自定义 MediaShape
+│   │   │   ├── lib/                  API client、canvas 映射、布局、WebSocket
+│   │   │   ├── shapes/               tldraw 自定义 MediaShape、GroupContainerShape
 │   │   │   └── stores/               auth、appearance 状态
 │   │   ├── package.json              @clip-anvil/web
 │   │   ├── vite.config.ts
@@ -21,7 +21,7 @@ clip-anvil/
 │   └── server/                       后端应用
 │       ├── cmd/server/main.go        Hertz 启动入口
 │       ├── internal/
-│       │   ├── api/                  当前 REST handler；WS 后续阶段引入
+│       │   ├── api/                  REST handler + /ws/canvas
 │       │   ├── auth/                 JWT 鉴权
 │       │   ├── config/              viper 配置加载
 │       │   └── store/               sqlc + 仓储层
@@ -44,7 +44,7 @@ clip-anvil/
 ├── scripts/
 │   ├── dev-start.sh                  一键启动开发环境
 │   └── dev-stop.sh                   一键停止
-├── docs/                             项目文档
+├── docs/                             项目文档（README 索引，engineering/design/milestones/archive 分层）
 ├── AGENTS.md                         Codex/Agent 项目上下文
 ├── CLAUDE.md                         AI Agent 项目上下文（精简版）
 ├── Makefile                          Go 构建/测试命令
@@ -55,6 +55,34 @@ clip-anvil/
 ```
 
 ## 构建与运行命令
+
+### 本地开发 profiles
+
+`./scripts/dev-start.sh` 默认启动一组前后端：后端优先使用 `8888`、Vite 优先使用 `5173`。如果这些端口已被其他 worktree 占用，脚本会自动向后寻找可用端口。多个 worktree 并行时，每个 worktree 使用独立 profile 和端口，PostgreSQL / Redis / MinIO / NGINX 仍共享同一套中间件容器。
+
+查看当前 worktree 将使用的 profile 和端口：
+
+```bash
+CLIPANVIL_PRINT_DEV_ENV=1 ./scripts/dev-start.sh
+```
+
+直接启动时也会自动推导，不需要 agent 手动判断自己是否在 worktree 中：
+
+```bash
+./scripts/dev-start.sh
+./scripts/dev-stop.sh
+```
+
+需要固定端口时再显式传：
+
+```bash
+CLIPANVIL_DEV_NAME=agent-a CLIPANVIL_SERVER_PORT=8888 CLIPANVIL_WEB_PORT=5173 ./scripts/dev-start.sh
+CLIPANVIL_DEV_NAME=agent-b CLIPANVIL_SERVER_PORT=8889 CLIPANVIL_WEB_PORT=5174 ./scripts/dev-start.sh
+
+CLIPANVIL_DEV_NAME=agent-b ./scripts/dev-stop.sh
+```
+
+并行模式下优先访问脚本输出的 Vite 地址，例如 `http://localhost:5174`。Vite 会读取 `CLIPANVIL_SERVER_PORT`，把 `/api` 和 `/ws` 代理到对应后端。
 
 ### 前端
 

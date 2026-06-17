@@ -41,7 +41,7 @@ clip-anvil/
                 │          │ ── /ws/chat   ──▶ server (WebSocket: Agent 对话)
                 │          │ ── /ws/canvas ──▶ server (WebSocket: 画布同步)
                 └──────────┘
-                                       
+
                   server (Go)
                      │
    ┌─────────────────┼──────────────────┬──────────────────┐

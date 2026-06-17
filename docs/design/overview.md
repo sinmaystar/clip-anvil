@@ -80,17 +80,17 @@
 | **谁创建内容** | 用户 | Agent |
 | **数据通路** | 用户操作 → REST API → DB → 画布 | 用户对话 → Agent → 生产工具 → DB → 事件流 → 画布 |
 
-**模式切换**：Workspace 级别设置，保存在 `workspace.settings.mode`。
+**模式切换（目标态）**：Workspace 级别设置，建议保存在 `workspace.settings.mode` 或后续显式 `workspace.mode` 字段。当前代码尚未提供 Studio/Agent 模式切换 UI，所有已落地画布能力默认属于 Studio 模式。
 
 - Studio → Agent：保留画布上已有内容，Agent 可识别并复用
 - Agent → Studio：保留 Agent 创建的所有内容，用户获得完全编辑权限
 - Agent 运行中不可切换到 Studio（需先暂停或完成）
 
-详细设计：[Studio 模式](design-studio-mode.md) · [Agent 模式](design-agent-mode.md)
+详细设计：[Studio 模式](studio-mode.md) · [Agent 模式](agent-mode.md)
 
 ## 5. 核心实体
 
-完整数据库 schema 见 [database-design.md](database-design.md)。
+完整数据库 schema 见 [../engineering/database.md](../engineering/database.md)。
 
 | 实体 | 关键字段 | 说明 |
 |---|---|---|
@@ -172,8 +172,8 @@ Draft → Ready → Queued → Running → Succeeded
 4. inputHash 有效（上游实际输出未变）→ 停止传播
 
 **处理方式因模式而异**：
-- **Studio**：画布底部弹出影响分析条，展示影响范围和预估费用，用户决定是否重新生成。详见 [Studio 模式 §Stale 处理](design-studio-mode.md)
-- **Agent**：Agent 在对话中报告影响范围并给出建议。详见 [Agent 模式 §Stale 处理](design-agent-mode.md)
+- **Studio**：画布底部弹出影响分析条，展示影响范围和预估费用，用户决定是否重新生成。详见 [Studio 模式 §Stale 处理](studio-mode.md)
+- **Agent**：Agent 在对话中报告影响范围并给出建议。详见 [Agent 模式 §Stale 处理](agent-mode.md)
 
 ### 6.3 Gate 系统
 
@@ -232,18 +232,19 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 - 节点标题/Prompt 单击后在节点下方编辑并自动保存
 - 可折叠左侧栏、明亮/暗夜外观切换
 
-### M1.x: Studio 增量
+### M1.x: Studio 增量（核心已落地）
 
 目标：把 M1 的文本节点画布扩展为完整 Studio DAG 编辑器。
 
 交付：
-- image / video / audio 节点类型
-- ArrowShape（三种连线类型）和 DAG 环检测
-- 分组（MediaGroup）和完整左侧资源树
-- 右侧属性面板和高级模型参数
-- 生成任务、版本列表与 winner 切换
-- WebSocket 事件流
-- 基础自动布局
+- image / video / audio 节点类型（已落地）
+- dependency 连线、ArrowShape 投影和 DAG 环检测（已落地）
+- 分组（MediaGroup）和左侧资源树（已落地）
+- 右侧属性面板基础信息（已落地）；高级模型参数待生成系统落地
+- `/ws/canvas` 事件流（已落地）
+- 拖拽上传资产和 MinIO 存储（已落地）
+- Dagre 基础自动布局（已落地）
+- 生成任务、版本列表与 winner 切换（未落地，后续阶段）
 
 ### M2: Agent 对话基础
 
@@ -294,9 +295,9 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 
 ## 相关文档
 
-- [画布设计和交互方案](design-canvas.md) — tldraw 投影、视觉规格、数据通路
-- [Studio 模式设计方案](design-studio-mode.md) — 用户主导的创作交互
-- [Agent 模式设计方案](design-agent-mode.md) — Agent 驱动的生产交互
-- [前端视觉和系统设计方案](design-frontend.md) - 前端视觉和系统设计方案
-- [数据库设计](database-design.md) — 完整 schema、迁移、查询
-- [技术架构](architecture.md) — 技术选型、项目结构、部署
+- [画布设计和交互方案](canvas.md) — tldraw 投影、视觉规格、数据通路
+- [Studio 模式设计方案](studio-mode.md) — 用户主导的创作交互
+- [Agent 模式设计方案](agent-mode.md) — Agent 驱动的生产交互
+- [前端视觉和系统设计方案](frontend.md) - 前端视觉和系统设计方案
+- [数据库设计](../engineering/database.md) — 完整 schema、迁移、查询
+- [技术架构](../engineering/architecture.md) — 技术选型、项目结构、部署

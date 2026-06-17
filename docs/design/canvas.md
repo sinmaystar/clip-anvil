@@ -23,27 +23,36 @@
 
 ## 2. tldraw 投影层类型
 
-### 2.0 M1 当前实现快照
+### 2.0 当前实现快照
 
-M1 当前只落地文本节点画布，`packages/canvas-schema` 的 `MediaShapeProps` 为：
+当前已落地 Studio M1.x 的节点和分组投影，`packages/canvas-schema` 的核心 props 为：
 
 ```typescript
 interface MediaShapeProps {
-  w: number
-  h: number
   nodeId: string
   nodeType: MediaType
   title: string
   prompt: string
   status: NodeStatus
+  thumbnailUrl?: string
+  w: number
+  h: number
+}
+
+interface GroupContainerShapeProps {
+  groupId: string
+  name: string
+  nodeCount: number
+  w: number
+  h: number
 }
 ```
 
-这里把 `prompt` 放入 shape props，是为了支持节点卡片预览、节点下方内联编辑，以及删除后 `Cmd+Z` 撤销恢复时保留标题和 Prompt。缩略图、进度、评分、Agent 来源视觉等字段属于 M1.x/M2 目标态。
+这里把 `prompt` 放入 shape props，是为了支持节点卡片预览、节点下方内联编辑，以及删除后撤销恢复时保留标题和 Prompt。`thumbnailUrl` 已用于图片/视频/音频资产预览；进度、评分、Agent 来源视觉等字段仍属于 M2/M3 目标态。
 
 ### 2.1 MediaShapeProps
 
-以下是目标态 props 设计，不代表 M1 已全部实现：
+以下是更远目标态 props 设计，不代表当前已全部实现：
 
 ```typescript
 import type { TLBaseShape } from 'tldraw'
@@ -66,7 +75,7 @@ interface MediaShapeProps {
 type MediaShape = TLBaseShape<'media', MediaShapeProps>
 ```
 
-目标态下，Prompt、模型参数、版本历史等通过 `nodeId` 从 API 按需加载，不放在 shape props 里。M1 为了简化自动保存和撤销恢复，临时把 `prompt` 放入 props。
+目标态下，模型参数、版本历史等通过 `nodeId` 从 API 按需加载，不放在 shape props 里。当前为了简化自动保存和撤销恢复，仍把 `prompt` 放入 props。
 
 ### 2.2 从业务数据构建 shape
 
@@ -194,9 +203,9 @@ API JSON 字段使用 Go 后端惯例的 `snake_case`（如 `canvas_x`、`node_t
 
 - 分组是纯组织工具，不影响依赖关系和生成逻辑
 - 依赖连线可自由跨越分组边界
-- 拖拽节点进入分组容器 → 自动加入分组
-- 拖拽节点移出分组容器 → 自动脱离分组
-- 移动分组 → 内部节点跟随移动
+- 当前支持选中多个节点创建分组、资源树选中分组、属性面板删除分组
+- 当前支持通过资源树/属性面板查看节点所属分组
+- 拖拽节点进入/移出分组、移动分组带动内部节点属于后续增强
 - 删除分组 → 内部节点保留，仅解除分组关系
 - 画布分组与左侧资源树文件夹双向同步
 
@@ -235,9 +244,9 @@ Agent 模式下节点创建后必须自动布局。Studio 模式下用户可手�
 
 | 角色 | 职责 |
 |---|---|
-| 后端（生产翻译层） | 创建节点时写入简单初始坐标（分镜水平排开 `x = i * (cardWidth + gap)`，素材在上方，成片在下方）。这不是布局算法，是十行算术 |
-| 前端（tldraw） | 用户点击"自动整理"时运行完整布局算法（dagre/elkjs），计算最优坐标，写回后端 |
-| 前端 → 后端 | 坐标写回通过 `PATCH /api/nodes/batch-position` 防抖 2s |
+| 后端 | 创建节点时写入初始坐标；保存用户拖拽和自动布局后的坐标 |
+| 前端（tldraw） | 用户点击"自动整理"时运行 Dagre 布局，计算节点坐标和分组边界 |
+| 前端 → 后端 | 坐标写回通过 `PATCH /api/nodes/batch-position` |
 
 后端不需要 dagre/elkjs 等布局库。初始坐标让节点不堆在 (0,0) 即可，真正的布局是前端的事。
 
@@ -352,7 +361,7 @@ Agent 模式下无此问题——画布只读，无并发编辑。
 
 ## 相关文档
 
-- [整体设计](design-overview.md) — 架构、原则、路线图
-- [Studio 模式](design-studio-mode.md) — 用户主导的创作交互
-- [Agent 模式](design-agent-mode.md) — Agent 驱动的生产交互
-- [数据库设计](database-design.md) — 完整 schema 和数据通路
+- [整体设计](overview.md) — 架构、原则、路线图
+- [Studio 模式](studio-mode.md) — 用户主导的创作交互
+- [Agent 模式](agent-mode.md) — Agent 驱动的生产交互
+- [数据库设计](../engineering/database.md) — 完整 schema 和数据通路

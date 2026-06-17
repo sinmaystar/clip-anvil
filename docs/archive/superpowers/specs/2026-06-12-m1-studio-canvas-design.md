@@ -834,7 +834,7 @@ apps/web/src/
 
 ## 8. 与现有设计文档的关系
 
-本 Spec 是 Studio Canvas 基础链路的第一步实施拆解。当前项目以 [architecture.md](../../architecture.md) 的里程碑表为准：M1 = Studio 画布基础，M1.x = Studio 增量，M2 = Agent 对话基础。
+本 Spec 是 Studio Canvas 基础链路的第一步实施拆解。当前项目以 [architecture.md](../../../engineering/architecture.md) 的里程碑表为准：M1 = Studio 画布基础，M1.x = Studio 增量，M2 = Agent 对话基础。
 
 完成 M1 后，下一步迭代方向：
 

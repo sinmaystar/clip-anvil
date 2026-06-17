@@ -1152,10 +1152,10 @@ M2 实现覆盖以下设计文档的核心内容：
 
 | 设计文档 | M2 覆盖的章节 |
 |---|---|
-| [design-canvas.md](../design-canvas.md) | §2 投影层类型、§3 节点卡片视觉规格、§4 连线视觉规格、§5 分组视觉规格、§6 自动布局、§7 数据通路 |
-| [design-studio-mode.md](../design-studio-mode.md) | §3 资源树、§5 创建资源（右键菜单 + 拖拽上传）、§6 编辑资源、§7 连线（单一 dependency）、§8 分组、§12 面板联动 |
-| [database-design.md](../database-design.md) | §2.6 media_asset、§2.7 media_group、§2.9 media_edge |
-| [architecture.md](../architecture.md) | WebSocket 双通道（M2 只做 /ws/canvas）、MinIO 文件存储 |
+| [design-canvas.md](../../../design/canvas.md) | §2 投影层类型、§3 节点卡片视觉规格、§4 连线视觉规格、§5 分组视觉规格、§6 自动布局、§7 数据通路 |
+| [design-studio-mode.md](../../../design/studio-mode.md) | §3 资源树、§5 创建资源（右键菜单 + 拖拽上传）、§6 编辑资源、§7 连线（单一 dependency）、§8 分组、§12 面板联动 |
+| [database-design.md](../../../engineering/database.md) | §2.6 media_asset、§2.7 media_group、§2.9 media_edge |
+| [architecture.md](../../../engineering/architecture.md) | WebSocket 双通道（M2 只做 /ws/canvas）、MinIO 文件存储 |
 
 **M2 未覆盖的设计文档内容**（留后续）：
 - design-studio-mode.md §4 浮动工具栏、§9 生成流程、§10 节点状态机（running/succeeded/failed）、§11 Stale 处理

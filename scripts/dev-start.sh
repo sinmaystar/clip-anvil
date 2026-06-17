@@ -2,8 +2,95 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PID_DIR="$ROOT_DIR/.dev-pids"
 cd "$ROOT_DIR"
+
+sanitize() {
+  tr -cs '[:alnum:]_.-' '-' | sed 's/^-//; s/-$//'
+}
+
+default_profile_name() {
+  local base branch checksum suffix
+  base="$(basename "$ROOT_DIR" | sanitize)"
+  branch="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null | sanitize)"
+  if [[ -z "$branch" ]]; then
+    branch="detached"
+  fi
+  checksum="$(printf '%s' "$ROOT_DIR" | cksum)"
+  checksum="${checksum%% *}"
+  suffix="$(printf '%04d' "$((checksum % 10000))")"
+  echo "$base-$branch-$suffix"
+}
+
+port_in_use() {
+  local port=$1
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+  (echo >"/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1
+}
+
+find_free_port() {
+  local port=$1 max_port=$2
+  while (( port <= max_port )); do
+    if ! port_in_use "$port"; then
+      echo "$port"
+      return 0
+    fi
+    port=$((port + 1))
+  done
+  return 1
+}
+
+shell_quote() {
+  printf '%q' "$1"
+}
+
+default_name="$(default_profile_name)"
+DEV_NAME="${CLIPANVIL_DEV_NAME:-$default_name}"
+SERVER_HOST="${CLIPANVIL_SERVER_HOST:-localhost}"
+
+if [[ -n "${CLIPANVIL_SERVER_PORT:-}" ]]; then
+  SERVER_PORT="$CLIPANVIL_SERVER_PORT"
+  if port_in_use "$SERVER_PORT"; then
+    echo "CLIPANVIL_SERVER_PORT=$SERVER_PORT 已被占用，请换一个端口或先停止对应 profile。" >&2
+    exit 1
+  fi
+else
+  SERVER_PORT="$(find_free_port 8888 8999)" || {
+    echo "未找到可用后端端口（8888-8999）。" >&2
+    exit 1
+  }
+fi
+
+if [[ -n "${CLIPANVIL_WEB_PORT:-}" ]]; then
+  WEB_PORT="$CLIPANVIL_WEB_PORT"
+  if port_in_use "$WEB_PORT"; then
+    echo "CLIPANVIL_WEB_PORT=$WEB_PORT 已被占用，请换一个端口或先停止对应 profile。" >&2
+    exit 1
+  fi
+else
+  WEB_PORT="$(find_free_port 5173 5299)" || {
+    echo "未找到可用前端端口（5173-5299）。" >&2
+    exit 1
+  }
+fi
+
+PUBLIC_BASE_URL="${CLIPANVIL_PUBLIC_BASE_URL:-http://localhost:$WEB_PORT}"
+PID_DIR="$ROOT_DIR/.dev-pids/$DEV_NAME"
+SERVER_LOG="${CLIPANVIL_SERVER_LOG:-/tmp/clipanvil-$DEV_NAME-server.log}"
+WEB_LOG="${CLIPANVIL_WEB_LOG:-/tmp/clipanvil-$DEV_NAME-web.log}"
+
+if [[ "${CLIPANVIL_PRINT_DEV_ENV:-}" == "1" ]]; then
+  echo "export CLIPANVIL_DEV_NAME=$(shell_quote "$DEV_NAME")"
+  echo "export CLIPANVIL_SERVER_PORT=$(shell_quote "$SERVER_PORT")"
+  echo "export CLIPANVIL_WEB_PORT=$(shell_quote "$WEB_PORT")"
+  echo "export CLIPANVIL_SERVER_HOST=$(shell_quote "$SERVER_HOST")"
+  echo "export CLIPANVIL_PUBLIC_BASE_URL=$(shell_quote "$PUBLIC_BASE_URL")"
+  echo "export CLIPANVIL_SERVER_LOG=$(shell_quote "$SERVER_LOG")"
+  echo "export CLIPANVIL_WEB_LOG=$(shell_quote "$WEB_LOG")"
+  exit 0
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -27,14 +114,14 @@ wait_for() {
 
 # 检查是否已在运行
 if [[ -d "$PID_DIR" ]] && kill -0 "$(cat "$PID_DIR/server.pid" 2>/dev/null)" 2>/dev/null; then
-  fail "开发环境已在运行，先执行 ./scripts/dev-stop.sh"
+  fail "开发环境 profile '$DEV_NAME' 已在运行，先执行 CLIPANVIL_DEV_NAME=$DEV_NAME ./scripts/dev-stop.sh"
 fi
 
 mkdir -p "$PID_DIR"
 
 echo ""
 echo "========================================="
-echo "  ClipAnvil 影砧 - 开发环境启动"
+echo "  ClipAnvil 影砧 - 开发环境启动 ($DEV_NAME)"
 echo "========================================="
 echo ""
 
@@ -57,25 +144,28 @@ echo "--- 后端 ---"
 cd "$ROOT_DIR/apps/server"
 go build -o "$ROOT_DIR/bin/server" ./cmd/server
 cd "$ROOT_DIR"
-./bin/server > /tmp/clipanvil-server.log 2>&1 &
+CLIPANVIL_SERVER_PORT="$SERVER_PORT" ./bin/server > "$SERVER_LOG" 2>&1 &
 echo $! > "$PID_DIR/server.pid"
 
-wait_for "http://localhost:8888/api/health" 20 "Go server"
-log "后端已启动 (PID: $(cat "$PID_DIR/server.pid"))"
+wait_for "http://$SERVER_HOST:$SERVER_PORT/api/health" 20 "Go server"
+log "后端已启动 (PID: $(cat "$PID_DIR/server.pid"), port: $SERVER_PORT)"
 
 # 3. 前端
 echo ""
 echo "--- 前端 ---"
-pnpm --filter @clip-anvil/web dev > /tmp/clipanvil-web.log 2>&1 &
+CLIPANVIL_WEB_PORT="$WEB_PORT" \
+CLIPANVIL_SERVER_PORT="$SERVER_PORT" \
+CLIPANVIL_SERVER_HOST="$SERVER_HOST" \
+  pnpm --filter @clip-anvil/web dev > "$WEB_LOG" 2>&1 &
 echo $! > "$PID_DIR/web.pid"
 
-wait_for "http://localhost:5173" 15 "Vite dev server"
-log "前端已启动 (PID: $(cat "$PID_DIR/web.pid"))"
+wait_for "http://localhost:$WEB_PORT" 15 "Vite dev server"
+log "前端已启动 (PID: $(cat "$PID_DIR/web.pid"), port: $WEB_PORT)"
 
 # 4. 健康检查
 echo ""
 echo "--- 健康检查 ---"
-HEALTH=$(curl -s http://localhost/api/health)
+HEALTH=$(curl -s "http://$SERVER_HOST:$SERVER_PORT/api/health")
 STATUS=$(echo "$HEALTH" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "fail")
 
 if [[ "$STATUS" == "ok" ]]; then
@@ -88,11 +178,12 @@ echo ""
 echo "========================================="
 echo -e "  ${GREEN}全部启动成功！${NC}"
 echo ""
-echo "  浏览器打开: http://localhost"
-echo "  API 地址:   http://localhost/api/health"
+echo "  浏览器打开: $PUBLIC_BASE_URL"
+echo "  API 地址:   http://$SERVER_HOST:$SERVER_PORT/api/health"
+echo "  Profile:    $DEV_NAME"
 echo ""
-echo "  后端日志:   tail -f /tmp/clipanvil-server.log"
-echo "  前端日志:   tail -f /tmp/clipanvil-web.log"
+echo "  后端日志:   tail -f $SERVER_LOG"
+echo "  前端日志:   tail -f $WEB_LOG"
 echo ""
-echo "  停止:       ./scripts/dev-stop.sh"
+echo "  停止:       CLIPANVIL_DEV_NAME=$DEV_NAME ./scripts/dev-stop.sh"
 echo "========================================="
