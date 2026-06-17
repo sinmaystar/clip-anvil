@@ -10,13 +10,13 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/sinmaystar/clip-anvil/internal/api"
 	"github.com/sinmaystar/clip-anvil/internal/auth"
 	"github.com/sinmaystar/clip-anvil/internal/config"
+	"github.com/sinmaystar/clip-anvil/internal/sandbox"
+	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -49,15 +49,12 @@ func main() {
 	slog.Info("redis connected")
 	defer func() { _ = rdb.Close() }()
 
-	minioClient, err := minio.New(cfg.MinIO.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.MinIO.AccessKey, cfg.MinIO.SecretKey, ""),
-		Secure: cfg.MinIO.UseSSL,
-	})
+	storageService, err := storage.New(cfg.MinIO)
 	if err != nil {
-		slog.Error("failed to create minio client", "error", err)
+		slog.Error("failed to create storage service", "error", err)
 		os.Exit(1)
 	}
-	if _, err := minioClient.ListBuckets(ctx); err != nil {
+	if _, err := storageService.ListBuckets(ctx); err != nil {
 		slog.Error("failed to connect to minio", "error", err)
 		os.Exit(1)
 	}
@@ -66,6 +63,9 @@ func main() {
 	h := server.Default(server.WithHostPorts(fmt.Sprintf(":%d", cfg.Server.Port)))
 	h.NoHijackConnPool = true
 	queries := db.New(pgPool)
+	sandboxClient := sandbox.NewOpenSandboxClient(cfg.Sandbox)
+	sandboxStore := sandbox.NewStore(pgPool, queries)
+	sandboxManager := sandbox.NewManager(sandboxClient, cfg.Sandbox, sandboxStore)
 	authHandler := api.NewAuthHandler(queries, cfg.JWT.Secret, cfg.JWT.ExpireHours)
 	authMiddleware := auth.Middleware(cfg.JWT.Secret)
 	canvasHub := api.NewCanvasHub()
@@ -74,8 +74,16 @@ func main() {
 	nodeHandler := api.NewNodeHandler(pgPool, queries, canvasHub)
 	edgeHandler := api.NewEdgeHandler(pgPool, queries, canvasHub)
 	groupHandler := api.NewGroupHandler(pgPool, queries, canvasHub)
-	uploadHandler := api.NewUploadHandler(queries, minioClient)
+	uploadHandler := api.NewUploadHandler(queries, storageService)
+	storageHandler := api.NewStorageHandler(queries, storageService)
 	canvasWSHandler := api.NewCanvasWSHandler(queries, canvasHub, cfg.JWT.Secret)
+	artifactService := sandbox.NewArtifactService(
+		sandboxClient,
+		queries,
+		storageService,
+		api.NewSandboxBroadcaster(canvasHub),
+	)
+	sandboxHandler := api.NewSandboxHandler(queries, sandboxManager, sandboxClient, artifactService, storageService)
 
 	h.GET("/api/health", func(ctx context.Context, c *app.RequestContext) {
 		pgStatus := "connected"
@@ -89,7 +97,7 @@ func main() {
 		}
 
 		minioStatus := "connected"
-		if _, err := minioClient.ListBuckets(ctx); err != nil {
+		if _, err := storageService.ListBuckets(ctx); err != nil {
 			minioStatus = "disconnected"
 		}
 
@@ -119,6 +127,15 @@ func main() {
 	h.GET("/api/workspaces/", authMiddleware, workspaceHandler.List)
 	h.GET("/api/workspaces/:id/canvas", authMiddleware, canvasHandler.GetCanvas)
 	h.PATCH("/api/workspaces/:id/camera", authMiddleware, canvasHandler.UpdateCamera)
+	h.GET("/api/workspaces/:id/sandbox", authMiddleware, sandboxHandler.Status)
+	h.DELETE("/api/workspaces/:id/sandbox", authMiddleware, sandboxHandler.Delete)
+	h.POST("/api/workspaces/:id/sandbox/exec", authMiddleware, sandboxHandler.Exec)
+	h.POST("/api/workspaces/:id/sandbox/artifacts", authMiddleware, sandboxHandler.SubmitArtifact)
+	h.POST("/api/workspaces/:id/sandbox/download-from-minio", authMiddleware, sandboxHandler.DownloadFromMinIO)
+	h.POST("/api/workspaces/:id/sandbox/upload-to-minio", authMiddleware, sandboxHandler.UploadToMinIO)
+	h.POST("/api/workspaces/:id/storage/upload", authMiddleware, storageHandler.Upload)
+	h.POST("/api/workspaces/:id/storage/presigned-upload", authMiddleware, storageHandler.PresignedUpload)
+	h.POST("/api/workspaces/:id/storage/complete-upload", authMiddleware, storageHandler.CompleteUpload)
 	h.GET("/api/workspaces/:id", authMiddleware, workspaceHandler.Get)
 
 	h.POST("/api/nodes", authMiddleware, nodeHandler.Create)

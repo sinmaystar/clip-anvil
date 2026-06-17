@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<policymap>
+  <policy domain="coder" rights="none" pattern="URL" />
+  <policy domain="coder" rights="none" pattern="HTTP" />
+  <policy domain="coder" rights="none" pattern="HTTPS" />
+</policymap>

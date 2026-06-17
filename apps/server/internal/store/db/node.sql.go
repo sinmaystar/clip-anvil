@@ -42,6 +42,69 @@ func (q *Queries) ClearMediaNodeGroup(ctx context.Context, id pgtype.UUID) (Medi
 	return i, err
 }
 
+const createAgentMediaNode = `-- name: CreateAgentMediaNode :one
+INSERT INTO media_node (
+    workspace_id,
+    node_type,
+    title,
+    prompt,
+    status,
+    source,
+    asset_id,
+    canvas_x,
+    canvas_y,
+    canvas_w,
+    canvas_h
+)
+VALUES ($1, $2, $3, $4, 'succeeded', 'agent', $5, $6, $7, $8, $9)
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id
+`
+
+type CreateAgentMediaNodeParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	NodeType    MediaType   `json:"node_type"`
+	Title       string      `json:"title"`
+	Prompt      string      `json:"prompt"`
+	AssetID     pgtype.UUID `json:"asset_id"`
+	CanvasX     float32     `json:"canvas_x"`
+	CanvasY     float32     `json:"canvas_y"`
+	CanvasW     float32     `json:"canvas_w"`
+	CanvasH     float32     `json:"canvas_h"`
+}
+
+func (q *Queries) CreateAgentMediaNode(ctx context.Context, arg CreateAgentMediaNodeParams) (MediaNode, error) {
+	row := q.db.QueryRow(ctx, createAgentMediaNode,
+		arg.WorkspaceID,
+		arg.NodeType,
+		arg.Title,
+		arg.Prompt,
+		arg.AssetID,
+		arg.CanvasX,
+		arg.CanvasY,
+		arg.CanvasW,
+		arg.CanvasH,
+	)
+	var i MediaNode
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.NodeType,
+		&i.Title,
+		&i.Status,
+		&i.Prompt,
+		&i.Source,
+		&i.CanvasX,
+		&i.CanvasY,
+		&i.CanvasW,
+		&i.CanvasH,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.GroupID,
+		&i.AssetID,
+	)
+	return i, err
+}
+
 const createMediaNode = `-- name: CreateMediaNode :one
 INSERT INTO media_node (
     workspace_id,

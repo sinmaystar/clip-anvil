@@ -84,6 +84,22 @@ CLIPANVIL_DEV_NAME=agent-b ./scripts/dev-stop.sh
 
 并行模式下优先访问脚本输出的 Vite 地址，例如 `http://localhost:5174`。Vite 会读取 `CLIPANVIL_SERVER_PORT`，把 `/api` 和 `/ws` 代理到对应后端。
 
+### OpenSandbox
+
+本地开发栈包含 OpenSandbox Server，默认监听 `http://localhost:8080`。它是 Go 后端使用的内部基础设施服务，不直接暴露给前端。
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:8080/health
+```
+
+修改 `sandbox-image/` 后构建本地沙箱镜像：
+
+```bash
+docker build -t clipanvil-sandbox:dev sandbox-image
+```
+
 ### 前端
 
 ```bash
