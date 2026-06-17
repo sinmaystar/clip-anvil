@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { MediaGroup, MediaNode, MediaType } from "../lib/api";
+import { getResourceTreeSections } from "../lib/canvasSelectors";
 
 interface ResourceTreeProps {
   nodes: MediaNode[];
@@ -41,19 +42,9 @@ export function ResourceTree({
   const [filter, setFilter] = useState<"all" | MediaType>("all");
   const [collapsedGroups, setCollapsedGroups] = useState(new Set<string>());
 
-  const visibleNodes = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return nodes.filter((node) => {
-      const matchesType = filter === "all" || node.node_type === filter;
-      const matchesQuery =
-        normalized === "" || node.title.toLowerCase().includes(normalized);
-      return matchesType && matchesQuery;
-    });
-  }, [filter, nodes, query]);
-
-  const groupedNodeIDs = new Set(groups.flatMap((group) => group.node_ids));
-  const ungroupedNodes = visibleNodes.filter(
-    (node) => !groupedNodeIDs.has(node.id),
+  const sections = useMemo(
+    () => getResourceTreeSections(nodes, groups, { query, type: filter }),
+    [filter, groups, nodes, query],
   );
 
   return (
@@ -62,7 +53,6 @@ export function ResourceTree({
         <p className="studio-section-label">Resources</p>
         <button
           className="studio-secondary-button resource-tree-create"
-          disabled={!selectedNodeId}
           onClick={onCreateGroup}
           type="button"
         >
@@ -89,11 +79,8 @@ export function ResourceTree({
         ))}
       </div>
       <div className="resource-tree-list">
-        {groups.map((group) => {
+        {sections.groups.map(({ group, memberCount, nodes: groupNodes }) => {
           const collapsed = collapsedGroups.has(group.id);
-          const groupNodes = visibleNodes.filter((node) =>
-            group.node_ids.includes(node.id),
-          );
           return (
             <section className="resource-tree-group" key={group.id}>
               <div className="resource-tree-group-header">
@@ -103,6 +90,7 @@ export function ResourceTree({
                   type="button"
                 >
                   {group.name}
+                  <span>{memberCount}</span>
                 </button>
                 <button
                   aria-label={collapsed ? "展开分组" : "收起分组"}
@@ -129,8 +117,11 @@ export function ResourceTree({
           );
         })}
         <section className="resource-tree-group">
-          <p className="resource-tree-ungrouped-label">未分组</p>
-          {ungroupedNodes.map((node) => (
+          <p className="resource-tree-ungrouped-label">
+            未分组
+            <span>{sections.ungroupedNodes.length}</span>
+          </p>
+          {sections.ungroupedNodes.map((node) => (
             <ResourceNodeRow
               key={node.id}
               node={node}

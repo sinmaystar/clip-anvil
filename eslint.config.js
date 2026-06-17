@@ -7,6 +7,7 @@ export default [
     ignores: [
       "dist/**",
       "apps/web/dist/**",
+      "apps/web/dist-test/**",
       "node_modules/**",
       "apps/web/tsconfig.tsbuildinfo",
       "bin/**",

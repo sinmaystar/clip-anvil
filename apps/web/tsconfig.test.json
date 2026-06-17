@@ -10,5 +10,11 @@
     "rootDir": "src",
     "tsBuildInfoFile": "dist-test/tsconfig.test.tsbuildinfo"
   },
-  "include": ["src/lib/connectionGeometry.ts"]
+  "include": [
+    "src/lib/canvasSelectors.ts",
+    "src/lib/connectionFeedback.ts",
+    "src/lib/connectionGeometry.ts",
+    "src/lib/groupLayout.ts",
+    "src/lib/layout.ts"
+  ]
 }

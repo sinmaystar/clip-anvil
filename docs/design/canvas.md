@@ -8,7 +8,7 @@
 业务 DB（PostgreSQL）
   │
   ├── media_node (含画布坐标 x,y,w,h)  ──→  tldraw MediaShape
-  ├── media_edge                        ──→  tldraw ArrowShape + Binding
+  ├── media_edge                        ──→  SVG connection overlay
   ├── media_group                       ──→  tldraw GroupShape
   └── canvas_document (camera)          ──→  tldraw Camera
 ```
@@ -152,27 +152,27 @@ API JSON 字段使用 Go 后端惯例的 `snake_case`（如 `canvas_x`、`node_t
 
 ## 4. 连线视觉规格
 
-### 4.1 三种连线类型
+### 4.1 Studio 当前连线类型
 
 | edgeType | 线型 | 颜色 | 箭头 | 标签 |
 |---|---|---|---|---|
-| `dependency` | 2px 实线 | `#3b82f6` 蓝 | 实心三角 | 无 |
-| `reference` | 2px 虚线 | `#a855f7` 紫 | 空心三角 | "参考" |
-| `sequence` | 2px 实线 | `#22c55e` 绿 | 实心三角 | 转场类型 + 时长 |
+| `dependency` | SVG 曲线 + 流动动效 | 蓝/绿/紫渐变 | 实心三角 | 无 |
+
+Studio M2a 只暴露 dependency。`reference`、`sequence` 和 transition 配置属于未来 Agent/分镜能力，不作为当前 Studio 手动编辑功能。
 
 ### 4.2 端口规则
 
 - 每个节点左侧中点为输入端口，右侧中点为输出端口
 - 端口在鼠标悬停节点时显示为实心圆点（半径 4px）
-- 拖拽端口时高亮所有合法目标端口
+- 从输出端口拖拽时显示预览线，释放到任意合法目标 Node 上即可创建 dependency
 - 禁止自连接和环形依赖（前端校验 + 后端二次校验）
 
 ### 4.3 连线交互
 
 - 点击连线 → 选中高亮（线宽变 3px）
-- 选中 dependency/reference edge → 右侧属性面板显示连线详情
-- 选中 sequence edge → 右侧属性面板显示转场配置（类型选择 + 时长滑块）
-- sequence edge 的标签可点击，弹出转场快捷配置浮层
+- 选中 dependency edge → 右侧属性面板显示依赖关系
+- Delete / Backspace 删除选中的 dependency edge
+- 成环失败使用画布级 toast 解释错误原因
 
 ## 5. 分组视觉规格
 
@@ -293,11 +293,11 @@ GET /api/workspaces/:id/canvas
 }
 ```
 
-M1 当前响应只有 `camera` 和 `nodes`。`edges`、`groups` 是 M1.x 目标字段。
+M1.x 当前响应已包含 `camera`、`nodes`、`edges` 和 `groups`。
 
 前端收到后：
 1. `editor.createShapes(nodes.map(nodeToShape))` — 批量创建节点 shape
-2. 为每条 edge 创建 ArrowShape + Binding
+2. SVG connection overlay 根据 `edges + nodes` 渲染 dependency 连线
 3. 为每个 group 创建 GroupShape
 4. `editor.setCamera({ x, y, z: zoom })` — 恢复视口
 
@@ -335,15 +335,15 @@ Agent 操作、生成任务状态变更等后端事件通过 WebSocket 推送到
 WebSocket /ws/canvas?workspaceId=xxx
 ```
 
-M1 后端尚未实现 WebSocket，画布跨端同步、Agent 推送和生成进度留给 M1.x/M2。
+M1.x 已实现 `/ws/canvas` 事件通道，节点、连线和分组变更会广播；前端断线重连后重新拉取画布。Agent 推送和生成进度仍属于后续阶段。
 
 | 事件 | Payload | 前端响应 |
 |---|---|---|
 | `NodeCreated` | node 完整数据 | `editor.createShape(nodeToShape(node))` |
 | `NodeUpdated` | nodeId + changes | `editor.updateShape({ id, props: changes })` |
 | `NodeDeleted` | nodeId | `editor.deleteShape(shapeId)` |
-| `EdgeCreated` | edge 完整数据 | 创建 ArrowShape + Binding |
-| `EdgeDeleted` | edgeId | 删除 ArrowShape |
+| `EdgeCreated` | edge 完整数据 | 重新拉取或更新 canvas edges，SVG overlay 渲染连线 |
+| `EdgeDeleted` | edgeId | 重新拉取或更新 canvas edges，SVG overlay 移除连线 |
 | `JobProgress` | nodeId, progress | 更新节点进度条 |
 | `JobCompleted` | nodeId, status, thumbnailUrl, reviewScore | 更新状态 + 缩略图 + 评分 |
 | `JobFailed` | nodeId, errorMessage | 更新状态为 failed |

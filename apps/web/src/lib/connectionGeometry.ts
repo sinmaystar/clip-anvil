@@ -19,11 +19,14 @@ export interface Point {
   y: number;
 }
 
-export function mediaNodeBounds(node: CanvasNodeLike): ConnectionNodeBounds {
+export function mediaNodeBounds(
+  node: CanvasNodeLike,
+  livePosition?: Point | null,
+): ConnectionNodeBounds {
   return {
     id: node.id,
-    x: node.canvas_x,
-    y: node.canvas_y,
+    x: livePosition?.x ?? node.canvas_x,
+    y: livePosition?.y ?? node.canvas_y,
     w: node.canvas_w,
     h: node.canvas_h,
   };
@@ -51,6 +54,13 @@ export function connectionPath(start: Point, end: Point): string {
   return `M ${round(start.x)} ${round(start.y)} C ${round(c1.x)} ${round(
     c1.y,
   )}, ${round(c2.x)} ${round(c2.y)}, ${round(end.x)} ${round(end.y)}`;
+}
+
+export function isValidConnectionTarget(
+  fromNodeId: string,
+  toNodeId: string | null | undefined,
+): toNodeId is string {
+  return Boolean(toNodeId && toNodeId !== fromNodeId);
 }
 
 function round(value: number) {

@@ -141,13 +141,13 @@ M1 当前的内联编辑不是嵌在节点卡片内部，而是单击节点后�
 
 ## 7. 建立连线
 
-三种连线方式：
+当前 Studio 只暴露 dependency 连线：
 
 | 方式 | 操作 | 结果 |
 |---|---|---|
-| **拖拽连线** | 从 A 输出端口拖到 B 输入端口 | 当前已落地：创建 dependency edge |
-| **Prompt @引用** | 在 B 的 Prompt 中输入 `@` → 弹出资源选择器 → 选择 A | 目标态：创建 dependency edge + 在 Prompt 中插入引用标记 |
-| **右键连线** | 选中两个节点 → 右键 → "建立依赖" / "建立序列" | 目标态：创建指定类型的 edge |
+| **拖拽连线** | 从 A 输出端口拖出预览线，释放到 B 节点任意位置 | 创建 dependency edge，表示 B 依赖 A |
+| **资源树起点** | 在资源树中选择 A 作为连线起点，再点击 B | 创建 dependency edge |
+| **右键连线** | 选中节点后从上下文菜单开始依赖连线 | M2a 待补齐 |
 
 **数据流**：
 
@@ -155,8 +155,8 @@ M1 当前的内联编辑不是嵌在节点卡片内部，而是单击节点后�
 用户拖拽连线
   → POST /api/edges { from_node_id, to_node_id }
   → 后端做 DAG 环检测
-  → 成功 → editor.createShape(arrowShape) + binding
-  → 失败（成环）→ toast "不能形成循环依赖"
+  → 成功 → canvas payload 增加 edge，SVG overlay 渲染动效连线
+  → 失败（成环）→ 画布 toast "这条线会形成循环"
 ```
 
 连线创建后，B 的"输入引用"区域自动展示 A 的缩略图和标题。
@@ -220,7 +220,7 @@ Draft → Ready → Queued → Running → Succeeded
 | 单击选中一个节点 | 右侧展示属性面板 |
 | 点击画布空白区域 | 取消选择，属性面板隐藏 |
 | 左侧资源树点击某资源 | 画布定位到对应节点 + 右侧展示属性 |
-| 选中连线 | 右侧展示连线详情（dependency/reference 显示基本信息，sequence 显示转场配置） |
+| 选中连线 | 右侧展示 dependency 关系详情 |
 
 ## 相关文档
 

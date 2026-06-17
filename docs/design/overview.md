@@ -99,7 +99,7 @@
 | MediaAsset | type, mime, storage_url | 文件级资产（图片/视频/音频/文本） |
 | MediaNode | node_type, status, prompt, canvas_x/y/w/h | 画布上的业务节点 |
 | MediaGroup | name, sort_order | 扁平分组 |
-| MediaEdge | from/to_node_id, edge_type, transition | 节点间关系 |
+| MediaEdge | from/to_node_id, edge_type | 节点间依赖关系 |
 | GenerationJob | provider, model, prompt, status | 一次生成任务 |
 | ArtifactVersion | version_no, winner, review_score, input_hash | 产物版本 |
 | ReviewRecord | axes, score, verdict | 评审记录 |
@@ -107,13 +107,13 @@
 | AgentSession | skill_name, status, current_phase | Agent 工作会话 |
 | Skill | name, config, is_builtin | 领域知识模块 |
 
-### 5.1 三种连线语义（MediaEdge.edgeType）
+### 5.1 Studio 当前连线语义
 
 | edgeType | 语义 | 示例 | 画布视觉 |
 |---|---|---|---|
-| `dependency` | A 的输出作为 B 的输入 | 产品图 → 视频节点 | 蓝色实线 + 箭头 |
-| `reference` | A 作为 B 的风格/内容参考 | 竞品广告 → 自己的视频 | 紫色虚线 |
-| `sequence` | A 在成片中排在 B 前面 | 镜头01 → 镜头02 | 绿色实线 |
+| `dependency` | A 的输出作为 B 的输入，B 依赖 A | 产品图 → 视频节点 | SVG 曲线 + 流动动效 + 箭头 |
+
+Studio 模式当前只向用户暴露 dependency。数据库中的 `edge_type` 仍保留 `reference` / `sequence` 兼容和未来 Agent/分镜扩展口径，但它们不是 M2a Studio 用户交互范围。
 
 ### 5.2 节点状态机
 
@@ -238,7 +238,7 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 
 交付：
 - image / video / audio 节点类型（已落地）
-- dependency 连线、ArrowShape 投影和 DAG 环检测（已落地）
+- dependency 连线、SVG overlay 投影和 DAG 环检测（已落地）
 - 分组（MediaGroup）和左侧资源树（已落地）
 - 右侧属性面板基础信息（已落地）；高级模型参数待生成系统落地
 - `/ws/canvas` 事件流（已落地）

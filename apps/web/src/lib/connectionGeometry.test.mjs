@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   connectionPath,
   inputAnchor,
+  isValidConnectionTarget,
   mediaNodeBounds,
   outputAnchor,
 } from "../../dist-test/lib/connectionGeometry.js";
@@ -28,6 +29,22 @@ describe("connection geometry", () => {
     assert.deepEqual(inputAnchor(target), { x: 300, y: 160 });
   });
 
+  it("can use a live shape position while keeping saved dimensions", () => {
+    const source = mediaNodeBounds(
+      {
+        id: "a",
+        canvas_x: 40,
+        canvas_y: 60,
+        canvas_w: 120,
+        canvas_h: 80,
+      },
+      { x: 120, y: 90 },
+    );
+
+    assert.deepEqual(source, { id: "a", x: 120, y: 90, w: 120, h: 80 });
+    assert.deepEqual(outputAnchor(source), { x: 240, y: 130 });
+  });
+
   it("builds a long cubic path with horizontal pull", () => {
     const path = connectionPath({ x: 160, y: 100 }, { x: 300, y: 160 });
 
@@ -38,5 +55,11 @@ describe("connection geometry", () => {
     const path = connectionPath({ x: 160, y: 100 }, { x: 178, y: 116 });
 
     assert.equal(path, "M 160 100 C 220 100, 118 116, 178 116");
+  });
+
+  it("accepts any other node as a drag release target", () => {
+    assert.equal(isValidConnectionTarget("source", "target"), true);
+    assert.equal(isValidConnectionTarget("source", "source"), false);
+    assert.equal(isValidConnectionTarget("source", null), false);
   });
 });

@@ -192,3 +192,14 @@ export function isMediaShape(shape: unknown): shape is MediaShape {
     (shape as { type?: string }).type === MEDIA_SHAPE_TYPE
   );
 }
+
+export function isGroupContainerShape(
+  shape: unknown,
+): shape is GroupContainerShape {
+  return (
+    typeof shape === "object" &&
+    shape !== null &&
+    "type" in shape &&
+    (shape as { type?: string }).type === GROUP_CONTAINER_SHAPE_TYPE
+  );
+}
