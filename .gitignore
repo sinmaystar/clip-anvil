@@ -1,16 +1,35 @@
+# Dependencies
 node_modules/
-dist/
+.pnpm-store/
+
+# Environment and local secrets
 .env
-*.log
-.DS_Store
+.env.local
+.env.*.local
+deploy/.env
+
+# Build output and caches
 bin/
 tmp/
-.vite/
+dist/
 .cache/
-.pnpm-store/
+.vite/
+coverage/
 *.tsbuildinfo
+apps/web/dist/
+apps/web/.vite/
+apps/web/coverage/
+apps/web/tsconfig.tsbuildinfo
 
-# Go
+# Go local output
 apps/server/bin/
 apps/server/tmp/
+apps/server/coverage.out
+
+# Local dev runtime files
 .dev-pids/
+*.log
+
+# OS and editor noise
+.DS_Store
+
