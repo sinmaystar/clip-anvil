@@ -29,10 +29,10 @@
 
 ### 2.0 当前迁移快照
 
-当前 goose 迁移包含 `001_init_schema.sql` 到 `004_add_assets.sql`，已覆盖 Studio M1.x 的核心编辑数据：
+当前 goose 迁移包含 `001_init_schema.sql` 到 `005_add_workspace_sandbox.sql`，已覆盖 Studio M1.x 的核心编辑数据和 OpenSandbox workspace 绑定：
 
 - 枚举：`media_type`、`node_status`、`edge_type`、`transition_type`
-- 表：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`
+- 表：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`、`workspace_sandbox`
 - `media_node` 当前包含 `group_id`、`asset_id`，但不包含 `model_provider`、`model_name`、`model_params`、`current_version_id`、`sort_order`
 - `canvas_w/canvas_h` 默认值为 `200/120`
 
@@ -198,7 +198,25 @@ CREATE TABLE media_edge (
 
 **DAG 约束**：`no_self_loop` 在 SQL 层禁止自连接。环检测在应用层实现——创建 dependency 类型的 edge 前，从目标节点沿 dependency 出边做 BFS，如果能到达源节点则拒绝。
 
-### 2.10 generation_job — 生成任务
+### 2.10 workspace_sandbox — 工作区沙箱绑定
+
+```sql
+CREATE TABLE workspace_sandbox (
+    workspace_id          UUID PRIMARY KEY REFERENCES workspace(id) ON DELETE CASCADE,
+    sandbox_id            TEXT,
+    volume_name           TEXT NOT NULL UNIQUE,
+    status                TEXT NOT NULL CHECK (status IN ('creating', 'running', 'unhealthy', 'terminated')),
+    last_health_check_at  TIMESTAMPTZ,
+    last_seen_at          TIMESTAMPTZ,
+    error_message         TEXT,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+OpenSandbox 容器本身可替换，`workspace_sandbox` 是 workspace 到稳定 sandbox volume 的事实源。后端通过这张表创建、复用、替换或终止 workspace sandbox，内存状态不作为恢复依据。
+
+### 2.11 generation_job — 生成任务
 
 ```sql
 CREATE TABLE generation_job (
@@ -221,7 +239,7 @@ CREATE TABLE generation_job (
 
 每次调用 `submit_generation` 创建一条记录。`prompt` 和 `params` 是提交时的快照——后续修改节点的 Prompt 不影响已提交的任务。`cost_cents` 以分为单位记录费用，用于 Stale 影响分析时展示重算成本。
 
-### 2.11 artifact_version — 产物版本
+### 2.12 artifact_version — 产物版本
 
 ```sql
 CREATE TABLE artifact_version (
@@ -244,7 +262,7 @@ ALTER TABLE media_node ADD CONSTRAINT fk_current_version
 
 一个节点可以有多个版本（多次生成的候选结果）。`winner = true` 标记当前选中的版本，`media_node.current_version_id` 指向它。`input_hash` 是上游依赖 winner + Prompt + 模型参数的哈希，用于 Stale 检测时判断当前版本是否仍有效。
 
-### 2.12 review_record — 评审记录
+### 2.13 review_record — 评审记录
 
 ```sql
 CREATE TABLE review_record (
@@ -261,7 +279,7 @@ CREATE TABLE review_record (
 
 `axes` 存储多维度评分（如 `{"visual_quality": 8.5, "cast_match": 7.0, "content_safety": 9.0}`）。`reviewer` 为 `'auto'`（Clip Review Skill 自动评审）或 `'user'`（用户手动评审）。
 
-### 2.13 agent_step — Agent 操作审计日志
+### 2.14 agent_step — Agent 操作审计日志
 
 ```sql
 CREATE TABLE agent_step (
@@ -279,7 +297,7 @@ CREATE TABLE agent_step (
 
 Agent 的每一步操作记录。`step_type` 对应 Skill 名称（如 `'screenwriter'`、`'director'`）或命令名称（如 `'create_media_node'`）。用于操作回溯和调试。
 
-### 2.14 索引
+### 2.15 索引
 
 ```sql
 -- 账号
@@ -299,6 +317,7 @@ CREATE INDEX idx_media_edge_to ON media_edge(to_node_id);
 -- 节点状态筛选（资源树按状态过滤）
 CREATE INDEX idx_media_node_status ON media_node(workspace_id, status);
 CREATE INDEX idx_media_node_group ON media_node(group_id);
+CREATE INDEX idx_workspace_sandbox_status ON workspace_sandbox(status);
 
 -- 版本查询
 CREATE INDEX idx_artifact_version_node ON artifact_version(node_id);

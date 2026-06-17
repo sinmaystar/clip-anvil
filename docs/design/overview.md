@@ -246,7 +246,18 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 - Dagre 基础自动布局（已落地）
 - 生成任务、版本列表与 winner 切换（未落地，后续阶段）
 
-### M2: Agent 对话基础
+### M2: OpenSandbox 工作区沙箱（基础已部分落地）
+
+目标：为 Agent 模式提供 workspace 级长生命周期沙箱，支持命令执行、素材预置、MinIO 传输和产物提交。
+
+交付：
+- OpenSandbox Server 本地 compose 服务（已落地）
+- `workspace_sandbox` 数据库绑定（已落地）
+- sandbox exec、workspace 文件布局和素材 manifest（已落地）
+- MinIO 预签名下载/上传和 artifact submit（已落地）
+- 与 Agent 生产工具的端到端编排（未落地）
+
+### M2.x: Agent 对话基础
 
 目标：用户可通过对话让单 Agent 创建节点和生成内容。
 
