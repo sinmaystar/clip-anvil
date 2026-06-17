@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
@@ -84,6 +88,7 @@ func main() {
 		api.NewSandboxBroadcaster(canvasHub),
 	)
 	sandboxHandler := api.NewSandboxHandler(queries, sandboxManager, sandboxClient, artifactService, storageService)
+	sandboxHTTPClient := &http.Client{Timeout: 2 * time.Second}
 
 	h.GET("/api/health", func(ctx context.Context, c *app.RequestContext) {
 		pgStatus := "connected"
@@ -101,8 +106,13 @@ func main() {
 			minioStatus = "disconnected"
 		}
 
+		sandboxStatus := "connected"
+		if err := checkSandboxServerHealth(ctx, sandboxHTTPClient, cfg.Sandbox.Endpoint); err != nil {
+			sandboxStatus = "disconnected"
+		}
+
 		status := "ok"
-		if pgStatus != "connected" || redisStatus != "connected" || minioStatus != "connected" {
+		if pgStatus != "connected" || redisStatus != "connected" || minioStatus != "connected" || sandboxStatus != "connected" {
 			status = "degraded"
 		}
 
@@ -112,6 +122,7 @@ func main() {
 				"postgres": pgStatus,
 				"redis":    redisStatus,
 				"minio":    minioStatus,
+				"sandbox":  sandboxStatus,
 			},
 		})
 	})
@@ -162,4 +173,37 @@ func main() {
 
 	slog.Info("server starting", "port", cfg.Server.Port)
 	h.Spin()
+}
+
+func checkSandboxServerHealth(ctx context.Context, client *http.Client, endpoint string) error {
+	healthURL, err := sandboxHealthURL(endpoint)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("sandbox health status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func sandboxHealthURL(endpoint string) (string, error) {
+	base := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	base = strings.TrimSuffix(base, "/v1")
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid sandbox endpoint")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/health"
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
 }
