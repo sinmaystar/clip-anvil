@@ -536,11 +536,11 @@ SVG 实现：每条边一个 `<path>` + 末端 `<marker>` 箭头。运行中节�
 
 ## 11. 给其他 Coding Agent 的提示词模板
 
-本项目的视觉契约入口是 `docs/design-frontend.md`。如果外部工具硬编码读取 `docs/frontend-design-system.md`，可建立一个转向说明文件，但不要维护两份互相漂移的设计系统。
+本项目的视觉契约入口是 `docs/design/frontend.md`。如果外部工具硬编码读取旧设计系统入口，保留转向说明文件即可，不要维护两份互相漂移的设计系统。
 
-### 11.1 M1 当前 CSS 命名范围
+### 11.1 M1.x 当前 CSS 命名范围
 
-M1 已落地页面优先使用以下 class 前缀，新增同类组件时沿用现有风格：
+当前已落地页面优先使用以下 class 前缀，新增同类组件时沿用现有风格：
 
 | 前缀 | 用途 |
 |---|---|
@@ -549,12 +549,15 @@ M1 已落地页面优先使用以下 class 前缀，新增同类组件时沿用�
 | `workspace-*` | 项目列表、创建项目弹窗 |
 | `studio-*` | Studio 画布页、左侧栏、右键菜单、节点编辑面板 |
 | `media-node-*` | tldraw 自定义媒体节点 |
+| `group-container-*` | tldraw 自定义分组容器 |
+| `resource-tree-*` | 左侧资源树 |
+| `auto-layout-*` | 自动布局控件 |
 | `modal-*` | 弹窗和遮罩 |
 
 把这份文档作为上下文，然后给 AI 这样的指令：
 
 ```
-请阅读 docs/design-frontend.md 作为本项目的视觉契约。
+请阅读 docs/design/frontend.md 作为本项目的视觉契约。
 新组件必须：
 1. 仅使用 apps/web/src/main.css 中的 CSS 变量，禁止写裸 hex
 2. 主 CTA 使用 999px pill + Apple-grade 阴影栈（见文档 §5.1）
@@ -577,17 +580,27 @@ M1 已落地页面优先使用以下 class 前缀，新增同类组件时沿用�
 
 ```
 docs/
-├── design-frontend.md             ← 本文档（视觉契约总入口）
-├── design-overview.md              架构（4 层）+ 双模式
-├── design-canvas.md                MediaShape props + 节点尺寸细节
-├── design-agent-mode.md            Agent 多角色 + Skills YAML + Gate 流程
-└── design-studio-mode.md           Studio 模式三栏 + 属性面板
+├── README.md
+├── design/
+│   ├── frontend.md          ← 本文档（视觉契约总入口）
+│   ├── overview.md          架构（4 层）+ 双模式
+│   ├── canvas.md            MediaShape props + 节点尺寸细节
+│   ├── agent-mode.md        Agent 多角色 + Skills YAML + Gate 流程
+│   └── studio-mode.md       Studio 模式三栏 + 属性面板
+└── engineering/
+    ├── architecture.md
+    ├── database.md
+    ├── deployment.md
+    └── development.md
 
 apps/web/src/
 ├── main.css                        Seed + 派生 + 状态色 + 页面样式
 ├── components/
 │   ├── Layout.tsx
 │   ├── CreateWorkspaceDialog.tsx
+│   ├── ResourceTree.tsx
+│   ├── PropertyPanel.tsx
+│   ├── FileDropZone.tsx
 │   ├── ProtectedRoute.tsx
 │   └── GuestRoute.tsx
 ├── pages/
@@ -596,7 +609,8 @@ apps/web/src/
 │   ├── WorkspaceListPage.tsx
 │   └── WorkspaceDetailPage.tsx
 ├── shapes/
-│   └── MediaShapeUtil.tsx
+│   ├── MediaShapeUtil.tsx
+│   └── GroupContainerShapeUtil.tsx
 └── App.tsx                         RouterProvider 路由入口
 ```
 
@@ -607,7 +621,8 @@ apps/web/src/
 - **v0.1** · 初版，Forge Workshop 单一方向，按钮使用 `0 0 16px brand` 外发光
 - **v0.2** · 加入 hybrid.css，叠加 Storyboard（胶片孔）+ Spatial OS（毛玻璃）层
 - **v0.3** · Apple polish，按钮去外发光改投影，pill 化，全局字距收紧，点阵降亮
-- **v0.4** · 同步 M1 实际文件结构、Studio 两列画布布局、当前 CSS class 契约 ← **当前**
+- **v0.4** · 同步 M1 实际文件结构、Studio 两列画布布局、当前 CSS class 契约
+- **v0.5** · 同步 M1.x 文档目录、资源树、属性面板、分组容器、上传和自动布局入口 ← **当前**
 
 ---
 

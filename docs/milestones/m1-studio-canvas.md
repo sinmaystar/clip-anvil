@@ -2,7 +2,7 @@
 
 **状态**：✅ 核心链路已落地
 **日期**：2026-06-13
-**范围来源**：[M1 Studio 画布基础规格](../superpowers/specs/2026-06-12-m1-studio-canvas-design.md)
+**范围来源**：[M1 Studio 画布基础规格](../archive/superpowers/specs/2026-06-12-m1-studio-canvas-design.md)
 
 ## 交付内容
 

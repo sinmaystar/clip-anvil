@@ -27,16 +27,16 @@
 
 ## 2. 数据库表结构
 
-### 2.0 M1 当前迁移快照
+### 2.0 当前迁移快照
 
-M1 当前 goose 迁移只创建最小闭环所需对象：
+当前 goose 迁移包含 `001_init_schema.sql` 到 `004_add_assets.sql`，已覆盖 Studio M1.x 的核心编辑数据：
 
-- 枚举：`media_type`、`node_status`
-- 表：`account`、`workspace`、`canvas_document`、`media_node`
-- `media_node` 当前不包含 `group_id`、`asset_id`、`model_provider`、`model_name`、`model_params`、`current_version_id`、`sort_order`
+- 枚举：`media_type`、`node_status`、`edge_type`、`transition_type`
+- 表：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`
+- `media_node` 当前包含 `group_id`、`asset_id`，但不包含 `model_provider`、`model_name`、`model_params`、`current_version_id`、`sort_order`
 - `canvas_w/canvas_h` 默认值为 `200/120`
 
-下面的完整 schema 是目标态设计，后续 M1.x/M2/M3 会逐步补齐。
+下面的完整 schema 同时记录当前已落地对象和后续 Agent/生成目标态。真实可执行结构以 `apps/server/migrations/` 和 sqlc 生成代码为准。
 
 ### 2.1 枚举类型
 
@@ -167,7 +167,7 @@ CREATE TABLE media_node (
 
 **关键设计**：画布坐标（`canvas_x/y/w/h`）直接存在业务节点表上，不存在独立的画布状态表。tldraw 的 MediaShape 从这张表构建，不需要 snapshot。
 
-> M1 当前实现使用精简版 `media_node`，默认尺寸为 `200 × 120`，只支持 `text` 节点。上方完整表结构中的分组、资产、模型和版本字段属于目标态。
+> 当前实现使用分阶段迁移后的 `media_node`：默认尺寸为 `200 × 120`，支持 `text/image/video/audio`，并已通过后续迁移增加 `group_id` 和 `asset_id`。上方完整表结构中的模型、版本和排序字段仍属于目标态。
 
 - `group_id`：所属分组，一个节点最多属于一个分组
 - `asset_id`：关联的文件资产（Draft 节点此字段为 NULL）
@@ -547,9 +547,11 @@ make sqlc-generate    # 生成 Go 代码
 
 ## 6. v2 业务交互设计增补
 
-以下表和字段在 [业务交互设计 v2](design-overview.md) 中引入，作为 Agent 模式和 Skill 体系的数据支撑。
+以下表和字段在 [业务交互设计 v2](../design/overview.md) 中引入，作为 Agent 模式和 Skill 体系的数据支撑。
 
 ### 6.1 workspace 表增加 mode 字段
+
+当前代码仍通过 `workspace.settings` 承载项目级配置，未增加显式 `mode` 字段。后续如果 Agent/Studio 模式切换需要查询和约束，再引入显式字段。
 
 ```sql
 ALTER TABLE workspace ADD COLUMN mode TEXT NOT NULL DEFAULT 'studio';
@@ -606,7 +608,7 @@ CREATE TABLE agent_session (
 
 ## 相关文档
 
-- [整体设计](design-overview.md) — 架构、原则、路线图
-- [画布设计](design-canvas.md) — tldraw 投影层和数据通路
-- [Studio 模式](design-studio-mode.md) — 用户主导的创作交互
-- [Agent 模式](design-agent-mode.md) — Agent 驱动的生产交互
+- [整体设计](../design/overview.md) — 架构、原则、路线图
+- [画布设计](../design/canvas.md) — tldraw 投影层和数据通路
+- [Studio 模式](../design/studio-mode.md) — 用户主导的创作交互
+- [Agent 模式](../design/agent-mode.md) — Agent 驱动的生产交互

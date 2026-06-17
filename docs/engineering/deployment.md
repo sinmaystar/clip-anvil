@@ -6,8 +6,8 @@
                 ┌──────────┐
    浏览器  ───▶ │  nginx   │ ── 静态前端（prod）/ 代理 Vite dev server（dev）
                 │  :80     │ ── /api       ──▶ server :8888
-                │          │ ── /ws/chat   ──▶ server :8888 (WebSocket，M2 目标)
-                │          │ ── /ws/canvas ──▶ server :8888 (WebSocket，M1.x/M2 目标)
+                │          │ ── /ws/canvas ──▶ server :8888 (Canvas WebSocket)
+                │          │ ── /ws/chat   ──▶ server :8888 (Agent WebSocket，目标态)
                 └──────────┘
 
                   server (Go, 宿主机运行)
@@ -23,7 +23,7 @@ postgres:16       redis:7         minio:latest
 | 服务 | 端口 | 说明 |
 |---|---|---|
 | Nginx | 80 | 统一入口，反代所有请求 |
-| Go Server | 8888 | 后端 REST API（M1）；WebSocket 后续阶段引入 |
+| Go Server | 8888 | 后端 REST API + `/ws/canvas` |
 | Vite Dev | 5173 | 前端开发服务器（宿主机运行，仅 dev） |
 | PostgreSQL | 5432 | 数据库 |
 | Redis | 6379 | 缓存 |
@@ -52,6 +52,51 @@ postgres:16       redis:7         minio:latest
 ./scripts/dev-start.sh     # 拉起中间件容器 → 编译启动后端 → 启动前端 → 健康检查
 ./scripts/dev-stop.sh      # 停止前后端进程，中间件容器保持运行
 ```
+
+默认 profile 会优先使用 `server:8888`、`web:5173`，并可通过 NGINX `http://localhost` 访问。多个 worktree 或多个 AI Coding Agent 并行时，使用共享中间件 + 多组前后端端口。
+
+agent 不需要手动判断自己是否在 worktree 中：`./scripts/dev-start.sh` 会根据当前目录、git 分支和路径 hash 自动生成 profile 名，并从 `8888-8999`、`5173-5299` 查找可用端口。需要先查看将使用的环境时：
+
+```bash
+CLIPANVIL_PRINT_DEV_ENV=1 ./scripts/dev-start.sh
+```
+
+输出是可 `eval` 的 `export` 行。需要固定端口时再显式传：
+
+```bash
+# worktree A
+CLIPANVIL_DEV_NAME=wt-a \
+CLIPANVIL_SERVER_PORT=8888 \
+CLIPANVIL_WEB_PORT=5173 \
+./scripts/dev-start.sh
+
+# worktree B
+CLIPANVIL_DEV_NAME=wt-b \
+CLIPANVIL_SERVER_PORT=8889 \
+CLIPANVIL_WEB_PORT=5174 \
+./scripts/dev-start.sh
+```
+
+并行模式下优先访问各自 Vite 地址，例如 `http://localhost:5174`。Vite 会把该 worktree 的 `/api` 和 `/ws` 代理到对应 `CLIPANVIL_SERVER_PORT`，避免 NGINX 固定反代到单一 `8888` 后端。
+
+停止某个 profile：
+
+```bash
+CLIPANVIL_DEV_NAME=wt-b ./scripts/dev-stop.sh
+```
+
+可用环境变量：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `CLIPANVIL_DEV_NAME` | `目录名-分支名-路径hash` | PID 和日志 profile 名 |
+| `CLIPANVIL_SERVER_PORT` | 自动从 `8888` 起查找 | 宿主机 Go 后端端口；显式设置时如果被占用会失败 |
+| `CLIPANVIL_WEB_PORT` | 自动从 `5173` 起查找 | Vite dev server 端口；显式设置时如果被占用会失败 |
+| `CLIPANVIL_SERVER_HOST` | `localhost` | Vite proxy 和健康检查访问后端的 host |
+| `CLIPANVIL_PUBLIC_BASE_URL` | `http://localhost:$CLIPANVIL_WEB_PORT` | 脚本启动完成后展示的访问入口 |
+| `CLIPANVIL_SERVER_LOG` | `/tmp/clipanvil-$CLIPANVIL_DEV_NAME-server.log` | 后端日志路径 |
+| `CLIPANVIL_WEB_LOG` | `/tmp/clipanvil-$CLIPANVIL_DEV_NAME-web.log` | 前端日志路径 |
+| `CLIPANVIL_PRINT_DEV_ENV` | 空 | 设置为 `1` 时只打印当前 profile/端口环境，不启动进程 |
 
 ### 容器化部署
 

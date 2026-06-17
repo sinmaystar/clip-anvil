@@ -263,6 +263,6 @@ pnpm --filter @clip-anvil/web... build
 ## 9. 关联文档
 
 - [M1.x-A Studio 节点基础完善](./2026-06-13-m1x-a-studio-node-foundation-design.md)
-- [画布设计](../../design-canvas.md)
-- [Studio 模式设计](../../design-studio-mode.md)
-- [数据库设计](../../database-design.md)
+- [画布设计](../../../design/canvas.md)
+- [Studio 模式设计](../../../design/studio-mode.md)
+- [数据库设计](../../../engineering/database.md)

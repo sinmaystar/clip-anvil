@@ -358,7 +358,7 @@ pnpm --filter @clip-anvil/web... build
 ## 9. 关联文档
 
 - [M1.x-C Studio 分组、资源树与属性面板](./2026-06-13-m1x-c-studio-groups-panels-design.md)
-- [画布设计](../../design-canvas.md)
-- [Studio 模式设计](../../design-studio-mode.md)
-- [数据库设计](../../database-design.md)
-- [架构文档](../../architecture.md)
+- [画布设计](../../../design/canvas.md)
+- [Studio 模式设计](../../../design/studio-mode.md)
+- [数据库设计](../../../engineering/database.md)
+- [架构文档](../../../engineering/architecture.md)
