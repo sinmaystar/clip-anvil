@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:connections": "tsc -p tsconfig.test.json && node --test src/lib/canvasLayering.test.mjs src/lib/canvasSelectors.test.mjs src/lib/connectionFeedback.test.mjs src/lib/connectionGeometry.test.mjs src/lib/groupLayout.test.mjs src/lib/layout.test.mjs"
   },
   "dependencies": {
     "@clip-anvil/canvas-schema": "workspace:*",
@@ -20,12 +21,12 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.0",
+    "@tailwindcss/vite": "^4.3.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.2",
     "eslint": "^10",
-    "tailwindcss": "^4.3.0",
+    "tailwindcss": "^4.3.1",
     "typescript": "^6",
     "vite": "^8"
   }

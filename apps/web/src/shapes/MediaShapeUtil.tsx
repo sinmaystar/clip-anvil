@@ -113,7 +113,7 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
   const [activeNodeId, setActiveNodeId] = useState(activeMediaNodeId);
   const [titleValue, setTitleValue] = useState(title);
   const [promptValue, setPromptValue] = useState(prompt);
-  const [selectedModel, setSelectedModel] = useState("copywriter");
+  const [isFlashing, setIsFlashing] = useState(false);
   const isActive = activeNodeId === shape.props.nodeId;
 
   useEffect(() => {
@@ -147,14 +147,31 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
     };
   }, []);
 
-  const stopCanvasEvent = (event: SyntheticEvent) => {
-    event.stopPropagation();
-  };
+  useEffect(() => {
+    const onFlash = (event: Event) => {
+      const detail = (event as CustomEvent<{ nodeIds?: string[] }>).detail;
+      if (!detail?.nodeIds?.includes(shape.props.nodeId)) {
+        return;
+      }
+      setIsFlashing(true);
+      window.setTimeout(() => setIsFlashing(false), 700);
+    };
 
-  const dispatchConnectionStart = (pointerId: number | null) => {
+    window.addEventListener("clip-anvil:node-flash", onFlash);
+    return () => {
+      window.removeEventListener("clip-anvil:node-flash", onFlash);
+    };
+  }, [shape.props.nodeId]);
+
+  const dispatchConnectionStart = (
+    pointerId: number | null,
+    point?: { clientX: number; clientY: number },
+  ) => {
     window.dispatchEvent(
       new CustomEvent("clip-anvil:connection-start", {
         detail: {
+          clientX: point?.clientX,
+          clientY: point?.clientY,
           fromNodeId: shape.props.nodeId,
           pointerId,
         },
@@ -166,7 +183,10 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    dispatchConnectionStart(event.pointerId);
+    dispatchConnectionStart(event.pointerId, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
   };
 
   const startConnectionClick = (event: SyntheticEvent) => {
@@ -175,57 +195,12 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
     dispatchConnectionStart(null);
   };
 
-  const onTitleChange = (value: string) => {
-    setTitleValue(value);
-    window.dispatchEvent(
-      new CustomEvent("clip-anvil:title-change", {
-        detail: {
-          nodeId: shape.props.nodeId,
-          title: value,
-        },
-      }),
-    );
-  };
-
-  const commitTitle = () => {
-    window.dispatchEvent(
-      new CustomEvent("clip-anvil:title-commit", {
-        detail: {
-          nodeId: shape.props.nodeId,
-          title: titleValue,
-        },
-      }),
-    );
-  };
-
-  const onPromptChange = (value: string) => {
-    setPromptValue(value);
-    window.dispatchEvent(
-      new CustomEvent("clip-anvil:prompt-change", {
-        detail: {
-          nodeId: shape.props.nodeId,
-          prompt: value,
-        },
-      }),
-    );
-  };
-
-  const commitPrompt = () => {
-    window.dispatchEvent(
-      new CustomEvent("clip-anvil:prompt-commit", {
-        detail: {
-          nodeId: shape.props.nodeId,
-          prompt: promptValue,
-        },
-      }),
-    );
-  };
-
   return (
     <HTMLContainer>
       <div
         className="media-node-shell"
         data-active={isActive}
+        data-flash={isFlashing}
         data-node-id={shape.props.nodeId}
         style={{ width: w }}
       >
@@ -283,56 +258,6 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
             <span>Prompt</span>
           </div>
         </div>
-
-        {isActive ? (
-          <div
-            className="media-node-inline-editor"
-            onContextMenu={stopCanvasEvent}
-            onKeyDown={stopCanvasEvent}
-            onPointerDown={stopCanvasEvent}
-            onWheel={stopCanvasEvent}
-            style={{ top: h + 12, width: Math.max(340, w) }}
-          >
-            <div className="media-node-inline-refs">
-              <span>引用资源</span>
-              <span>暂无引用</span>
-            </div>
-            <label className="media-node-inline-title">
-              <span>标题</span>
-              <input
-                onBlur={commitTitle}
-                onChange={(event) => onTitleChange(event.target.value)}
-                placeholder="输入节点标题"
-                value={titleValue}
-              />
-            </label>
-            <label className="media-node-inline-prompt">
-              <span>Prompt</span>
-              <textarea
-                onBlur={commitPrompt}
-                onChange={(event) => onPromptChange(event.target.value)}
-                placeholder="输入生成文本、画面描述或旁白方向"
-                rows={5}
-                value={promptValue}
-              />
-            </label>
-            <div className="media-node-inline-footer">
-              <label>
-                <span>模型</span>
-                <select
-                  onBlur={commitPrompt}
-                  onChange={(event) => setSelectedModel(event.target.value)}
-                  value={selectedModel}
-                >
-                  <option value="copywriter">文案生成</option>
-                  <option value="storyboard">分镜草稿</option>
-                  <option value="general-video">通用视频</option>
-                </select>
-              </label>
-              <span className="media-node-inline-save-state">自动保存</span>
-            </div>
-          </div>
-        ) : null}
       </div>
     </HTMLContainer>
   );

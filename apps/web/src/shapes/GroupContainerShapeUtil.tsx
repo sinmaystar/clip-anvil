@@ -6,6 +6,7 @@ import {
   type Geometry2d,
   type RecordProps,
 } from "tldraw";
+import { useEffect, useState } from "react";
 import {
   GROUP_CONTAINER_SHAPE_TYPE,
   type GroupContainerShape,
@@ -46,19 +47,7 @@ export class GroupContainerShapeUtil extends ShapeUtil<GroupContainerShape> {
   }
 
   override component(shape: GroupContainerShape) {
-    return (
-      <HTMLContainer>
-        <div
-          className="group-container-shape"
-          style={{ width: shape.props.w, height: shape.props.h }}
-        >
-          <div className="group-container-title">
-            <span>{shape.props.name}</span>
-            <span>{shape.props.nodeCount}</span>
-          </div>
-        </div>
-      </HTMLContainer>
-    );
+    return <GroupContainer shape={shape} />;
   }
 
   override getIndicatorPath(shape: GroupContainerShape) {
@@ -74,4 +63,39 @@ export class GroupContainerShapeUtil extends ShapeUtil<GroupContainerShape> {
       }),
     );
   }
+}
+
+function GroupContainer({ shape }: { shape: GroupContainerShape }) {
+  const [isFlashing, setIsFlashing] = useState(false);
+
+  useEffect(() => {
+    const onFlash = (event: Event) => {
+      const detail = (event as CustomEvent<{ groupId?: string }>).detail;
+      if (detail?.groupId !== shape.props.groupId) {
+        return;
+      }
+      setIsFlashing(true);
+      window.setTimeout(() => setIsFlashing(false), 700);
+    };
+
+    window.addEventListener("clip-anvil:group-flash", onFlash);
+    return () => {
+      window.removeEventListener("clip-anvil:group-flash", onFlash);
+    };
+  }, [shape.props.groupId]);
+
+  return (
+    <HTMLContainer>
+      <div
+        className="group-container-shape"
+        data-flash={isFlashing}
+        style={{ width: shape.props.w, height: shape.props.h }}
+      >
+        <div className="group-container-title">
+          <span>{shape.props.name}</span>
+          <span>{shape.props.nodeCount}</span>
+        </div>
+      </div>
+    </HTMLContainer>
+  );
 }

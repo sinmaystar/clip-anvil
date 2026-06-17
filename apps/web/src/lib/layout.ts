@@ -33,45 +33,119 @@ export function computeDagreLayout(input: {
     marginy: 20,
   });
 
+  const groupBoundsById = new Map(
+    input.groups.map((group) => [group.id, boundsForGroup(group, input.nodes)]),
+  );
+  const groupedNodeIds = new Set(input.groups.flatMap((group) => group.node_ids));
+  const containerByNodeId = new Map<string, string>();
+
+  for (const group of input.groups) {
+    const bounds = groupBoundsById.get(group.id) ?? {
+      groupId: group.id,
+      x: 0,
+      y: 0,
+      w: 240,
+      h: 120,
+    };
+    graph.setNode(containerIdForGroup(group.id), {
+      width: bounds.w,
+      height: bounds.h,
+    });
+    for (const nodeId of group.node_ids) {
+      containerByNodeId.set(nodeId, containerIdForGroup(group.id));
+    }
+  }
+
   for (const node of input.nodes) {
-    graph.setNode(node.id, {
+    if (groupedNodeIds.has(node.id)) {
+      continue;
+    }
+    const containerId = containerIdForNode(node.id);
+    containerByNodeId.set(node.id, containerId);
+    graph.setNode(containerId, {
       width: node.canvas_w,
       height: node.canvas_h,
     });
   }
 
+  const seenEdges = new Set<string>();
   for (const edge of input.edges) {
     if (edge.edge_type === "dependency") {
-      graph.setEdge(edge.from_node_id, edge.to_node_id);
+      const fromContainer = containerByNodeId.get(edge.from_node_id);
+      const toContainer = containerByNodeId.get(edge.to_node_id);
+      if (!fromContainer || !toContainer || fromContainer === toContainer) {
+        continue;
+      }
+      const edgeKey = `${fromContainer}->${toContainer}`;
+      if (seenEdges.has(edgeKey)) {
+        continue;
+      }
+      seenEdges.add(edgeKey);
+      graph.setEdge(fromContainer, toContainer);
     }
   }
 
   dagre.layout(graph);
 
-  const positions = input.nodes.map((node) => {
-    const layoutNode = graph.node(node.id) as { x: number; y: number };
-    return {
+  const positions: LayoutPosition[] = [];
+  const groupBounds: GroupBounds[] = [];
+
+  for (const group of input.groups) {
+    const containerId = containerIdForGroup(group.id);
+    const layoutNode = graph.node(containerId) as { x: number; y: number };
+    const oldBounds = groupBoundsById.get(group.id);
+    if (!layoutNode || !oldBounds) {
+      continue;
+    }
+    const nextBounds = {
+      ...oldBounds,
+      x: layoutNode.x - oldBounds.w / 2,
+      y: layoutNode.y - oldBounds.h / 2,
+    };
+    const deltaX = nextBounds.x - oldBounds.x;
+    const deltaY = nextBounds.y - oldBounds.y;
+    groupBounds.push(nextBounds);
+    const memberIds = new Set(group.node_ids);
+    positions.push(
+      ...input.nodes
+        .filter((node) => memberIds.has(node.id))
+        .map((node) => ({
+          id: node.id,
+          canvas_x: node.canvas_x + deltaX,
+          canvas_y: node.canvas_y + deltaY,
+        })),
+    );
+  }
+
+  for (const node of input.nodes) {
+    if (groupedNodeIds.has(node.id)) {
+      continue;
+    }
+    const layoutNode = graph.node(containerIdForNode(node.id)) as
+      | { x: number; y: number }
+      | undefined;
+    if (!layoutNode) {
+      continue;
+    }
+    positions.push({
       id: node.id,
       canvas_x: layoutNode.x - node.canvas_w / 2,
       canvas_y: layoutNode.y - node.canvas_h / 2,
-    };
-  });
-  const positionByID = new Map(
-    positions.map((position) => [position.id, position]),
-  );
-  const positionedNodes = input.nodes.map((node) => {
-    const position = positionByID.get(node.id);
-    return position
-      ? { ...node, canvas_x: position.canvas_x, canvas_y: position.canvas_y }
-      : node;
-  });
+    });
+  }
 
   return {
     positions,
-    groupBounds: input.groups.map((group) =>
-      boundsForGroup(group, positionedNodes),
-    ),
+    groupBounds,
   };
+}
+
+function containerIdForGroup(groupId: string) {
+  return `group:${groupId}`;
+}
+
+function containerIdForNode(nodeId: string) {
+  return `node:${nodeId}`;
 }
 
 function boundsForGroup(group: MediaGroup, nodes: MediaNode[]): GroupBounds {

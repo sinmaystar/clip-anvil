@@ -104,7 +104,7 @@ export function edgeToArrow(
         font: "draw",
         start,
         end,
-        bend: 0,
+        bend: 84,
         richText: toRichText(""),
         labelPosition: 0.5,
         scale: 1,
@@ -190,5 +190,16 @@ export function isMediaShape(shape: unknown): shape is MediaShape {
     shape !== null &&
     "type" in shape &&
     (shape as { type?: string }).type === MEDIA_SHAPE_TYPE
+  );
+}
+
+export function isGroupContainerShape(
+  shape: unknown,
+): shape is GroupContainerShape {
+  return (
+    typeof shape === "object" &&
+    shape !== null &&
+    "type" in shape &&
+    (shape as { type?: string }).type === GROUP_CONTAINER_SHAPE_TYPE
   );
 }

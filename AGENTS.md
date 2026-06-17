@@ -150,3 +150,28 @@ git diff --check
 - 不要使用破坏性 git 命令，除非用户明确要求。
 - 并行 worktree 下，报告访问地址时必须使用脚本输出的 Vite URL，不要默认写 `http://localhost`。
 - 启动失败时先查对应 profile 的日志路径，日志路径由 `dev-start.sh` 输出。
+
+## GitHub PR Flow
+
+用户要求“提 PR”时，走这条最短路线：
+
+1. 查清范围：`git status --short --branch`、`git diff --stat`、`git ls-files --others --exclude-standard`。有无关改动就先问用户，不要直接 `git add -A`。
+2. 建分支并提交：detached HEAD 或默认分支上先建 `codex/<short-topic>`；显式 `git add <files>`，确认 `git diff --cached --stat`，再 commit。
+3. 推送分支：
+
+   ```bash
+   git push -u origin <branch>
+   ```
+
+4. 创建 draft PR：优先用 GitHub App；如果返回 `403 Resource not accessible by integration`，改用 `gh pr create`：
+
+   ```bash
+   gh pr create \
+     --draft \
+     --base main \
+     --head <branch> \
+     --title "[codex] <summary>" \
+     --body-file /tmp/<repo>-pr-body.md
+   ```
+
+注意：如果写 `.git` 或访问 GitHub 被 sandbox 拒绝，提权重跑同一条命令。`gh auth status` 在 sandbox 中可能显示 token invalid；实际 `gh pr create` 提权后仍可能成功。完成后只汇报 PR URL、分支、commit、验证结果和本地状态。

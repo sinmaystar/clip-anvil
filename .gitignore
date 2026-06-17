@@ -13,10 +13,12 @@ bin/
 tmp/
 dist/
 .cache/
+.superpowers/
 .vite/
 coverage/
 *.tsbuildinfo
 apps/web/dist/
+apps/web/dist-test/
 apps/web/.vite/
 apps/web/coverage/
 apps/web/tsconfig.tsbuildinfo
@@ -32,4 +34,3 @@ apps/server/coverage.out
 
 # OS and editor noise
 .DS_Store
-

@@ -182,7 +182,9 @@ export function createWorkspace(name: string) {
 }
 
 export function fetchCanvas(workspaceId: string) {
-  return apiFetch<CanvasPayload>(`/workspaces/${workspaceId}/canvas`);
+  return apiFetch<CanvasPayload>(`/workspaces/${workspaceId}/canvas`).then(
+    normalizeCanvasPayload,
+  );
 }
 
 export function createMediaNode(input: {
@@ -253,13 +255,30 @@ export function deleteMediaGroup(id: string) {
 }
 
 export function replaceMediaGroupNodes(id: string, node_ids: string[]) {
-  return apiFetch<{ group: Omit<MediaGroup, "node_ids">; node_ids: string[] }>(
+  return apiFetch<{
+    group: Omit<MediaGroup, "node_ids">;
+    node_ids: string[] | null;
+  }>(
     `/groups/${id}/nodes`,
     {
       method: "PUT",
       body: JSON.stringify({ node_ids }),
     },
   );
+}
+
+function normalizeCanvasPayload(payload: CanvasPayload): CanvasPayload {
+  return {
+    ...payload,
+    groups: payload.groups.map(normalizeMediaGroup),
+  };
+}
+
+function normalizeMediaGroup(group: MediaGroup): MediaGroup {
+  return {
+    ...group,
+    node_ids: Array.isArray(group.node_ids) ? group.node_ids : [],
+  };
 }
 
 export function fetchNodeInputs(id: string) {

@@ -10,7 +10,7 @@
 业务 DB（PostgreSQL）
   │
   ├── media_node (含画布坐标 x,y,w,h)  ──→  tldraw MediaShape
-  ├── media_edge                        ──→  tldraw ArrowShape + Binding
+  ├── media_edge                        ──→  SVG connection overlay
   ├── media_group                       ──→  tldraw GroupShape
   └── canvas_document (camera)          ──→  tldraw Camera
 ```
@@ -194,9 +194,9 @@ CREATE TABLE media_edge (
 );
 ```
 
-三种语义的连线共用一张表。`transition_type` 和 `transition_duration` 仅 sequence 类型使用，其他类型为 NULL。
+当前 Studio 用户只创建 dependency 连线。`edge_type`、`transition_type` 和 `transition_duration` 保留为未来 reference / sequence / transition 能力的兼容字段，不代表 M2a Studio 暴露多语义连线。
 
-**DAG 约束**：`no_self_loop` 在 SQL 层禁止自连接。环检测在应用层实现——创建 dependency 类型的 edge 前，从目标节点沿 dependency 出边做 BFS，如果能到达源节点则拒绝。`reference` 和 `sequence` 类型不参与依赖传播，不做环检测。
+**DAG 约束**：`no_self_loop` 在 SQL 层禁止自连接。环检测在应用层实现——创建 dependency 类型的 edge 前，从目标节点沿 dependency 出边做 BFS，如果能到达源节点则拒绝。
 
 ### 2.10 generation_job — 生成任务
 
@@ -403,7 +403,7 @@ GET /api/workspaces/:id/canvas
 
 前端收到后：
 1. `editor.createShapes(nodes.map(nodeToShape))` — 批量创建节点 shape
-2. 为每条 edge 创建 ArrowShape + Binding
+2. SVG connection overlay 根据 `edges + nodes` 渲染 dependency 连线
 3. 为每个 group 创建 GroupShape
 4. `editor.setCamera({ x, y, z: zoom })` — 恢复视口
 
@@ -445,10 +445,10 @@ GET /api/workspaces/:id/canvas
 
 ```
 用户从 A 拖连线到 B
-  → 调用 POST /api/edges { fromNodeId: A, toNodeId: B, edgeType: 'dependency' }
+  → 调用 POST /api/edges { fromNodeId: A, toNodeId: B }
   → 后端做 DAG 环检测
-  → 成功 → editor.createShape(arrowShape) + binding
-  → 失败（成环）→ toast 提示"不能形成循环依赖"
+  → 成功 → canvas payload 增加 edge，SVG overlay 渲染动效连线
+  → 失败（成环）→ toast 提示"这条线会形成循环"
   → 失败（其他）→ toast 提示"连线失败，请重试"
 ```
 
@@ -480,8 +480,8 @@ WebSocket /ws/canvas?workspaceId=xxx
 | NodeCreated | `editor.createShape(nodeToShape(node))` |
 | NodeUpdated | `editor.updateShape({ id, props: changes })` |
 | NodeDeleted | `editor.deleteShape(shapeId)` |
-| EdgeCreated | 创建 ArrowShape + Binding |
-| EdgeDeleted | 删除 ArrowShape |
+| EdgeCreated | 更新 canvas edges，SVG overlay 渲染连线 |
+| EdgeDeleted | 更新 canvas edges，SVG overlay 移除连线 |
 | JobProgress | `editor.updateShape({ id, props: { progress } })` |
 | JobCompleted | 更新 status + thumbnailUrl + reviewScore |
 | JobFailed | 更新 status 为 failed |

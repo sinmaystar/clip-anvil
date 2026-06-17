@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noEmit": false,
+    "outDir": "dist-test",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist-test/tsconfig.test.tsbuildinfo"
+  },
+  "include": [
+    "src/lib/canvasSelectors.ts",
+    "src/lib/connectionFeedback.ts",
+    "src/lib/connectionGeometry.ts",
+    "src/lib/groupLayout.ts",
+    "src/lib/layout.ts"
+  ]
+}
