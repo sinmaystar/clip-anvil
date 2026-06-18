@@ -127,7 +127,7 @@ API JSON 字段使用 Go 后端惯例的 `snake_case`（如 `canvas_x`、`node_t
 ├─────────────────────────┤
 │ [Prompt]    [模型▾][▶]  │  ← 操作栏 32px：Prompt 单行预览 + 模型 + 生成
 └─────────────────────────┘
-● 输入端口（左中）    输出端口（右中） ●
+                  +        ← hover / selected 时右侧外浮连接按钮
 ```
 
 ### 3.3 状态边框样式
@@ -156,21 +156,21 @@ API JSON 字段使用 Go 后端惯例的 `snake_case`（如 `canvas_x`、`node_t
 
 | edgeType | 线型 | 颜色 | 箭头 | 标签 |
 |---|---|---|---|---|
-| `dependency` | SVG 曲线 + 流动动效 | 蓝/绿/紫渐变 | 实心三角 | 无 |
+| `dependency` | SVG 细曲线 + 轻量流动动效 | `--accent` 蓝 | 实心三角 | 无 |
 
 Studio M2a 只暴露 dependency。`reference`、`sequence` 和 transition 配置属于未来 Agent/分镜能力，不作为当前 Studio 手动编辑功能。
 
 ### 4.2 端口规则
 
-- 每个节点左侧中点为输入端口，右侧中点为输出端口
-- 端口在鼠标悬停节点时显示为实心圆点（半径 4px）
-- 从输出端口拖拽时显示预览线，释放到任意合法目标 Node 上即可创建 dependency
+- 节点不显示左侧输入端口。
+- hover 或 selected 时，节点右侧外侧显示一个 `+` 连接按钮。
+- 从右侧 `+` 拖拽时显示预览线，释放到任意合法目标 Node 区域即可创建 dependency。
 - 禁止自连接和环形依赖（前端校验 + 后端二次校验）
 
 ### 4.3 连线交互
 
 - 点击连线 → 选中高亮（线宽变 3px）
-- 选中 dependency edge → 右侧属性面板显示依赖关系
+- 选中 dependency edge → 高亮该连线，可通过 Delete / Backspace 删除
 - Delete / Backspace 删除选中的 dependency edge
 - 成环失败使用画布级 toast 解释错误原因
 

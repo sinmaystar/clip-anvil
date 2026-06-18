@@ -17,11 +17,17 @@ export interface GroupBounds {
   h: number;
 }
 
+export interface LayoutOrigin {
+  x: number;
+  y: number;
+}
+
 export function computeDagreLayout(input: {
   nodes: MediaNode[];
   edges: MediaEdge[];
   groups: MediaGroup[];
   direction: LayoutDirection;
+  origin?: LayoutOrigin;
 }): { positions: LayoutPosition[]; groupBounds: GroupBounds[] } {
   const graph = new dagre.graphlib.Graph();
   graph.setDefaultEdgeLabel(() => ({}));
@@ -134,9 +140,49 @@ export function computeDagreLayout(input: {
     });
   }
 
+  return alignLayoutToOrigin({ groupBounds, origin: input.origin, positions });
+}
+
+function alignLayoutToOrigin(input: {
+  groupBounds: GroupBounds[];
+  origin?: LayoutOrigin;
+  positions: LayoutPosition[];
+}) {
+  if (!input.origin || input.positions.length === 0) {
+    return {
+      positions: input.positions,
+      groupBounds: input.groupBounds,
+    };
+  }
+
+  const minNodeX = Math.min(
+    ...input.positions.map((position) => position.canvas_x),
+  );
+  const minNodeY = Math.min(
+    ...input.positions.map((position) => position.canvas_y),
+  );
+  const minGroupX =
+    input.groupBounds.length > 0
+      ? Math.min(...input.groupBounds.map((bounds) => bounds.x))
+      : minNodeX;
+  const minGroupY =
+    input.groupBounds.length > 0
+      ? Math.min(...input.groupBounds.map((bounds) => bounds.y))
+      : minNodeY;
+  const deltaX = input.origin.x - Math.min(minNodeX, minGroupX);
+  const deltaY = input.origin.y - Math.min(minNodeY, minGroupY);
+
   return {
-    positions,
-    groupBounds,
+    positions: input.positions.map((position) => ({
+      ...position,
+      canvas_x: position.canvas_x + deltaX,
+      canvas_y: position.canvas_y + deltaY,
+    })),
+    groupBounds: input.groupBounds.map((bounds) => ({
+      ...bounds,
+      x: bounds.x + deltaX,
+      y: bounds.y + deltaY,
+    })),
   };
 }
 

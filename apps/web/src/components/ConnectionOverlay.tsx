@@ -19,7 +19,6 @@ interface ConnectionOverlayProps {
   dragConnection: DragConnection | null;
   editor: Editor | null;
   edges: MediaEdge[];
-  hoveredTargetNodeId: string | null;
   nodes: MediaNode[];
   onSelectEdge: (edgeId: string) => void;
   selectedEdgeId: string | null;
@@ -41,7 +40,6 @@ export function ConnectionOverlay({
   dragConnection,
   editor,
   edges,
-  hoveredTargetNodeId,
   nodes,
   onSelectEdge,
   selectedEdgeId,
@@ -155,21 +153,6 @@ export function ConnectionOverlay({
     return connectionPath(start, end);
   })();
 
-  const targetHighlights = dragConnection
-    ? nodes
-        .filter((node) => node.id !== dragConnection.fromNodeId)
-        .map((node) => {
-          const point = project(
-            inputAnchor(nodeBoundsById.get(node.id) ?? mediaNodeBounds(node)),
-          );
-          return {
-            id: node.id,
-            point,
-            active: node.id === hoveredTargetNodeId,
-          };
-        })
-    : [];
-
   return (
     <svg
       aria-hidden="true"
@@ -178,28 +161,16 @@ export function ConnectionOverlay({
       ref={overlayRef}
     >
       <defs>
-        <linearGradient
-          gradientUnits="userSpaceOnUse"
-          id="connection-overlay-gradient"
-          x1="0"
-          x2={viewport.width || 1}
-          y1="0"
-          y2={viewport.height || 1}
-        >
-          <stop offset="0%" stopColor="#22c55e" stopOpacity="0.45" />
-          <stop offset="52%" stopColor="#3b82f6" stopOpacity="0.95" />
-          <stop offset="100%" stopColor="#b26bff" stopOpacity="0.86" />
-        </linearGradient>
         <marker
           id="connection-overlay-arrow"
-          markerHeight="6"
-          markerWidth="7"
+          markerHeight="5"
+          markerWidth="6"
           orient="auto"
-          refX="6"
-          refY="3"
-          viewBox="0 0 7 6"
+          refX="5.5"
+          refY="2.5"
+          viewBox="0 0 6 5"
         >
-          <path d="M 0 0 L 7 3 L 0 6 z" fill="#b26bff" />
+          <path d="M 0 0 L 6 2.5 L 0 5 z" fill="var(--accent)" />
         </marker>
       </defs>
 
@@ -233,16 +204,6 @@ export function ConnectionOverlay({
         </g>
       ) : null}
 
-      {targetHighlights.map(({ active, id, point }) => (
-        <circle
-          className="connection-overlay-target"
-          cx={point.x}
-          cy={point.y}
-          data-active={active}
-          key={id}
-          r={active ? 15 : 10}
-        />
-      ))}
     </svg>
   );
 }

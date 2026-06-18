@@ -22,10 +22,10 @@ const filters: Array<{ value: "all" | MediaType; label: string }> = [
 ];
 
 const nodeTypeLabel: Record<MediaType, string> = {
-  text: "T",
-  image: "I",
-  video: "V",
-  audio: "A",
+  text: "文案",
+  image: "参考",
+  video: "视频",
+  audio: "音频",
 };
 
 export function ResourceTree({

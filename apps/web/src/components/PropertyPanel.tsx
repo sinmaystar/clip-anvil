@@ -21,6 +21,24 @@ interface PropertyPanelProps {
   onRenameGroup: (groupId: string, name: string) => void;
 }
 
+const nodeTypeLabel: Record<MediaNode["node_type"], string> = {
+  text: "文本",
+  image: "图片",
+  video: "视频",
+  audio: "音频",
+};
+
+const statusLabel: Record<MediaNode["status"], string> = {
+  draft: "草稿",
+  ready: "就绪",
+  queued: "排队",
+  running: "运行中",
+  succeeded: "完成",
+  failed: "失败",
+  stale: "需更新",
+  user_editing: "编辑中",
+};
+
 export function PropertyPanel({
   edges,
   groups,
@@ -205,11 +223,11 @@ function NodePropertyPanel({
 
   return (
     <aside className="property-panel">
-      <PanelHeader eyebrow={node.node_type} title={node.title} />
+      <PanelHeader eyebrow={nodeTypeLabel[node.node_type]} title={node.title} />
       <dl className="property-list">
         <div>
           <dt>状态</dt>
-          <dd>{node.status}</dd>
+          <dd>{statusLabel[node.status]}</dd>
         </div>
       </dl>
       <label className="property-field">
@@ -302,7 +320,7 @@ function DependencyRows({
   return nodes.map((node) => (
     <div className="property-row" key={node.id}>
       <span>{node.title}</span>
-      <span>{node.node_type}</span>
+      <span>{nodeTypeLabel[node.node_type]}</span>
     </div>
   ));
 }
@@ -311,7 +329,7 @@ function NodeChip({ node }: { node: MediaNode }) {
   return (
     <span className="property-node-chip">
       <span>{node.title}</span>
-      <small>{node.node_type}</small>
+      <small>{nodeTypeLabel[node.node_type]}</small>
     </span>
   );
 }

@@ -27,10 +27,10 @@ const nodeTypeMeta: Record<
   MediaShape["props"]["nodeType"],
   { icon: string; label: string; emptyTitle: string }
 > = {
-  text: { icon: "T", label: "Text", emptyTitle: "未命名文本" },
-  image: { icon: "I", label: "Image", emptyTitle: "未命名图片" },
-  video: { icon: "V", label: "Video", emptyTitle: "未命名视频" },
-  audio: { icon: "A", label: "Audio", emptyTitle: "未命名音频" },
+  text: { icon: "文案", label: "文本", emptyTitle: "未命名文本" },
+  image: { icon: "参考", label: "图片", emptyTitle: "未命名图片" },
+  video: { icon: "视频", label: "视频", emptyTitle: "未命名视频" },
+  audio: { icon: "音频", label: "音频", emptyTitle: "未命名音频" },
 };
 
 let activeMediaNodeId: string | null = null;
@@ -210,18 +210,15 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
           data-type={nodeType}
           style={{ width: w, height: h }}
         >
-          <span
-            aria-label="依赖输入端口"
-            className="media-node-port media-node-port-input"
-            role="img"
-          />
           <button
             aria-label={`从 ${titleValue || typeMeta.emptyTitle} 创建依赖连线`}
-            className="media-node-port media-node-port-output"
+            className="media-node-connect-button"
             onClick={startConnectionClick}
             onPointerDown={startConnectionDrag}
             type="button"
-          />
+          >
+            +
+          </button>
           <div className="media-node-header">
             <span className="media-node-icon">{typeMeta.icon}</span>
             <p className="media-node-title">
