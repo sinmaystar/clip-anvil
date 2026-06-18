@@ -99,7 +99,7 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusBadRequest, "invalid node type")
 		return
 	}
-	if !h.workspaceBelongsToAccount(ctx, workspaceID, accountID, c) {
+	if _, ok := requireStudioWorkspace(ctx, h.queries, workspaceID, accountID, c); !ok {
 		return
 	}
 
@@ -213,6 +213,9 @@ func (h *NodeHandler) Update(ctx context.Context, c *app.RequestContext) {
 
 	node, ok := h.nodeForAccount(ctx, c.Param("id"), accountID, c)
 	if !ok {
+		return
+	}
+	if _, ok := requireStudioWorkspace(ctx, h.queries, node.WorkspaceID, accountID, c); !ok {
 		return
 	}
 
@@ -335,6 +338,9 @@ func (h *NodeHandler) Delete(ctx context.Context, c *app.RequestContext) {
 	if !ok {
 		return
 	}
+	if _, ok := requireStudioWorkspace(ctx, h.queries, node.WorkspaceID, accountID, c); !ok {
+		return
+	}
 	if err := h.queries.DeleteMediaNode(ctx, node.ID); err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to delete node")
 		return
@@ -377,6 +383,9 @@ func (h *NodeHandler) BatchUpdatePosition(ctx context.Context, c *app.RequestCon
 	for _, position := range req.Positions {
 		node, ok := h.nodeForAccount(ctx, position.ID, accountID, c)
 		if !ok {
+			return
+		}
+		if _, ok := requireStudioWorkspace(ctx, h.queries, node.WorkspaceID, accountID, c); !ok {
 			return
 		}
 		positions = append(positions, struct {
@@ -429,27 +438,10 @@ func (h *NodeHandler) nodeForAccount(ctx context.Context, id string, accountID p
 		return db.MediaNode{}, false
 	}
 
-	if !h.workspaceBelongsToAccount(ctx, node.WorkspaceID, accountID, c) {
+	if !workspaceBelongsToAccount(ctx, h.queries, node.WorkspaceID, accountID, c) {
 		return db.MediaNode{}, false
 	}
 	return node, true
-}
-
-func (h *NodeHandler) workspaceBelongsToAccount(ctx context.Context, workspaceID pgtype.UUID, accountID pgtype.UUID, c *app.RequestContext) bool {
-	workspace, err := h.queries.GetWorkspaceByID(ctx, workspaceID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(c, consts.StatusNotFound, "workspace not found")
-			return false
-		}
-		writeError(c, consts.StatusInternalServerError, "failed to load workspace")
-		return false
-	}
-	if workspace.OwnerID != accountID {
-		writeError(c, consts.StatusForbidden, "forbidden")
-		return false
-	}
-	return true
 }
 
 func defaultNodeSize(nodeType db.MediaType) (float32, float32) {

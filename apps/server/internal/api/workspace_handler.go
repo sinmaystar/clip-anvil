@@ -27,11 +27,13 @@ func NewWorkspaceHandler(pool *pgxpool.Pool, queries *db.Queries) *WorkspaceHand
 
 type createWorkspaceRequest struct {
 	Name string `json:"name"`
+	Mode string `json:"mode"`
 }
 
 type workspaceResponse struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
+	Mode      string          `json:"mode"`
 	OwnerID   string          `json:"owner_id"`
 	Settings  json.RawMessage `json:"settings,omitempty"`
 	CreatedAt string          `json:"created_at"`
@@ -54,6 +56,11 @@ func (h *WorkspaceHandler) Create(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusBadRequest, "invalid request")
 		return
 	}
+	mode, ok := req.workspaceMode()
+	if !ok {
+		writeError(c, consts.StatusBadRequest, "invalid workspace mode")
+		return
+	}
 
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
@@ -66,6 +73,7 @@ func (h *WorkspaceHandler) Create(ctx context.Context, c *app.RequestContext) {
 	workspace, err := qtx.CreateWorkspace(ctx, db.CreateWorkspaceParams{
 		Name:    strings.TrimSpace(req.Name),
 		OwnerID: accountID,
+		Mode:    mode,
 	})
 	if err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to create workspace")
@@ -137,6 +145,17 @@ func validWorkspaceName(name string) bool {
 	return strings.TrimSpace(name) != ""
 }
 
+func (r createWorkspaceRequest) workspaceMode() (db.WorkspaceMode, bool) {
+	switch strings.TrimSpace(r.Mode) {
+	case "", string(db.WorkspaceModeStudio):
+		return db.WorkspaceModeStudio, true
+	case string(db.WorkspaceModeAgent):
+		return db.WorkspaceModeAgent, true
+	default:
+		return "", false
+	}
+}
+
 func accountIDFromContext(c *app.RequestContext) (pgtype.UUID, bool) {
 	value, ok := c.Get(auth.AccountIDKey)
 	if !ok {
@@ -161,6 +180,7 @@ func toWorkspaceResponse(workspace db.Workspace) workspaceResponse {
 	return workspaceResponse{
 		ID:        uuidToString(workspace.ID),
 		Name:      workspace.Name,
+		Mode:      string(workspace.Mode),
 		OwnerID:   uuidToString(workspace.OwnerID),
 		Settings:  json.RawMessage(workspace.Settings),
 		CreatedAt: workspace.CreatedAt.Time.Format(timeFormatRFC3339),

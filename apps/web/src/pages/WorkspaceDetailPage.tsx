@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SyntheticEvent,
 } from "react";
-import { useNavigate, useParams } from "react-router";
+import { Navigate, useNavigate, useParams } from "react-router";
 import {
   ApiError,
   batchUpdateNodePositions,
@@ -72,6 +72,7 @@ import {
 } from "../lib/groupLayout";
 import { useAppearanceStore } from "../stores/appearance";
 import { useAuthStore } from "../stores/auth";
+import { workspaceModeRoute } from "../lib/workspaceRoutes";
 
 interface CanvasContextMenu {
   screenX: number;
@@ -1575,6 +1576,15 @@ export function WorkspaceDetailPage() {
     logout();
     navigate("/login", { replace: true });
   };
+
+  if (workspaceQuery.data && workspaceQuery.data.mode !== "studio") {
+    return (
+      <Navigate
+        to={workspaceModeRoute(workspaceQuery.data.id, workspaceQuery.data.mode)}
+        replace
+      />
+    );
+  }
 
   return (
     <main

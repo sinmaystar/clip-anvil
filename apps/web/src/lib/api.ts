@@ -12,9 +12,12 @@ export interface AuthResponse {
   account: Account;
 }
 
+export type WorkspaceMode = "studio" | "agent";
+
 export interface Workspace {
   id: string;
   name: string;
+  mode: WorkspaceMode;
   owner_id: string;
   settings?: Record<string, unknown>;
   created_at: string;
@@ -174,10 +177,10 @@ export function fetchWorkspace(id: string) {
   return apiFetch<Workspace>(`/workspaces/${id}`);
 }
 
-export function createWorkspace(name: string) {
+export function createWorkspace(input: { name: string; mode: WorkspaceMode }) {
   return apiFetch<Workspace>("/workspaces", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(input),
   });
 }
 

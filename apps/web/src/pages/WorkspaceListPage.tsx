@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { CreateWorkspaceDialog } from "../components/CreateWorkspaceDialog";
-import { createWorkspace, fetchWorkspaces } from "../lib/api";
+import { createWorkspace, fetchWorkspaces, type WorkspaceMode } from "../lib/api";
+import { workspaceRoute } from "../lib/workspaceRoutes";
 
 export function WorkspaceListPage() {
   const navigate = useNavigate();
@@ -20,16 +21,16 @@ export function WorkspaceListPage() {
     onSuccess: async (workspace) => {
       await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
       setIsDialogOpen(false);
-      navigate(`/workspaces/${workspace.id}`);
+      navigate(workspaceRoute(workspace));
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "创建项目失败");
     },
   });
 
-  const handleCreate = (name: string) => {
+  const handleCreate = (input: { name: string; mode: WorkspaceMode }) => {
     setError("");
-    createMutation.mutate(name);
+    createMutation.mutate(input);
   };
 
   return (
@@ -79,12 +80,22 @@ export function WorkspaceListPage() {
               <button
                 className="workspace-card"
                 key={workspace.id}
-                onClick={() => navigate(`/workspaces/${workspace.id}`)}
+                onClick={() => navigate(workspaceRoute(workspace))}
                 type="button"
               >
                 <span className="workspace-card-cover" aria-hidden="true" />
                 <span className="workspace-card-body">
-                  <span className="workspace-card-title">{workspace.name}</span>
+                  <span className="workspace-card-title-row">
+                    <span className="workspace-card-title">
+                      {workspace.name}
+                    </span>
+                    <span
+                      className="workspace-mode-badge"
+                      data-mode={workspace.mode}
+                    >
+                      {workspace.mode === "agent" ? "Agent" : "Studio"}
+                    </span>
+                  </span>
                   <span className="workspace-card-meta">
                     {formatDate(workspace.created_at)} 创建
                   </span>

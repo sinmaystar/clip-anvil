@@ -108,7 +108,7 @@ func (h *EdgeHandler) Delete(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusInternalServerError, "failed to load edge")
 		return
 	}
-	if !h.workspaceBelongsToAccount(ctx, edge.WorkspaceID, accountID, c) {
+	if _, ok := requireStudioWorkspace(ctx, h.queries, edge.WorkspaceID, accountID, c); !ok {
 		return
 	}
 	if err := h.queries.DeleteMediaEdge(ctx, edge.ID); err != nil {
@@ -200,6 +200,9 @@ func (h *EdgeHandler) validateEdgeEndpoints(
 	if workspace.OwnerID != accountID {
 		return consts.StatusForbidden, "forbidden"
 	}
+	if !isStudioWorkspaceMode(workspace.Mode) {
+		return consts.StatusForbidden, "workspace is read-only in agent mode"
+	}
 
 	fromNode, err := q.GetMediaNodeByID(ctx, fromNodeID)
 	if err != nil {
@@ -220,23 +223,6 @@ func (h *EdgeHandler) validateEdgeEndpoints(
 	}
 
 	return consts.StatusOK, ""
-}
-
-func (h *EdgeHandler) workspaceBelongsToAccount(ctx context.Context, workspaceID pgtype.UUID, accountID pgtype.UUID, c *app.RequestContext) bool {
-	workspace, err := h.queries.GetWorkspaceByID(ctx, workspaceID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(c, consts.StatusNotFound, "workspace not found")
-			return false
-		}
-		writeError(c, consts.StatusInternalServerError, "failed to load workspace")
-		return false
-	}
-	if workspace.OwnerID != accountID {
-		writeError(c, consts.StatusForbidden, "forbidden")
-		return false
-	}
-	return true
 }
 
 func wouldCreateCycle(ctx context.Context, q dependencyEdgeLister, fromNodeID pgtype.UUID, toNodeID pgtype.UUID) (bool, error) {

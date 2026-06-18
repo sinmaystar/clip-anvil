@@ -62,6 +62,15 @@ func TestIsAllowedNodeTypeRejectsUnknownTypes(t *testing.T) {
 	}
 }
 
+func TestIsStudioWorkspaceMode(t *testing.T) {
+	if !isStudioWorkspaceMode(db.WorkspaceModeStudio) {
+		t.Fatal("studio mode should allow ordinary canvas edits")
+	}
+	if isStudioWorkspaceMode(db.WorkspaceModeAgent) {
+		t.Fatal("agent mode should block ordinary canvas edits")
+	}
+}
+
 func TestNodePatchRequestDetectsProvidedFields(t *testing.T) {
 	title := "新标题"
 	req := updateNodeRequest{Title: &title}

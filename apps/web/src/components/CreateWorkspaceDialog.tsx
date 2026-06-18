@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
+import type { WorkspaceMode } from "../lib/api";
 
 interface CreateWorkspaceDialogProps {
   isOpen: boolean;
   isSubmitting: boolean;
   error: string;
   onClose: () => void;
-  onSubmit: (name: string) => void;
+  onSubmit: (input: { name: string; mode: WorkspaceMode }) => void;
 }
 
 export function CreateWorkspaceDialog({
@@ -16,11 +17,13 @@ export function CreateWorkspaceDialog({
   onSubmit,
 }: CreateWorkspaceDialogProps) {
   const [name, setName] = useState("");
+  const [mode, setMode] = useState<WorkspaceMode>("studio");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setName("");
+      setMode("studio");
       window.setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [isOpen]);
@@ -31,7 +34,7 @@ export function CreateWorkspaceDialog({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onSubmit(name);
+    onSubmit({ name, mode });
   };
 
   return (
@@ -43,6 +46,42 @@ export function CreateWorkspaceDialog({
         </div>
 
         <form className="auth-form" onSubmit={handleSubmit}>
+          <fieldset className="workspace-mode-picker">
+            <legend>项目模式</legend>
+            <label
+              className="workspace-mode-option"
+              data-selected={mode === "studio"}
+            >
+              <input
+                checked={mode === "studio"}
+                name="workspace-mode"
+                onChange={() => setMode("studio")}
+                type="radio"
+                value="studio"
+              />
+              <span>
+                <strong>Studio 手动模式</strong>
+                <small>专业用户手动搭建节点、连线和运行。</small>
+              </span>
+            </label>
+            <label
+              className="workspace-mode-option"
+              data-selected={mode === "agent"}
+            >
+              <input
+                checked={mode === "agent"}
+                name="workspace-mode"
+                onChange={() => setMode("agent")}
+                type="radio"
+                value="agent"
+              />
+              <span>
+                <strong>Agent 自动模式</strong>
+                <small>通过对话驱动 Agent 规划和生产，画布只读。</small>
+              </span>
+            </label>
+          </fieldset>
+
           <label className="field-label">
             项目名称
             <input

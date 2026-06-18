@@ -190,6 +190,48 @@ func (ns NullTransitionType) Value() (driver.Value, error) {
 	return string(ns.TransitionType), nil
 }
 
+type WorkspaceMode string
+
+const (
+	WorkspaceModeStudio WorkspaceMode = "studio"
+	WorkspaceModeAgent  WorkspaceMode = "agent"
+)
+
+func (e *WorkspaceMode) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WorkspaceMode(s)
+	case string:
+		*e = WorkspaceMode(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WorkspaceMode: %T", src)
+	}
+	return nil
+}
+
+type NullWorkspaceMode struct {
+	WorkspaceMode WorkspaceMode `json:"workspace_mode"`
+	Valid         bool          `json:"valid"` // Valid is true if WorkspaceMode is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWorkspaceMode) Scan(value interface{}) error {
+	if value == nil {
+		ns.WorkspaceMode, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WorkspaceMode.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWorkspaceMode) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WorkspaceMode), nil
+}
+
 type Account struct {
 	ID           pgtype.UUID        `json:"id"`
 	Email        string             `json:"email"`
@@ -270,6 +312,7 @@ type Workspace struct {
 	Settings  []byte             `json:"settings"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	Mode      WorkspaceMode      `json:"mode"`
 }
 
 type WorkspaceSandbox struct {

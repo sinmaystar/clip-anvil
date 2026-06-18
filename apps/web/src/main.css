@@ -678,8 +678,17 @@ a:focus-visible {
   padding: var(--space-4);
 }
 
+.workspace-card-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
 .workspace-card-title {
   margin: 0;
+  min-width: 0;
   overflow: hidden;
   color: var(--fg-primary);
   font-size: 14px;
@@ -687,6 +696,22 @@ a:focus-visible {
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspace-mode-badge {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--color-panel-elevated);
+  color: var(--fg-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 7px;
+}
+
+.workspace-mode-badge[data-mode="agent"] {
+  color: var(--accent-secondary);
 }
 
 .workspace-card-meta {
@@ -710,11 +735,169 @@ a:focus-visible {
   padding: var(--space-6);
 }
 
+.workspace-mode-picker {
+  display: grid;
+  gap: var(--space-2);
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.workspace-mode-picker legend {
+  margin-bottom: var(--space-2);
+  color: var(--fg-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workspace-mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  cursor: pointer;
+  padding: 10px;
+}
+
+.workspace-mode-option[data-selected="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.workspace-mode-option input {
+  margin-top: 3px;
+}
+
+.workspace-mode-option strong,
+.workspace-mode-option small {
+  display: block;
+}
+
+.workspace-mode-option small {
+  margin-top: 3px;
+  color: var(--fg-tertiary);
+  font-size: 12px;
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-3);
   padding-top: var(--space-2);
+}
+
+.workspace-route-state,
+.agent-workspace-shell {
+  min-height: 100vh;
+  background: var(--color-canvas);
+  color: var(--fg-primary);
+}
+
+.workspace-route-state {
+  display: grid;
+  place-items: center;
+  color: var(--fg-tertiary);
+  font-size: 13px;
+}
+
+.agent-workspace-shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.agent-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--color-panel);
+  padding: var(--space-4) var(--space-5);
+}
+
+.agent-topbar h1 {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.agent-workbench {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+}
+
+.agent-chat-panel,
+.agent-canvas-panel {
+  min-height: 0;
+  padding: var(--space-4);
+}
+
+.agent-chat-panel {
+  border-right: 1px solid var(--border-subtle);
+  background: var(--color-panel);
+}
+
+.agent-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.agent-panel-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.agent-panel-header span,
+.agent-empty-text,
+.agent-chat-placeholder {
+  color: var(--fg-tertiary);
+  font-size: 13px;
+}
+
+.agent-chat-placeholder,
+.agent-node-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-panel-elevated);
+  padding: var(--space-3);
+}
+
+.agent-chat-placeholder p,
+.agent-empty-text {
+  margin: 0;
+}
+
+.agent-node-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.agent-node-card {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-node-card strong {
+  overflow: hidden;
+  color: var(--fg-primary);
+  font-size: 13px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-node-card span {
+  color: var(--fg-tertiary);
+  font-size: 12px;
 }
 
 @media (min-width: 640px) {
@@ -726,6 +909,17 @@ a:focus-visible {
 @media (min-width: 1024px) {
   .workspace-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .agent-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-chat-panel {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
   }
 }
 

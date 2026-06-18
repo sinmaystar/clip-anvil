@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/auth"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 func TestValidWorkspaceNameRejectsBlank(t *testing.T) {
@@ -18,6 +19,38 @@ func TestValidWorkspaceNameRejectsBlank(t *testing.T) {
 func TestValidWorkspaceNameAcceptsTrimmedText(t *testing.T) {
 	if !validWorkspaceName("  咖啡广告  ") {
 		t.Fatal("non-blank workspace name must be valid")
+	}
+}
+
+func TestCreateWorkspaceRequestDefaultsToStudioMode(t *testing.T) {
+	req := createWorkspaceRequest{Name: "Demo"}
+
+	mode, ok := req.workspaceMode()
+	if !ok {
+		t.Fatal("expected blank mode to default")
+	}
+	if mode != db.WorkspaceModeStudio {
+		t.Fatalf("mode = %q, want studio", mode)
+	}
+}
+
+func TestCreateWorkspaceRequestAcceptsAgentMode(t *testing.T) {
+	req := createWorkspaceRequest{Name: "Demo", Mode: "agent"}
+
+	mode, ok := req.workspaceMode()
+	if !ok {
+		t.Fatal("expected agent mode to be valid")
+	}
+	if mode != db.WorkspaceModeAgent {
+		t.Fatalf("mode = %q, want agent", mode)
+	}
+}
+
+func TestCreateWorkspaceRequestRejectsUnknownMode(t *testing.T) {
+	req := createWorkspaceRequest{Name: "Demo", Mode: "manual"}
+
+	if _, ok := req.workspaceMode(); ok {
+		t.Fatal("unknown mode must be invalid")
 	}
 }
 

@@ -14,6 +14,18 @@ const WorkspaceDetailPage = lazy(() =>
   })),
 );
 
+const WorkspaceModeGatePage = lazy(() =>
+  import("./pages/WorkspaceModeGatePage").then((module) => ({
+    default: module.WorkspaceModeGatePage,
+  })),
+);
+
+const AgentWorkspacePage = lazy(() =>
+  import("./pages/AgentWorkspacePage").then((module) => ({
+    default: module.AgentWorkspacePage,
+  })),
+);
+
 function RouteFallback() {
   return (
     <div className="app-route-loading" role="status" aria-label="正在加载" />
@@ -41,7 +53,23 @@ const router = createBrowserRouter([
         path: "/workspaces/:id",
         element: (
           <Suspense fallback={<RouteFallback />}>
+            <WorkspaceModeGatePage />
+          </Suspense>
+        ),
+      },
+      {
+        path: "/workspaces/:id/studio",
+        element: (
+          <Suspense fallback={<RouteFallback />}>
             <WorkspaceDetailPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: "/workspaces/:id/agent",
+        element: (
+          <Suspense fallback={<RouteFallback />}>
+            <AgentWorkspacePage />
           </Suspense>
         ),
       },
