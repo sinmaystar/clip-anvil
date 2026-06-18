@@ -65,7 +65,7 @@ func (h *GroupHandler) Create(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusBadRequest, "invalid request")
 		return
 	}
-	if !h.workspaceBelongsToAccount(ctx, workspaceID, accountID, c) {
+	if _, ok := requireStudioWorkspace(ctx, h.queries, workspaceID, accountID, c); !ok {
 		return
 	}
 
@@ -86,6 +86,9 @@ func (h *GroupHandler) Update(ctx context.Context, c *app.RequestContext) {
 	}
 	group, ok := h.groupForAccount(ctx, c.Param("id"), accountID, c)
 	if !ok {
+		return
+	}
+	if _, ok := requireStudioWorkspace(ctx, h.queries, group.WorkspaceID, accountID, c); !ok {
 		return
 	}
 
@@ -137,6 +140,9 @@ func (h *GroupHandler) Delete(ctx context.Context, c *app.RequestContext) {
 	if !ok {
 		return
 	}
+	if _, ok := requireStudioWorkspace(ctx, h.queries, group.WorkspaceID, accountID, c); !ok {
+		return
+	}
 	if err := h.queries.DeleteMediaGroup(ctx, group.ID); err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to delete group")
 		return
@@ -154,6 +160,9 @@ func (h *GroupHandler) ReplaceNodes(ctx context.Context, c *app.RequestContext) 
 	}
 	group, ok := h.groupForAccount(ctx, c.Param("id"), accountID, c)
 	if !ok {
+		return
+	}
+	if _, ok := requireStudioWorkspace(ctx, h.queries, group.WorkspaceID, accountID, c); !ok {
 		return
 	}
 
@@ -293,25 +302,8 @@ func (h *GroupHandler) groupForAccount(ctx context.Context, id string, accountID
 		writeError(c, consts.StatusInternalServerError, "failed to load group")
 		return db.MediaGroup{}, false
 	}
-	if !h.workspaceBelongsToAccount(ctx, group.WorkspaceID, accountID, c) {
+	if !workspaceBelongsToAccount(ctx, h.queries, group.WorkspaceID, accountID, c) {
 		return db.MediaGroup{}, false
 	}
 	return group, true
-}
-
-func (h *GroupHandler) workspaceBelongsToAccount(ctx context.Context, workspaceID pgtype.UUID, accountID pgtype.UUID, c *app.RequestContext) bool {
-	workspace, err := h.queries.GetWorkspaceByID(ctx, workspaceID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(c, consts.StatusNotFound, "workspace not found")
-			return false
-		}
-		writeError(c, consts.StatusInternalServerError, "failed to load workspace")
-		return false
-	}
-	if workspace.OwnerID != accountID {
-		writeError(c, consts.StatusForbidden, "forbidden")
-		return false
-	}
-	return true
 }

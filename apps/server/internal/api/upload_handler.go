@@ -143,16 +143,3 @@ func safeFilename(name string) string {
 		return '-'
 	}, name)
 }
-
-func workspaceBelongsToAccount(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID, accountID pgtype.UUID, c *app.RequestContext) bool {
-	workspace, err := queries.GetWorkspaceByID(ctx, workspaceID)
-	if err != nil {
-		writeError(c, consts.StatusNotFound, "workspace not found")
-		return false
-	}
-	if workspace.OwnerID != accountID {
-		writeError(c, consts.StatusForbidden, "forbidden")
-		return false
-	}
-	return true
-}

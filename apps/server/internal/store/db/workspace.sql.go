@@ -12,18 +12,19 @@ import (
 )
 
 const createWorkspace = `-- name: CreateWorkspace :one
-INSERT INTO workspace (name, owner_id)
-VALUES ($1, $2)
-RETURNING id, name, owner_id, settings, created_at, updated_at
+INSERT INTO workspace (name, owner_id, mode)
+VALUES ($1, $2, $3)
+RETURNING id, name, owner_id, settings, created_at, updated_at, mode
 `
 
 type CreateWorkspaceParams struct {
-	Name    string      `json:"name"`
-	OwnerID pgtype.UUID `json:"owner_id"`
+	Name    string        `json:"name"`
+	OwnerID pgtype.UUID   `json:"owner_id"`
+	Mode    WorkspaceMode `json:"mode"`
 }
 
 func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (Workspace, error) {
-	row := q.db.QueryRow(ctx, createWorkspace, arg.Name, arg.OwnerID)
+	row := q.db.QueryRow(ctx, createWorkspace, arg.Name, arg.OwnerID, arg.Mode)
 	var i Workspace
 	err := row.Scan(
 		&i.ID,
@@ -32,12 +33,13 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.Settings,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mode,
 	)
 	return i, err
 }
 
 const getWorkspaceByID = `-- name: GetWorkspaceByID :one
-SELECT id, name, owner_id, settings, created_at, updated_at
+SELECT id, name, owner_id, settings, created_at, updated_at, mode
 FROM workspace
 WHERE id = $1
 `
@@ -52,12 +54,13 @@ func (q *Queries) GetWorkspaceByID(ctx context.Context, id pgtype.UUID) (Workspa
 		&i.Settings,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mode,
 	)
 	return i, err
 }
 
 const listWorkspacesByOwner = `-- name: ListWorkspacesByOwner :many
-SELECT id, name, owner_id, settings, created_at, updated_at
+SELECT id, name, owner_id, settings, created_at, updated_at, mode
 FROM workspace
 WHERE owner_id = $1
 ORDER BY created_at DESC
@@ -79,6 +82,7 @@ func (q *Queries) ListWorkspacesByOwner(ctx context.Context, ownerID pgtype.UUID
 			&i.Settings,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Mode,
 		); err != nil {
 			return nil, err
 		}

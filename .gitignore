@@ -30,6 +30,7 @@ apps/server/coverage.out
 
 # Local dev runtime files
 .dev-pids/
+.playwright-mcp/
 *.log
 
 # OS and editor noise

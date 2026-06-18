@@ -2,11 +2,9 @@ package api
 
 import (
 	"context"
-	"errors"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -65,17 +63,7 @@ func (h *CanvasHandler) GetCanvas(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	workspace, err := h.queries.GetWorkspaceByID(ctx, workspaceID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(c, consts.StatusNotFound, "workspace not found")
-			return
-		}
-		writeError(c, consts.StatusInternalServerError, "failed to load workspace")
-		return
-	}
-	if workspace.OwnerID != accountID {
-		writeError(c, consts.StatusForbidden, "forbidden")
+	if !workspaceBelongsToAccount(ctx, h.queries, workspaceID, accountID, c) {
 		return
 	}
 
@@ -130,17 +118,7 @@ func (h *CanvasHandler) UpdateCamera(ctx context.Context, c *app.RequestContext)
 		return
 	}
 
-	workspace, err := h.queries.GetWorkspaceByID(ctx, workspaceID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(c, consts.StatusNotFound, "workspace not found")
-			return
-		}
-		writeError(c, consts.StatusInternalServerError, "failed to load workspace")
-		return
-	}
-	if workspace.OwnerID != accountID {
-		writeError(c, consts.StatusForbidden, "forbidden")
+	if _, ok := requireStudioWorkspace(ctx, h.queries, workspaceID, accountID, c); !ok {
 		return
 	}
 
