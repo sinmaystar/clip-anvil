@@ -227,7 +227,3 @@ func (b *artifactFakeBroadcaster) has(event string) bool {
 	}
 	return false
 }
-
-func pngBytes() []byte {
-	return []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
-}

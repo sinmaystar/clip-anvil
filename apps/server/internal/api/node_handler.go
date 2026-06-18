@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -29,15 +30,19 @@ func NewNodeHandler(pool *pgxpool.Pool, queries *db.Queries, hub ...*CanvasHub) 
 }
 
 type createNodeRequest struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	NodeType    string  `json:"node_type"`
-	Title       string  `json:"title"`
-	Prompt      string  `json:"prompt"`
-	Status      string  `json:"status"`
-	AssetID     string  `json:"asset_id"`
-	CanvasX     float32 `json:"canvas_x"`
-	CanvasY     float32 `json:"canvas_y"`
+	ID            string          `json:"id"`
+	WorkspaceID   string          `json:"workspace_id"`
+	NodeType      string          `json:"node_type"`
+	Title         string          `json:"title"`
+	Prompt        string          `json:"prompt"`
+	Status        string          `json:"status"`
+	AssetID       string          `json:"asset_id"`
+	OperationType string          `json:"operation_type"`
+	ModelProvider string          `json:"model_provider"`
+	ModelID       string          `json:"model_id"`
+	ModelParams   json.RawMessage `json:"model_params"`
+	CanvasX       float32         `json:"canvas_x"`
+	CanvasY       float32         `json:"canvas_y"`
 }
 
 func (r createNodeRequest) nodeID() (pgtype.UUID, bool) {
@@ -55,15 +60,34 @@ func (r createNodeRequest) nodeStatus() (db.NodeStatus, bool) {
 	return status, isKnownNodeStatus(status)
 }
 
+func (r createNodeRequest) modelParamsJSON() []byte {
+	if len(r.ModelParams) == 0 {
+		return []byte("{}")
+	}
+	return []byte(r.ModelParams)
+}
+
+func (r createNodeRequest) hasProductionConfig() bool {
+	return strings.TrimSpace(r.OperationType) != "" ||
+		strings.TrimSpace(r.ModelProvider) != "" ||
+		strings.TrimSpace(r.ModelID) != "" ||
+		len(r.ModelParams) > 0
+}
+
 type updateNodeRequest struct {
-	Title   *string `json:"title"`
-	Prompt  *string `json:"prompt"`
-	Status  *string `json:"status"`
-	GroupID *string `json:"group_id"`
+	Title         *string          `json:"title"`
+	Prompt        *string          `json:"prompt"`
+	Status        *string          `json:"status"`
+	GroupID       *string          `json:"group_id"`
+	OperationType *string          `json:"operation_type"`
+	ModelProvider *string          `json:"model_provider"`
+	ModelID       *string          `json:"model_id"`
+	ModelParams   *json.RawMessage `json:"model_params"`
 }
 
 func (r updateNodeRequest) hasChanges() bool {
-	return r.Title != nil || r.Prompt != nil || r.Status != nil || r.GroupID != nil
+	return r.Title != nil || r.Prompt != nil || r.Status != nil || r.GroupID != nil ||
+		r.OperationType != nil || r.ModelProvider != nil || r.ModelID != nil || r.ModelParams != nil
 }
 
 type positionRequest struct {
@@ -94,9 +118,13 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusBadRequest, "invalid request")
 		return
 	}
-	nodeType := db.MediaType(req.NodeType)
+	nodeType := db.NodeType(req.NodeType)
 	if !isAllowedNodeType(nodeType) {
 		writeError(c, consts.StatusBadRequest, "invalid node type")
+		return
+	}
+	if nodeType == db.NodeTypeReferencePack && strings.TrimSpace(req.AssetID) != "" {
+		writeError(c, consts.StatusBadRequest, "reference pack cannot bind an asset")
 		return
 	}
 	if _, ok := requireStudioWorkspace(ctx, h.queries, workspaceID, accountID, c); !ok {
@@ -153,6 +181,24 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusInternalServerError, "failed to create node")
 		return
 	}
+	if req.hasProductionConfig() {
+		operation := strings.TrimSpace(req.OperationType)
+		if operation == "" {
+			operation = node.OperationType
+		}
+		node, err = h.queries.UpdateMediaNodeProductionConfig(ctx, db.UpdateMediaNodeProductionConfigParams{
+			ID:             node.ID,
+			OperationType:  operation,
+			PromptTemplate: node.PromptTemplate,
+			ModelProvider:  nullableString(req.ModelProvider),
+			ModelID:        nullableString(req.ModelID),
+			ModelParams:    req.modelParamsJSON(),
+		})
+		if err != nil {
+			writeError(c, consts.StatusInternalServerError, "failed to create node")
+			return
+		}
+	}
 	h.broadcast(node.WorkspaceID, "NodeCreated", map[string]any{"node": node})
 
 	c.JSON(consts.StatusOK, node)
@@ -162,7 +208,7 @@ func (h *NodeHandler) assetIDForCreate(
 	ctx context.Context,
 	id string,
 	workspaceID pgtype.UUID,
-	nodeType db.MediaType,
+	nodeType db.NodeType,
 	c *app.RequestContext,
 ) (pgtype.UUID, bool) {
 	if strings.TrimSpace(id) == "" {
@@ -182,7 +228,7 @@ func (h *NodeHandler) assetIDForCreate(
 		writeError(c, consts.StatusInternalServerError, "failed to load asset")
 		return pgtype.UUID{}, false
 	}
-	if asset.WorkspaceID != workspaceID || asset.Type != nodeType {
+	if asset.WorkspaceID != workspaceID || asset.Type != assetTypeForNodeType(nodeType) {
 		writeError(c, consts.StatusBadRequest, "invalid asset")
 		return pgtype.UUID{}, false
 	}
@@ -300,6 +346,40 @@ func (h *NodeHandler) Update(ctx context.Context, c *app.RequestContext) {
 				writeError(c, consts.StatusInternalServerError, "failed to update node")
 				return
 			}
+		}
+	}
+	if req.OperationType != nil || req.ModelProvider != nil || req.ModelID != nil || req.ModelParams != nil {
+		operation := node.OperationType
+		if req.OperationType != nil {
+			operation = strings.TrimSpace(*req.OperationType)
+		}
+		prompt := node.PromptTemplate
+		provider := node.ModelProvider
+		if req.ModelProvider != nil {
+			provider = nullableString(*req.ModelProvider)
+		}
+		modelID := node.ModelID
+		if req.ModelID != nil {
+			modelID = nullableString(*req.ModelID)
+		}
+		modelParams := node.ModelParams
+		if req.ModelParams != nil {
+			modelParams = []byte(*req.ModelParams)
+			if len(modelParams) == 0 {
+				modelParams = []byte("{}")
+			}
+		}
+		node, err = h.queries.UpdateMediaNodeProductionConfig(ctx, db.UpdateMediaNodeProductionConfigParams{
+			ID:             node.ID,
+			OperationType:  operation,
+			PromptTemplate: prompt,
+			ModelProvider:  provider,
+			ModelID:        modelID,
+			ModelParams:    modelParams,
+		})
+		if err != nil {
+			writeError(c, consts.StatusInternalServerError, "failed to update node")
+			return
 		}
 	}
 	h.broadcast(node.WorkspaceID, "NodeUpdated", map[string]any{"node": node})
@@ -422,13 +502,17 @@ func (h *NodeHandler) BatchUpdatePosition(ctx context.Context, c *app.RequestCon
 }
 
 func (h *NodeHandler) nodeForAccount(ctx context.Context, id string, accountID pgtype.UUID, c *app.RequestContext) (db.MediaNode, bool) {
+	return nodeForAccountByQueries(ctx, h.queries, id, accountID, c)
+}
+
+func nodeForAccountByQueries(ctx context.Context, queries *db.Queries, id string, accountID pgtype.UUID, c *app.RequestContext) (db.MediaNode, bool) {
 	nodeID, ok := uuidFromString(id)
 	if !ok {
 		writeError(c, consts.StatusNotFound, "node not found")
 		return db.MediaNode{}, false
 	}
 
-	node, err := h.queries.GetMediaNodeByID(ctx, nodeID)
+	node, err := queries.GetMediaNodeByID(ctx, nodeID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(c, consts.StatusNotFound, "node not found")
@@ -438,34 +522,57 @@ func (h *NodeHandler) nodeForAccount(ctx context.Context, id string, accountID p
 		return db.MediaNode{}, false
 	}
 
-	if !workspaceBelongsToAccount(ctx, h.queries, node.WorkspaceID, accountID, c) {
+	if !workspaceBelongsToAccount(ctx, queries, node.WorkspaceID, accountID, c) {
 		return db.MediaNode{}, false
 	}
 	return node, true
 }
 
-func defaultNodeSize(nodeType db.MediaType) (float32, float32) {
+func defaultNodeSize(nodeType db.NodeType) (float32, float32) {
 	switch nodeType {
-	case db.MediaTypeText:
+	case db.NodeTypeText:
 		return 200, 120
-	case db.MediaTypeImage:
+	case db.NodeTypeImage:
 		return 200, 160
-	case db.MediaTypeVideo:
+	case db.NodeTypeVideo:
 		return 240, 180
-	case db.MediaTypeAudio:
+	case db.NodeTypeAudio:
 		return 200, 80
 	default:
 		return 200, 120
 	}
 }
 
-func isAllowedNodeType(nodeType db.MediaType) bool {
+func isAllowedNodeType(nodeType db.NodeType) bool {
 	switch nodeType {
-	case db.MediaTypeText, db.MediaTypeImage, db.MediaTypeVideo, db.MediaTypeAudio:
+	case db.NodeTypeText, db.NodeTypeImage, db.NodeTypeVideo, db.NodeTypeAudio, db.NodeTypeReferencePack:
 		return true
 	default:
 		return false
 	}
+}
+
+func assetTypeForNodeType(nodeType db.NodeType) db.AssetType {
+	switch nodeType {
+	case db.NodeTypeText:
+		return db.AssetTypeText
+	case db.NodeTypeImage:
+		return db.AssetTypeImage
+	case db.NodeTypeVideo:
+		return db.AssetTypeVideo
+	case db.NodeTypeAudio:
+		return db.AssetTypeAudio
+	default:
+		return db.AssetType("")
+	}
+}
+
+func nullableString(value string) pgtype.Text {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: value, Valid: true}
 }
 
 func isKnownNodeStatus(status db.NodeStatus) bool {

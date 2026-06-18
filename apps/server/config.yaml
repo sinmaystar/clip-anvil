@@ -28,3 +28,13 @@ sandbox:
   resource_limits:
     cpu: "2"
     memory: "4Gi"
+
+production:
+  provider_mode: "mock"
+  default_provider: "mock"
+  default_text_model: "mock-text"
+  volcengine:
+    base_url: "https://ark.cn-beijing.volces.com"
+    text_model: "doubao-seed-1-6-lite"
+    image_model: "seedream-lite"
+    video_model: "seedance-lite"

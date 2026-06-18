@@ -1,13 +1,14 @@
 package api
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 func TestDefaultNodeSizeForText(t *testing.T) {
-	w, h := defaultNodeSize(db.MediaTypeText)
+	w, h := defaultNodeSize(db.NodeTypeText)
 	if w != 200 {
 		t.Fatalf("width = %v, want 200", w)
 	}
@@ -18,14 +19,14 @@ func TestDefaultNodeSizeForText(t *testing.T) {
 
 func TestDefaultNodeSizeForM1xNodeTypes(t *testing.T) {
 	testCases := []struct {
-		nodeType db.MediaType
+		nodeType db.NodeType
 		width    float32
 		height   float32
 	}{
-		{nodeType: db.MediaTypeText, width: 200, height: 120},
-		{nodeType: db.MediaTypeImage, width: 200, height: 160},
-		{nodeType: db.MediaTypeVideo, width: 240, height: 180},
-		{nodeType: db.MediaTypeAudio, width: 200, height: 80},
+		{nodeType: db.NodeTypeText, width: 200, height: 120},
+		{nodeType: db.NodeTypeImage, width: 200, height: 160},
+		{nodeType: db.NodeTypeVideo, width: 240, height: 180},
+		{nodeType: db.NodeTypeAudio, width: 200, height: 80},
 	}
 
 	for _, tc := range testCases {
@@ -42,11 +43,11 @@ func TestDefaultNodeSizeForM1xNodeTypes(t *testing.T) {
 }
 
 func TestIsAllowedNodeTypeAcceptsM1xTypes(t *testing.T) {
-	for _, nodeType := range []db.MediaType{
-		db.MediaTypeText,
-		db.MediaTypeImage,
-		db.MediaTypeVideo,
-		db.MediaTypeAudio,
+	for _, nodeType := range []db.NodeType{
+		db.NodeTypeText,
+		db.NodeTypeImage,
+		db.NodeTypeVideo,
+		db.NodeTypeAudio,
 	} {
 		t.Run(string(nodeType), func(t *testing.T) {
 			if !isAllowedNodeType(nodeType) {
@@ -57,7 +58,7 @@ func TestIsAllowedNodeTypeAcceptsM1xTypes(t *testing.T) {
 }
 
 func TestIsAllowedNodeTypeRejectsUnknownTypes(t *testing.T) {
-	if isAllowedNodeType(db.MediaType("model")) {
+	if isAllowedNodeType(db.NodeType("model")) {
 		t.Fatal("unknown node type should not be allowed")
 	}
 }
@@ -120,5 +121,22 @@ func TestCreateNodeRequestAcceptsRestoreFields(t *testing.T) {
 	}
 	if status != db.NodeStatusDraft {
 		t.Fatalf("status = %q, want draft", status)
+	}
+}
+
+func TestCreateNodeRequestModelParamsJSON(t *testing.T) {
+	raw := json.RawMessage(`{"temperature":0.2}`)
+	req := createNodeRequest{ModelParams: raw}
+	got := req.modelParamsJSON()
+	if string(got) != `{"temperature":0.2}` {
+		t.Fatalf("model params = %s", got)
+	}
+}
+
+func TestCreateNodeRequestModelParamsDefaultsToObject(t *testing.T) {
+	req := createNodeRequest{}
+	got := req.modelParamsJSON()
+	if string(got) != `{}` {
+		t.Fatalf("model params = %s", got)
 	}
 }

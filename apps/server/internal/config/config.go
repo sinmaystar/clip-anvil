@@ -1,18 +1,20 @@
 package config
 
 import (
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	Server   ServerConfig
-	Postgres PostgresConfig
-	Redis    RedisConfig
-	MinIO    MinIOConfig
-	JWT      JWTConfig
-	Sandbox  SandboxConfig
+	Server     ServerConfig
+	Postgres   PostgresConfig
+	Redis      RedisConfig
+	MinIO      MinIOConfig
+	JWT        JWTConfig
+	Sandbox    SandboxConfig
+	Production ProductionConfig
 }
 
 type ServerConfig struct {
@@ -55,7 +57,25 @@ type SandboxResourceLimits struct {
 	Memory string
 }
 
+type ProductionConfig struct {
+	ProviderMode     string `mapstructure:"provider_mode"`
+	DefaultProvider  string `mapstructure:"default_provider"`
+	DefaultTextModel string `mapstructure:"default_text_model"`
+	Volcengine       VolcengineConfig
+}
+
+type VolcengineConfig struct {
+	APIKey     string `mapstructure:"api_key"`
+	BaseURL    string `mapstructure:"base_url"`
+	TextModel  string `mapstructure:"text_model"`
+	ImageModel string `mapstructure:"image_model"`
+	VideoModel string `mapstructure:"video_model"`
+}
+
 func Load() (*Config, error) {
+	_ = loadDotEnv(".env")
+	_ = loadDotEnv("../../.env")
+
 	v := viper.New()
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
@@ -101,9 +121,46 @@ func bindEnv(v *viper.Viper) error {
 		"sandbox.use_server_proxy",
 		"sandbox.resource_limits.cpu",
 		"sandbox.resource_limits.memory",
+		"production.provider_mode",
+		"production.default_provider",
+		"production.default_text_model",
+		"production.volcengine.api_key",
+		"production.volcengine.base_url",
+		"production.volcengine.text_model",
+		"production.volcengine.image_model",
+		"production.volcengine.video_model",
 	}
 	for _, key := range keys {
 		if err := v.BindEnv(key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadDotEnv(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		if err := os.Setenv(key, value); err != nil {
 			return err
 		}
 	}

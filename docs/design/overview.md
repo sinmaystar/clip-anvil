@@ -257,40 +257,55 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 - MinIO 预签名下载/上传和 artifact submit（已落地）
 - 与 Agent 生产工具的端到端编排（未落地）
 
-### M2.x: Agent 对话基础
+### M3: Workspace 模式入口（已完成）
 
-目标：用户可通过对话让单 Agent 创建节点和生成内容。
-
-交付：
-- 对话面板 UI
-- 单 Agent + 生产级工具（尚未拆分 Sub-Agent）
-- Production State Summary 生成
-- Agent 模式画布只读
-- 基础 Gate（分镜确认 + 成片预览）
-- Agent 状态指示器
-
-### M3: MultiAgent + Skill
-
-目标：Agent 可自动完成从需求到成片的全流程。
+目标：从入口、路由和权限上区分 Studio Workspace 与 Agent Workspace。
 
 交付：
-- Producer + Screenwriter + Director + Review + Stitch 五角色拆分
-- 内置 Skill（marketing-ad-short）
-- 评审与重试循环
-- Stale 传播与增量重算
-- Sub-Agent 并行生成
-- 对话式修改
+- `workspace.mode`
+- Studio / Agent 创建入口
+- `/studio` 与 `/agent` 路由分流
+- Agent Workspace 只读画布
+- Agent Workspace 普通画布写接口后端拒绝
 
-### M4: 一致性与质量
+### M4: 共享生产底座（已完成）
 
-目标：提升生成视频的可用性和可控性。
+目标：建立 Studio 和 Agent 共用的生产数据和执行链路。
 
 交付：
-- 跨镜头一致性机制（参考图 + mood_anchor + 帧连续）
-- 多 Skill（product-demo、brand-story 等）
-- 成本预估与预算管理
-- 详细审计日志与操作回溯
-- Studio ↔ Agent 模式无缝切换
+- GenerationIntent
+- Provider Bridge
+- Sandbox Job Service
+- `generation_job` / `artifact_version` / current winner
+- capability validation、failure records、retry chain
+- input hash、stale propagation、stale reasons
+- Reference Pack data foundation
+- sandbox-backed internal FFmpeg operations
+- Production Read API for M5
+
+### M5: Studio 专业手动模式（待实施）
+
+目标：让专业用户可手动创建、引用、运行、查看版本和处理 stale。
+
+交付：
+- 富属性面板
+- Prompt `@`
+- Reference Pack UI
+- 手动运行和版本管理
+- stale 可视化和手动重跑
+- 模型能力驱动的模型选择
+
+### M6: Agent 自动生产模式（待实施）
+
+目标：Producer / Craftsman / Worker / Composer 复用 M4 生产底座完成分镜到成片。
+
+交付：
+- Agent runtime 存储、Eino checkpoint、PSS 和 Memory
+- Producer 对话面板与 HITL 决策卡片
+- Storyboard / shot / shot dependency
+- Craftsman + Worker 生成与评审重试
+- Composer sandbox-backed 成片合成
+- Studio / Agent 复制导入，而不是原地无缝切换
 
 ## 8. 开放问题
 

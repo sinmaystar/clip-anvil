@@ -87,7 +87,7 @@ func (h *UploadHandler) Upload(ctx context.Context, c *app.RequestContext) {
 		WorkspaceID: workspaceID,
 		Type:        mediaType,
 		Mime:        mime,
-		StorageUrl:  object.StorageURL,
+		StorageUrl:  pgtype.Text{String: object.StorageURL, Valid: true},
 		SizeBytes:   pgtype.Int8{Int64: header.Size, Valid: true},
 		Metadata:    []byte("{}"),
 	})
@@ -104,14 +104,14 @@ func (h *UploadHandler) Upload(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, assetResponse{MediaAsset: asset, AccessURL: accessURL})
 }
 
-func mediaTypeForMIME(mime string) (db.MediaType, bool) {
+func mediaTypeForMIME(mime string) (db.AssetType, bool) {
 	switch mime {
 	case "image/jpeg", "image/png", "image/webp", "image/gif":
-		return db.MediaTypeImage, true
+		return db.AssetTypeImage, true
 	case "video/mp4", "video/quicktime", "video/webm":
-		return db.MediaTypeVideo, true
+		return db.AssetTypeVideo, true
 	case "audio/mpeg", "audio/wav", "audio/aac", "audio/ogg":
-		return db.MediaTypeAudio, true
+		return db.AssetTypeAudio, true
 	default:
 		return "", false
 	}

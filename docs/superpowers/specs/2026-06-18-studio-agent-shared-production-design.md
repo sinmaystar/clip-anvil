@@ -21,6 +21,7 @@ ClipAnvil 需要同时支持两种创作方式：
 - ArtifactVersion
 - ReviewRecord
 - Storage
+- SandboxJob
 - WebSocket 事件
 - Stale 传播
 - Provider Bridge
@@ -30,6 +31,7 @@ ClipAnvil 需要同时支持两种创作方式：
 - Studio Workspace 只允许用户手动编辑。
 - Agent Workspace 只允许 Agent 编辑，画布对用户只读。
 - 不做原地无缝切换。两种模式通过复制/导入 Workspace 互通。
+- Studio 和 Agent 共享同一个 sandbox execution 边界：内部媒体处理、Agent shell、Composer 命令都走 Sandbox Job Service，不在应用容器执行。
 
 ## 2. 核心原则
 
@@ -240,6 +242,8 @@ Image node 输出图片。
 | `extract_first_frame` | 从视频提取首帧，不调用模型 |
 | `extract_last_frame` | 从视频提取尾帧，不调用模型 |
 
+首帧/尾帧提取是 sandbox-backed internal operation。Studio 用户点击运行时仍然得到普通 `generation_job` 和 `artifact_version`，但实际 FFmpeg 命令必须记录为 `sandbox_job`。
+
 ### 4.4 Video Node
 
 Video node 输出视频。
@@ -254,6 +258,8 @@ Video node 输出视频。
 | `video_to_video` | 视频编辑或续写 |
 | `multi_reference_to_video` | 多模态参考生视频 |
 | `compose` | 多段视频、音频和字幕合成 |
+
+`compose` 是 sandbox-backed internal operation。Composer 不在应用进程中执行 FFmpeg，而是提交 sandbox job，由 sandbox 服务处理输入落位、命令执行、输出上传和失败记录。
 
 ### 4.5 Audio Node
 
@@ -492,7 +498,7 @@ Video Node C 在 Prompt 中 @引用 Image Node B
 Video Node C 生成续接视频
 ```
 
-`extract_first_frame` 和 `extract_last_frame` 由工程层 media processing job 调用 ffmpeg 完成，不调用模型。
+`extract_first_frame` 和 `extract_last_frame` 由 sandbox-backed internal operation 调用 ffmpeg 完成，不调用模型，不在应用容器执行。
 
 Agent 模式可以自动创建这些中间节点。Studio 模式由用户手动创建或通过快捷操作创建。
 

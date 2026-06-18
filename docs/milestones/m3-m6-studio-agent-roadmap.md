@@ -1,6 +1,6 @@
 # M3-M6 Studio / Agent 生产体系路线图
 
-**状态**：M3 已完成，M4-M6 待实施
+**状态**：M3-M4 已完成，M5-M6 待实施
 **日期**：2026-06-18
 **目标**：自底向上建设 Studio / Agent 双模式：先明确 Workspace 入口和权限边界，再建设共享生产底座，随后分别完成专业手动 Studio 和自动化 Agent 模式。
 
@@ -12,14 +12,15 @@
 2. **先共享底座，后模式体验**：Studio 手动运行和 Agent 自动运行都应复用同一套节点、依赖、生成、版本、Stale、模型能力和资源存储。
 3. **Studio 与 Agent 不无缝切换**：两种模式通过复制/导入衔接，避免 Agent 上下文被用户手动编辑扰乱。
 4. **Agent 模式画布只读**：Agent Workspace 中用户通过对话干预，画布由 Agent 工具写入。
-5. **边做边验收**：每个里程碑都有独立可验收闭环，通过后再进入下一阶段。
+5. **Sandbox 是执行边界**：FFmpeg、Agent shell、Composer、Python/ImageMagick/yt-dlp 等不可预测资源消耗必须通过 Sandbox Job Service 执行，应用容器不直接执行这些命令。
+6. **边做边验收**：每个里程碑都有独立可验收闭环，通过后再进入下一阶段。
 
 ## 里程碑总览
 
 | 里程碑 | 状态 | 名称 | 核心目标 | 主要产物 |
 |---|---|---|---|---|
 | M3 | 已完成 | Workspace 模式入口 | 从创建入口、路由和权限上区分 Studio / Agent | `workspace.mode`、创建入口、路由分流、Agent 只读画布 |
-| M4 | 待实施 | 共享生产底座 | 建立 Studio / Agent 共用的生产数据和执行链路 | 节点目标态、GenerationIntent、Provider Bridge、版本、Stale、失败重试 |
+| M4 | 已完成 | 共享生产底座 | 建立 Studio / Agent 共用的生产数据和执行链路 | 节点目标态、GenerationIntent、Provider Bridge、Sandbox Job Service、版本、Stale、失败重试、Production Read API |
 | M5 | 待实施 | Studio 专业手动模式 | 让专业用户可手动创建、引用、运行和重跑节点 | 富属性面板、Prompt `@`、Reference Pack、手动运行、级联 Stale |
 | M6 | 待实施 | Agent 自动生产模式 | Producer/Craftsman/Worker 复用共享底座完成分镜到成片 | Eino runtime、PSS、shot、HITL、Craftsman、评审重试、Composer |
 
@@ -150,11 +151,15 @@ E2E / smoke 结果：
 
 # M4 共享生产底座
 
+**状态**：已完成（2026-06-18）
+
+分阶段执行计划见：[M4 Shared Production Foundation](./m4-shared-production-foundation.md)。
+
 ## 目标
 
 建立 Studio 和 Agent 都能复用的生产核心。M4 关注数据事实和执行链路，不追求完整 Studio 体验，也不引入完整 Agent orchestration。
 
-完成 M4 后，系统应能表达“节点输入 -> 生成任务 -> 产物版本 -> winner -> 下游 Stale -> 失败记录/重试”的闭环。
+M4 完成后，系统已经能表达“节点输入 -> GenerationIntent -> generation job -> artifact version -> winner -> 下游 stale -> 失败记录/重试”的闭环，并把内部 FFmpeg 等不可预测执行放入 Sandbox Job Service。
 
 ## 工作项
 
@@ -195,7 +200,8 @@ E2E / smoke 结果：
 7. **内部媒体操作**
    - 支持 `extract_first_frame` 和 `extract_last_frame`。
    - 内部操作也创建 `generation_job` 和 `artifact_version`。
-   - 背后可用 ffmpeg，不调用模型供应商。
+   - 背后使用 sandbox 内的 ffmpeg，不调用模型供应商。
+   - 应用容器不得直接执行 ffmpeg；每次内部媒体执行都要有 `sandbox_job` 记录。
 
 ## 可验收标准
 
@@ -244,6 +250,44 @@ make server-test
 pnpm --filter @clip-anvil/web... build
 git diff --check
 ```
+
+## 完成记录
+
+M4 实施范围：
+
+- 数据库和 sqlc 已支持生产节点字段、`generation_job`、`artifact_version`、`model_provider`、`model_capability`、`node_stale_reason`、`reference_pack_item`、`sandbox_job`。
+- 节点运行已通过 `GenerationIntent` 和 Provider Bridge 统一进入 mock provider、Volcengine adapter boundary 或 sandbox-backed internal provider。
+- 能力校验、provider 失败、内部处理失败和重试耗尽都会持久化 failed `generation_job`。
+- 成功运行会创建 `media_asset`、`artifact_version`，并更新 `media_node.current_version_id`。
+- 上游 winner、Reference Pack membership、Reference Pack member winner 变化会标记下游 stale，并记录可查询原因。
+- `extract_first_frame` 和 `extract_last_frame` 通过 Sandbox Job Service 运行 FFmpeg，不在应用容器执行。
+- Production Read API 已提供模型能力、版本、生产状态、job、sandbox job list/detail 读取能力，作为 M5 属性面板后端基础。
+
+已执行验收：
+
+```bash
+make sqlc-generate
+GOCACHE=/private/tmp/clipanvil-go-build make server-test
+GOCACHE=/private/tmp/clipanvil-go-build make server-build
+pnpm --filter @clip-anvil/web... build
+CLIPANVIL_API_BASE=http://127.0.0.1:8891/api scripts/smoke-m4-1.sh
+CLIPANVIL_API_BASE=http://127.0.0.1:8891/api scripts/smoke-m4-2.sh
+CLIPANVIL_API_BASE=http://127.0.0.1:8891/api scripts/smoke-m4-3.sh
+CLIPANVIL_API_BASE=http://127.0.0.1:8891/api scripts/smoke-m4-4.sh
+CLIPANVIL_API_BASE=http://127.0.0.1:8891/api scripts/smoke-m4-5.sh
+CLIPANVIL_API_BASE=http://127.0.0.1:8891/api scripts/smoke-m4-6.sh
+rg -n 'exec\.Command|os/exec' apps/server/internal
+git diff --check
+```
+
+E2E / smoke 结果：
+
+- M4.1 smoke 通过：Text Node 可生成 job、version 和 current winner。
+- M4.2 smoke 通过：GenerationIntent、Provider Bridge 和缺失真实 provider key 的失败落库可用。
+- M4.3 smoke 通过：capability mismatch、provider failure、retry chain 可追溯。
+- M4.4 smoke 通过：input hash 和 stale propagation 可用。
+- M4.5 smoke 通过：Reference Pack、内部首帧/尾帧提取、sandbox-backed FFmpeg 成功和失败路径可用。
+- M4.6 smoke 通过：capability、versions、production state、job detail、sandbox job list/detail 读接口可用。
 
 ---
 
@@ -337,6 +381,7 @@ git diff --check
    - 上传 video。
    - 创建 image node，operation 为 `extract_first_frame`。
    - 运行后画布显示提取出的图片。
+   - 验证抽帧对应的 `sandbox_job` 成功，且应用进程未本地执行 ffmpeg。
 
 ## 建议验证命令
 
@@ -397,6 +442,7 @@ git diff --check
    - Craftsman 生成策略和 prompt。
    - Worker 执行一次 GenerationIntent。
    - 生成结果写入共享 `generation_job` / `artifact_version`。
+   - Worker 需要 shell、脚本或内部媒体处理时，只能通过 Sandbox Job Service。
 
 7. **评审和重试**
    - 通用评审轴：proportion、physics、style、visual_quality。
@@ -416,6 +462,7 @@ git diff --check
    - 视频也走 GenerationIntent 和版本链路。
    - Composer 使用已确认视频和音频合成成片。
    - 成片版本也可被确认或重做。
+   - Composer 的 FFmpeg 合成命令必须在 sandbox 内执行，并写入 `sandbox_job`。
 
 10. **Studio / Agent 复制导入**
     - Agent -> Studio：复制完整 Workspace 内容到新的 Studio Workspace。
@@ -517,7 +564,7 @@ flowchart TD
 说明：
 
 - M3 是入口和权限基础，必须先做。
-- M4 是 M5/M6 的共同底座，必须在完整 Studio/Agent 前完成。
+- M4 是 M5/M6 的共同底座，已完成；M5/M6 后续应复用 M4 的生产链路和 Sandbox Job Service。
 - M5 可以先于 M6 完成，因为 Studio 是验证共享生产底座最直接的手动界面。
 - M6 复用 M4 的生产链路，也会借鉴 M5 的节点、版本和 Reference Pack 交互。
 

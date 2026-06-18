@@ -21,10 +21,10 @@ func TestWouldCreateCycleDetectsReachableSource(t *testing.T) {
 	nodeC := testUUID(0x03)
 	lister := fakeDependencyEdgeLister{
 		nodeB: {
-			{FromNodeID: nodeB, ToNodeID: nodeC, EdgeType: db.EdgeTypeDependency},
+			{FromNodeID: nodeB, ToNodeID: nodeC},
 		},
 		nodeC: {
-			{FromNodeID: nodeC, ToNodeID: nodeA, EdgeType: db.EdgeTypeDependency},
+			{FromNodeID: nodeC, ToNodeID: nodeA},
 		},
 	}
 
@@ -43,7 +43,7 @@ func TestWouldCreateCycleAllowsAcyclicEdge(t *testing.T) {
 	nodeC := testUUID(0x03)
 	lister := fakeDependencyEdgeLister{
 		nodeB: {
-			{FromNodeID: nodeB, ToNodeID: nodeC, EdgeType: db.EdgeTypeDependency},
+			{FromNodeID: nodeB, ToNodeID: nodeC},
 		},
 	}
 

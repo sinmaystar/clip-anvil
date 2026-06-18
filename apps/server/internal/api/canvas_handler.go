@@ -27,7 +27,7 @@ type cameraResponse struct {
 type canvasResponse struct {
 	Camera cameraResponse        `json:"camera"`
 	Nodes  []canvasNodeResponse  `json:"nodes"`
-	Edges  []db.MediaEdge        `json:"edges"`
+	Edges  []mediaEdgeResponse   `json:"edges"`
 	Groups []canvasGroupResponse `json:"groups"`
 }
 
@@ -100,7 +100,7 @@ func (h *CanvasHandler) GetCanvas(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, canvasResponse{
 		Camera: toCameraResponse(canvas),
 		Nodes:  toCanvasNodeResponses(nodes, assetsByID),
-		Edges:  edges,
+		Edges:  toMediaEdgeResponses(edges),
 		Groups: toCanvasGroupResponses(groups, nodes),
 	})
 }

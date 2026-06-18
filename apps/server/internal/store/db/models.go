@@ -11,91 +11,95 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type EdgeType string
+type AssetType string
 
 const (
-	EdgeTypeDependency EdgeType = "dependency"
-	EdgeTypeReference  EdgeType = "reference"
-	EdgeTypeSequence   EdgeType = "sequence"
+	AssetTypeText  AssetType = "text"
+	AssetTypeImage AssetType = "image"
+	AssetTypeVideo AssetType = "video"
+	AssetTypeAudio AssetType = "audio"
+	AssetTypeJson  AssetType = "json"
 )
 
-func (e *EdgeType) Scan(src interface{}) error {
+func (e *AssetType) Scan(src interface{}) error {
 	switch s := src.(type) {
 	case []byte:
-		*e = EdgeType(s)
+		*e = AssetType(s)
 	case string:
-		*e = EdgeType(s)
+		*e = AssetType(s)
 	default:
-		return fmt.Errorf("unsupported scan type for EdgeType: %T", src)
+		return fmt.Errorf("unsupported scan type for AssetType: %T", src)
 	}
 	return nil
 }
 
-type NullEdgeType struct {
-	EdgeType EdgeType `json:"edge_type"`
-	Valid    bool     `json:"valid"` // Valid is true if EdgeType is not NULL
+type NullAssetType struct {
+	AssetType AssetType `json:"asset_type"`
+	Valid     bool      `json:"valid"` // Valid is true if AssetType is not NULL
 }
 
 // Scan implements the Scanner interface.
-func (ns *NullEdgeType) Scan(value interface{}) error {
+func (ns *NullAssetType) Scan(value interface{}) error {
 	if value == nil {
-		ns.EdgeType, ns.Valid = "", false
+		ns.AssetType, ns.Valid = "", false
 		return nil
 	}
 	ns.Valid = true
-	return ns.EdgeType.Scan(value)
+	return ns.AssetType.Scan(value)
 }
 
 // Value implements the driver Valuer interface.
-func (ns NullEdgeType) Value() (driver.Value, error) {
+func (ns NullAssetType) Value() (driver.Value, error) {
 	if !ns.Valid {
 		return nil, nil
 	}
-	return string(ns.EdgeType), nil
+	return string(ns.AssetType), nil
 }
 
-type MediaType string
+type JobStatus string
 
 const (
-	MediaTypeText  MediaType = "text"
-	MediaTypeImage MediaType = "image"
-	MediaTypeVideo MediaType = "video"
-	MediaTypeAudio MediaType = "audio"
+	JobStatusPending   JobStatus = "pending"
+	JobStatusQueued    JobStatus = "queued"
+	JobStatusRunning   JobStatus = "running"
+	JobStatusSucceeded JobStatus = "succeeded"
+	JobStatusFailed    JobStatus = "failed"
+	JobStatusCancelled JobStatus = "cancelled"
 )
 
-func (e *MediaType) Scan(src interface{}) error {
+func (e *JobStatus) Scan(src interface{}) error {
 	switch s := src.(type) {
 	case []byte:
-		*e = MediaType(s)
+		*e = JobStatus(s)
 	case string:
-		*e = MediaType(s)
+		*e = JobStatus(s)
 	default:
-		return fmt.Errorf("unsupported scan type for MediaType: %T", src)
+		return fmt.Errorf("unsupported scan type for JobStatus: %T", src)
 	}
 	return nil
 }
 
-type NullMediaType struct {
-	MediaType MediaType `json:"media_type"`
-	Valid     bool      `json:"valid"` // Valid is true if MediaType is not NULL
+type NullJobStatus struct {
+	JobStatus JobStatus `json:"job_status"`
+	Valid     bool      `json:"valid"` // Valid is true if JobStatus is not NULL
 }
 
 // Scan implements the Scanner interface.
-func (ns *NullMediaType) Scan(value interface{}) error {
+func (ns *NullJobStatus) Scan(value interface{}) error {
 	if value == nil {
-		ns.MediaType, ns.Valid = "", false
+		ns.JobStatus, ns.Valid = "", false
 		return nil
 	}
 	ns.Valid = true
-	return ns.MediaType.Scan(value)
+	return ns.JobStatus.Scan(value)
 }
 
 // Value implements the driver Valuer interface.
-func (ns NullMediaType) Value() (driver.Value, error) {
+func (ns NullJobStatus) Value() (driver.Value, error) {
 	if !ns.Valid {
 		return nil, nil
 	}
-	return string(ns.MediaType), nil
+	return string(ns.JobStatus), nil
 }
 
 type NodeStatus string
@@ -146,48 +150,49 @@ func (ns NullNodeStatus) Value() (driver.Value, error) {
 	return string(ns.NodeStatus), nil
 }
 
-type TransitionType string
+type NodeType string
 
 const (
-	TransitionTypeCut       TransitionType = "cut"
-	TransitionTypeCrossfade TransitionType = "crossfade"
-	TransitionTypeDissolve  TransitionType = "dissolve"
-	TransitionTypeWipe      TransitionType = "wipe"
+	NodeTypeText          NodeType = "text"
+	NodeTypeImage         NodeType = "image"
+	NodeTypeVideo         NodeType = "video"
+	NodeTypeAudio         NodeType = "audio"
+	NodeTypeReferencePack NodeType = "reference_pack"
 )
 
-func (e *TransitionType) Scan(src interface{}) error {
+func (e *NodeType) Scan(src interface{}) error {
 	switch s := src.(type) {
 	case []byte:
-		*e = TransitionType(s)
+		*e = NodeType(s)
 	case string:
-		*e = TransitionType(s)
+		*e = NodeType(s)
 	default:
-		return fmt.Errorf("unsupported scan type for TransitionType: %T", src)
+		return fmt.Errorf("unsupported scan type for NodeType: %T", src)
 	}
 	return nil
 }
 
-type NullTransitionType struct {
-	TransitionType TransitionType `json:"transition_type"`
-	Valid          bool           `json:"valid"` // Valid is true if TransitionType is not NULL
+type NullNodeType struct {
+	NodeType NodeType `json:"node_type"`
+	Valid    bool     `json:"valid"` // Valid is true if NodeType is not NULL
 }
 
 // Scan implements the Scanner interface.
-func (ns *NullTransitionType) Scan(value interface{}) error {
+func (ns *NullNodeType) Scan(value interface{}) error {
 	if value == nil {
-		ns.TransitionType, ns.Valid = "", false
+		ns.NodeType, ns.Valid = "", false
 		return nil
 	}
 	ns.Valid = true
-	return ns.TransitionType.Scan(value)
+	return ns.NodeType.Scan(value)
 }
 
 // Value implements the driver Valuer interface.
-func (ns NullTransitionType) Value() (driver.Value, error) {
+func (ns NullNodeType) Value() (driver.Value, error) {
 	if !ns.Valid {
 		return nil, nil
 	}
-	return string(ns.TransitionType), nil
+	return string(ns.NodeType), nil
 }
 
 type WorkspaceMode string
@@ -242,6 +247,20 @@ type Account struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ArtifactVersion struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	NodeID      pgtype.UUID        `json:"node_id"`
+	JobID       pgtype.UUID        `json:"job_id"`
+	AssetID     pgtype.UUID        `json:"asset_id"`
+	VersionNo   int32              `json:"version_no"`
+	Winner      bool               `json:"winner"`
+	Output      []byte             `json:"output"`
+	ReviewScore pgtype.Float4      `json:"review_score"`
+	InputHash   string             `json:"input_hash"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type CanvasDocument struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
@@ -252,30 +271,55 @@ type CanvasDocument struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type GenerationJob struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	TargetNodeID     pgtype.UUID        `json:"target_node_id"`
+	ParentJobID      pgtype.UUID        `json:"parent_job_id"`
+	OperationType    string             `json:"operation_type"`
+	Provider         string             `json:"provider"`
+	ModelID          string             `json:"model_id"`
+	Intent           []byte             `json:"intent"`
+	RenderedPrompt   string             `json:"rendered_prompt"`
+	ProviderRequest  []byte             `json:"provider_request"`
+	ProviderResponse []byte             `json:"provider_response"`
+	Status           JobStatus          `json:"status"`
+	Progress         int32              `json:"progress"`
+	Attempt          int32              `json:"attempt"`
+	MaxAttempts      int32              `json:"max_attempts"`
+	RetryPolicy      []byte             `json:"retry_policy"`
+	CostCents        pgtype.Int4        `json:"cost_cents"`
+	ErrorCode        pgtype.Text        `json:"error_code"`
+	ErrorMessage     pgtype.Text        `json:"error_message"`
+	RequestedByType  string             `json:"requested_by_type"`
+	RequestedByID    pgtype.Text        `json:"requested_by_id"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type MediaAsset struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
-	Type         MediaType          `json:"type"`
+	Type         AssetType          `json:"type"`
 	Mime         string             `json:"mime"`
-	StorageUrl   string             `json:"storage_url"`
+	StorageUrl   pgtype.Text        `json:"storage_url"`
 	ThumbnailUrl pgtype.Text        `json:"thumbnail_url"`
 	DurationMs   pgtype.Int4        `json:"duration_ms"`
 	SizeBytes    pgtype.Int8        `json:"size_bytes"`
 	Metadata     []byte             `json:"metadata"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	TextContent  pgtype.Text        `json:"text_content"`
 }
 
 type MediaEdge struct {
-	ID                 pgtype.UUID        `json:"id"`
-	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	FromNodeID         pgtype.UUID        `json:"from_node_id"`
-	ToNodeID           pgtype.UUID        `json:"to_node_id"`
-	EdgeType           EdgeType           `json:"edge_type"`
-	TransitionType     NullTransitionType `json:"transition_type"`
-	TransitionDuration pgtype.Float4      `json:"transition_duration"`
-	Source             string             `json:"source"`
-	Metadata           []byte             `json:"metadata"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	FromNodeID  pgtype.UUID        `json:"from_node_id"`
+	ToNodeID    pgtype.UUID        `json:"to_node_id"`
+	Source      string             `json:"source"`
+	Metadata    []byte             `json:"metadata"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type MediaGroup struct {
@@ -288,21 +332,104 @@ type MediaGroup struct {
 }
 
 type MediaNode struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	NodeType    MediaType          `json:"node_type"`
-	Title       string             `json:"title"`
-	Status      NodeStatus         `json:"status"`
-	Prompt      string             `json:"prompt"`
-	Source      string             `json:"source"`
-	CanvasX     float32            `json:"canvas_x"`
-	CanvasY     float32            `json:"canvas_y"`
-	CanvasW     float32            `json:"canvas_w"`
-	CanvasH     float32            `json:"canvas_h"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	GroupID     pgtype.UUID        `json:"group_id"`
-	AssetID     pgtype.UUID        `json:"asset_id"`
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	NodeType         NodeType           `json:"node_type"`
+	Title            string             `json:"title"`
+	Status           NodeStatus         `json:"status"`
+	Prompt           string             `json:"prompt"`
+	Source           string             `json:"source"`
+	CanvasX          float32            `json:"canvas_x"`
+	CanvasY          float32            `json:"canvas_y"`
+	CanvasW          float32            `json:"canvas_w"`
+	CanvasH          float32            `json:"canvas_h"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	GroupID          pgtype.UUID        `json:"group_id"`
+	AssetID          pgtype.UUID        `json:"asset_id"`
+	OperationType    string             `json:"operation_type"`
+	PromptTemplate   string             `json:"prompt_template"`
+	PromptRich       []byte             `json:"prompt_rich"`
+	PromptRefs       []byte             `json:"prompt_refs"`
+	ModelProvider    pgtype.Text        `json:"model_provider"`
+	ModelID          pgtype.Text        `json:"model_id"`
+	ModelParams      []byte             `json:"model_params"`
+	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
+	Metadata         []byte             `json:"metadata"`
+}
+
+type ModelCapability struct {
+	ID                      pgtype.UUID        `json:"id"`
+	ProviderID              string             `json:"provider_id"`
+	ModelID                 string             `json:"model_id"`
+	DisplayName             string             `json:"display_name"`
+	OutputTypes             []byte             `json:"output_types"`
+	SupportedOperations     []byte             `json:"supported_operations"`
+	SupportedInputNodeTypes []byte             `json:"supported_input_node_types"`
+	Limits                  []byte             `json:"limits"`
+	Pricing                 []byte             `json:"pricing"`
+	Defaults                []byte             `json:"defaults"`
+	Enabled                 bool               `json:"enabled"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ModelProvider struct {
+	ID           string             `json:"id"`
+	DisplayName  string             `json:"display_name"`
+	ProviderType string             `json:"provider_type"`
+	Config       []byte             `json:"config"`
+	Enabled      bool               `json:"enabled"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type NodeStaleReason struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	NodeID            pgtype.UUID        `json:"node_id"`
+	UpstreamNodeID    pgtype.UUID        `json:"upstream_node_id"`
+	UpstreamVersionID pgtype.UUID        `json:"upstream_version_id"`
+	ReasonCode        string             `json:"reason_code"`
+	ReasonMessage     string             `json:"reason_message"`
+	Details           []byte             `json:"details"`
+	ResolvedAt        pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type ReferencePackItem struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	PackNodeID   pgtype.UUID        `json:"pack_node_id"`
+	MemberNodeID pgtype.UUID        `json:"member_node_id"`
+	Position     int32              `json:"position"`
+	Metadata     []byte             `json:"metadata"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SandboxJob struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	TargetNodeID    pgtype.UUID        `json:"target_node_id"`
+	GenerationJobID pgtype.UUID        `json:"generation_job_id"`
+	JobType         string             `json:"job_type"`
+	OperationType   string             `json:"operation_type"`
+	Status          JobStatus          `json:"status"`
+	SandboxID       pgtype.Text        `json:"sandbox_id"`
+	Command         string             `json:"command"`
+	Cwd             string             `json:"cwd"`
+	Input           []byte             `json:"input"`
+	Output          []byte             `json:"output"`
+	ExitCode        pgtype.Int4        `json:"exit_code"`
+	Stdout          string             `json:"stdout"`
+	Stderr          string             `json:"stderr"`
+	DurationMs      int32              `json:"duration_ms"`
+	ErrorCode       pgtype.Text        `json:"error_code"`
+	ErrorMessage    pgtype.Text        `json:"error_message"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type Workspace struct {

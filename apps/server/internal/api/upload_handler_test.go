@@ -9,12 +9,12 @@ import (
 func TestMediaTypeForMIMEAcceptsSupportedAssetTypes(t *testing.T) {
 	testCases := []struct {
 		mime      string
-		mediaType db.MediaType
+		mediaType db.AssetType
 	}{
-		{mime: "image/png", mediaType: db.MediaTypeImage},
-		{mime: "image/jpeg", mediaType: db.MediaTypeImage},
-		{mime: "video/mp4", mediaType: db.MediaTypeVideo},
-		{mime: "audio/mpeg", mediaType: db.MediaTypeAudio},
+		{mime: "image/png", mediaType: db.AssetTypeImage},
+		{mime: "image/jpeg", mediaType: db.AssetTypeImage},
+		{mime: "video/mp4", mediaType: db.AssetTypeVideo},
+		{mime: "audio/mpeg", mediaType: db.AssetTypeAudio},
 	}
 
 	for _, tc := range testCases {

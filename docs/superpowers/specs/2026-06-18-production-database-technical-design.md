@@ -18,11 +18,13 @@
 - `media_asset` 是文件级存储，不是主要交互对象。
 - `artifact_version` 是节点每次运行的产物版本。
 - `generation_job` 记录一次模型调用或内部媒体处理任务。
+- `sandbox_job` 记录一次沙箱执行事实；FFmpeg、Agent shell、Composer、脚本类任务必须落这张表。
 - `media_edge` 只记录节点之间的 dependency 输入候选关系，不再保留多种边类型。
 - `media_node.prompt_refs` 记录 Prompt 中 `@` 显式引用了哪些输入候选。
 - `reference_pack` 作为一种 node 存在，成员关系由 `reference_pack_item` 表显式记录。
 - Agent 的 `shot` 是生产语义，不是 Studio 必备节点。
 - Studio 和 Agent 都提交 `GenerationIntent`，由 Provider Bridge 转为具体供应商请求。
+- Provider Bridge 可以转向外部模型供应商，也可以转向 sandbox-backed internal provider；应用进程不本地执行不可预测资源命令。
 
 ## 2. 当前状态
 
@@ -47,6 +49,7 @@
 - 上传和 MinIO 存储。
 - 画布坐标和 camera。
 - OpenSandbox workspace 绑定。
+- OpenSandbox Sandbox Job Service 是 M4.S 的生产执行基础，负责会话、volume、输入输出传输、命令执行和失败归因。
 
 当前缺口：
 
@@ -57,6 +60,7 @@
 - Reference Pack membership。
 - 模型能力表。
 - Agent shot、shot_dependency、thread/message、Eino checkpoint、task、event、HITL decision。
+- `sandbox_job` 和 generation job 的关联。
 - Workspace 模式复制/导入来源追踪。
 
 ## 2.1 Eino 调研结论
@@ -163,6 +167,44 @@ CREATE TYPE review_verdict AS ENUM (
 - Studio 和 Agent 共享的节点边只保留 dependency。多种边类型会增加用户理解成本，也会让 Studio 和 Agent 的运行依赖变得不清楚。
 - Agent 的分镜顺序和跨分镜依赖使用 `shot_dependency`，不复用 `media_edge` 的边类型。
 - 如果 PostgreSQL enum 后续变更成本太高，可以把 `operation_type`、`task_type`、`dependency_type` 等保留为 `TEXT + CHECK` 或配置校验。
+
+## 4.1 sandbox_job
+
+`sandbox_job` 是沙箱执行事实表，不替代 `generation_job`。一个 `generation_job` 可以委托一个或多个 `sandbox_job`，M4 首版先支持内部媒体 provider 写入一个关联 sandbox job。
+
+目标态：
+
+```sql
+CREATE TABLE sandbox_job (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    target_node_id UUID REFERENCES media_node(id) ON DELETE SET NULL,
+    generation_job_id UUID REFERENCES generation_job(id) ON DELETE SET NULL,
+    job_type TEXT NOT NULL,
+    operation_type TEXT NOT NULL,
+    status job_status NOT NULL DEFAULT 'pending',
+    sandbox_id TEXT,
+    command TEXT NOT NULL DEFAULT '',
+    cwd TEXT NOT NULL DEFAULT '/workspace',
+    input JSONB NOT NULL DEFAULT '{}',
+    output JSONB NOT NULL DEFAULT '{}',
+    exit_code INT,
+    stdout TEXT NOT NULL DEFAULT '',
+    stderr TEXT NOT NULL DEFAULT '',
+    duration_ms INT NOT NULL DEFAULT 0,
+    error_code TEXT,
+    error_message TEXT,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+规则：
+
+- `sandbox_job` 可以记录 Agent shell、内部 FFmpeg、Composer 合成、输入准备和后续脚本任务。
+- `sandbox_id`、workspace volume、临时路径、presigned URL 不参与 `artifact_version.input_hash`。
+- `generation_job.provider_response.sandbox_job_id` 是生产任务追踪 sandbox 执行的第一版轻量关联。
 
 ## 5. Workspace 层
 

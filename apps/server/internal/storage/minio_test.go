@@ -20,6 +20,19 @@ func TestStorageURLUsesWorkspaceBucket(t *testing.T) {
 	}
 }
 
+func TestKeyFromStorageURLExtractsWorkspaceObjectKey(t *testing.T) {
+	workspaceID := testWorkspaceID()
+	storageURL := StorageURL(workspaceID, "assets/input.mp4")
+
+	key, err := KeyFromStorageURL(workspaceID, storageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "assets/input.mp4" {
+		t.Fatalf("key = %q", key)
+	}
+}
+
 func TestPresignedSandboxURLUsesSandboxEndpoint(t *testing.T) {
 	service, err := New(config.MinIOConfig{
 		Endpoint:        "localhost:9000",

@@ -2,7 +2,7 @@
 
 **状态**：待评审
 **日期**：2026-06-17
-**范围**：为 Agent 驱动的媒体生产增加 workspace 级执行沙箱。
+**范围**：为 Agent 驱动和共享生产底座增加 workspace 级执行沙箱。
 **核心决策**：基于 OpenSandbox 实现沙箱基础设施；ClipAnvil 后端负责业务状态、权限、存储和产物发布。
 
 ## 1. 背景
@@ -30,6 +30,7 @@ ClipAnvil 只使用 OpenSandbox 做生命周期管理和沙箱内执行。Go 后
 
 - 为每个 workspace 提供一台类似 VM 的长生命周期执行环境。
 - 第一版只向 Agent 暴露两个工具：`sandbox_exec` 和 `submit_artifact`。
+- 为应用内部媒体操作和未来 Agent shell 提供统一 Sandbox Job Service；调用方不直接关心 sandbox id、volume、容器生命周期、输入下载或输出上传。
 - 通过稳定的 workspace volume 保留沙箱文件，使 sandbox container 可替换。
 - 沙箱内不放任何平台凭证。
 - 数据库是 workspace 与 sandbox 绑定关系的唯一事实源。
@@ -45,6 +46,7 @@ ClipAnvil 只使用 OpenSandbox 做生命周期管理和沙箱内执行。Go 后
 - 第一版不接入 OpenSandbox Credential Vault。
 - 第一版不承诺严格网络 egress 隔离。
 - 第一版不实现 generation job、artifact version、review record，除非后续里程碑单独加入。
+- Sandbox Job Service 可以在后续里程碑加入 `sandbox_job`，用来持久化每次 sandbox 执行事实。
 
 ## 4. 总体架构
 
@@ -69,7 +71,11 @@ Sandbox Container
 - OpenSandbox Server：sandbox 生命周期、Docker/Kubernetes runtime、资源限制、endpoint 解析、`execd` 注入。
 - Sandbox Container：命令执行、脚本、中间文件和 `/workspace/output` 下的最终文件。
 
+M4.S 后，Go 后端中的 `internal/sandbox.JobService` 是调用 OpenSandbox 的高层边界：它负责确保 workspace sandbox、初始化目录、下载输入、执行命令、检查输出、通过 sandbox-side presigned PUT 上传结果，并写入 `sandbox_job`。Production 和 Agent 只提交执行请求。
+
 Agent 感知上像是在操作一台项目 VM；平台边界仍然收口在 Go 后端。
+
+应用进程不得本地执行 FFmpeg、ImageMagick、yt-dlp、Python 脚本或 Agent shell 命令。这些命令都属于 sandbox execution。
 
 ## 5. Workspace 生命周期模型
 
