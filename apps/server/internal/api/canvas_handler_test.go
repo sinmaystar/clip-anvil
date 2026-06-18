@@ -33,13 +33,7 @@ func TestCanvasResponseIncludesEdges(t *testing.T) {
 	response := canvasResponse{
 		Camera: cameraResponse{X: 1, Y: 2, Zoom: 1},
 		Nodes:  []canvasNodeResponse{},
-		Edges: []db.MediaEdge{
-			{
-				FromNodeID: fromNodeID,
-				ToNodeID:   toNodeID,
-				EdgeType:   db.EdgeTypeDependency,
-			},
-		},
+		Edges:  toMediaEdgeResponses([]db.MediaEdge{{FromNodeID: fromNodeID, ToNodeID: toNodeID}}),
 	}
 
 	raw, err := json.Marshal(response)
@@ -48,7 +42,7 @@ func TestCanvasResponseIncludesEdges(t *testing.T) {
 	}
 
 	var payload struct {
-		Edges []db.MediaEdge `json:"edges"`
+		Edges []mediaEdgeResponse `json:"edges"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatalf("unmarshal canvas response: %v", err)
@@ -62,6 +56,9 @@ func TestCanvasResponseIncludesEdges(t *testing.T) {
 	if payload.Edges[0].ToNodeID != toNodeID {
 		t.Fatalf("to node id = %v, want %v", payload.Edges[0].ToNodeID, toNodeID)
 	}
+	if payload.Edges[0].EdgeType != "dependency" {
+		t.Fatalf("edge type = %q, want dependency", payload.Edges[0].EdgeType)
+	}
 }
 
 func TestCanvasResponseIncludesGroups(t *testing.T) {
@@ -70,7 +67,7 @@ func TestCanvasResponseIncludesGroups(t *testing.T) {
 	response := canvasResponse{
 		Camera: cameraResponse{X: 1, Y: 2, Zoom: 1},
 		Nodes:  []canvasNodeResponse{},
-		Edges:  []db.MediaEdge{},
+		Edges:  []mediaEdgeResponse{},
 		Groups: []canvasGroupResponse{
 			{
 				ID:      groupID,

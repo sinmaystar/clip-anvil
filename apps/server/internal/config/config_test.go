@@ -121,3 +121,172 @@ jwt:
 		t.Fatalf("MinIO.SandboxEndpoint = %q", cfg.MinIO.SandboxEndpoint)
 	}
 }
+
+func TestLoadProductionConfigDefaultsFromYaml(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	configData := []byte(`
+server:
+  port: 9999
+postgres:
+  dsn: "postgres://test:test@localhost:5432/test?sslmode=disable"
+redis:
+  addr: "localhost:6379"
+minio:
+  endpoint: "localhost:9000"
+  sandbox_endpoint: "host.docker.internal:9000"
+  access_key: "clipanvil"
+  secret_key: "clipanvil_dev"
+  use_ssl: false
+jwt:
+  secret: "test-secret"
+  expire_hours: 12
+production:
+  provider_mode: "mock"
+  default_provider: "mock"
+  default_text_model: "mock-text"
+  volcengine:
+    base_url: "https://ark.cn-beijing.volces.com"
+    text_model: "doubao-seed-1-6-lite"
+    image_model: "seedream-lite"
+    video_model: "seedance-lite"
+`)
+
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Chdir(dir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Production.ProviderMode != "mock" {
+		t.Fatalf("ProviderMode = %q, want mock", cfg.Production.ProviderMode)
+	}
+	if cfg.Production.DefaultTextModel != "mock-text" {
+		t.Fatalf("DefaultTextModel = %q, want mock-text", cfg.Production.DefaultTextModel)
+	}
+	if cfg.Production.Volcengine.APIKey != "" {
+		t.Fatalf("Volcengine.APIKey must not be set by committed yaml")
+	}
+}
+
+func TestLoadProductionConfigAllowsEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	configData := []byte(`
+server:
+  port: 9999
+postgres:
+  dsn: "postgres://test:test@localhost:5432/test?sslmode=disable"
+redis:
+  addr: "localhost:6379"
+minio:
+  endpoint: "localhost:9000"
+  sandbox_endpoint: "host.docker.internal:9000"
+  access_key: "clipanvil"
+  secret_key: "clipanvil_dev"
+  use_ssl: false
+jwt:
+  secret: "test-secret"
+  expire_hours: 12
+production:
+  provider_mode: "mock"
+  default_provider: "mock"
+  default_text_model: "mock-text"
+  volcengine:
+    base_url: "https://example.invalid"
+    text_model: "cheap-default"
+`)
+
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Chdir(dir)
+	t.Setenv("CLIPANVIL_PRODUCTION_PROVIDER_MODE", "real")
+	t.Setenv("CLIPANVIL_PRODUCTION_DEFAULT_PROVIDER", "volcengine")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY", "local-key")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TEXT_MODEL", "doubao-cheap")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Production.ProviderMode != "real" {
+		t.Fatalf("ProviderMode = %q, want real", cfg.Production.ProviderMode)
+	}
+	if cfg.Production.DefaultProvider != "volcengine" {
+		t.Fatalf("DefaultProvider = %q, want volcengine", cfg.Production.DefaultProvider)
+	}
+	if cfg.Production.Volcengine.APIKey != "local-key" {
+		t.Fatalf("Volcengine.APIKey was not loaded from env")
+	}
+	if cfg.Production.Volcengine.TextModel != "doubao-cheap" {
+		t.Fatalf("Volcengine.TextModel = %q, want doubao-cheap", cfg.Production.Volcengine.TextModel)
+	}
+}
+
+func TestLoadProductionConfigReadsDotEnv(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	configData := []byte(`
+server:
+  port: 9999
+postgres:
+  dsn: "postgres://test:test@localhost:5432/test?sslmode=disable"
+redis:
+  addr: "localhost:6379"
+minio:
+  endpoint: "localhost:9000"
+  sandbox_endpoint: "host.docker.internal:9000"
+  access_key: "clipanvil"
+  secret_key: "clipanvil_dev"
+  use_ssl: false
+jwt:
+  secret: "test-secret"
+  expire_hours: 12
+production:
+  provider_mode: "mock"
+  default_provider: "mock"
+  default_text_model: "mock-text"
+`)
+
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	envData := []byte(`
+CLIPANVIL_PRODUCTION_PROVIDER_MODE=real
+CLIPANVIL_PRODUCTION_DEFAULT_PROVIDER=volcengine
+CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY=dotenv-key
+`)
+	if err := os.WriteFile(filepath.Join(dir, ".env"), envData, 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	defer func() {
+		_ = os.Unsetenv("CLIPANVIL_PRODUCTION_PROVIDER_MODE")
+		_ = os.Unsetenv("CLIPANVIL_PRODUCTION_DEFAULT_PROVIDER")
+		_ = os.Unsetenv("CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY")
+	}()
+
+	t.Chdir(dir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Production.ProviderMode != "real" {
+		t.Fatalf("ProviderMode = %q, want real", cfg.Production.ProviderMode)
+	}
+	if cfg.Production.DefaultProvider != "volcengine" {
+		t.Fatalf("DefaultProvider = %q, want volcengine", cfg.Production.DefaultProvider)
+	}
+	if cfg.Production.Volcengine.APIKey != "dotenv-key" {
+		t.Fatalf("Volcengine.APIKey was not loaded from .env")
+	}
+}

@@ -15,14 +15,12 @@ const createMediaEdge = `-- name: CreateMediaEdge :one
 INSERT INTO media_edge (
     workspace_id,
     from_node_id,
-    to_node_id,
-    edge_type
+    to_node_id
 ) VALUES (
     $1,
     $2,
-    $3,
-    'dependency'
-) RETURNING id, workspace_id, from_node_id, to_node_id, edge_type, transition_type, transition_duration, source, metadata, created_at
+    $3
+) RETURNING id, workspace_id, from_node_id, to_node_id, source, metadata, created_at
 `
 
 type CreateMediaEdgeParams struct {
@@ -39,9 +37,6 @@ func (q *Queries) CreateMediaEdge(ctx context.Context, arg CreateMediaEdgeParams
 		&i.WorkspaceID,
 		&i.FromNodeID,
 		&i.ToNodeID,
-		&i.EdgeType,
-		&i.TransitionType,
-		&i.TransitionDuration,
 		&i.Source,
 		&i.Metadata,
 		&i.CreatedAt,
@@ -60,10 +55,9 @@ func (q *Queries) DeleteMediaEdge(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getDependencyEdgeByEndpoints = `-- name: GetDependencyEdgeByEndpoints :one
-SELECT id, workspace_id, from_node_id, to_node_id, edge_type, transition_type, transition_duration, source, metadata, created_at FROM media_edge
+SELECT id, workspace_id, from_node_id, to_node_id, source, metadata, created_at FROM media_edge
 WHERE from_node_id = $1
   AND to_node_id = $2
-  AND edge_type = 'dependency'
 `
 
 type GetDependencyEdgeByEndpointsParams struct {
@@ -79,9 +73,6 @@ func (q *Queries) GetDependencyEdgeByEndpoints(ctx context.Context, arg GetDepen
 		&i.WorkspaceID,
 		&i.FromNodeID,
 		&i.ToNodeID,
-		&i.EdgeType,
-		&i.TransitionType,
-		&i.TransitionDuration,
 		&i.Source,
 		&i.Metadata,
 		&i.CreatedAt,
@@ -90,7 +81,7 @@ func (q *Queries) GetDependencyEdgeByEndpoints(ctx context.Context, arg GetDepen
 }
 
 const getMediaEdgeByID = `-- name: GetMediaEdgeByID :one
-SELECT id, workspace_id, from_node_id, to_node_id, edge_type, transition_type, transition_duration, source, metadata, created_at FROM media_edge
+SELECT id, workspace_id, from_node_id, to_node_id, source, metadata, created_at FROM media_edge
 WHERE id = $1
 `
 
@@ -102,9 +93,6 @@ func (q *Queries) GetMediaEdgeByID(ctx context.Context, id pgtype.UUID) (MediaEd
 		&i.WorkspaceID,
 		&i.FromNodeID,
 		&i.ToNodeID,
-		&i.EdgeType,
-		&i.TransitionType,
-		&i.TransitionDuration,
 		&i.Source,
 		&i.Metadata,
 		&i.CreatedAt,
@@ -113,7 +101,7 @@ func (q *Queries) GetMediaEdgeByID(ctx context.Context, id pgtype.UUID) (MediaEd
 }
 
 const listMediaEdgesByWorkspace = `-- name: ListMediaEdgesByWorkspace :many
-SELECT id, workspace_id, from_node_id, to_node_id, edge_type, transition_type, transition_duration, source, metadata, created_at FROM media_edge
+SELECT id, workspace_id, from_node_id, to_node_id, source, metadata, created_at FROM media_edge
 WHERE workspace_id = $1
 ORDER BY created_at
 `
@@ -132,9 +120,6 @@ func (q *Queries) ListMediaEdgesByWorkspace(ctx context.Context, workspaceID pgt
 			&i.WorkspaceID,
 			&i.FromNodeID,
 			&i.ToNodeID,
-			&i.EdgeType,
-			&i.TransitionType,
-			&i.TransitionDuration,
 			&i.Source,
 			&i.Metadata,
 			&i.CreatedAt,
@@ -150,9 +135,8 @@ func (q *Queries) ListMediaEdgesByWorkspace(ctx context.Context, workspaceID pgt
 }
 
 const listOutgoingDependencyEdges = `-- name: ListOutgoingDependencyEdges :many
-SELECT id, workspace_id, from_node_id, to_node_id, edge_type, transition_type, transition_duration, source, metadata, created_at FROM media_edge
+SELECT id, workspace_id, from_node_id, to_node_id, source, metadata, created_at FROM media_edge
 WHERE from_node_id = $1
-  AND edge_type = 'dependency'
 ORDER BY created_at
 `
 
@@ -170,9 +154,6 @@ func (q *Queries) ListOutgoingDependencyEdges(ctx context.Context, fromNodeID pg
 			&i.WorkspaceID,
 			&i.FromNodeID,
 			&i.ToNodeID,
-			&i.EdgeType,
-			&i.TransitionType,
-			&i.TransitionDuration,
 			&i.Source,
 			&i.Metadata,
 			&i.CreatedAt,

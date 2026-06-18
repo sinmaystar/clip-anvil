@@ -2,13 +2,11 @@
 INSERT INTO media_edge (
     workspace_id,
     from_node_id,
-    to_node_id,
-    edge_type
+    to_node_id
 ) VALUES (
     $1,
     $2,
-    $3,
-    'dependency'
+    $3
 ) RETURNING *;
 
 -- name: ListMediaEdgesByWorkspace :many
@@ -23,13 +21,11 @@ WHERE id = $1;
 -- name: GetDependencyEdgeByEndpoints :one
 SELECT * FROM media_edge
 WHERE from_node_id = $1
-  AND to_node_id = $2
-  AND edge_type = 'dependency';
+  AND to_node_id = $2;
 
 -- name: ListOutgoingDependencyEdges :many
 SELECT * FROM media_edge
 WHERE from_node_id = $1
-  AND edge_type = 'dependency'
 ORDER BY created_at;
 
 -- name: DeleteMediaEdge :exec

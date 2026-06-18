@@ -82,8 +82,9 @@ func (h *EdgeHandler) Create(ctx context.Context, c *app.RequestContext) {
 		writeError(c, result.status, result.message)
 		return
 	}
-	h.broadcast(result.edge.WorkspaceID, "EdgeCreated", map[string]any{"edge": result.edge})
-	c.JSON(consts.StatusOK, result.edge)
+	edgeResponse := toMediaEdgeResponse(result.edge)
+	h.broadcast(result.edge.WorkspaceID, "EdgeCreated", map[string]any{"edge": edgeResponse})
+	c.JSON(consts.StatusOK, edgeResponse)
 }
 
 func (h *EdgeHandler) Delete(ctx context.Context, c *app.RequestContext) {

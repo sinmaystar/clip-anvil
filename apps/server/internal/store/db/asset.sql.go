@@ -23,14 +23,14 @@ INSERT INTO media_asset (
     metadata
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8
-) RETURNING id, workspace_id, type, mime, storage_url, thumbnail_url, duration_ms, size_bytes, metadata, created_at
+) RETURNING id, workspace_id, type, mime, storage_url, thumbnail_url, duration_ms, size_bytes, metadata, created_at, text_content
 `
 
 type CreateMediaAssetParams struct {
 	WorkspaceID  pgtype.UUID `json:"workspace_id"`
-	Type         MediaType   `json:"type"`
+	Type         AssetType   `json:"type"`
 	Mime         string      `json:"mime"`
-	StorageUrl   string      `json:"storage_url"`
+	StorageUrl   pgtype.Text `json:"storage_url"`
 	ThumbnailUrl pgtype.Text `json:"thumbnail_url"`
 	DurationMs   pgtype.Int4 `json:"duration_ms"`
 	SizeBytes    pgtype.Int8 `json:"size_bytes"`
@@ -60,12 +60,60 @@ func (q *Queries) CreateMediaAsset(ctx context.Context, arg CreateMediaAssetPara
 		&i.SizeBytes,
 		&i.Metadata,
 		&i.CreatedAt,
+		&i.TextContent,
+	)
+	return i, err
+}
+
+const createTextMediaAsset = `-- name: CreateTextMediaAsset :one
+INSERT INTO media_asset (
+    workspace_id,
+    type,
+    mime,
+    storage_url,
+    text_content,
+    thumbnail_url,
+    duration_ms,
+    size_bytes,
+    metadata
+) VALUES (
+    $1, 'text', 'text/plain; charset=utf-8', NULL, $2, NULL, NULL, $3, $4
+) RETURNING id, workspace_id, type, mime, storage_url, thumbnail_url, duration_ms, size_bytes, metadata, created_at, text_content
+`
+
+type CreateTextMediaAssetParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	TextContent pgtype.Text `json:"text_content"`
+	SizeBytes   pgtype.Int8 `json:"size_bytes"`
+	Metadata    []byte      `json:"metadata"`
+}
+
+func (q *Queries) CreateTextMediaAsset(ctx context.Context, arg CreateTextMediaAssetParams) (MediaAsset, error) {
+	row := q.db.QueryRow(ctx, createTextMediaAsset,
+		arg.WorkspaceID,
+		arg.TextContent,
+		arg.SizeBytes,
+		arg.Metadata,
+	)
+	var i MediaAsset
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Type,
+		&i.Mime,
+		&i.StorageUrl,
+		&i.ThumbnailUrl,
+		&i.DurationMs,
+		&i.SizeBytes,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.TextContent,
 	)
 	return i, err
 }
 
 const getMediaAssetByID = `-- name: GetMediaAssetByID :one
-SELECT id, workspace_id, type, mime, storage_url, thumbnail_url, duration_ms, size_bytes, metadata, created_at
+SELECT id, workspace_id, type, mime, storage_url, thumbnail_url, duration_ms, size_bytes, metadata, created_at, text_content
 FROM media_asset
 WHERE id = $1
 `
@@ -84,12 +132,13 @@ func (q *Queries) GetMediaAssetByID(ctx context.Context, id pgtype.UUID) (MediaA
 		&i.SizeBytes,
 		&i.Metadata,
 		&i.CreatedAt,
+		&i.TextContent,
 	)
 	return i, err
 }
 
 const listMediaAssetsByWorkspace = `-- name: ListMediaAssetsByWorkspace :many
-SELECT id, workspace_id, type, mime, storage_url, thumbnail_url, duration_ms, size_bytes, metadata, created_at
+SELECT id, workspace_id, type, mime, storage_url, thumbnail_url, duration_ms, size_bytes, metadata, created_at, text_content
 FROM media_asset
 WHERE workspace_id = $1
 ORDER BY created_at
@@ -115,6 +164,7 @@ func (q *Queries) ListMediaAssetsByWorkspace(ctx context.Context, workspaceID pg
 			&i.SizeBytes,
 			&i.Metadata,
 			&i.CreatedAt,
+			&i.TextContent,
 		); err != nil {
 			return nil, err
 		}

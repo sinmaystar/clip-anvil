@@ -196,7 +196,7 @@ Composer 负责成片合成。
 
 - 读取已确认的视频 winner。
 - 读取 BGM、旁白、字幕和转场要求。
-- 调用 OpenSandbox/ffmpeg 合成成片。
+- 通过 Sandbox Job Service 在 sandbox 内调用 ffmpeg 合成成片。
 - 生成最终 artifact version。
 - 写入合成日志、耗时、成本和错误。
 
@@ -901,7 +901,7 @@ Producer：
 
 Composer：
 1. 拉取 selected video winners。
-2. 执行 ffmpeg 合成。
+2. 通过 Sandbox Job Service 执行 ffmpeg 合成。
 3. 写 final asset 和 artifact version。
 4. 写 final_video_ready event。
 ```
@@ -1127,7 +1127,7 @@ Studio 当前只暴露 dependency；Agent 模式可内部使用 shot_dependency�
 交付：
 
 - Composer task。
-- OpenSandbox/ffmpeg 合成。
+- Sandbox Job Service / ffmpeg 合成。
 - final video artifact。
 - 成片确认卡片。
 

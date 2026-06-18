@@ -142,6 +142,15 @@ func StorageURL(workspaceID pgtype.UUID, key string) string {
 	return BucketName(workspaceID) + "/" + strings.TrimLeft(key, "/")
 }
 
+func KeyFromStorageURL(workspaceID pgtype.UUID, storageURL string) (string, error) {
+	prefix := BucketName(workspaceID) + "/"
+	storageURL = strings.TrimSpace(storageURL)
+	if !strings.HasPrefix(storageURL, prefix) {
+		return "", fmt.Errorf("storage url does not belong to workspace")
+	}
+	return CleanKey(strings.TrimPrefix(storageURL, prefix))
+}
+
 func (s *Service) StorageURL(workspaceID pgtype.UUID, key string) string {
 	return StorageURL(workspaceID, key)
 }

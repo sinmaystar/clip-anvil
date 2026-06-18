@@ -19,6 +19,7 @@ import (
 	"github.com/sinmaystar/clip-anvil/internal/api"
 	"github.com/sinmaystar/clip-anvil/internal/auth"
 	"github.com/sinmaystar/clip-anvil/internal/config"
+	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/sandbox"
 	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -76,6 +77,24 @@ func main() {
 	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
 	canvasHandler := api.NewCanvasHandler(queries)
 	nodeHandler := api.NewNodeHandler(pgPool, queries, canvasHub)
+	providerRegistry := production.NewProviderRegistry(production.ProviderConfig{
+		ProviderMode:     cfg.Production.ProviderMode,
+		DefaultProvider:  cfg.Production.DefaultProvider,
+		DefaultTextModel: cfg.Production.DefaultTextModel,
+		Volcengine: production.VolcengineProviderConfig{
+			APIKey:     cfg.Production.Volcengine.APIKey,
+			BaseURL:    cfg.Production.Volcengine.BaseURL,
+			TextModel:  cfg.Production.Volcengine.TextModel,
+			ImageModel: cfg.Production.Volcengine.ImageModel,
+			VideoModel: cfg.Production.Volcengine.VideoModel,
+		},
+	})
+	sandboxJobService := sandbox.NewJobService(sandboxManager, sandboxClient, queries, storageService)
+	providerRegistry.Register("internal_ffmpeg", production.NewInternalFFmpegProvider(sandboxJobService))
+	productionService := production.NewService(pgPool, queries, providerRegistry, storageService)
+	runHandler := api.NewRunHandler(productionService, queries, storageService)
+	modelHandler := api.NewModelHandler(queries)
+	referencePackHandler := api.NewReferencePackHandler(pgPool, queries, productionService)
 	edgeHandler := api.NewEdgeHandler(pgPool, queries, canvasHub)
 	groupHandler := api.NewGroupHandler(pgPool, queries, canvasHub)
 	uploadHandler := api.NewUploadHandler(queries, storageService)
@@ -148,14 +167,23 @@ func main() {
 	h.POST("/api/workspaces/:id/storage/presigned-upload", authMiddleware, storageHandler.PresignedUpload)
 	h.POST("/api/workspaces/:id/storage/complete-upload", authMiddleware, storageHandler.CompleteUpload)
 	h.GET("/api/workspaces/:id", authMiddleware, workspaceHandler.Get)
+	h.GET("/api/model-capabilities", authMiddleware, modelHandler.ListCapabilities)
 
 	h.POST("/api/nodes", authMiddleware, nodeHandler.Create)
 	h.POST("/api/nodes/", authMiddleware, nodeHandler.Create)
 	h.PATCH("/api/nodes/batch-position", authMiddleware, nodeHandler.BatchUpdatePosition)
+	h.POST("/api/nodes/:id/run", authMiddleware, runHandler.RunNode)
+	h.GET("/api/nodes/:id/versions", authMiddleware, runHandler.ListNodeVersions)
+	h.GET("/api/nodes/:id/production-state", authMiddleware, runHandler.GetNodeProductionState)
+	h.GET("/api/nodes/:id/jobs", authMiddleware, runHandler.ListNodeJobs)
+	h.GET("/api/nodes/:id/stale-reasons", authMiddleware, runHandler.ListStaleReasons)
 	h.GET("/api/nodes/:id/inputs", authMiddleware, nodeHandler.Inputs)
 	h.GET("/api/nodes/:id", authMiddleware, nodeHandler.Get)
 	h.PATCH("/api/nodes/:id", authMiddleware, nodeHandler.Update)
 	h.DELETE("/api/nodes/:id", authMiddleware, nodeHandler.Delete)
+
+	h.GET("/api/reference-packs/:id/items", authMiddleware, referencePackHandler.ListItems)
+	h.PUT("/api/reference-packs/:id/items", authMiddleware, referencePackHandler.ReplaceItems)
 
 	h.POST("/api/groups", authMiddleware, groupHandler.Create)
 	h.POST("/api/groups/", authMiddleware, groupHandler.Create)
@@ -168,6 +196,10 @@ func main() {
 	h.POST("/api/edges", authMiddleware, edgeHandler.Create)
 	h.POST("/api/edges/", authMiddleware, edgeHandler.Create)
 	h.DELETE("/api/edges/:id", authMiddleware, edgeHandler.Delete)
+	h.GET("/api/jobs/:id", authMiddleware, runHandler.GetJob)
+	h.GET("/api/jobs/:id/sandbox-jobs", authMiddleware, runHandler.ListJobSandboxJobs)
+	h.POST("/api/jobs/:id/retry", authMiddleware, runHandler.RetryJob)
+	h.GET("/api/sandbox-jobs/:id", authMiddleware, runHandler.GetSandboxJob)
 
 	h.GET("/ws/canvas", canvasWSHandler.Canvas)
 

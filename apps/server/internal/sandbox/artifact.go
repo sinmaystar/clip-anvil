@@ -103,9 +103,9 @@ func (s *ArtifactService) Submit(ctx context.Context, sandboxID string, workspac
 	}
 	asset, err := s.repository.CreateMediaAsset(ctx, db.CreateMediaAssetParams{
 		WorkspaceID: workspaceID,
-		Type:        db.MediaType(mediaType),
+		Type:        db.AssetType(mediaType),
 		Mime:        info.Mime,
-		StorageUrl:  s.storage.StorageURL(workspaceID, objectName),
+		StorageUrl:  pgtype.Text{String: s.storage.StorageURL(workspaceID, objectName), Valid: true},
 		SizeBytes:   pgtype.Int8{Int64: info.SizeBytes, Valid: true},
 		Metadata:    []byte("{}"),
 	})
@@ -189,14 +189,14 @@ func (s *ArtifactService) upsertNode(ctx context.Context, workspaceID pgtype.UUI
 		if !ok {
 			return db.MediaNode{}, errors.New("invalid node id")
 		}
-		node, err := s.repository.UpdateMediaNodeAsset(ctx, db.UpdateMediaNodeAssetParams{
+		_, err := s.repository.UpdateMediaNodeAsset(ctx, db.UpdateMediaNodeAssetParams{
 			ID:      nodeID,
 			AssetID: asset.ID,
 		})
 		if err != nil {
 			return db.MediaNode{}, err
 		}
-		node, err = s.repository.UpdateMediaNodeStatus(ctx, db.UpdateMediaNodeStatusParams{
+		node, err := s.repository.UpdateMediaNodeStatus(ctx, db.UpdateMediaNodeStatusParams{
 			ID:     nodeID,
 			Status: db.NodeStatusSucceeded,
 		})
@@ -213,7 +213,7 @@ func (s *ArtifactService) upsertNode(ctx context.Context, workspaceID pgtype.UUI
 	}
 	node, err := s.repository.CreateAgentMediaNode(ctx, db.CreateAgentMediaNodeParams{
 		WorkspaceID: workspaceID,
-		NodeType:    asset.Type,
+		NodeType:    nodeTypeForAssetType(asset.Type),
 		Title:       title,
 		Prompt:      "",
 		AssetID:     asset.ID,
@@ -227,6 +227,21 @@ func (s *ArtifactService) upsertNode(ctx context.Context, workspaceID pgtype.UUI
 	}
 	s.broadcast(workspaceID, "NodeCreated", map[string]any{"node": node})
 	return node, nil
+}
+
+func nodeTypeForAssetType(assetType db.AssetType) db.NodeType {
+	switch assetType {
+	case db.AssetTypeText:
+		return db.NodeTypeText
+	case db.AssetTypeImage:
+		return db.NodeTypeImage
+	case db.AssetTypeVideo:
+		return db.NodeTypeVideo
+	case db.AssetTypeAudio:
+		return db.NodeTypeAudio
+	default:
+		return db.NodeType("")
+	}
 }
 
 func (s *ArtifactService) broadcast(workspaceID pgtype.UUID, event string, payload map[string]any) {

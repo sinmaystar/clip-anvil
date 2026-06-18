@@ -131,7 +131,7 @@ func (h *StorageHandler) CompleteUpload(ctx context.Context, c *app.RequestConte
 		WorkspaceID: workspaceID,
 		Type:        mediaType,
 		Mime:        object.MIME,
-		StorageUrl:  object.StorageURL,
+		StorageUrl:  pgtype.Text{String: object.StorageURL, Valid: true},
 		SizeBytes:   pgtype.Int8{Int64: object.Size, Valid: true},
 		Metadata:    []byte("{}"),
 	})

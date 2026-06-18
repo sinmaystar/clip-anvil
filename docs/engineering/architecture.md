@@ -136,14 +136,17 @@ apps/server/internal/
 
 ## 迭代里程碑
 
+当前里程碑以 `docs/milestones/` 为准；下表保留工程视角的当前状态摘要。
+
 | 里程碑 | 范围 | 关键交付 |
 |---|---|---|
 | M0 基建 | Monorepo 骨架 + compose + 前后端 hello world | ✅ 已完成 |
 | M1 Studio 画布基础 | 注册登录 + Workspace + 文本节点画布 + 坐标持久化 | 用户可创建项目、创建文本节点、拖拽后刷新保持位置 |
 | M1.x Studio 增量 | image/video/audio 节点 + 连线 + 分组 + 资源树 + 属性面板 + WebSocket + 上传 + 自动布局 | ✅ 已完成核心 DAG 编辑能力；生成/版本仍后续 |
 | M2 OpenSandbox 工作区沙箱 | OpenSandbox Server + workspace_sandbox + sandbox exec + MinIO 传输 + artifact submit | ✅ 基础链路已部分落地；端到端 Agent 集成仍后续 |
-| M2.x Agent 对话 | 对话面板 + 单 Agent + 生产级工具 + PSS + 画布只读 + Gate | 用户可通过对话让 Agent 创建节点和生成 |
-| M3 MultiAgent + Skill | Producer + 5 Sub-Agent + 内置 Skill + 评审重试 + Stale 传播 | Agent 自动完成需求到成片全流程 |
-| M4 一致性与质量 | 跨镜头一致性 + 多 Skill + 成本管理 + 审计 + 模式切换 | 生成视频可用性和可控性提升 |
+| M3 Workspace 模式入口 | Studio / Agent Workspace 入口、路由分流和权限边界 | ✅ 已完成 |
+| M4 共享生产底座 | GenerationIntent、Provider Bridge、Sandbox Job Service、版本、stale、失败重试、Production Read API | ✅ 已完成 |
+| M5 Studio 专业手动模式 | 富属性面板、Prompt `@`、Reference Pack UI、手动运行和版本管理 | 待实施 |
+| M6 Agent 自动生产模式 | Producer / Craftsman / Worker / Composer 复用 M4 生产底座完成自动生产 | 待实施 |
 
 详见 [整体业务交互设计 — 实施路线](../design/overview.md)。
