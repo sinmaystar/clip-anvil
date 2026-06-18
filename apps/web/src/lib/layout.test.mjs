@@ -60,6 +60,25 @@ describe("layout", () => {
     assert.ok(gamma);
     assert.equal(isPointInside(gamma, groupBounds), false);
   });
+
+  it("shifts the graph to the provided visible origin", () => {
+    const result = computeDagreLayout({
+      direction: "LR",
+      edges: [edge("alpha-beta", "alpha", "beta")],
+      groups: [],
+      nodes: [node("alpha", 0, 0), node("beta", 240, 0)],
+      origin: { x: 360, y: 112 },
+    });
+
+    assert.equal(
+      Math.min(...result.positions.map((position) => position.canvas_x)),
+      360,
+    );
+    assert.equal(
+      Math.min(...result.positions.map((position) => position.canvas_y)),
+      112,
+    );
+  });
 });
 
 function isPointInside(point, bounds) {

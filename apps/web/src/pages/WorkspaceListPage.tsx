@@ -48,7 +48,7 @@ export function WorkspaceListPage() {
             }}
             type="button"
           >
-            + 新建项目
+            新建项目
           </button>
         </div>
 
@@ -82,12 +82,13 @@ export function WorkspaceListPage() {
                 onClick={() => navigate(`/workspaces/${workspace.id}`)}
                 type="button"
               >
-                <h2 className="workspace-card-title">
-                  {workspace.name}
-                </h2>
-                <p className="workspace-card-meta">
-                  {formatDate(workspace.created_at)} 创建
-                </p>
+                <span className="workspace-card-cover" aria-hidden="true" />
+                <span className="workspace-card-body">
+                  <span className="workspace-card-title">{workspace.name}</span>
+                  <span className="workspace-card-meta">
+                    {formatDate(workspace.created_at)} 创建
+                  </span>
+                </span>
               </button>
             ))}
           </div>

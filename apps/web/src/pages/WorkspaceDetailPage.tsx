@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type SyntheticEvent,
 } from "react";
 import { useNavigate, useParams } from "react-router";
@@ -16,14 +17,11 @@ import {
   createMediaEdge,
   createMediaNode,
   deleteMediaEdge,
-  deleteMediaGroup,
   deleteMediaNode,
   fetchCanvas,
   fetchWorkspace,
   updateCamera,
-  updateMediaGroup,
   updateMediaNode,
-  replaceMediaGroupNodes,
   type CanvasPayload,
   type MediaEdge,
   type MediaGroup,
@@ -45,7 +43,6 @@ import {
   type DragConnection,
 } from "../components/ConnectionOverlay";
 import { FileDropZone } from "../components/FileDropZone";
-import { PropertyPanel } from "../components/PropertyPanel";
 import { ResourceTree } from "../components/ResourceTree";
 import {
   connectCanvasSocket,
@@ -66,13 +63,11 @@ import {
   connectionFailureFeedback,
   type ConnectionFeedback,
 } from "../lib/connectionFeedback";
-import { nodeIdsWith, nodeIdsWithout } from "../lib/canvasSelectors";
+import { nodeIdsWithout } from "../lib/canvasSelectors";
 import { isValidConnectionTarget } from "../lib/connectionGeometry";
 import {
   getContainingGroupId,
-  getGroupMemberLayoutPositions,
   getGroupMemberMovePositions,
-  type CanvasPosition,
   type GroupBounds as GroupHitBounds,
 } from "../lib/groupLayout";
 import { useAppearanceStore } from "../stores/appearance";
@@ -124,28 +119,28 @@ const nodeCreateOptions: Array<{
     type: "text",
     title: "文本节点",
     description: "提示词 / 文案 / 旁白",
-    icon: "T",
+    icon: "文本",
     defaultTitle: "未命名文本",
   },
   {
     type: "image",
     title: "图片节点",
     description: "参考图 / 产品图 / 画面素材",
-    icon: "I",
+    icon: "图片",
     defaultTitle: "未命名图片",
   },
   {
     type: "video",
     title: "视频节点",
     description: "镜头 / 片段 / 成片",
-    icon: "V",
+    icon: "视频",
     defaultTitle: "未命名视频",
   },
   {
     type: "audio",
     title: "音频节点",
     description: "配乐 / 旁白 / 音效",
-    icon: "A",
+    icon: "音频",
     defaultTitle: "未命名音频",
   },
 ];
@@ -154,11 +149,16 @@ const nodeEditorTypeMeta: Record<
   MediaNode["node_type"],
   { label: string; emptyTitle: string }
 > = {
-  text: { label: "Text", emptyTitle: "未命名文本" },
-  image: { label: "Image", emptyTitle: "未命名图片" },
-  video: { label: "Video", emptyTitle: "未命名视频" },
-  audio: { label: "Audio", emptyTitle: "未命名音频" },
+  text: { label: "文本", emptyTitle: "未命名文本" },
+  image: { label: "图片", emptyTitle: "未命名图片" },
+  video: { label: "视频", emptyTitle: "未命名视频" },
+  audio: { label: "音频", emptyTitle: "未命名音频" },
 };
+
+const layoutSafeInset = {
+  collapsed: { x: 120, y: 112 },
+  expanded: { x: 360, y: 112 },
+} as const;
 
 export function WorkspaceDetailPage() {
   const navigate = useNavigate();
@@ -172,7 +172,6 @@ export function WorkspaceDetailPage() {
   const promptSaveTimersRef = useRef(new Map<string, number>());
   const restoringNodeIdsRef = useRef(new Set<string>());
   const pendingConnectionRef = useRef<PendingConnection | null>(null);
-  const groupLayoutVersionRef = useRef(0);
   const shapeUtils = useMemo(() => [GroupContainerShapeUtil, MediaShapeUtil], []);
   const tldrawComponents = useMemo<TLUiComponents>(
     () => ({
@@ -213,8 +212,6 @@ export function WorkspaceDetailPage() {
   );
   const [dragConnection, setDragConnection] =
     useState<DragConnection | null>(null);
-  const [hoveredConnectionTargetId, setHoveredConnectionTargetId] =
-    useState<string | null>(null);
   const [connectionFeedback, setConnectionFeedback] =
     useState<ConnectionFeedback | null>(null);
   const [connectionStatus, setConnectionStatus] =
@@ -227,6 +224,10 @@ export function WorkspaceDetailPage() {
   const token = useAuthStore((state) => state.token);
   const account = useAuthStore((state) => state.account);
   const logout = useAuthStore((state) => state.logout);
+
+  useEffect(() => {
+    editor?.user.updateUserPreferences({ colorScheme: appearance });
+  }, [appearance, editor]);
 
   const workspaceQuery = useQuery({
     queryKey: ["workspace", id],
@@ -285,7 +286,6 @@ export function WorkspaceDetailPage() {
         pointerId: pointer?.pointerId ?? null,
       };
       setConnectionSourceId(fromNodeId);
-      setHoveredConnectionTargetId(null);
       setContextMenu(null);
 
       if (pointer && editorRef.current) {
@@ -351,166 +351,6 @@ export function WorkspaceDetailPage() {
     },
   });
 
-  const deleteGroupMutation = useMutation({
-    mutationFn: deleteMediaGroup,
-    onSuccess: (_, groupId) => {
-      queryClient.setQueryData<CanvasPayload>(
-        ["workspace", id, "canvas"],
-        (current) => removeCanvasGroup(current, groupId),
-      );
-      editorRef.current?.store.mergeRemoteChanges(() => {
-        editorRef.current?.deleteShapes([shapeIdForGroup(groupId)]);
-      });
-      setSelectedGroupId(null);
-    },
-  });
-
-  const renameGroupMutation = useMutation({
-    mutationFn: ({ groupId, name }: { groupId: string; name: string }) =>
-      updateMediaGroup(groupId, { name }),
-    onSuccess: (group, { groupId }) => {
-      queryClient.setQueryData<CanvasPayload>(
-        ["workspace", id, "canvas"],
-        (current) => updateCanvasGroupMeta(current, groupId, group),
-      );
-    },
-  });
-
-  const replaceGroupNodesMutation = useMutation({
-    mutationFn: ({
-      groupId,
-      nodeIds,
-    }: {
-      groupId: string;
-      nodeIds: string[];
-    }) => replaceMediaGroupNodes(groupId, nodeIds),
-    onMutate: async ({ groupId, nodeIds }) => {
-      const queryKey = ["workspace", id, "canvas"] as const;
-      await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<CanvasPayload>(queryKey);
-      const layoutVersion = groupLayoutVersionRef.current + 1;
-      groupLayoutVersionRef.current = layoutVersion;
-      const group = previous?.groups.find((item) => item.id === groupId);
-      const previousNodeIds = group?.node_ids ?? [];
-      const groupShape = editorRef.current?.getShape(shapeIdForGroup(groupId));
-      const fallbackGroupShape =
-        group && previous ? groupToShape(group, previous.nodes) : null;
-      const groupX = groupShape?.x ?? fallbackGroupShape?.x ?? 0;
-      const groupY = groupShape?.y ?? fallbackGroupShape?.y ?? 0;
-      const nextGroup = group ? { ...group, node_ids: nodeIds } : null;
-      const layoutPositions =
-        previous && nextGroup
-          ? getGroupMemberLayoutPositions({
-              group: nextGroup,
-              nodes: previous.nodes,
-              groupX,
-              groupY,
-            })
-          : [];
-      queryClient.setQueryData<CanvasPayload>(queryKey, (current) =>
-        replaceCanvasGroupNodeIdsAndPositions(
-          current,
-          groupId,
-          nodeIds,
-          layoutPositions,
-        ),
-      );
-      for (const position of layoutPositions) {
-        const node = previous?.nodes.find((item) => item.id === position.id);
-        if (node) {
-          nodeSnapshotsRef.current.set(node.id, {
-            ...node,
-            canvas_x: position.canvas_x,
-            canvas_y: position.canvas_y,
-            group_id: groupId,
-          });
-        }
-      }
-      editorRef.current?.store.mergeRemoteChanges(() => {
-        editorRef.current?.updateShapes(
-          layoutPositions.map((position) => ({
-            id: shapeIdForNode(position.id),
-            type: "media",
-            x: position.canvas_x,
-            y: position.canvas_y,
-          })),
-        );
-      });
-      return {
-        addedNodeIds: nodeIds.filter((nodeId) => !previousNodeIds.includes(nodeId)),
-        groupId,
-        layoutPositions,
-        layoutVersion,
-        previous,
-        queryKey,
-      };
-    },
-    onError: (_error, _variables, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(context.queryKey, context.previous);
-        if (editorRef.current) {
-          syncEditorWithCanvas(editorRef.current, context.previous);
-        }
-      }
-    },
-    onSuccess: (response, _variables, context) => {
-      const group = groupResponseToMediaGroup(response);
-      queryClient.setQueryData<CanvasPayload>(
-        ["workspace", id, "canvas"],
-        (current) => appendCanvasGroup(current, group),
-      );
-      if (context?.layoutPositions.length) {
-        void batchUpdateNodePositions(context.layoutPositions)
-          .then(async () => {
-            if (context.layoutVersion !== groupLayoutVersionRef.current) {
-              return;
-            }
-            await queryClient.cancelQueries({
-              queryKey: ["workspace", id, "canvas"],
-            });
-            queryClient.setQueryData<CanvasPayload>(
-              ["workspace", id, "canvas"],
-              (current) =>
-                updateCanvasNodePositions(current, context.layoutPositions),
-            );
-            const current = queryClient.getQueryData<CanvasPayload>([
-              "workspace",
-              id,
-              "canvas",
-            ]);
-            if (current && editorRef.current) {
-              syncEditorWithCanvas(editorRef.current, current);
-            }
-          })
-          .catch(() => {
-            void queryClient.invalidateQueries({
-              queryKey: ["workspace", id, "canvas"],
-            });
-          });
-      }
-      if (context?.addedNodeIds.length) {
-        flashGroupMembers(context.groupId, context.addedNodeIds);
-      }
-    },
-  });
-
-  const changeNodeGroupMutation = useMutation({
-    mutationFn: ({
-      groupId,
-      nodeId,
-    }: {
-      groupId: string | null;
-      nodeId: string;
-    }) => updateMediaNode(nodeId, { group_id: groupId ?? "" }),
-    onSuccess: (node) => {
-      nodeSnapshotsRef.current.set(node.id, node);
-      queryClient.setQueryData<CanvasPayload>(
-        ["workspace", id, "canvas"],
-        (current) => replaceCanvasNodeAndGroupMembership(current, node),
-      );
-    },
-  });
-
   const createNodeMutation = useMutation({
     mutationFn: async (input?: {
       point?: { x: number; y: number };
@@ -549,6 +389,25 @@ export function WorkspaceDetailPage() {
       setContextMenu(null);
     },
   });
+
+  const createNodeAtViewportCenter = useCallback(
+    (nodeType: MediaType) => {
+      createNodeMutation.mutate({ nodeType });
+    },
+    [createNodeMutation],
+  );
+
+  const startToolbarConnection = useCallback(() => {
+    if (selectedNodeId) {
+      beginDependencyConnection(selectedNodeId);
+      return;
+    }
+    setConnectionFeedback({
+      title: "选择起点节点",
+      description: "先选中一个节点，再点击连接并选择目标节点。",
+      tone: "info",
+    });
+  }, [beginDependencyConnection, selectedNodeId]);
 
   const createDependencyEdge = useCallback(
     (fromNodeId: string, toNodeId: string) => {
@@ -641,12 +500,24 @@ export function WorkspaceDetailPage() {
     if (!id || !canvasQuery.data || !editorRef.current) {
       return;
     }
+    const frameRect = canvasFrameRef.current?.getBoundingClientRect();
+    const safeInset = isSidebarCollapsed
+      ? layoutSafeInset.collapsed
+      : layoutSafeInset.expanded;
+    const origin = frameRect
+      ? editorRef.current.screenToPage({
+          x: frameRect.left + safeInset.x,
+          y: frameRect.top + safeInset.y,
+        })
+      : safeInset;
+
     setIsLayouting(true);
     const result = computeDagreLayout({
       nodes: canvasQuery.data.nodes,
       edges: canvasQuery.data.edges,
       groups: canvasQuery.data.groups,
       direction: layoutDirection,
+      origin,
     });
 
     const editor = editorRef.current;
@@ -706,7 +577,7 @@ export function WorkspaceDetailPage() {
         });
       })
       .finally(() => setIsLayouting(false));
-  }, [canvasQuery.data, id, layoutDirection, queryClient]);
+  }, [canvasQuery.data, id, isSidebarCollapsed, layoutDirection, queryClient]);
 
   useEffect(() => {
     if (!editor || !canvasQuery.data) {
@@ -771,7 +642,6 @@ export function WorkspaceDetailPage() {
         pendingConnectionRef.current = null;
         setConnectionSourceId(null);
         setDragConnection(null);
-        setHoveredConnectionTargetId(null);
         setConnectionFeedback(null);
         createDependencyEdge(fromNodeId, nodeId);
       }
@@ -1378,7 +1248,7 @@ export function WorkspaceDetailPage() {
       if (!(target instanceof HTMLElement)) {
         return false;
       }
-      const port = target.closest(".media-node-port-output");
+      const port = target.closest(".media-node-connect-button");
       if (!(port instanceof HTMLElement)) {
         return false;
       }
@@ -1424,7 +1294,7 @@ export function WorkspaceDetailPage() {
     const onConnectionTargetClick = (event: globalThis.MouseEvent) => {
       if (
         event.target instanceof HTMLElement &&
-        event.target.closest(".media-node-port-output")
+        event.target.closest(".media-node-connect-button")
       ) {
         return;
       }
@@ -1443,30 +1313,11 @@ export function WorkspaceDetailPage() {
       pendingConnectionRef.current = null;
       setConnectionSourceId(null);
       setDragConnection(null);
-      setHoveredConnectionTargetId(null);
       setConnectionFeedback(null);
       createDependencyEdge(pending.fromNodeId, toNodeId);
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-    };
-
-    const updateHoveredConnectionTarget = (
-      clientX: number,
-      clientY: number,
-      fromNodeId: string,
-    ) => {
-      const target = document
-        .elementFromPoint(clientX, clientY)
-        ?.closest(".media-node-shell");
-      if (!(target instanceof HTMLElement)) {
-        setHoveredConnectionTargetId(null);
-        return;
-      }
-      const toNodeId = target.dataset.nodeId;
-      setHoveredConnectionTargetId(
-        isValidConnectionTarget(fromNodeId, toNodeId) ? toNodeId : null,
-      );
     };
 
     const onConnectionStart = (event: Event) => {
@@ -1507,11 +1358,6 @@ export function WorkspaceDetailPage() {
           y: event.clientY,
         }),
       });
-      updateHoveredConnectionTarget(
-        event.clientX,
-        event.clientY,
-        pending.fromNodeId,
-      );
       event.preventDefault();
     };
 
@@ -1527,7 +1373,6 @@ export function WorkspaceDetailPage() {
       pendingConnectionRef.current = null;
       setConnectionSourceId(null);
       setDragConnection(null);
-      setHoveredConnectionTargetId(null);
       const target = document
         .elementFromPoint(event.clientX, event.clientY)
         ?.closest(".media-node-shell");
@@ -1588,7 +1433,7 @@ export function WorkspaceDetailPage() {
       }
       if (
         event.target.closest(
-          ".media-node-shell, .node-editor-overlay, .resource-tree, .property-panel, .studio-context-menu, .connection-overlay",
+          ".media-node-shell, .node-editor-overlay, .resource-tree, .studio-context-menu, .connection-overlay",
         )
       ) {
         return;
@@ -1710,6 +1555,22 @@ export function WorkspaceDetailPage() {
     };
   }, [contextMenu]);
 
+  const closeCanvasMenuOnPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (!contextMenu) {
+        return;
+      }
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest(".studio-context-menu")
+      ) {
+        return;
+      }
+      setContextMenu(null);
+    },
+    [contextMenu],
+  );
+
   const handleLogout = () => {
     logout();
     navigate("/login", { replace: true });
@@ -1724,94 +1585,143 @@ export function WorkspaceDetailPage() {
         className="studio-sidebar"
         data-collapsed={isSidebarCollapsed}
       >
-        <div className="studio-sidebar-header">
-          <div className="studio-brand-row">
-            <div className="studio-brand">
-              <p className="studio-brand-kicker">Studio</p>
-              <h1 className="studio-brand-title">
-                {workspaceQuery.data?.name ?? "加载中"}
-              </h1>
-              <ConnectionStatus status={connectionStatus} />
-            </div>
+        {isSidebarCollapsed ? (
+          <div className="studio-sidebar-collapsed">
             <button
-              aria-label={isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-              className="studio-icon-button"
-              onClick={() => setIsSidebarCollapsed((value) => !value)}
+              aria-label="展开侧边栏"
+              className="studio-sidebar-peek"
+              onClick={() => setIsSidebarCollapsed(false)}
               type="button"
             >
-              {isSidebarCollapsed ? "›" : "‹"}
+              <span className="studio-peek-mark">影</span>
+              <span className="studio-peek-title">
+                {workspaceQuery.data?.name ?? "Studio"}
+              </span>
+              <span className="studio-peek-arrow">›</span>
             </button>
           </div>
-        </div>
-
-        <div className="studio-sidebar-body">
-          <div className="studio-action-row">
-            <button
-              className="studio-secondary-button"
-              onClick={() => navigate("/workspaces")}
-              type="button"
-            >
-              <span className="studio-action-label">项目列表</span>
-              {isSidebarCollapsed ? "⌂" : null}
-            </button>
-            <button
-              aria-label="切换明暗模式"
-              className="studio-icon-button"
-              onClick={toggleAppearance}
-              type="button"
-            >
-              {appearance === "dark" ? "☾" : "☼"}
-            </button>
-          </div>
-
-          <div className="mt-5">
-            {nodes.length > 0 ? (
-              <ResourceTree
-                groups={groups}
-                nodes={nodes}
-                selectedGroupId={selectedGroupId}
-                selectedNodeId={selectedNodeId}
-                onCreateGroup={() => createGroupMutation.mutate()}
-                onSelectGroup={selectGroup}
-                onSelectNode={selectOrConnectNode}
-                onStartConnection={beginDependencyConnection}
-              />
-            ) : (
-              <div className="rounded-[var(--radius-md)] p-3 text-[12px] leading-5 text-[var(--fg-tertiary)]">
-                在画布空白处右键，选择节点类型开始。
+        ) : (
+          <>
+            <div className="studio-sidebar-header">
+              <div className="studio-brand-row">
+                <div className="studio-brand">
+                  <p className="studio-brand-kicker">Studio</p>
+                  <h1 className="studio-brand-title">
+                    {workspaceQuery.data?.name ?? "加载中"}
+                  </h1>
+                  <ConnectionStatus status={connectionStatus} />
+                </div>
+                <button
+                  aria-label="收起侧边栏"
+                  className="studio-icon-button studio-sidebar-toggle"
+                  onClick={() => setIsSidebarCollapsed(true)}
+                  type="button"
+                >
+                  ‹
+                </button>
               </div>
-            )}
-          </div>
-
-        </div>
-
-        <div className="studio-sidebar-footer">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-[12px] font-medium text-[var(--fg-secondary)]">
-                {account?.name ?? "未登录"}
-              </p>
-              <p className="mt-1 truncate text-[11.5px] text-[var(--fg-tertiary)]">
-                {account?.email}
-              </p>
             </div>
-            <button
-              className="studio-secondary-button"
-              onClick={handleLogout}
-              type="button"
-            >
-              登出
-            </button>
-          </div>
-        </div>
+
+            <div className="studio-sidebar-body">
+              <div className="studio-action-row">
+                <button
+                  className="studio-secondary-button studio-nav-button"
+                  onClick={() => navigate("/workspaces")}
+                  type="button"
+                >
+                  <span className="studio-action-label">项目列表</span>
+                </button>
+                <button
+                  aria-label="切换明暗模式"
+                  className="studio-icon-button studio-theme-toggle"
+                  onClick={toggleAppearance}
+                  type="button"
+                >
+                  ◐
+                </button>
+              </div>
+
+              <div className="mt-5">
+                {nodes.length > 0 ? (
+                  <ResourceTree
+                    groups={groups}
+                    nodes={nodes}
+                    selectedGroupId={selectedGroupId}
+                    selectedNodeId={selectedNodeId}
+                    onCreateGroup={() => createGroupMutation.mutate()}
+                    onSelectGroup={selectGroup}
+                    onSelectNode={selectOrConnectNode}
+                    onStartConnection={beginDependencyConnection}
+                  />
+                ) : (
+                  <div className="rounded-[var(--radius-md)] p-3 text-[12px] leading-5 text-[var(--fg-tertiary)]">
+                    在画布空白处右键，选择节点类型开始。
+                  </div>
+                )}
+              </div>
+
+            </div>
+
+            <div className="studio-sidebar-footer">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-[12px] font-medium text-[var(--fg-secondary)]">
+                    {account?.name ?? "未登录"}
+                  </p>
+                  <p className="mt-1 truncate text-[11.5px] text-[var(--fg-tertiary)]">
+                    {account?.email}
+                  </p>
+                </div>
+                <button
+                  className="studio-secondary-button studio-logout-button"
+                  onClick={handleLogout}
+                  type="button"
+                >
+                  登出
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </aside>
 
       <section
         className="studio-canvas-frame"
         data-connection-dragging={dragConnection ? "true" : "false"}
         onContextMenuCapture={openCanvasMenu}
+        onPointerDownCapture={closeCanvasMenuOnPointerDown}
         ref={canvasFrameRef}
       >
+        <div className="studio-floating-toolbar" aria-label="创建节点工具栏">
+          <button
+            onClick={() => createNodeAtViewportCenter("video")}
+            type="button"
+          >
+            视频
+          </button>
+          <button
+            onClick={() => createNodeAtViewportCenter("text")}
+            type="button"
+          >
+            文本
+          </button>
+          <button
+            onClick={() => createNodeAtViewportCenter("image")}
+            type="button"
+          >
+            图片
+          </button>
+          <button
+            onClick={() => createNodeAtViewportCenter("audio")}
+            type="button"
+          >
+            音频
+          </button>
+          <button onClick={startToolbarConnection} type="button">
+            连接
+          </button>
+        </div>
+
         {workspaceQuery.isError || canvasQuery.isError ? (
           <div className="flex h-full items-center justify-center text-[13px] text-[var(--fg-tertiary)]">
             画布加载失败
@@ -1837,7 +1747,6 @@ export function WorkspaceDetailPage() {
           dragConnection={dragConnection}
           editor={editor}
           edges={canvasQuery.data?.edges ?? []}
-          hoveredTargetNodeId={hoveredConnectionTargetId}
           nodes={nodes}
           onSelectEdge={selectEdge}
           selectedEdgeId={selectedEdgeId}
@@ -1928,43 +1837,6 @@ export function WorkspaceDetailPage() {
         ) : null}
       </section>
 
-      <PropertyPanel
-        edges={canvasQuery.data?.edges ?? []}
-        groups={groups}
-        nodes={nodes}
-        selectedEdgeId={selectedEdgeId}
-        selectedGroupId={selectedGroupId}
-        selectedNodeId={selectedNodeId}
-        isUpdatingGroupMembers={replaceGroupNodesMutation.isPending}
-        onAddGroupMember={(groupId, nodeId) => {
-          const group = groups.find((item) => item.id === groupId);
-          if (!group) {
-            return;
-          }
-          replaceGroupNodesMutation.mutate({
-            groupId,
-            nodeIds: nodeIdsWith(group.node_ids, nodeId),
-          });
-        }}
-        onChangeNodeGroup={(nodeId, groupId) =>
-          changeNodeGroupMutation.mutate({ groupId, nodeId })
-        }
-        onDeleteEdge={deleteEdgeById}
-        onDeleteGroup={(groupId) => deleteGroupMutation.mutate(groupId)}
-        onRemoveGroupMember={(groupId, nodeId) => {
-          const group = groups.find((item) => item.id === groupId);
-          if (!group) {
-            return;
-          }
-          replaceGroupNodesMutation.mutate({
-            groupId,
-            nodeIds: nodeIdsWithout(group.node_ids, nodeId),
-          });
-        }}
-        onRenameGroup={(groupId, name) =>
-          renameGroupMutation.mutate({ groupId, name })
-        }
-      />
     </main>
   );
 }
@@ -2109,54 +1981,6 @@ function appendCanvasGroup(
   };
 }
 
-function updateCanvasGroupMeta(
-  current: CanvasPayload | undefined,
-  groupId: string,
-  group: Omit<MediaGroup, "node_ids">,
-) {
-  if (!current) {
-    return current;
-  }
-  return {
-    ...current,
-    groups: current.groups.map((item) =>
-      item.id === groupId ? { ...item, ...group } : item,
-    ),
-  };
-}
-
-function replaceCanvasGroupNodeIdsAndPositions(
-  current: CanvasPayload | undefined,
-  groupId: string,
-  nodeIds: string[],
-  positions: CanvasPosition[],
-) {
-  if (!current) {
-    return current;
-  }
-  const group = current.groups.find((item) => item.id === groupId);
-  if (!group) {
-    return current;
-  }
-  return updateCanvasNodePositions(
-    appendCanvasGroup(current, { ...group, node_ids: nodeIds }),
-    positions,
-  );
-}
-
-function removeCanvasGroup(current: CanvasPayload | undefined, groupId: string) {
-  if (!current) {
-    return current;
-  }
-  return {
-    ...current,
-    groups: current.groups.filter((group) => group.id !== groupId),
-    nodes: current.nodes.map((node) =>
-      node.group_id === groupId ? { ...node, group_id: null } : node,
-    ),
-  };
-}
-
 function removeCanvasEdge(current: CanvasPayload | undefined, edgeId: string) {
   if (!current) {
     return current;
@@ -2223,31 +2047,6 @@ function updateCanvasNodePosition(
         ? { ...node, canvas_x: canvasX, canvas_y: canvasY }
         : node,
     ),
-  };
-}
-
-function updateCanvasNodePositions(
-  current: CanvasPayload | undefined,
-  positions: CanvasPosition[],
-) {
-  if (!current || positions.length === 0) {
-    return current;
-  }
-  const positionById = new Map(
-    positions.map((position) => [position.id, position]),
-  );
-  return {
-    ...current,
-    nodes: current.nodes.map((node) => {
-      const position = positionById.get(node.id);
-      return position
-        ? {
-            ...node,
-            canvas_x: position.canvas_x,
-            canvas_y: position.canvas_y,
-          }
-        : node;
-    }),
   };
 }
 
