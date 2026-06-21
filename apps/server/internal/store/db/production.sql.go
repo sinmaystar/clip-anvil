@@ -33,22 +33,38 @@ INSERT INTO artifact_version (
     winner,
     output,
     review_score,
-    input_hash
+    input_hash,
+    status,
+    progress,
+    error_code,
+    error_message,
+    provider_request,
+    provider_response,
+    started_at,
+    completed_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
-) RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+) RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
 `
 
 type CreateArtifactVersionParams struct {
-	WorkspaceID pgtype.UUID   `json:"workspace_id"`
-	NodeID      pgtype.UUID   `json:"node_id"`
-	JobID       pgtype.UUID   `json:"job_id"`
-	AssetID     pgtype.UUID   `json:"asset_id"`
-	VersionNo   int32         `json:"version_no"`
-	Winner      bool          `json:"winner"`
-	Output      []byte        `json:"output"`
-	ReviewScore pgtype.Float4 `json:"review_score"`
-	InputHash   string        `json:"input_hash"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	NodeID           pgtype.UUID        `json:"node_id"`
+	JobID            pgtype.UUID        `json:"job_id"`
+	AssetID          pgtype.UUID        `json:"asset_id"`
+	VersionNo        int32              `json:"version_no"`
+	Winner           bool               `json:"winner"`
+	Output           []byte             `json:"output"`
+	ReviewScore      pgtype.Float4      `json:"review_score"`
+	InputHash        string             `json:"input_hash"`
+	Status           JobStatus          `json:"status"`
+	Progress         int32              `json:"progress"`
+	ErrorCode        pgtype.Text        `json:"error_code"`
+	ErrorMessage     pgtype.Text        `json:"error_message"`
+	ProviderRequest  []byte             `json:"provider_request"`
+	ProviderResponse []byte             `json:"provider_response"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
 }
 
 func (q *Queries) CreateArtifactVersion(ctx context.Context, arg CreateArtifactVersionParams) (ArtifactVersion, error) {
@@ -62,6 +78,14 @@ func (q *Queries) CreateArtifactVersion(ctx context.Context, arg CreateArtifactV
 		arg.Output,
 		arg.ReviewScore,
 		arg.InputHash,
+		arg.Status,
+		arg.Progress,
+		arg.ErrorCode,
+		arg.ErrorMessage,
+		arg.ProviderRequest,
+		arg.ProviderResponse,
+		arg.StartedAt,
+		arg.CompletedAt,
 	)
 	var i ArtifactVersion
 	err := row.Scan(
@@ -76,6 +100,14 @@ func (q *Queries) CreateArtifactVersion(ctx context.Context, arg CreateArtifactV
 		&i.ReviewScore,
 		&i.InputHash,
 		&i.CreatedAt,
+		&i.Status,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.StartedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -190,7 +222,7 @@ func (q *Queries) CreateGenerationJob(ctx context.Context, arg CreateGenerationJ
 }
 
 const getArtifactVersionByID = `-- name: GetArtifactVersionByID :one
-SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at
+SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
 FROM artifact_version
 WHERE id = $1
 `
@@ -210,12 +242,53 @@ func (q *Queries) GetArtifactVersionByID(ctx context.Context, id pgtype.UUID) (A
 		&i.ReviewScore,
 		&i.InputHash,
 		&i.CreatedAt,
+		&i.Status,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.StartedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const getArtifactVersionByJobID = `-- name: GetArtifactVersionByJobID :one
+SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+FROM artifact_version
+WHERE job_id = $1
+`
+
+func (q *Queries) GetArtifactVersionByJobID(ctx context.Context, jobID pgtype.UUID) (ArtifactVersion, error) {
+	row := q.db.QueryRow(ctx, getArtifactVersionByJobID, jobID)
+	var i ArtifactVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.NodeID,
+		&i.JobID,
+		&i.AssetID,
+		&i.VersionNo,
+		&i.Winner,
+		&i.Output,
+		&i.ReviewScore,
+		&i.InputHash,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.StartedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
 
 const getCurrentArtifactVersionForNode = `-- name: GetCurrentArtifactVersionForNode :one
-SELECT artifact_version.id, artifact_version.workspace_id, artifact_version.node_id, artifact_version.job_id, artifact_version.asset_id, artifact_version.version_no, artifact_version.winner, artifact_version.output, artifact_version.review_score, artifact_version.input_hash, artifact_version.created_at
+SELECT artifact_version.id, artifact_version.workspace_id, artifact_version.node_id, artifact_version.job_id, artifact_version.asset_id, artifact_version.version_no, artifact_version.winner, artifact_version.output, artifact_version.review_score, artifact_version.input_hash, artifact_version.created_at, artifact_version.status, artifact_version.progress, artifact_version.error_code, artifact_version.error_message, artifact_version.provider_request, artifact_version.provider_response, artifact_version.started_at, artifact_version.completed_at
 FROM artifact_version
 JOIN media_node ON media_node.current_version_id = artifact_version.id
 WHERE media_node.id = $1
@@ -236,6 +309,14 @@ func (q *Queries) GetCurrentArtifactVersionForNode(ctx context.Context, id pgtyp
 		&i.ReviewScore,
 		&i.InputHash,
 		&i.CreatedAt,
+		&i.Status,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.StartedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -433,7 +514,7 @@ func (q *Queries) ListActiveStaleReasonsByNode(ctx context.Context, nodeID pgtyp
 }
 
 const listArtifactVersionsByNode = `-- name: ListArtifactVersionsByNode :many
-SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at
+SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
 FROM artifact_version
 WHERE node_id = $1
 ORDER BY version_no
@@ -460,6 +541,14 @@ func (q *Queries) ListArtifactVersionsByNode(ctx context.Context, nodeID pgtype.
 			&i.ReviewScore,
 			&i.InputHash,
 			&i.CreatedAt,
+			&i.Status,
+			&i.Progress,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.ProviderRequest,
+			&i.ProviderResponse,
+			&i.StartedAt,
+			&i.CompletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -573,6 +662,453 @@ func (q *Queries) ListGenerationJobsByParent(ctx context.Context, parentJobID pg
 		return nil, err
 	}
 	return items, nil
+}
+
+const markArtifactVersionFailedByJob = `-- name: MarkArtifactVersionFailedByJob :one
+UPDATE artifact_version
+SET status = 'failed',
+    progress = $2,
+    provider_response = $3,
+    error_code = $4,
+    error_message = $5,
+    completed_at = now()
+WHERE job_id = $1
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+`
+
+type MarkArtifactVersionFailedByJobParams struct {
+	JobID            pgtype.UUID `json:"job_id"`
+	Progress         int32       `json:"progress"`
+	ProviderResponse []byte      `json:"provider_response"`
+	ErrorCode        pgtype.Text `json:"error_code"`
+	ErrorMessage     pgtype.Text `json:"error_message"`
+}
+
+func (q *Queries) MarkArtifactVersionFailedByJob(ctx context.Context, arg MarkArtifactVersionFailedByJobParams) (ArtifactVersion, error) {
+	row := q.db.QueryRow(ctx, markArtifactVersionFailedByJob,
+		arg.JobID,
+		arg.Progress,
+		arg.ProviderResponse,
+		arg.ErrorCode,
+		arg.ErrorMessage,
+	)
+	var i ArtifactVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.NodeID,
+		&i.JobID,
+		&i.AssetID,
+		&i.VersionNo,
+		&i.Winner,
+		&i.Output,
+		&i.ReviewScore,
+		&i.InputHash,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.StartedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const markArtifactVersionProgressByJob = `-- name: MarkArtifactVersionProgressByJob :one
+UPDATE artifact_version
+SET progress = $2,
+    provider_response = $3
+WHERE job_id = $1
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+`
+
+type MarkArtifactVersionProgressByJobParams struct {
+	JobID            pgtype.UUID `json:"job_id"`
+	Progress         int32       `json:"progress"`
+	ProviderResponse []byte      `json:"provider_response"`
+}
+
+func (q *Queries) MarkArtifactVersionProgressByJob(ctx context.Context, arg MarkArtifactVersionProgressByJobParams) (ArtifactVersion, error) {
+	row := q.db.QueryRow(ctx, markArtifactVersionProgressByJob, arg.JobID, arg.Progress, arg.ProviderResponse)
+	var i ArtifactVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.NodeID,
+		&i.JobID,
+		&i.AssetID,
+		&i.VersionNo,
+		&i.Winner,
+		&i.Output,
+		&i.ReviewScore,
+		&i.InputHash,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.StartedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const markArtifactVersionRunningByJob = `-- name: MarkArtifactVersionRunningByJob :one
+UPDATE artifact_version
+SET status = 'running',
+    progress = $2,
+    provider_response = $3,
+    started_at = COALESCE(started_at, now())
+WHERE job_id = $1
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+`
+
+type MarkArtifactVersionRunningByJobParams struct {
+	JobID            pgtype.UUID `json:"job_id"`
+	Progress         int32       `json:"progress"`
+	ProviderResponse []byte      `json:"provider_response"`
+}
+
+func (q *Queries) MarkArtifactVersionRunningByJob(ctx context.Context, arg MarkArtifactVersionRunningByJobParams) (ArtifactVersion, error) {
+	row := q.db.QueryRow(ctx, markArtifactVersionRunningByJob, arg.JobID, arg.Progress, arg.ProviderResponse)
+	var i ArtifactVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.NodeID,
+		&i.JobID,
+		&i.AssetID,
+		&i.VersionNo,
+		&i.Winner,
+		&i.Output,
+		&i.ReviewScore,
+		&i.InputHash,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.StartedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const markArtifactVersionSucceededByJob = `-- name: MarkArtifactVersionSucceededByJob :one
+UPDATE artifact_version
+SET status = 'succeeded',
+    progress = 100,
+    asset_id = $2,
+    winner = true,
+    output = $3,
+    input_hash = $4,
+    provider_request = $5,
+    provider_response = $6,
+    error_code = NULL,
+    error_message = NULL,
+    completed_at = now()
+WHERE job_id = $1
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+`
+
+type MarkArtifactVersionSucceededByJobParams struct {
+	JobID            pgtype.UUID `json:"job_id"`
+	AssetID          pgtype.UUID `json:"asset_id"`
+	Output           []byte      `json:"output"`
+	InputHash        string      `json:"input_hash"`
+	ProviderRequest  []byte      `json:"provider_request"`
+	ProviderResponse []byte      `json:"provider_response"`
+}
+
+func (q *Queries) MarkArtifactVersionSucceededByJob(ctx context.Context, arg MarkArtifactVersionSucceededByJobParams) (ArtifactVersion, error) {
+	row := q.db.QueryRow(ctx, markArtifactVersionSucceededByJob,
+		arg.JobID,
+		arg.AssetID,
+		arg.Output,
+		arg.InputHash,
+		arg.ProviderRequest,
+		arg.ProviderResponse,
+	)
+	var i ArtifactVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.NodeID,
+		&i.JobID,
+		&i.AssetID,
+		&i.VersionNo,
+		&i.Winner,
+		&i.Output,
+		&i.ReviewScore,
+		&i.InputHash,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.StartedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const markArtifactVersionWinner = `-- name: MarkArtifactVersionWinner :one
+UPDATE artifact_version
+SET winner = true
+WHERE id = $1
+  AND node_id = $2
+  AND status = 'succeeded'
+  AND asset_id IS NOT NULL
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+`
+
+type MarkArtifactVersionWinnerParams struct {
+	ID     pgtype.UUID `json:"id"`
+	NodeID pgtype.UUID `json:"node_id"`
+}
+
+func (q *Queries) MarkArtifactVersionWinner(ctx context.Context, arg MarkArtifactVersionWinnerParams) (ArtifactVersion, error) {
+	row := q.db.QueryRow(ctx, markArtifactVersionWinner, arg.ID, arg.NodeID)
+	var i ArtifactVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.NodeID,
+		&i.JobID,
+		&i.AssetID,
+		&i.VersionNo,
+		&i.Winner,
+		&i.Output,
+		&i.ReviewScore,
+		&i.InputHash,
+		&i.CreatedAt,
+		&i.Status,
+		&i.Progress,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.StartedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const markGenerationJobFailed = `-- name: MarkGenerationJobFailed :one
+UPDATE generation_job
+SET status = 'failed',
+    progress = $2,
+    provider_response = $3,
+    error_code = $4,
+    error_message = $5,
+    completed_at = now()
+WHERE id = $1
+RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+`
+
+type MarkGenerationJobFailedParams struct {
+	ID               pgtype.UUID `json:"id"`
+	Progress         int32       `json:"progress"`
+	ProviderResponse []byte      `json:"provider_response"`
+	ErrorCode        pgtype.Text `json:"error_code"`
+	ErrorMessage     pgtype.Text `json:"error_message"`
+}
+
+func (q *Queries) MarkGenerationJobFailed(ctx context.Context, arg MarkGenerationJobFailedParams) (GenerationJob, error) {
+	row := q.db.QueryRow(ctx, markGenerationJobFailed,
+		arg.ID,
+		arg.Progress,
+		arg.ProviderResponse,
+		arg.ErrorCode,
+		arg.ErrorMessage,
+	)
+	var i GenerationJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TargetNodeID,
+		&i.ParentJobID,
+		&i.OperationType,
+		&i.Provider,
+		&i.ModelID,
+		&i.Intent,
+		&i.RenderedPrompt,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.Status,
+		&i.Progress,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.RetryPolicy,
+		&i.CostCents,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const markGenerationJobProgress = `-- name: MarkGenerationJobProgress :one
+UPDATE generation_job
+SET progress = $2,
+    provider_response = $3
+WHERE id = $1
+RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+`
+
+type MarkGenerationJobProgressParams struct {
+	ID               pgtype.UUID `json:"id"`
+	Progress         int32       `json:"progress"`
+	ProviderResponse []byte      `json:"provider_response"`
+}
+
+func (q *Queries) MarkGenerationJobProgress(ctx context.Context, arg MarkGenerationJobProgressParams) (GenerationJob, error) {
+	row := q.db.QueryRow(ctx, markGenerationJobProgress, arg.ID, arg.Progress, arg.ProviderResponse)
+	var i GenerationJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TargetNodeID,
+		&i.ParentJobID,
+		&i.OperationType,
+		&i.Provider,
+		&i.ModelID,
+		&i.Intent,
+		&i.RenderedPrompt,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.Status,
+		&i.Progress,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.RetryPolicy,
+		&i.CostCents,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const markGenerationJobRunning = `-- name: MarkGenerationJobRunning :one
+UPDATE generation_job
+SET status = 'running',
+    progress = $2,
+    provider_response = $3,
+    started_at = COALESCE(started_at, now())
+WHERE id = $1
+RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+`
+
+type MarkGenerationJobRunningParams struct {
+	ID               pgtype.UUID `json:"id"`
+	Progress         int32       `json:"progress"`
+	ProviderResponse []byte      `json:"provider_response"`
+}
+
+func (q *Queries) MarkGenerationJobRunning(ctx context.Context, arg MarkGenerationJobRunningParams) (GenerationJob, error) {
+	row := q.db.QueryRow(ctx, markGenerationJobRunning, arg.ID, arg.Progress, arg.ProviderResponse)
+	var i GenerationJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TargetNodeID,
+		&i.ParentJobID,
+		&i.OperationType,
+		&i.Provider,
+		&i.ModelID,
+		&i.Intent,
+		&i.RenderedPrompt,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.Status,
+		&i.Progress,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.RetryPolicy,
+		&i.CostCents,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const markGenerationJobSucceeded = `-- name: MarkGenerationJobSucceeded :one
+UPDATE generation_job
+SET status = 'succeeded',
+    progress = 100,
+    rendered_prompt = $2,
+    provider_request = $3,
+    provider_response = $4,
+    completed_at = now()
+WHERE id = $1
+RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+`
+
+type MarkGenerationJobSucceededParams struct {
+	ID               pgtype.UUID `json:"id"`
+	RenderedPrompt   string      `json:"rendered_prompt"`
+	ProviderRequest  []byte      `json:"provider_request"`
+	ProviderResponse []byte      `json:"provider_response"`
+}
+
+func (q *Queries) MarkGenerationJobSucceeded(ctx context.Context, arg MarkGenerationJobSucceededParams) (GenerationJob, error) {
+	row := q.db.QueryRow(ctx, markGenerationJobSucceeded,
+		arg.ID,
+		arg.RenderedPrompt,
+		arg.ProviderRequest,
+		arg.ProviderResponse,
+	)
+	var i GenerationJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TargetNodeID,
+		&i.ParentJobID,
+		&i.OperationType,
+		&i.Provider,
+		&i.ModelID,
+		&i.Intent,
+		&i.RenderedPrompt,
+		&i.ProviderRequest,
+		&i.ProviderResponse,
+		&i.Status,
+		&i.Progress,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.RetryPolicy,
+		&i.CostCents,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const nextArtifactVersionNo = `-- name: NextArtifactVersionNo :one

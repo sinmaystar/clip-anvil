@@ -139,6 +139,54 @@ func TestJobServiceExtractFrameExecutesFFmpegInsideSandboxAndUploadsOutput(t *te
 	}
 }
 
+func TestJobServiceImportRemoteAssetDownloadsInsideSandboxAndUploadsOutput(t *testing.T) {
+	repo := newFakeSandboxJobRepository()
+	client := &jobServiceFakeClient{
+		result: ExecResult{ExitCode: 0, Stdout: "done", DurationMS: 49},
+		inspect: FileInfo{
+			Path:      "/workspace/assets/provider-node.mp4",
+			SizeBytes: 456,
+			Mime:      "video/mp4",
+		},
+	}
+	manager := NewManager(client, testSandboxConfig(), newFakeBindingStore(Binding{
+		Status:     StatusRunning,
+		SandboxID:  "sandbox-1",
+		VolumeName: "sandbox-ws-aabbccdd-0000-0000-0000-000000000000",
+	}))
+	storage := &fakeSandboxJobStorage{}
+	service := NewJobService(manager, client, repo, storage)
+
+	result, err := service.ImportRemoteAsset(context.Background(), RemoteAssetInput{
+		WorkspaceID:  testWorkspaceID(),
+		TargetNodeID: testNodeID(),
+		SourceURL:    "https://provider.example/output/video.mp4?token=secret",
+		MimeHint:     "video/mp4",
+	})
+	if err != nil {
+		t.Fatalf("ImportRemoteAsset error = %v", err)
+	}
+	if result.Job.Status != db.JobStatusSucceeded {
+		t.Fatalf("job status = %q, want succeeded", result.Job.Status)
+	}
+	if result.Asset.StorageURL == "" || result.Thumbnail.StorageURL == "" || result.MIME != "video/mp4" || result.Size != 123 {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(storage.putKeys) != 2 || !strings.HasPrefix(storage.putKeys[0], "production/") || !strings.HasSuffix(storage.putKeys[0], "-thumbnail.png") || !strings.HasSuffix(storage.putKeys[1], ".mp4") {
+		t.Fatalf("put keys = %#v", storage.putKeys)
+	}
+	joined := strings.Join(client.commands, "\n")
+	if !strings.Contains(joined, "curl -sS -f -L -o") || !strings.Contains(joined, "https://provider.example/output/video.mp4?token=secret") {
+		t.Fatalf("expected sandbox provider download command, got %q", joined)
+	}
+	if !strings.Contains(joined, "curl -sS -f -L -X PUT -T") || !strings.Contains(joined, "/workspace/assets/provider-") {
+		t.Fatalf("expected sandbox upload command, got %q", joined)
+	}
+	if !strings.Contains(joined, "ffmpeg -y -i") || !strings.Contains(joined, "/workspace/output/thumbnail-") {
+		t.Fatalf("expected sandbox thumbnail extraction command, got %q", joined)
+	}
+}
+
 func testNodeID() pgtype.UUID {
 	return pgtype.UUID{Bytes: [16]byte{0xbb, 0xcc, 0xdd, 0xee}, Valid: true}
 }
@@ -225,6 +273,9 @@ func (f *jobServiceFakeClient) Ping(ctx context.Context, sandboxID string) error
 func (f *jobServiceFakeClient) Exec(ctx context.Context, sandboxID string, req ExecRequest) (ExecResult, error) {
 	f.commands = append(f.commands, req.Command)
 	if strings.Contains(req.Command, "stat -c%s") {
+		if strings.Contains(req.Command, "thumbnail-") {
+			return ExecResult{ExitCode: 0, Stdout: "123\nimage/png"}, nil
+		}
 		if f.inspect.SizeBytes == 0 {
 			f.inspect = FileInfo{SizeBytes: 123, Mime: "image/png"}
 		}

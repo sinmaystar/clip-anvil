@@ -26,6 +26,44 @@ INSERT INTO generation_job (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
 ) RETURNING *;
 
+-- name: MarkGenerationJobRunning :one
+UPDATE generation_job
+SET status = 'running',
+    progress = $2,
+    provider_response = $3,
+    started_at = COALESCE(started_at, now())
+WHERE id = $1
+RETURNING *;
+
+-- name: MarkGenerationJobProgress :one
+UPDATE generation_job
+SET progress = $2,
+    provider_response = $3
+WHERE id = $1
+RETURNING *;
+
+-- name: MarkGenerationJobSucceeded :one
+UPDATE generation_job
+SET status = 'succeeded',
+    progress = 100,
+    rendered_prompt = $2,
+    provider_request = $3,
+    provider_response = $4,
+    completed_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: MarkGenerationJobFailed :one
+UPDATE generation_job
+SET status = 'failed',
+    progress = $2,
+    provider_response = $3,
+    error_code = $4,
+    error_message = $5,
+    completed_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: NextArtifactVersionNo :one
 SELECT COALESCE(MAX(version_no), 0)::int + 1 AS version_no
 FROM artifact_version
@@ -37,6 +75,15 @@ SET winner = false
 WHERE node_id = $1
   AND winner = true;
 
+-- name: MarkArtifactVersionWinner :one
+UPDATE artifact_version
+SET winner = true
+WHERE id = $1
+  AND node_id = $2
+  AND status = 'succeeded'
+  AND asset_id IS NOT NULL
+RETURNING *;
+
 -- name: CreateArtifactVersion :one
 INSERT INTO artifact_version (
     workspace_id,
@@ -47,10 +94,66 @@ INSERT INTO artifact_version (
     winner,
     output,
     review_score,
-    input_hash
+    input_hash,
+    status,
+    progress,
+    error_code,
+    error_message,
+    provider_request,
+    provider_response,
+    started_at,
+    completed_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 ) RETURNING *;
+
+-- name: GetArtifactVersionByJobID :one
+SELECT *
+FROM artifact_version
+WHERE job_id = $1;
+
+-- name: MarkArtifactVersionRunningByJob :one
+UPDATE artifact_version
+SET status = 'running',
+    progress = $2,
+    provider_response = $3,
+    started_at = COALESCE(started_at, now())
+WHERE job_id = $1
+RETURNING *;
+
+-- name: MarkArtifactVersionProgressByJob :one
+UPDATE artifact_version
+SET progress = $2,
+    provider_response = $3
+WHERE job_id = $1
+RETURNING *;
+
+-- name: MarkArtifactVersionSucceededByJob :one
+UPDATE artifact_version
+SET status = 'succeeded',
+    progress = 100,
+    asset_id = $2,
+    winner = true,
+    output = $3,
+    input_hash = $4,
+    provider_request = $5,
+    provider_response = $6,
+    error_code = NULL,
+    error_message = NULL,
+    completed_at = now()
+WHERE job_id = $1
+RETURNING *;
+
+-- name: MarkArtifactVersionFailedByJob :one
+UPDATE artifact_version
+SET status = 'failed',
+    progress = $2,
+    provider_response = $3,
+    error_code = $4,
+    error_message = $5,
+    completed_at = now()
+WHERE job_id = $1
+RETURNING *;
 
 -- name: ListArtifactVersionsByNode :many
 SELECT *

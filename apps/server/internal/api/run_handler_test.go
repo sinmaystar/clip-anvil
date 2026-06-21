@@ -1,10 +1,12 @@
 package api
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -60,6 +62,93 @@ func TestRunNodeRequestCapsMaxAttempts(t *testing.T) {
 	req := runNodeRequest{MaxAttempts: 99}
 	if got := req.runOptions().MaxAttempts; got != 3 {
 		t.Fatalf("max attempts = %d, want 3", got)
+	}
+}
+
+func TestSourceMaterialNodeCannotRun(t *testing.T) {
+	if !isSourceMaterialNode(db.MediaNode{
+		NodeType:      db.NodeTypeImage,
+		OperationType: "upload",
+		AssetID:       pgtype.UUID{Valid: true},
+	}) {
+		t.Fatal("upload asset node should be source material")
+	}
+	if !isSourceMaterialNode(db.MediaNode{
+		NodeType:      db.NodeTypeText,
+		OperationType: "manual",
+	}) {
+		t.Fatal("manual text node should be source material")
+	}
+	if isSourceMaterialNode(db.MediaNode{
+		NodeType:      db.NodeTypeImage,
+		OperationType: "text_to_image",
+	}) {
+		t.Fatal("generated image node should remain runnable")
+	}
+}
+
+func TestSourceMaterialProductionStateIsEmpty(t *testing.T) {
+	node := db.MediaNode{
+		ID:            pgtype.UUID{Bytes: [16]byte{0x51}, Valid: true},
+		NodeType:      db.NodeTypeVideo,
+		Title:         "用户视频",
+		OperationType: "upload",
+		AssetID:       pgtype.UUID{Bytes: [16]byte{0x52}, Valid: true},
+		Status:        db.NodeStatusSucceeded,
+	}
+
+	resp := sourceMaterialProductionState(node)
+	if len(resp.Versions) != 0 || resp.LatestJob != nil || resp.CurrentVersion != nil {
+		t.Fatalf("source material production state should be empty: %#v", resp)
+	}
+	if len(resp.ActiveStaleReasons) != 0 || len(resp.SandboxJobs) != 0 {
+		t.Fatalf("source material state should not include run side data: %#v", resp)
+	}
+}
+
+func TestRunNodeResponseCanRepresentAsyncQueuedJob(t *testing.T) {
+	resp := runNodeResponse{
+		Job: generationJobResponse{
+			ID:              "job-1",
+			Status:          "queued",
+			Provider:        "volcengine",
+			ModelID:         "doubao-seed-2-0-mini-260428",
+			Attempt:         1,
+			MaxAttempts:     1,
+			RequestedByType: "user",
+		},
+	}
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["node"]; ok {
+		t.Fatalf("async queued response must omit node: %s", raw)
+	}
+	if _, ok := got["version"]; ok {
+		t.Fatalf("async queued response must omit version: %s", raw)
+	}
+	job := got["job"].(map[string]any)
+	if job["status"] != "queued" {
+		t.Fatalf("job status = %v", job["status"])
+	}
+}
+
+func TestStatusForProductionEvent(t *testing.T) {
+	cases := map[string]string{
+		production.ProductionEventJobStarted:   "running",
+		production.ProductionEventJobSucceeded: "succeeded",
+		production.ProductionEventJobFailed:    "failed",
+		production.ProductionEventJobCancelled: "cancelled",
+	}
+	for eventType, want := range cases {
+		if got := statusForProductionEvent(eventType); got != want {
+			t.Fatalf("statusForProductionEvent(%q) = %q, want %q", eventType, got, want)
+		}
 	}
 }
 

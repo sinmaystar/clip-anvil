@@ -16,6 +16,9 @@ import {
 } from "tldraw";
 import type { MediaEdge, MediaNode } from "./api";
 import type { MediaGroup } from "./api";
+import { adaptiveMediaNodeSize } from "./nodePreviewLayout";
+import { winnerPreviewText } from "./productionPreview";
+import { materialKindLabel, materialStatusLabel } from "./sourceMaterial.js";
 
 export function shapeIdForNode(nodeId: string) {
   return createShapeId(`media-${nodeId}`);
@@ -77,13 +80,15 @@ export function edgeToArrow(
   const arrowId = shapeIdForEdge(edge.id);
   const fromShapeId = shapeIdForNode(edge.from_node_id);
   const toShapeId = shapeIdForNode(edge.to_node_id);
+  const fromSize = mediaNodeDisplaySize(fromNode);
+  const toSize = mediaNodeDisplaySize(toNode);
   const start = {
-    x: fromNode.canvas_w,
-    y: fromNode.canvas_h / 2,
+    x: fromSize.w,
+    y: fromSize.h / 2,
   };
   const end = {
-    x: toNode.canvas_x - (fromNode.canvas_x + fromNode.canvas_w),
-    y: toNode.canvas_y + toNode.canvas_h / 2 - (fromNode.canvas_y + fromNode.canvas_h / 2),
+    x: toNode.canvas_x - (fromNode.canvas_x + fromSize.w),
+    y: toNode.canvas_y + toSize.h / 2 - (fromNode.canvas_y + fromSize.h / 2),
   };
 
   return {
@@ -147,16 +152,45 @@ export function edgeToArrow(
 }
 
 export function nodeToShapeProps(node: MediaNode): MediaShapeProps {
+  const size = mediaNodeDisplaySize(node);
   return {
     nodeId: node.id,
     nodeType: node.node_type,
+    operationType: node.operation_type,
+    assetId: node.asset_id ?? undefined,
+    nodeTypeLabel: materialKindLabel(node),
+    sourceMaterialStatusLabel: materialStatusLabel(node) || undefined,
     title: node.title || `未命名${nodeTypeLabel(node.node_type)}`,
     prompt: node.prompt,
     status: node.status,
     thumbnailUrl: node.thumbnail_url,
-    w: node.canvas_w,
-    h: node.canvas_h,
+    previewText: winnerPreviewText(node),
+    previewAssetType: node.production_preview?.asset_type,
+    previewAssetUrl: node.production_preview?.access_url,
+    previewThumbnailUrl: node.production_preview?.thumbnail_url,
+    previewVersionNo: node.production_preview?.version_no,
+    previewWidth: node.production_preview?.width,
+    previewHeight: node.production_preview?.height,
+    previewDurationMs: node.production_preview?.duration_ms,
+    activeStaleReasonCount: node.active_stale_reason_count ?? 0,
+    w: size.w,
+    h: size.h,
   };
+}
+
+export function mediaNodeDisplaySize(
+  node: Pick<
+    MediaNode,
+    | "node_type"
+    | "canvas_w"
+    | "canvas_h"
+    | "prompt"
+    | "production_preview"
+    | "reference_pack_preview"
+  >,
+) {
+  const size = adaptiveMediaNodeSize(node);
+  return { w: size.w, h: size.h };
 }
 
 function nodeTypeLabel(nodeType: MediaNode["node_type"]) {
@@ -167,6 +201,8 @@ function nodeTypeLabel(nodeType: MediaNode["node_type"]) {
       return "视频";
     case "audio":
       return "音频";
+    case "reference_pack":
+      return "参考包";
     case "text":
     default:
       return "文本";
@@ -179,8 +215,12 @@ function boundsForNodes(nodes: MediaNode[]) {
   }
   const minX = Math.min(...nodes.map((node) => node.canvas_x));
   const minY = Math.min(...nodes.map((node) => node.canvas_y));
-  const maxX = Math.max(...nodes.map((node) => node.canvas_x + node.canvas_w));
-  const maxY = Math.max(...nodes.map((node) => node.canvas_y + node.canvas_h));
+  const maxX = Math.max(
+    ...nodes.map((node) => node.canvas_x + mediaNodeDisplaySize(node).w),
+  );
+  const maxY = Math.max(
+    ...nodes.map((node) => node.canvas_y + mediaNodeDisplaySize(node).h),
+  );
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 

@@ -146,10 +146,12 @@ production:
   default_provider: "mock"
   default_text_model: "mock-text"
   volcengine:
-    base_url: "https://ark.cn-beijing.volces.com"
-    text_model: "doubao-seed-1-6-lite"
-    image_model: "seedream-lite"
-    video_model: "seedance-lite"
+    base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    region: "cn-beijing"
+    text_model: "doubao-seed-2-0-mini-260428"
+    image_model: "doubao-seedream-5-0-260128"
+    video_model: "doubao-seedance-1-0-pro-fast-251015"
+    audio_model: ""
 `)
 
 	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
@@ -171,6 +173,21 @@ production:
 	}
 	if cfg.Production.Volcengine.APIKey != "" {
 		t.Fatalf("Volcengine.APIKey must not be set by committed yaml")
+	}
+	if cfg.Production.Volcengine.Region != "cn-beijing" {
+		t.Fatalf("Volcengine.Region = %q, want cn-beijing", cfg.Production.Volcengine.Region)
+	}
+	if cfg.Production.Volcengine.TextModel != "doubao-seed-2-0-mini-260428" {
+		t.Fatalf("Volcengine.TextModel = %q", cfg.Production.Volcengine.TextModel)
+	}
+	if cfg.Production.Volcengine.ImageModel != "doubao-seedream-5-0-260128" {
+		t.Fatalf("Volcengine.ImageModel = %q", cfg.Production.Volcengine.ImageModel)
+	}
+	if cfg.Production.Volcengine.VideoModel != "doubao-seedance-1-0-pro-fast-251015" {
+		t.Fatalf("Volcengine.VideoModel = %q", cfg.Production.Volcengine.VideoModel)
+	}
+	if cfg.Production.Volcengine.AudioModel != "" {
+		t.Fatalf("Volcengine.AudioModel = %q, want empty", cfg.Production.Volcengine.AudioModel)
 	}
 }
 
@@ -211,6 +228,18 @@ production:
 	t.Setenv("CLIPANVIL_PRODUCTION_DEFAULT_PROVIDER", "volcengine")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY", "local-key")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TEXT_MODEL", "doubao-cheap")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_REGION", "cn-beijing")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_MODEL", "")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_ACCESS_KEY_ID", "tos-ak")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_SECRET_ACCESS_KEY", "tos-sk")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_BUCKET", "clip-anvil-temp-bucket")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_ENDPOINT", "tos-cn-beijing.volces.com")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_REGION", "cn-beijing")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_PUBLIC_BASE_URL", "https://clip-anvil-temp-bucket.tos-cn-beijing.volces.com")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_SIGNED_URL_TTL_SECONDS", "3600")
+	t.Setenv("CLIPANVIL_PRODUCTION_WORKER_CONCURRENCY", "2")
+	t.Setenv("CLIPANVIL_PRODUCTION_PROVIDER_POLL_INTERVAL_SECONDS", "5")
+	t.Setenv("CLIPANVIL_PRODUCTION_PROVIDER_MAX_POLL_SECONDS", "1800")
 
 	cfg, err := Load()
 	if err != nil {
@@ -228,6 +257,42 @@ production:
 	}
 	if cfg.Production.Volcengine.TextModel != "doubao-cheap" {
 		t.Fatalf("Volcengine.TextModel = %q, want doubao-cheap", cfg.Production.Volcengine.TextModel)
+	}
+	if cfg.Production.Volcengine.Region != "cn-beijing" {
+		t.Fatalf("Volcengine.Region = %q, want cn-beijing", cfg.Production.Volcengine.Region)
+	}
+	if cfg.Production.Volcengine.AudioModel != "" {
+		t.Fatalf("Volcengine.AudioModel = %q, want empty", cfg.Production.Volcengine.AudioModel)
+	}
+	if cfg.Production.Volcengine.TOS.AccessKeyID != "tos-ak" {
+		t.Fatalf("Volcengine.TOS.AccessKeyID was not loaded from env")
+	}
+	if cfg.Production.Volcengine.TOS.SecretAccessKey != "tos-sk" {
+		t.Fatalf("Volcengine.TOS.SecretAccessKey was not loaded from env")
+	}
+	if cfg.Production.Volcengine.TOS.Bucket != "clip-anvil-temp-bucket" {
+		t.Fatalf("Volcengine.TOS.Bucket = %q", cfg.Production.Volcengine.TOS.Bucket)
+	}
+	if cfg.Production.Volcengine.TOS.Endpoint != "tos-cn-beijing.volces.com" {
+		t.Fatalf("Volcengine.TOS.Endpoint = %q", cfg.Production.Volcengine.TOS.Endpoint)
+	}
+	if cfg.Production.Volcengine.TOS.Region != "cn-beijing" {
+		t.Fatalf("Volcengine.TOS.Region = %q", cfg.Production.Volcengine.TOS.Region)
+	}
+	if cfg.Production.Volcengine.TOS.PublicBaseURL != "https://clip-anvil-temp-bucket.tos-cn-beijing.volces.com" {
+		t.Fatalf("Volcengine.TOS.PublicBaseURL = %q", cfg.Production.Volcengine.TOS.PublicBaseURL)
+	}
+	if cfg.Production.Volcengine.TOS.SignedURLTTLSeconds != 3600 {
+		t.Fatalf("Volcengine.TOS.SignedURLTTLSeconds = %d", cfg.Production.Volcengine.TOS.SignedURLTTLSeconds)
+	}
+	if cfg.Production.WorkerConcurrency != 2 {
+		t.Fatalf("WorkerConcurrency = %d, want 2", cfg.Production.WorkerConcurrency)
+	}
+	if cfg.Production.ProviderPollIntervalSeconds != 5 {
+		t.Fatalf("ProviderPollIntervalSeconds = %d, want 5", cfg.Production.ProviderPollIntervalSeconds)
+	}
+	if cfg.Production.ProviderMaxPollSeconds != 1800 {
+		t.Fatalf("ProviderMaxPollSeconds = %d, want 1800", cfg.Production.ProviderMaxPollSeconds)
 	}
 }
 

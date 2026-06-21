@@ -150,6 +150,18 @@ func (h *ReferencePackHandler) ReplaceItems(ctx context.Context, c *app.RequestC
 			writeError(c, consts.StatusBadRequest, "invalid request")
 			return
 		}
+		existingPackInput, err := qtx.GetDependencyEdgeByEndpoints(ctx, db.GetDependencyEdgeByEndpointsParams{
+			FromNodeID: pack.ID,
+			ToNodeID:   member.ID,
+		})
+		if err == nil && referencePackMemberHasPackInput([]db.MediaEdge{existingPackInput}, pack.ID, member.ID) {
+			writeError(c, consts.StatusUnprocessableEntity, "reference pack cannot contain a node that depends on it")
+			return
+		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			writeError(c, consts.StatusInternalServerError, "failed to update reference pack")
+			return
+		}
 		item, err := qtx.CreateReferencePackItem(ctx, db.CreateReferencePackItemParams{
 			WorkspaceID:  pack.WorkspaceID,
 			PackNodeID:   pack.ID,
@@ -177,6 +189,15 @@ func (h *ReferencePackHandler) ReplaceItems(ctx context.Context, c *app.RequestC
 		resp = append(resp, toReferencePackItemResponse(item))
 	}
 	c.JSON(consts.StatusOK, resp)
+}
+
+func referencePackMemberHasPackInput(edges []db.MediaEdge, packID pgtype.UUID, memberID pgtype.UUID) bool {
+	for _, edge := range edges {
+		if edge.FromNodeID == packID && edge.ToNodeID == memberID {
+			return true
+		}
+	}
+	return false
 }
 
 func toReferencePackItemResponse(item db.ReferencePackItem) referencePackItemResponse {

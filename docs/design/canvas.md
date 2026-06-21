@@ -25,16 +25,18 @@
 
 ### 2.0 当前实现快照
 
-当前已落地 Studio M1.x 的节点和分组投影，`packages/canvas-schema` 的核心 props 为：
+当前已落地 Studio M5 的节点和分组投影，`packages/canvas-schema` 的核心 props 为：
 
 ```typescript
 interface MediaShapeProps {
   nodeId: string
-  nodeType: MediaType
+  nodeType: 'text' | 'image' | 'video' | 'audio' | 'reference_pack'
   title: string
   prompt: string
   status: NodeStatus
   thumbnailUrl?: string
+  productionPreview?: ProductionPreview
+  referencePackPreview?: ReferencePackPreview
   w: number
   h: number
 }
@@ -48,16 +50,16 @@ interface GroupContainerShapeProps {
 }
 ```
 
-这里把 `prompt` 放入 shape props，是为了支持节点卡片预览、节点下方内联编辑，以及删除后撤销恢复时保留标题和 Prompt。`thumbnailUrl` 已用于图片/视频/音频资产预览；进度、评分、Agent 来源视觉等字段仍属于 M2/M3 目标态。
+这里把 `prompt` 放入 shape props，是为了支持节点卡片预览和撤销恢复时保留标题与 Prompt。`productionPreview` 用于 current version 或用户源素材的文本/图片/视频预览；`referencePackPreview` 用于参考包成员摘要。版本列表、调用记录和模型参数不放入 tldraw store，按选中节点从 API 加载。
 
-### 2.1 MediaShapeProps
+### 2.1 MediaShapeProps 收敛方向
 
-以下是更远目标态 props 设计，不代表当前已全部实现：
+当前 M5 为了节点预览和撤销恢复保留了 `prompt`、`productionPreview` 和 `referencePackPreview`。未来如果预览数据变大，可以进一步收敛为更轻量的 shape props：
 
 ```typescript
 import type { TLBaseShape } from 'tldraw'
 
-type MediaType = 'text' | 'image' | 'video' | 'audio'
+type MediaType = 'text' | 'image' | 'video' | 'audio' | 'reference_pack'
 type NodeStatus = 'draft' | 'ready' | 'queued' | 'running'
   | 'succeeded' | 'failed' | 'stale' | 'user_editing'
 
@@ -68,14 +70,13 @@ interface MediaShapeProps {
   status: NodeStatus
   thumbnailUrl?: string
   progress?: number
-  reviewScore?: number
-  isAgentCreated: boolean
+  productionPreviewId?: string
 }
 
 type MediaShape = TLBaseShape<'media', MediaShapeProps>
 ```
 
-目标态下，模型参数、版本历史等通过 `nodeId` 从 API 按需加载，不放在 shape props 里。当前为了简化自动保存和撤销恢复，仍把 `prompt` 放入 props。
+无论是否继续收敛，模型参数、版本历史和调用记录都不应放入 shape props，应通过 `nodeId` 从 API 按需加载。
 
 ### 2.2 从业务数据构建 shape
 
@@ -154,11 +155,11 @@ API JSON 字段使用 Go 后端惯例的 `snake_case`（如 `canvas_x`、`node_t
 
 ### 4.1 Studio 当前连线类型
 
-| edgeType | 线型 | 颜色 | 箭头 | 标签 |
+| 关系 | 线型 | 颜色 | 箭头 | 标签 |
 |---|---|---|---|---|
-| `dependency` | SVG 细曲线 + 轻量流动动效 | `--accent` 蓝 | 实心三角 | 无 |
+| dependency | SVG 细曲线 + 轻量流动动效 | `--accent` 蓝 | 实心三角 | 无 |
 
-Studio M2a 只暴露 dependency。`reference`、`sequence` 和 transition 配置属于未来 Agent/分镜能力，不作为当前 Studio 手动编辑功能。
+当前 `media_edge` schema 只保存 dependency。`reference`、`sequence` 和 transition 配置属于未来 Agent/分镜能力，不作为当前 Studio 手动编辑功能。
 
 ### 4.2 端口规则
 
@@ -288,12 +289,12 @@ GET /api/workspaces/:id/canvas
 {
   camera: { x, y, zoom },
   nodes: [ { id, nodeType, title, status, ..., canvasX, canvasY, canvasW, canvasH } ],
-  edges: [ { id, fromNodeId, toNodeId, edgeType, transitionType, ... } ],
+  edges: [ { id, fromNodeId, toNodeId, ... } ],
   groups: [ { id, name, nodeIds: [...] } ]
 }
 ```
 
-M1.x 当前响应已包含 `camera`、`nodes`、`edges` 和 `groups`。
+M5 当前响应已包含 `camera`、`nodes`、`edges`、`groups`、节点 production preview 和 reference pack preview。
 
 前端收到后：
 1. `editor.createShapes(nodes.map(nodeToShape))` — 批量创建节点 shape
@@ -325,17 +326,17 @@ M1.x 当前响应已包含 `camera`、`nodes`、`edges` 和 `groups`。
   → 失败 → toast 提示"创建失败，请重试"
 ```
 
-**目标态原则**：创建节点、建连线、提交生成等业务操作以后端成功为准。M1 当前对标题/Prompt 编辑做了本地即时更新 + 自动保存，用来保证输入体验和 `Cmd+Z` 撤销恢复不丢内容。
+**当前原则**：创建节点、建连线、提交生成等业务操作以后端成功为准。标题、Prompt 和 Inspector 配置采用自动保存或显式 API 更新；运行状态和预览以后端 job/version 状态为准。
 
-### 7.4 通路 ③：后端事件 → WebSocket 推送（目标态）
+### 7.4 通路 ③：后端事件 → WebSocket 推送
 
-Agent 操作、生成任务状态变更等后端事件通过 WebSocket 推送到前端：
+当前画布变更和节点生产状态变更通过 WebSocket 推送到前端：
 
 ```
 WebSocket /ws/canvas?workspaceId=xxx
 ```
 
-M1.x 已实现 `/ws/canvas` 事件通道，节点、连线和分组变更会广播；前端断线重连后重新拉取画布。Agent 推送和生成进度仍属于后续阶段。
+当前已实现 `/ws/canvas` 事件通道，节点、连线、分组、节点状态和预览变更会广播；前端断线重连后重新拉取画布。Agent 对话事件和 HITL 卡片仍属于 M6。
 
 | 事件 | Payload | 前端响应 |
 |---|---|---|
@@ -344,10 +345,9 @@ M1.x 已实现 `/ws/canvas` 事件通道，节点、连线和分组变更会广�
 | `NodeDeleted` | nodeId | `editor.deleteShape(shapeId)` |
 | `EdgeCreated` | edge 完整数据 | 重新拉取或更新 canvas edges，SVG overlay 渲染连线 |
 | `EdgeDeleted` | edgeId | 重新拉取或更新 canvas edges，SVG overlay 移除连线 |
-| `JobProgress` | nodeId, progress | 更新节点进度条 |
-| `JobCompleted` | nodeId, status, thumbnailUrl, reviewScore | 更新状态 + 缩略图 + 评分 |
-| `JobFailed` | nodeId, errorMessage | 更新状态为 failed |
-| `GateRequested` | gateType, message, options | 对话面板展示确认卡片 |
+| `GroupCreated` / `GroupUpdated` / `GroupDeleted` | group 数据或 groupId | 更新 GroupShape 和资源树 |
+
+Job progress、GateRequested、Agent 对话流等更细事件属于 M6 目标态；M5 画布以 `NodeUpdated` 承载节点状态、尺寸和预览投影。
 
 ### 7.5 冲突处理
 

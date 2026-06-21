@@ -29,25 +29,28 @@
 
 ### 2.0 当前迁移快照
 
-当前 goose 迁移包含 `001_init_schema.sql` 到 `005_add_workspace_sandbox.sql`，已覆盖 Studio M1.x 的核心编辑数据和 OpenSandbox workspace 绑定：
+当前 goose 迁移包含 `001_init_schema.sql` 到 `014_m5_version_lifecycle.sql`，已覆盖 M3-M5 的 Studio 生产链路：
 
-- 枚举：`media_type`、`node_status`、`edge_type`、`transition_type`
-- 表：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`、`workspace_sandbox`
-- `media_node` 当前包含 `group_id`、`asset_id`，但不包含 `model_provider`、`model_name`、`model_params`、`current_version_id`、`sort_order`
-- `canvas_w/canvas_h` 默认值为 `200/120`
+- 枚举：`workspace_mode`、`node_type`、`asset_type`、`node_status`、`job_status`
+- 核心表：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`
+- 沙箱表：`workspace_sandbox`、`sandbox_job`
+- 生产表：`generation_job`、`artifact_version`、`model_provider`、`model_capability`、`node_stale_reason`、`reference_pack_item`
+- 已收敛：`media_edge` 当前只表达 dependency，不再存 `edge_type` / transition 字段。
+- 已扩展：`media_node` 当前包含 `operation_type`、`prompt_template`、`prompt_rich`、`prompt_refs`、`model_provider`、`model_id`、`model_params`、`current_version_id`、`metadata`。
+- 已扩展：`artifact_version` 当前支持 queued/running/succeeded/failed/cancelled 生命周期，并通过 `job_id` 与 `generation_job` 一一绑定。
 
-下面的完整 schema 同时记录当前已落地对象和后续 Agent/生成目标态。真实可执行结构以 `apps/server/migrations/` 和 sqlc 生成代码为准。
+下面的 schema 记录当前已落地对象；Agent runtime、shot、review 等 M6 目标态对象在第 6 节单独列出。真实可执行结构以 `apps/server/migrations/` 和 sqlc 生成代码为准。
 
 ### 2.1 枚举类型
 
 ```sql
-CREATE TYPE media_type      AS ENUM ('text', 'image', 'video', 'audio');
+CREATE TYPE workspace_mode  AS ENUM ('studio', 'agent');
+CREATE TYPE node_type       AS ENUM ('text', 'image', 'video', 'audio', 'reference_pack');
+CREATE TYPE asset_type      AS ENUM ('text', 'image', 'video', 'audio', 'json');
 CREATE TYPE node_status     AS ENUM ('draft', 'ready', 'queued', 'running',
                                      'succeeded', 'failed', 'stale', 'user_editing');
-CREATE TYPE edge_type       AS ENUM ('dependency', 'reference', 'sequence');
-CREATE TYPE transition_type AS ENUM ('cut', 'crossfade', 'dissolve', 'wipe');
-CREATE TYPE job_status      AS ENUM ('pending', 'running', 'succeeded', 'failed', 'cancelled');
-CREATE TYPE review_verdict  AS ENUM ('approved', 'rejected', 'needs_revision');
+CREATE TYPE job_status      AS ENUM ('pending', 'queued', 'running', 'succeeded',
+                                     'failed', 'cancelled');
 ```
 
 ### 2.2 account — 用户账号
@@ -79,13 +82,14 @@ CREATE TABLE workspace (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name       TEXT NOT NULL,
     owner_id   UUID NOT NULL REFERENCES account(id),
+    mode       workspace_mode NOT NULL DEFAULT 'studio',
     settings   JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-一个 Workspace 对应一个项目（如"咖啡广告"）。`settings` 存项目级配置（默认模型、质量阈值等）。`owner_id` 关联 account 表。
+一个 Workspace 对应一个项目（如"咖啡广告"）。`mode` 是 Studio / Agent 的路由和权限边界。`settings` 存项目级配置（默认模型、质量阈值等）。`owner_id` 关联 account 表。
 
 ### 2.5 canvas_document — 画布视口状态
 
@@ -109,18 +113,21 @@ CREATE TABLE canvas_document (
 CREATE TABLE media_asset (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id  UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
-    type          media_type NOT NULL,
+    type          asset_type NOT NULL,
     mime          TEXT NOT NULL,
-    storage_url   TEXT NOT NULL,
+    storage_url   TEXT,
+    text_content  TEXT,
     thumbnail_url TEXT,
     duration_ms   INT,
     size_bytes    BIGINT,
     metadata      JSONB NOT NULL DEFAULT '{}',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT media_asset_has_content
+      CHECK (storage_url IS NOT NULL OR text_content IS NOT NULL)
 );
 ```
 
-所有文件级资源：用户上传的图片、Agent 生成的视频、BGM 音频等。实际文件存 MinIO，这里存元数据和访问路径。多个节点/版本可以引用同一个 asset。
+所有资源级资产：用户上传的图片/视频/音频、模型生成的图片/视频、文本生成结果等。二进制文件存 MinIO，文本内容可直接存 `text_content`。多个节点/版本可以引用同一个 asset。
 
 ### 2.7 media_group — 扁平分组
 
@@ -145,21 +152,25 @@ CREATE TABLE media_node (
     workspace_id       UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     group_id           UUID REFERENCES media_group(id) ON DELETE SET NULL,
     asset_id           UUID REFERENCES media_asset(id) ON DELETE SET NULL,
-    node_type          media_type NOT NULL,
+    node_type          node_type NOT NULL,
     title              TEXT NOT NULL DEFAULT '',
     status             node_status NOT NULL DEFAULT 'draft',
     prompt             TEXT NOT NULL DEFAULT '',
+    operation_type     TEXT NOT NULL DEFAULT 'manual',
+    prompt_template    TEXT NOT NULL DEFAULT '',
+    prompt_rich        JSONB NOT NULL DEFAULT '{}',
+    prompt_refs        JSONB NOT NULL DEFAULT '[]',
     model_provider     TEXT,
-    model_name         TEXT,
+    model_id           TEXT,
     model_params       JSONB NOT NULL DEFAULT '{}',
     current_version_id UUID,
+    metadata           JSONB NOT NULL DEFAULT '{}',
     source             TEXT NOT NULL DEFAULT 'user',
-    sort_order         INT NOT NULL DEFAULT 0,
     -- 画布坐标（tldraw 渲染位置）
     canvas_x           REAL NOT NULL DEFAULT 0,
     canvas_y           REAL NOT NULL DEFAULT 0,
-    canvas_w           REAL NOT NULL DEFAULT 240,
-    canvas_h           REAL NOT NULL DEFAULT 180,
+    canvas_w           REAL NOT NULL DEFAULT 200,
+    canvas_h           REAL NOT NULL DEFAULT 120,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -167,13 +178,14 @@ CREATE TABLE media_node (
 
 **关键设计**：画布坐标（`canvas_x/y/w/h`）直接存在业务节点表上，不存在独立的画布状态表。tldraw 的 MediaShape 从这张表构建，不需要 snapshot。
 
-> 当前实现使用分阶段迁移后的 `media_node`：默认尺寸为 `200 × 120`，支持 `text/image/video/audio`，并已通过后续迁移增加 `group_id` 和 `asset_id`。上方完整表结构中的模型、版本和排序字段仍属于目标态。
-
 - `group_id`：所属分组，一个节点最多属于一个分组
-- `asset_id`：关联的文件资产（Draft 节点此字段为 NULL）
-- `current_version_id`：当前 winner 版本（FK 延迟添加，见 2.11）
+- `asset_id`：用户源素材节点直接关联的资产，或 legacy 上传资产引用
+- `operation_type`：生成或素材语义，例如 `manual`、`upload`、`text_generation`、`text_to_image`、`image_to_video`、`collect_references`
+- `prompt_template`：用户编写的原始 Prompt 模板，可包含 `@节点名`
+- `prompt_refs`：结构化 Prompt 引用，运行前用于校验和渲染
+- `current_version_id`：当前选中的产物版本
 - `source`：`'user'`（用户创建）或 `'agent'`（Agent 创建），决定画布上的视觉区分（实线 vs 蓝色虚线边框）
-- `canvas_w/h` 默认值对应视频节点的标准卡片尺寸，创建时可按 node_type 设置不同默认值
+- `operation_type='manual'` 的文本节点和 `operation_type='upload'` 或有 `asset_id` 的媒体节点是用户源素材，不展示模型运行入口，但可作为下游输入或参考包成员。
 
 ### 2.9 media_edge — 节点间关系
 
@@ -183,18 +195,15 @@ CREATE TABLE media_edge (
     workspace_id        UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     from_node_id        UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
     to_node_id          UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
-    edge_type           edge_type NOT NULL,
-    transition_type     transition_type,
-    transition_duration REAL,
     source              TEXT NOT NULL DEFAULT 'user',
     metadata            JSONB NOT NULL DEFAULT '{}',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT no_self_loop CHECK (from_node_id != to_node_id),
-    CONSTRAINT unique_edge UNIQUE (from_node_id, to_node_id, edge_type)
+    CONSTRAINT unique_edge UNIQUE (from_node_id, to_node_id)
 );
 ```
 
-当前 Studio 用户只创建 dependency 连线。`edge_type`、`transition_type` 和 `transition_duration` 保留为未来 reference / sequence / transition 能力的兼容字段，不代表 M2a Studio 暴露多语义连线。
+当前 Studio 用户只创建 dependency 连线。reference / sequence / transition 不在 `media_edge` 当前 schema 中表达，后续 Agent storyboard 需要时应在独立 Agent/shot 表里建模，避免污染 Studio dependency 语义。
 
 **DAG 约束**：`no_self_loop` 在 SQL 层禁止自连接。环检测在应用层实现——创建 dependency 类型的 edge 前，从目标节点沿 dependency 出边做 BFS，如果能到达源节点则拒绝。
 
@@ -220,38 +229,58 @@ OpenSandbox 容器本身可替换，`workspace_sandbox` 是 workspace 到稳定 
 
 ```sql
 CREATE TABLE generation_job (
-    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id   UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
-    target_node_id UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
-    provider       TEXT NOT NULL,
-    model          TEXT NOT NULL,
-    prompt         TEXT NOT NULL,
-    params         JSONB NOT NULL DEFAULT '{}',
-    status         job_status NOT NULL DEFAULT 'pending',
-    progress       INT NOT NULL DEFAULT 0,
-    cost_cents     INT,
-    error_message  TEXT,
-    started_at     TIMESTAMPTZ,
-    completed_at   TIMESTAMPTZ,
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id      UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    target_node_id    UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
+    parent_job_id     UUID REFERENCES generation_job(id) ON DELETE SET NULL,
+    operation_type    TEXT NOT NULL,
+    provider          TEXT NOT NULL,
+    model_id          TEXT NOT NULL,
+    intent            JSONB NOT NULL DEFAULT '{}',
+    rendered_prompt   TEXT NOT NULL DEFAULT '',
+    provider_request  JSONB NOT NULL DEFAULT '{}',
+    provider_response JSONB NOT NULL DEFAULT '{}',
+    status            job_status NOT NULL DEFAULT 'pending',
+    progress          INT NOT NULL DEFAULT 0,
+    attempt           INT NOT NULL DEFAULT 1,
+    max_attempts      INT NOT NULL DEFAULT 1,
+    retry_policy      JSONB NOT NULL DEFAULT '{}',
+    cost_cents        INT,
+    error_code        TEXT,
+    error_message     TEXT,
+    requested_by_type TEXT NOT NULL DEFAULT 'user',
+    requested_by_id   TEXT,
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-每次调用 `submit_generation` 创建一条记录。`prompt` 和 `params` 是提交时的快照——后续修改节点的 Prompt 不影响已提交的任务。`cost_cents` 以分为单位记录费用，用于 Stale 影响分析时展示重算成本。
+每次节点运行创建一条记录。`intent`、`rendered_prompt`、`provider_request` 和 `provider_response` 是提交和调用时的审计快照；后续修改节点 Prompt 不影响已提交任务。异步 provider 会先进入 `queued/running`，完成或失败后更新状态。`parent_job_id`、`attempt` 和 `max_attempts` 用于失败重试链路。
 
 ### 2.12 artifact_version — 产物版本
 
 ```sql
 CREATE TABLE artifact_version (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    node_id      UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
-    job_id       UUID REFERENCES generation_job(id) ON DELETE SET NULL,
-    asset_id     UUID REFERENCES media_asset(id) ON DELETE SET NULL,
-    version_no   INT NOT NULL,
-    winner       BOOLEAN NOT NULL DEFAULT false,
-    review_score REAL,
-    input_hash   TEXT,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id      UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    node_id           UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
+    job_id            UUID REFERENCES generation_job(id) ON DELETE SET NULL,
+    asset_id          UUID REFERENCES media_asset(id) ON DELETE SET NULL,
+    version_no        INT NOT NULL,
+    winner            BOOLEAN NOT NULL DEFAULT false,
+    output            JSONB NOT NULL DEFAULT '{}',
+    review_score      REAL,
+    input_hash        TEXT NOT NULL DEFAULT '',
+    status            job_status NOT NULL DEFAULT 'succeeded',
+    progress          INT NOT NULL DEFAULT 100,
+    error_code        TEXT,
+    error_message     TEXT,
+    provider_request  JSONB NOT NULL DEFAULT '{}',
+    provider_response JSONB NOT NULL DEFAULT '{}',
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT unique_version_per_node UNIQUE (node_id, version_no)
 );
 
@@ -262,42 +291,110 @@ ALTER TABLE media_node ADD CONSTRAINT fk_current_version
 
 一个节点可以有多个版本（多次生成的候选结果）。`winner = true` 标记当前选中的版本，`media_node.current_version_id` 指向它。`input_hash` 是上游依赖 winner + Prompt + 模型参数的哈希，用于 Stale 检测时判断当前版本是否仍有效。
 
-### 2.13 review_record — 评审记录
+M5 之后，用户点击运行时会立即创建一个 queued `artifact_version`，并通过唯一索引保证 production-generated version 与 `generation_job` 一一绑定。版本详情里展示该次运行的调用记录，而不是把所有 job 平铺在 Inspector 主界面。
+
+### 2.13 model_provider / model_capability — 模型能力
 
 ```sql
-CREATE TABLE review_record (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    version_id UUID NOT NULL REFERENCES artifact_version(id) ON DELETE CASCADE,
-    axes       JSONB NOT NULL DEFAULT '{}',
-    score      REAL NOT NULL,
-    critique   TEXT,
-    verdict    review_verdict NOT NULL,
-    reviewer   TEXT NOT NULL DEFAULT 'auto',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE model_provider (
+    id            TEXT PRIMARY KEY,
+    display_name  TEXT NOT NULL,
+    provider_type TEXT NOT NULL,
+    config        JSONB NOT NULL DEFAULT '{}',
+    enabled       BOOLEAN NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE model_capability (
+    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider_id                TEXT NOT NULL REFERENCES model_provider(id) ON DELETE CASCADE,
+    model_id                   TEXT NOT NULL,
+    display_name               TEXT NOT NULL,
+    output_types               JSONB NOT NULL DEFAULT '[]',
+    supported_operations       JSONB NOT NULL DEFAULT '[]',
+    supported_input_node_types JSONB NOT NULL DEFAULT '[]',
+    limits                     JSONB NOT NULL DEFAULT '{}',
+    pricing                    JSONB NOT NULL DEFAULT '{}',
+    defaults                   JSONB NOT NULL DEFAULT '{}',
+    enabled                    BOOLEAN NOT NULL DEFAULT true,
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT unique_model_capability UNIQUE (provider_id, model_id)
 );
 ```
 
-`axes` 存储多维度评分（如 `{"visual_quality": 8.5, "cast_match": 7.0, "content_safety": 9.0}`）。`reviewer` 为 `'auto'`（Clip Review Skill 自动评审）或 `'user'`（用户手动评审）。
+当前 provider 包括 `mock`、`volcengine` 和 `internal_ffmpeg`。Volcengine 当前启用文本 `doubao-seed-2-0-mini-260428`、图片 `doubao-seedream-5-0-260128`、视频 `doubao-seedance-1-0-pro-fast-251015`；音频模型记录为 hold/disabled。
 
-### 2.14 agent_step — Agent 操作审计日志
+### 2.14 node_stale_reason — Stale 原因
 
 ```sql
-CREATE TABLE agent_step (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id     UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
-    step_type        TEXT NOT NULL,
-    input            JSONB NOT NULL DEFAULT '{}',
-    output           JSONB NOT NULL DEFAULT '{}',
-    created_node_ids UUID[] DEFAULT '{}',
-    created_edge_ids UUID[] DEFAULT '{}',
-    duration_ms      INT,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE node_stale_reason (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id        UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    node_id             UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
+    upstream_node_id    UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
+    upstream_version_id UUID REFERENCES artifact_version(id) ON DELETE SET NULL,
+    reason_code         TEXT NOT NULL,
+    reason_message      TEXT NOT NULL DEFAULT '',
+    details             JSONB NOT NULL DEFAULT '{}',
+    resolved_at         TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-Agent 的每一步操作记录。`step_type` 对应 Skill 名称（如 `'screenwriter'`、`'director'`）或命令名称（如 `'create_media_node'`）。用于操作回溯和调试。
+上游 current winner、参考包成员、参考包成员 winner 等实质输入变化会写入 active stale reason。用户重跑并产生新版本后，相关 stale reason 会被清理或解析。
 
-### 2.15 索引
+### 2.15 reference_pack_item — 参考包成员
+
+```sql
+CREATE TABLE reference_pack_item (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id   UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    pack_node_id   UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
+    member_node_id UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
+    position       INT NOT NULL DEFAULT 0,
+    metadata       JSONB NOT NULL DEFAULT '{}',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT reference_pack_item_no_self_member CHECK (pack_node_id <> member_node_id),
+    CONSTRAINT unique_reference_pack_member UNIQUE (pack_node_id, member_node_id)
+);
+```
+
+Reference Pack 是一种 `media_node(node_type='reference_pack')`，成员通过这张表管理。Pack membership 不等于 dependency edge；其他节点可以 dependency 到整个 Pack。
+
+### 2.16 sandbox_job — 沙箱任务
+
+```sql
+CREATE TABLE sandbox_job (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id      UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    target_node_id    UUID REFERENCES media_node(id) ON DELETE SET NULL,
+    generation_job_id UUID REFERENCES generation_job(id) ON DELETE SET NULL,
+    job_type          TEXT NOT NULL,
+    operation_type    TEXT NOT NULL,
+    status            job_status NOT NULL DEFAULT 'pending',
+    sandbox_id        TEXT,
+    command           TEXT NOT NULL DEFAULT '',
+    cwd               TEXT NOT NULL DEFAULT '/workspace',
+    input             JSONB NOT NULL DEFAULT '{}',
+    output            JSONB NOT NULL DEFAULT '{}',
+    exit_code         INT,
+    stdout            TEXT NOT NULL DEFAULT '',
+    stderr            TEXT NOT NULL DEFAULT '',
+    duration_ms       INT NOT NULL DEFAULT 0,
+    error_code        TEXT,
+    error_message     TEXT,
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+FFmpeg 首帧/尾帧提取、远程生成图片/视频下载入库等不可预测资源消耗任务必须记录为 `sandbox_job`，应用容器不直接执行这些命令。
+
+### 2.17 索引
 
 ```sql
 -- 账号
@@ -305,6 +402,7 @@ CREATE INDEX idx_account_email ON account(email);
 
 -- workspace 维度（最常用的过滤条件）
 CREATE INDEX idx_workspace_owner ON workspace(owner_id);
+CREATE INDEX idx_workspace_owner_mode ON workspace(owner_id, mode);
 CREATE INDEX idx_media_node_workspace ON media_node(workspace_id);
 CREATE INDEX idx_media_asset_workspace ON media_asset(workspace_id);
 CREATE INDEX idx_media_edge_workspace ON media_edge(workspace_id);
@@ -321,15 +419,22 @@ CREATE INDEX idx_workspace_sandbox_status ON workspace_sandbox(status);
 
 -- 版本查询
 CREATE INDEX idx_artifact_version_node ON artifact_version(node_id);
-CREATE INDEX idx_artifact_version_winner ON artifact_version(node_id) WHERE winner = true;
-CREATE INDEX idx_review_record_version ON review_record(version_id);
+CREATE UNIQUE INDEX idx_artifact_version_one_winner ON artifact_version(node_id) WHERE winner = true;
+CREATE UNIQUE INDEX idx_artifact_version_job_unique ON artifact_version(job_id) WHERE job_id IS NOT NULL;
+CREATE INDEX idx_artifact_version_node_status ON artifact_version(node_id, status, created_at DESC);
 
 -- 生成任务
 CREATE INDEX idx_generation_job_node ON generation_job(target_node_id);
 CREATE INDEX idx_generation_job_status ON generation_job(workspace_id, status);
 
--- 审计日志（按时间倒序查最近操作）
-CREATE INDEX idx_agent_step_workspace ON agent_step(workspace_id, created_at DESC);
+-- 模型能力、stale、参考包、沙箱任务
+CREATE INDEX idx_model_capability_provider ON model_capability(provider_id);
+CREATE INDEX idx_model_capability_enabled ON model_capability(provider_id, enabled);
+CREATE INDEX idx_node_stale_reason_node_active ON node_stale_reason(node_id, created_at) WHERE resolved_at IS NULL;
+CREATE INDEX idx_reference_pack_item_pack ON reference_pack_item(pack_node_id, position, created_at);
+CREATE INDEX idx_reference_pack_item_member ON reference_pack_item(member_node_id);
+CREATE INDEX idx_sandbox_job_workspace_status ON sandbox_job(workspace_id, status);
+CREATE INDEX idx_sandbox_job_generation_job ON sandbox_job(generation_job_id);
 ```
 
 ## 3. tldraw 投影层类型
@@ -339,7 +444,7 @@ CREATE INDEX idx_agent_step_workspace ON agent_step(workspace_id, created_at DES
 ```typescript
 import type { TLBaseShape } from 'tldraw'
 
-type MediaType = 'text' | 'image' | 'video' | 'audio'
+type MediaType = 'text' | 'image' | 'video' | 'audio' | 'reference_pack'
 type NodeStatus = 'draft' | 'ready' | 'queued' | 'running'
   | 'succeeded' | 'failed' | 'stale' | 'user_editing'
 
@@ -347,17 +452,19 @@ interface MediaShapeProps {
   nodeId: string
   nodeType: MediaType
   title: string
+  prompt: string
   status: NodeStatus
+  w: number
+  h: number
   thumbnailUrl?: string
-  progress?: number
-  reviewScore?: number
-  isAgentCreated: boolean
+  productionPreview?: ProductionPreview
+  referencePackPreview?: ReferencePackPreview
 }
 
 type MediaShape = TLBaseShape<'media', MediaShapeProps>
 ```
 
-目标态下这是 tldraw shape 需要的最小渲染字段。M1 当前为了节点预览、自动保存和撤销恢复，把 `prompt` 也放入 `MediaShapeProps`，并额外包含 `w/h`。
+shape props 只保存画布渲染需要的业务投影。模型参数、版本列表、调用记录等重数据通过 selected node 的 API 按需加载，不塞进 tldraw store。
 
 ### 3.2 从业务数据构建 shape
 
@@ -376,9 +483,11 @@ function nodeToShape(node: MediaNodeDTO): MediaShape {
       nodeId: node.id,
       nodeType: node.nodeType,
       title: node.title,
+      prompt: node.prompt,
       status: node.status,
+      productionPreview: node.productionPreview,
+      referencePackPreview: node.referencePackPreview,
       thumbnailUrl: node.thumbnailUrl,
-      isAgentCreated: node.source === 'agent',
     },
   }
 }
@@ -415,7 +524,7 @@ GET /api/workspaces/:id/canvas
 {
   camera: { x, y, zoom },
   nodes: [ { id, nodeType, title, status, ..., canvasX, canvasY, canvasW, canvasH } ],
-  edges: [ { id, fromNodeId, toNodeId, edgeType, transitionType, ... } ],
+  edges: [ { id, fromNodeId, toNodeId, ... } ],
   groups: [ { id, name, nodeIds: [...] } ]
 }
 ```
@@ -475,7 +584,7 @@ GET /api/workspaces/:id/canvas
 
 ### 4.4 通路 ③：后端事件 → WebSocket 推送
 
-Agent 操作、生成任务状态变更等后端事件通过 WebSocket 推送到前端：
+当前 `/ws/canvas` 已用于节点、连线、分组和节点状态/预览更新。M6 Agent 操作、Gate 和更细粒度任务进度也会走事件流，但还没有完整落地：
 
 ```
 WebSocket /ws/canvas?workspaceId=xxx
@@ -486,10 +595,8 @@ WebSocket /ws/canvas?workspaceId=xxx
 { type: "NodeDeleted",   payload: { nodeId } }
 { type: "EdgeCreated",   payload: { edge: {...} } }
 { type: "EdgeDeleted",   payload: { edgeId } }
-{ type: "JobProgress",   payload: { nodeId, progress: 45 } }
-{ type: "JobCompleted",  payload: { nodeId, status, thumbnailUrl, reviewScore } }
-{ type: "JobFailed",     payload: { nodeId, errorMessage } }
-{ type: "GateRequested", payload: { gateType, message, options } }
+{ type: "NodeUpdated",   payload: { nodeId, changes: { status, productionPreview, ... } } }
+{ type: "GateRequested", payload: { gateType, message, options } } // M6 目标态
 ```
 
 前端按事件类型调用对应的 Editor API：
@@ -501,14 +608,14 @@ WebSocket /ws/canvas?workspaceId=xxx
 | NodeDeleted | `editor.deleteShape(shapeId)` |
 | EdgeCreated | 更新 canvas edges，SVG overlay 渲染连线 |
 | EdgeDeleted | 更新 canvas edges，SVG overlay 移除连线 |
-| JobProgress | `editor.updateShape({ id, props: { progress } })` |
-| JobCompleted | 更新 status + thumbnailUrl + reviewScore |
-| JobFailed | 更新 status 为 failed |
-| GateRequested | 对话面板展示确认卡片 |
+| NodeUpdated | 更新 status、尺寸、预览、参考包摘要等 props |
+| GateRequested | 对话面板展示确认卡片（M6 目标态） |
 
 ### 4.5 冲突处理
 
-当用户正在编辑某个节点，同时 Agent 也在修改它时：
+当前 M3 的选择是 Studio / Agent mode 分离：Studio Workspace 可手工编辑，Agent Workspace 普通画布写接口会被拒绝。因此 M5 不处理“同一 workspace 内用户和 Agent 同时编辑同一节点”的冲突。
+
+M6 如果引入 Agent 内部工具写画布，同时允许用户通过对话干预，应按以下目标态处理：
 
 1. 用户点击节点编辑 → 节点状态变为 `user_editing` → 后端广播 `NodeUpdated { status: 'user_editing' }`
 2. Agent 收到状态变更 → 暂停该节点的分支，转而处理其他节点
@@ -525,7 +632,9 @@ WebSocket /ws/canvas?workspaceId=xxx
 
 ```
 apps/server/migrations/
-└── 001_init_schema.sql    ← goose 格式：-- +goose Up / -- +goose Down
+├── 001_init_schema.sql
+├── ...
+└── 014_m5_version_lifecycle.sql
 ```
 
 goose 的 SQL-first 方式与 sqlc 配合最自然——sqlc 直接读迁移文件作为 schema 源，无需维护两份 schema 定义。
@@ -568,14 +677,14 @@ make sqlc-generate    # 生成 Go 代码
 
 以下表和字段在 [业务交互设计 v2](../design/overview.md) 中引入，作为 Agent 模式和 Skill 体系的数据支撑。
 
-### 6.1 workspace 表增加 mode 字段
-
-当前代码仍通过 `workspace.settings` 承载项目级配置，未增加显式 `mode` 字段。后续如果 Agent/Studio 模式切换需要查询和约束，再引入显式字段。
+### 6.1 workspace 表 mode 字段
 
 ```sql
-ALTER TABLE workspace ADD COLUMN mode TEXT NOT NULL DEFAULT 'studio';
--- 值: 'studio' | 'agent'
+CREATE TYPE workspace_mode AS ENUM ('studio', 'agent');
+ALTER TABLE workspace ADD COLUMN mode workspace_mode NOT NULL DEFAULT 'studio';
 ```
+
+`workspace.mode` 已在 M3 落地，用于 Studio / Agent 路由分流和普通画布写接口权限校验。
 
 ### 6.2 media_node 表增加分镜相关字段
 

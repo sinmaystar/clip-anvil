@@ -80,7 +80,7 @@
 | **谁创建内容** | 用户 | Agent |
 | **数据通路** | 用户操作 → REST API → DB → 画布 | 用户对话 → Agent → 生产工具 → DB → 事件流 → 画布 |
 
-**模式切换（目标态）**：Workspace 级别设置，建议保存在 `workspace.settings.mode` 或后续显式 `workspace.mode` 字段。当前代码尚未提供 Studio/Agent 模式切换 UI，所有已落地画布能力默认属于 Studio 模式。
+**模式切换（当前策略）**：Workspace 级别已有显式 `workspace.mode` 字段。当前不做原地无缝切换，Studio / Agent 通过创建入口、路由和权限边界分离；未来通过复制/导入衔接。
 
 - Studio → Agent：保留画布上已有内容，Agent 可识别并复用
 - Agent → Studio：保留 Agent 创建的所有内容，用户获得完全编辑权限
@@ -109,11 +109,11 @@
 
 ### 5.1 Studio 当前连线语义
 
-| edgeType | 语义 | 示例 | 画布视觉 |
+| 关系 | 语义 | 示例 | 画布视觉 |
 |---|---|---|---|
-| `dependency` | A 的输出作为 B 的输入，B 依赖 A | 产品图 → 视频节点 | SVG 曲线 + 流动动效 + 箭头 |
+| dependency | A 的输出作为 B 的输入，B 依赖 A | 产品图 → 视频节点 | SVG 曲线 + 流动动效 + 箭头 |
 
-Studio 模式当前只向用户暴露 dependency。数据库中的 `edge_type` 仍保留 `reference` / `sequence` 兼容和未来 Agent/分镜扩展口径，但它们不是 M2a Studio 用户交互范围。
+Studio 模式当前只向用户暴露 dependency，数据库中的 `media_edge` 也只保存 from/to 关系。Reference Pack membership、Prompt `@` 引用和未来 Agent storyboard 都不复用 `edge_type`。
 
 ### 5.2 节点状态机
 
@@ -240,11 +240,11 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 - image / video / audio 节点类型（已落地）
 - dependency 连线、SVG overlay 投影和 DAG 环检测（已落地）
 - 分组（MediaGroup）和左侧资源树（已落地）
-- 节点编辑浮层基础信息和 Prompt 自动保存（已落地）；高级模型参数待生成系统落地
+- 节点浮层 Inspector、Prompt 自动保存、模型和参数配置（已落地）
 - `/ws/canvas` 事件流（已落地）
 - 拖拽上传资产和 MinIO 存储（已落地）
 - Dagre 自动布局，并根据左侧浮层展开/收起状态避让安全区（已落地）
-- 生成任务、版本列表与 winner 切换（未落地，后续阶段）
+- 生成任务、版本列表与 current 选择（M5 已落地）
 
 ### M2: OpenSandbox 工作区沙箱（基础已部分落地）
 
@@ -283,17 +283,20 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 - sandbox-backed internal FFmpeg operations
 - Production Read API for M5
 
-### M5: Studio 专业手动模式（待实施）
+### M5: Studio 专业手动模式（已完成）
 
 目标：让专业用户可手动创建、引用、运行、查看版本和处理 stale。
 
 交付：
-- 富属性面板
-- Prompt `@`
-- Reference Pack UI
-- 手动运行和版本管理
-- stale 可视化和手动重跑
-- 模型能力驱动的模型选择
+- 浮层 Inspector，聚焦 Prompt、模型、参数和运行。
+- Prompt `@` 引用：文本依赖内联渲染，图片/视频依赖以可读占位进入 prompt 并作为 provider input refs 传入。
+- Reference Pack 一等节点和成员管理。
+- 手动运行、异步状态、版本列表、current 选择、版本详情里的调用记录。
+- stale 可视化和手动重跑。
+- 模型能力驱动的模型选择和 capability mismatch 阻断。
+- 真实 Volcengine 文本/图片/视频 provider，mock provider 保留本地测试。
+- TOS provider 输入暂存、sandbox-backed 远程图片/视频下载入 MinIO。
+- 用户源素材节点：手动文本、上传图片/视频/音频，不提供模型运行入口，可作为依赖或参考包成员。
 
 ### M6: Agent 自动生产模式（待实施）
 

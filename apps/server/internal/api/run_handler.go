@@ -34,9 +34,14 @@ func NewRunHandler(service *production.Service, queries *db.Queries, storage ...
 }
 
 type runNodeResponse struct {
-	Node    db.MediaNode          `json:"node"`
-	Job     generationJobResponse `json:"job"`
-	Version db.ArtifactVersion    `json:"version,omitempty"`
+	Node    *mediaNodeResponse       `json:"node,omitempty"`
+	Job     generationJobResponse    `json:"job"`
+	Version *artifactVersionResponse `json:"version,omitempty"`
+}
+
+type selectArtifactVersionResponse struct {
+	Node    mediaNodeResponse       `json:"node"`
+	Version artifactVersionResponse `json:"version"`
 }
 
 type runNodeRequest struct {
@@ -56,6 +61,7 @@ type generationJobResponse struct {
 	ProviderRequest  map[string]any `json:"provider_request"`
 	ProviderResponse map[string]any `json:"provider_response"`
 	Status           string         `json:"status"`
+	Progress         int32          `json:"progress"`
 	Attempt          int32          `json:"attempt"`
 	MaxAttempts      int32          `json:"max_attempts"`
 	ErrorCode        string         `json:"error_code,omitempty"`
@@ -76,18 +82,26 @@ type staleReasonResponse struct {
 }
 
 type artifactVersionResponse struct {
-	ID          string             `json:"id"`
-	WorkspaceID string             `json:"workspace_id"`
-	NodeID      string             `json:"node_id"`
-	JobID       string             `json:"job_id,omitempty"`
-	AssetID     string             `json:"asset_id,omitempty"`
-	VersionNo   int32              `json:"version_no"`
-	Winner      bool               `json:"winner"`
-	Output      map[string]any     `json:"output"`
-	ReviewScore *float32           `json:"review_score,omitempty"`
-	InputHash   string             `json:"input_hash"`
-	Asset       *assetReadResponse `json:"asset,omitempty"`
-	CreatedAt   string             `json:"created_at"`
+	ID               string             `json:"id"`
+	WorkspaceID      string             `json:"workspace_id"`
+	NodeID           string             `json:"node_id"`
+	JobID            string             `json:"job_id,omitempty"`
+	AssetID          string             `json:"asset_id,omitempty"`
+	VersionNo        int32              `json:"version_no"`
+	Winner           bool               `json:"winner"`
+	Output           map[string]any     `json:"output"`
+	ReviewScore      *float32           `json:"review_score,omitempty"`
+	InputHash        string             `json:"input_hash"`
+	Status           string             `json:"status"`
+	Progress         int32              `json:"progress"`
+	ErrorCode        string             `json:"error_code,omitempty"`
+	ErrorMessage     string             `json:"error_message,omitempty"`
+	ProviderRequest  map[string]any     `json:"provider_request"`
+	ProviderResponse map[string]any     `json:"provider_response"`
+	Asset            *assetReadResponse `json:"asset,omitempty"`
+	CreatedAt        string             `json:"created_at"`
+	StartedAt        string             `json:"started_at,omitempty"`
+	CompletedAt      string             `json:"completed_at,omitempty"`
 }
 
 type assetReadResponse struct {
@@ -124,7 +138,7 @@ type sandboxJobResponse struct {
 }
 
 type productionStateResponse struct {
-	Node               db.MediaNode              `json:"node"`
+	Node               mediaNodeResponse         `json:"node"`
 	CurrentVersion     *artifactVersionResponse  `json:"current_version,omitempty"`
 	Versions           []artifactVersionResponse `json:"versions"`
 	LatestJob          *generationJobResponse    `json:"latest_job,omitempty"`
@@ -162,6 +176,10 @@ func (h *RunHandler) RunNode(ctx context.Context, c *app.RequestContext) {
 	if _, ok := requireStudioWorkspace(ctx, h.queries, node.WorkspaceID, accountID, c); !ok {
 		return
 	}
+	if isSourceMaterialNode(node) {
+		writeError(c, consts.StatusBadRequest, "素材节点不需要运行模型。")
+		return
+	}
 
 	var req runNodeRequest
 	if len(c.Request.Body()) > 0 {
@@ -171,25 +189,37 @@ func (h *RunHandler) RunNode(ctx context.Context, c *app.RequestContext) {
 		}
 	}
 
-	result, err := h.service.RunNode(ctx, nodeID, production.RequestedBy{Type: "user", ID: uuidToString(accountID)}, req.runOptions())
+	result, err := h.service.SubmitNodeRun(ctx, nodeID, production.RequestedBy{Type: "user", ID: uuidToString(accountID)}, req.runOptions())
 	if err != nil {
+		if statusForRunError(err) == consts.StatusBadRequest {
+			if result.Job.ID.Valid {
+				resp := runNodeResponse{Job: toGenerationJobResponse(result.Job)}
+				if result.Version.ID.Valid {
+					version, versionErr := h.versionResponse(ctx, result.Version)
+					if versionErr == nil {
+						resp.Version = &version
+					}
+				}
+				c.JSON(consts.StatusBadRequest, resp)
+				return
+			}
+			writeError(c, consts.StatusBadRequest, err.Error())
+			return
+		}
 		latest, latestErr := h.queries.LatestGenerationJobByNode(ctx, nodeID)
 		if latestErr == nil {
 			c.JSON(statusForRunError(err), runNodeResponse{Job: toGenerationJobResponse(latest)})
 			return
 		}
-		if statusForRunError(err) == consts.StatusBadRequest {
-			writeError(c, consts.StatusBadRequest, err.Error())
-			return
-		}
 		writeError(c, consts.StatusInternalServerError, "failed to run node")
 		return
 	}
-	c.JSON(consts.StatusOK, runNodeResponse{
-		Node:    result.Node,
-		Job:     toGenerationJobResponse(result.Job),
-		Version: result.Version,
-	})
+	version, err := h.versionResponse(ctx, result.Version)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to load version")
+		return
+	}
+	c.JSON(consts.StatusAccepted, runNodeResponse{Job: toGenerationJobResponse(result.Job), Version: &version})
 }
 
 func (h *RunHandler) RetryJob(ctx context.Context, c *app.RequestContext) {
@@ -217,6 +247,10 @@ func (h *RunHandler) RetryJob(ctx context.Context, c *app.RequestContext) {
 	}
 	result, err := h.service.RetryJob(ctx, jobID, production.RequestedBy{Type: "user", ID: uuidToString(accountID)})
 	if err != nil {
+		if statusForRunError(err) == consts.StatusBadRequest {
+			writeError(c, consts.StatusBadRequest, err.Error())
+			return
+		}
 		latest, latestErr := h.queries.LatestGenerationJobInChain(ctx, jobID)
 		if latestErr == nil {
 			c.JSON(statusForRunError(err), runNodeResponse{Job: toGenerationJobResponse(generationJobFromLatestRow(latest))})
@@ -225,10 +259,16 @@ func (h *RunHandler) RetryJob(ctx context.Context, c *app.RequestContext) {
 		writeError(c, statusForRunError(err), err.Error())
 		return
 	}
+	nodeResp := toMediaNodeResponse(result.Node)
+	version, err := h.versionResponse(ctx, result.Version)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to load version")
+		return
+	}
 	c.JSON(consts.StatusOK, runNodeResponse{
-		Node:    result.Node,
+		Node:    &nodeResp,
 		Job:     toGenerationJobResponse(result.Job),
-		Version: result.Version,
+		Version: &version,
 	})
 }
 
@@ -252,6 +292,40 @@ func (h *RunHandler) ListNodeJobs(ctx context.Context, c *app.RequestContext) {
 		resp = append(resp, toGenerationJobResponse(job))
 	}
 	c.JSON(consts.StatusOK, resp)
+}
+
+func (h *RunHandler) SelectNodeVersion(ctx context.Context, c *app.RequestContext) {
+	accountID, ok := accountIDFromContext(c)
+	if !ok {
+		writeError(c, consts.StatusUnauthorized, "unauthorized")
+		return
+	}
+	node, ok := nodeForAccountByQueries(ctx, h.queries, c.Param("id"), accountID, c)
+	if !ok {
+		return
+	}
+	if _, ok := requireStudioWorkspace(ctx, h.queries, node.WorkspaceID, accountID, c); !ok {
+		return
+	}
+	versionID, ok := uuidFromString(c.Param("versionID"))
+	if !ok {
+		writeError(c, consts.StatusNotFound, "version not found")
+		return
+	}
+	result, err := h.service.SelectArtifactVersion(ctx, node.ID, versionID)
+	if err != nil {
+		writeError(c, consts.StatusBadRequest, err.Error())
+		return
+	}
+	version, err := h.versionResponse(ctx, result.Version)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to load version asset")
+		return
+	}
+	c.JSON(consts.StatusOK, selectArtifactVersionResponse{
+		Node:    toMediaNodeResponse(result.Node),
+		Version: version,
+	})
 }
 
 func (h *RunHandler) ListNodeVersions(ctx context.Context, c *app.RequestContext) {
@@ -373,8 +447,12 @@ func (h *RunHandler) GetNodeProductionState(ctx context.Context, c *app.RequestC
 	if !ok {
 		return
 	}
+	if isSourceMaterialNode(node) {
+		c.JSON(consts.StatusOK, sourceMaterialProductionState(node))
+		return
+	}
 	resp := productionStateResponse{
-		Node:               node,
+		Node:               toMediaNodeResponse(node),
 		Versions:           []artifactVersionResponse{},
 		ActiveStaleReasons: []staleReasonResponse{},
 		SandboxJobs:        []sandboxJobResponse{},
@@ -434,6 +512,21 @@ func (h *RunHandler) GetNodeProductionState(ctx context.Context, c *app.RequestC
 	c.JSON(consts.StatusOK, resp)
 }
 
+func isSourceMaterialNode(node db.MediaNode) bool {
+	return node.OperationType == "upload" ||
+		(node.OperationType == "manual" && node.NodeType == db.NodeTypeText) ||
+		node.AssetID.Valid
+}
+
+func sourceMaterialProductionState(node db.MediaNode) productionStateResponse {
+	return productionStateResponse{
+		Node:               toMediaNodeResponse(node),
+		Versions:           []artifactVersionResponse{},
+		ActiveStaleReasons: []staleReasonResponse{},
+		SandboxJobs:        []sandboxJobResponse{},
+	}
+}
+
 func statusForRunError(err error) int {
 	if errors.Is(err, production.ErrUnsupportedNodeType) ||
 		errors.Is(err, production.ErrProviderConfig) ||
@@ -459,6 +552,7 @@ func toGenerationJobResponse(job db.GenerationJob) generationJobResponse {
 		ProviderRequest:  jsonObject(job.ProviderRequest),
 		ProviderResponse: jsonObject(job.ProviderResponse),
 		Status:           string(job.Status),
+		Progress:         job.Progress,
 		Attempt:          job.Attempt,
 		MaxAttempts:      job.MaxAttempts,
 		ErrorCode:        textString(job.ErrorCode),
@@ -471,16 +565,24 @@ func toGenerationJobResponse(job db.GenerationJob) generationJobResponse {
 
 func toArtifactVersionResponse(version db.ArtifactVersion, asset *db.MediaAsset, accessURL string) artifactVersionResponse {
 	resp := artifactVersionResponse{
-		ID:          uuidToString(version.ID),
-		WorkspaceID: uuidToString(version.WorkspaceID),
-		NodeID:      uuidToString(version.NodeID),
-		JobID:       uuidString(version.JobID),
-		AssetID:     uuidString(version.AssetID),
-		VersionNo:   version.VersionNo,
-		Winner:      version.Winner,
-		Output:      jsonObject(version.Output),
-		InputHash:   version.InputHash,
-		CreatedAt:   timeString(version.CreatedAt),
+		ID:               uuidToString(version.ID),
+		WorkspaceID:      uuidToString(version.WorkspaceID),
+		NodeID:           uuidToString(version.NodeID),
+		JobID:            uuidString(version.JobID),
+		AssetID:          uuidString(version.AssetID),
+		VersionNo:        version.VersionNo,
+		Winner:           version.Winner,
+		Output:           jsonObject(version.Output),
+		InputHash:        version.InputHash,
+		Status:           string(version.Status),
+		Progress:         version.Progress,
+		ErrorCode:        textString(version.ErrorCode),
+		ErrorMessage:     textString(version.ErrorMessage),
+		ProviderRequest:  jsonObject(version.ProviderRequest),
+		ProviderResponse: jsonObject(version.ProviderResponse),
+		CreatedAt:        timeString(version.CreatedAt),
+		StartedAt:        timeString(version.StartedAt),
+		CompletedAt:      timeString(version.CompletedAt),
 	}
 	if version.ReviewScore.Valid {
 		value := version.ReviewScore.Float32

@@ -248,17 +248,25 @@ type Account struct {
 }
 
 type ArtifactVersion struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	NodeID      pgtype.UUID        `json:"node_id"`
-	JobID       pgtype.UUID        `json:"job_id"`
-	AssetID     pgtype.UUID        `json:"asset_id"`
-	VersionNo   int32              `json:"version_no"`
-	Winner      bool               `json:"winner"`
-	Output      []byte             `json:"output"`
-	ReviewScore pgtype.Float4      `json:"review_score"`
-	InputHash   string             `json:"input_hash"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	NodeID           pgtype.UUID        `json:"node_id"`
+	JobID            pgtype.UUID        `json:"job_id"`
+	AssetID          pgtype.UUID        `json:"asset_id"`
+	VersionNo        int32              `json:"version_no"`
+	Winner           bool               `json:"winner"`
+	Output           []byte             `json:"output"`
+	ReviewScore      pgtype.Float4      `json:"review_score"`
+	InputHash        string             `json:"input_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	Status           JobStatus          `json:"status"`
+	Progress         int32              `json:"progress"`
+	ErrorCode        pgtype.Text        `json:"error_code"`
+	ErrorMessage     pgtype.Text        `json:"error_message"`
+	ProviderRequest  []byte             `json:"provider_request"`
+	ProviderResponse []byte             `json:"provider_response"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
 }
 
 type CanvasDocument struct {

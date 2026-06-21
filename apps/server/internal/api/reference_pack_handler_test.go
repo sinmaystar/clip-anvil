@@ -35,6 +35,25 @@ func TestCanAddReferencePackMemberRejectsNestedPack(t *testing.T) {
 	}
 }
 
+func TestReferencePackMemberHasPackInput(t *testing.T) {
+	packID := pgtype.UUID{Bytes: [16]byte{0x03}, Valid: true}
+	memberID := pgtype.UUID{Bytes: [16]byte{0x04}, Valid: true}
+	otherMemberID := pgtype.UUID{Bytes: [16]byte{0x05}, Valid: true}
+	edges := []db.MediaEdge{
+		{FromNodeID: packID, ToNodeID: memberID},
+	}
+
+	if !referencePackMemberHasPackInput(edges, packID, memberID) {
+		t.Fatal("member dependency on pack should be rejected")
+	}
+	if referencePackMemberHasPackInput(edges, packID, otherMemberID) {
+		t.Fatal("dependency to another member should not reject this member")
+	}
+	if referencePackMemberHasPackInput(edges, pgtype.UUID{Bytes: [16]byte{0x06}, Valid: true}, memberID) {
+		t.Fatal("unexpected dependency detection for unrelated pack")
+	}
+}
+
 func TestToReferencePackItemResponsesUsesPositionOrder(t *testing.T) {
 	item := db.ReferencePackItem{
 		ID:           pgtype.UUID{Bytes: [16]byte{0x01}, Valid: true},

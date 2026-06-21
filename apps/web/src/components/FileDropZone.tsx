@@ -35,6 +35,8 @@ export function FileDropZone({
         node_type: asset.type,
         asset_id: asset.id,
         title: fileNameWithoutExtension(file.name),
+        status: "succeeded",
+        operation_type: "upload",
         canvas_x: point.x + index * 260,
         canvas_y: point.y,
       });

@@ -11,10 +11,18 @@
     "tsBuildInfoFile": "dist-test/tsconfig.test.tsbuildinfo"
   },
   "include": [
+    "src/lib/apiErrors.ts",
+    "src/lib/canvasRunState.ts",
     "src/lib/canvasSelectors.ts",
     "src/lib/connectionFeedback.ts",
     "src/lib/connectionGeometry.ts",
     "src/lib/groupLayout.ts",
-    "src/lib/layout.ts"
+    "src/lib/layout.ts",
+    "src/lib/nodePreviewLayout.ts",
+    "src/lib/promptRefs.ts",
+    "src/lib/productionPreview.ts",
+    "src/lib/productionPanel.ts",
+    "src/lib/referencePack.ts",
+    "src/lib/sourceMaterial.ts"
   ]
 }

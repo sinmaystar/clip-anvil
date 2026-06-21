@@ -8,13 +8,17 @@ import (
 )
 
 func DownloadFromMinIO(ctx context.Context, client Client, sandboxID string, presignedURL string, destPath string) (ExecResult, error) {
+	return DownloadURLToSandbox(ctx, client, sandboxID, presignedURL, destPath)
+}
+
+func DownloadURLToSandbox(ctx context.Context, client Client, sandboxID string, sourceURL string, destPath string) (ExecResult, error) {
 	if err := validateTransferPath(destPath); err != nil {
 		return ExecResult{}, err
 	}
-	if err := validatePresignedURL(presignedURL); err != nil {
+	if err := validatePresignedURL(sourceURL); err != nil {
 		return ExecResult{}, err
 	}
-	command := "mkdir -p " + shellQuote(parentDir(destPath)) + " && curl -sS -f -L -o " + shellQuote(destPath) + " " + shellQuote(presignedURL)
+	command := "mkdir -p " + shellQuote(parentDir(destPath)) + " && curl -sS -f -L -o " + shellQuote(destPath) + " " + shellQuote(sourceURL)
 	return RunExec(ctx, client, sandboxID, ExecInput{Command: command, TimeoutSeconds: DefaultExecTimeoutSeconds})
 }
 

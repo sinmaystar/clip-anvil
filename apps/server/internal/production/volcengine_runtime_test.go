@@ -1,0 +1,60 @@
+package production
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
+
+type fakeProductionRuntime struct {
+	started bool
+}
+
+func (f *fakeProductionRuntime) Start(context.Context, ProductionJob, GenerationIntent) (<-chan ProductionEvent, error) {
+	f.started = true
+	events := make(chan ProductionEvent, 1)
+	events <- ProductionEvent{Type: ProductionEventJobSucceeded, Output: ProductionOutput{TextContent: "ok"}}
+	close(events)
+	return events, nil
+}
+
+func TestVolcengineProductionRuntimeDelegatesNonVolcengineProvider(t *testing.T) {
+	legacy := &fakeProductionRuntime{}
+	runtime := VolcengineProductionRuntime{legacy: legacy}
+	stream, err := runtime.Start(context.Background(), ProductionJob{}, GenerationIntent{
+		OutputType: "text",
+		Model:      ModelSpec{Provider: "mock", ModelID: "mock-text"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream {
+	}
+	if !legacy.started {
+		t.Fatal("expected legacy runtime to start")
+	}
+}
+
+func TestVolcengineProductionRuntimeRejectsAudioWhileHeld(t *testing.T) {
+	runtime := VolcengineProductionRuntime{}
+	_, err := runtime.Start(context.Background(), ProductionJob{}, GenerationIntent{
+		OutputType: "audio",
+		Model:      ModelSpec{Provider: "volcengine", ModelID: "volcengine-audio-hold"},
+	})
+	if !errors.Is(err, ErrCapabilityMismatch) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNewVolcengineProductionRuntimePassesInputResolverToVideoRuntime(t *testing.T) {
+	resolver := &fakeProviderInputResolver{url: "https://signed.example/input.png"}
+	runtime := NewVolcengineProductionRuntime(VolcengineProviderConfig{}, nil, time.Second, time.Minute, nil, resolver)
+	video, ok := runtime.video.(VolcengineVideoRuntime)
+	if !ok {
+		t.Fatalf("video runtime = %T", runtime.video)
+	}
+	if video.inputResolver != resolver {
+		t.Fatal("expected video runtime to receive input resolver")
+	}
+}

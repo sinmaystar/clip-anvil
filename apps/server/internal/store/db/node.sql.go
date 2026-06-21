@@ -131,13 +131,14 @@ INSERT INTO media_node (
     title,
     prompt,
     prompt_template,
+    status,
     asset_id,
     canvas_x,
     canvas_y,
     canvas_w,
     canvas_h
 )
-VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata
 `
 
@@ -146,6 +147,7 @@ type CreateMediaNodeParams struct {
 	NodeType    NodeType    `json:"node_type"`
 	Title       string      `json:"title"`
 	Prompt      string      `json:"prompt"`
+	Status      NodeStatus  `json:"status"`
 	AssetID     pgtype.UUID `json:"asset_id"`
 	CanvasX     float32     `json:"canvas_x"`
 	CanvasY     float32     `json:"canvas_y"`
@@ -159,6 +161,7 @@ func (q *Queries) CreateMediaNode(ctx context.Context, arg CreateMediaNodeParams
 		arg.NodeType,
 		arg.Title,
 		arg.Prompt,
+		arg.Status,
 		arg.AssetID,
 		arg.CanvasX,
 		arg.CanvasY,
@@ -778,18 +781,27 @@ const updateMediaNodePrompt = `-- name: UpdateMediaNodePrompt :one
 UPDATE media_node
 SET prompt = $2,
     prompt_template = $2,
+    prompt_refs = $3,
+    prompt_rich = $4,
     updated_at = now()
 WHERE id = $1
 RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata
 `
 
 type UpdateMediaNodePromptParams struct {
-	ID     pgtype.UUID `json:"id"`
-	Prompt string      `json:"prompt"`
+	ID         pgtype.UUID `json:"id"`
+	Prompt     string      `json:"prompt"`
+	PromptRefs []byte      `json:"prompt_refs"`
+	PromptRich []byte      `json:"prompt_rich"`
 }
 
 func (q *Queries) UpdateMediaNodePrompt(ctx context.Context, arg UpdateMediaNodePromptParams) (MediaNode, error) {
-	row := q.db.QueryRow(ctx, updateMediaNodePrompt, arg.ID, arg.Prompt)
+	row := q.db.QueryRow(ctx, updateMediaNodePrompt,
+		arg.ID,
+		arg.Prompt,
+		arg.PromptRefs,
+		arg.PromptRich,
+	)
 	var i MediaNode
 	err := row.Scan(
 		&i.ID,

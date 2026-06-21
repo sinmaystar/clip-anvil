@@ -58,18 +58,34 @@ type SandboxResourceLimits struct {
 }
 
 type ProductionConfig struct {
-	ProviderMode     string `mapstructure:"provider_mode"`
-	DefaultProvider  string `mapstructure:"default_provider"`
-	DefaultTextModel string `mapstructure:"default_text_model"`
-	Volcengine       VolcengineConfig
+	ProviderMode                string `mapstructure:"provider_mode"`
+	DefaultProvider             string `mapstructure:"default_provider"`
+	DefaultTextModel            string `mapstructure:"default_text_model"`
+	WorkerConcurrency           int    `mapstructure:"worker_concurrency"`
+	ProviderPollIntervalSeconds int    `mapstructure:"provider_poll_interval_seconds"`
+	ProviderMaxPollSeconds      int    `mapstructure:"provider_max_poll_seconds"`
+	Volcengine                  VolcengineConfig
 }
 
 type VolcengineConfig struct {
 	APIKey     string `mapstructure:"api_key"`
 	BaseURL    string `mapstructure:"base_url"`
+	Region     string `mapstructure:"region"`
 	TextModel  string `mapstructure:"text_model"`
 	ImageModel string `mapstructure:"image_model"`
 	VideoModel string `mapstructure:"video_model"`
+	AudioModel string `mapstructure:"audio_model"`
+	TOS        TOSConfig
+}
+
+type TOSConfig struct {
+	AccessKeyID         string `mapstructure:"access_key_id"`
+	SecretAccessKey     string `mapstructure:"secret_access_key"`
+	Bucket              string `mapstructure:"bucket"`
+	Endpoint            string `mapstructure:"endpoint"`
+	Region              string `mapstructure:"region"`
+	PublicBaseURL       string `mapstructure:"public_base_url"`
+	SignedURLTTLSeconds int    `mapstructure:"signed_url_ttl_seconds"`
 }
 
 func Load() (*Config, error) {
@@ -124,11 +140,23 @@ func bindEnv(v *viper.Viper) error {
 		"production.provider_mode",
 		"production.default_provider",
 		"production.default_text_model",
+		"production.worker_concurrency",
+		"production.provider_poll_interval_seconds",
+		"production.provider_max_poll_seconds",
 		"production.volcengine.api_key",
 		"production.volcengine.base_url",
+		"production.volcengine.region",
 		"production.volcengine.text_model",
 		"production.volcengine.image_model",
 		"production.volcengine.video_model",
+		"production.volcengine.audio_model",
+		"production.volcengine.tos.access_key_id",
+		"production.volcengine.tos.secret_access_key",
+		"production.volcengine.tos.bucket",
+		"production.volcengine.tos.endpoint",
+		"production.volcengine.tos.region",
+		"production.volcengine.tos.public_base_url",
+		"production.volcengine.tos.signed_url_ttl_seconds",
 	}
 	for _, key := range keys {
 		if err := v.BindEnv(key); err != nil {

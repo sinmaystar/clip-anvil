@@ -60,7 +60,17 @@ func ValidateCapability(intent GenerationIntent, capability Capability) error {
 	if !contains(capability.SupportedOperations, intent.OperationType) {
 		return fmt.Errorf("%w: model %s/%s does not support operation %s", ErrCapabilityMismatch, capability.ProviderID, capability.ModelID, intent.OperationType)
 	}
-	if capability.Limits.MaxPromptChars > 0 && len([]rune(intent.PromptTemplate)) > capability.Limits.MaxPromptChars {
+	if len(capability.SupportedInputNodeTypes) > 0 {
+		for _, ref := range intent.InputRefs {
+			if ref.NodeType == "" || ref.Kind == "reference_pack" {
+				continue
+			}
+			if !contains(capability.SupportedInputNodeTypes, ref.NodeType) {
+				return fmt.Errorf("%w: model %s/%s does not support input node type %s", ErrCapabilityMismatch, capability.ProviderID, capability.ModelID, ref.NodeType)
+			}
+		}
+	}
+	if capability.Limits.MaxPromptChars > 0 && len([]rune(intent.EffectivePrompt())) > capability.Limits.MaxPromptChars {
 		return fmt.Errorf("%w: prompt exceeds max_prompt_chars %d", ErrCapabilityMismatch, capability.Limits.MaxPromptChars)
 	}
 	if len(capability.Limits.AllowedDurations) > 0 {

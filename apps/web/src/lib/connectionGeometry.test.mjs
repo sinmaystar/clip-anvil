@@ -45,6 +45,36 @@ describe("connection geometry", () => {
     assert.deepEqual(outputAnchor(source), { x: 240, y: 130 });
   });
 
+  it("uses adaptive preview dimensions when generated content expands a node", () => {
+    const source = mediaNodeBounds({
+      id: "a",
+      node_type: "text",
+      canvas_x: 40,
+      canvas_y: 60,
+      canvas_w: 220,
+      canvas_h: 132,
+      prompt: "",
+      production_preview: {
+        text: [
+          "# 视频脚本",
+          "",
+          "## 核心镜头",
+          "",
+          "- 机场大厅里三只彩色行李箱按绿、红、蓝排列。",
+          "- 地面有清晰反光，整体光线明亮。",
+          "- 镜头慢慢推近，突出材质和颜色对比。",
+          "",
+          "```text",
+          "主视觉：现代、干净、商业广告质感",
+          "```",
+        ].join("\n"),
+      },
+    });
+
+    assert.equal(source.w, 340);
+    assert.equal(outputAnchor(source).x, 380);
+  });
+
   it("builds a long cubic path with horizontal pull", () => {
     const path = connectionPath({ x: 160, y: 100 }, { x: 300, y: 160 });
 

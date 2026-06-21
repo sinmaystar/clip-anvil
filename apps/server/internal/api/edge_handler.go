@@ -44,6 +44,11 @@ type dependencyEdgeLister interface {
 	ListOutgoingDependencyEdges(context.Context, pgtype.UUID) ([]db.MediaEdge, error)
 }
 
+type referencePackMemberLister interface {
+	GetMediaNodeByID(context.Context, pgtype.UUID) (db.MediaNode, error)
+	ListReferencePackItems(context.Context, pgtype.UUID) ([]db.ReferencePackItem, error)
+}
+
 func (h *EdgeHandler) Create(ctx context.Context, c *app.RequestContext) {
 	accountID, ok := accountIDFromContext(c)
 	if !ok {
@@ -163,6 +168,13 @@ func (h *EdgeHandler) createDependencyEdge(
 	if hasCycle {
 		return edgeCreationResult{status: consts.StatusUnprocessableEntity, message: "edge creates cycle"}
 	}
+	hasPackMemberCycle, err := wouldCreateReferencePackMemberDependency(ctx, qtx, fromNodeID, toNodeID)
+	if err != nil {
+		return edgeCreationResult{status: consts.StatusInternalServerError, message: "failed to validate edge"}
+	}
+	if hasPackMemberCycle {
+		return edgeCreationResult{status: consts.StatusUnprocessableEntity, message: "reference pack cannot be an input to its member"}
+	}
 
 	edge, err := qtx.CreateMediaEdge(ctx, db.CreateMediaEdgeParams{
 		WorkspaceID: workspaceID,
@@ -251,4 +263,33 @@ func wouldCreateCycle(ctx context.Context, q dependencyEdgeLister, fromNodeID pg
 	}
 
 	return false, nil
+}
+
+func wouldCreateReferencePackMemberDependency(
+	ctx context.Context,
+	q referencePackMemberLister,
+	fromNodeID pgtype.UUID,
+	toNodeID pgtype.UUID,
+) (bool, error) {
+	fromNode, err := q.GetMediaNodeByID(ctx, fromNodeID)
+	if err != nil {
+		return false, err
+	}
+	if fromNode.NodeType != db.NodeTypeReferencePack {
+		return false, nil
+	}
+	items, err := q.ListReferencePackItems(ctx, fromNodeID)
+	if err != nil {
+		return false, err
+	}
+	return referencePackContainsMember(items, toNodeID), nil
+}
+
+func referencePackContainsMember(items []db.ReferencePackItem, nodeID pgtype.UUID) bool {
+	for _, item := range items {
+		if item.MemberNodeID == nodeID {
+			return true
+		}
+	}
+	return false
 }
