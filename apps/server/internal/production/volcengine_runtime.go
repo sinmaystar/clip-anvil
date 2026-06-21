@@ -16,11 +16,13 @@ type VolcengineProductionRuntime struct {
 }
 
 func NewVolcengineProductionRuntime(cfg VolcengineProviderConfig, httpClient *http.Client, pollInterval time.Duration, maxPoll time.Duration, legacy EinoProductionRuntime, inputResolver ProviderInputResolver) VolcengineProductionRuntime {
+	image := NewVolcengineImageRuntime(cfg, httpClient)
+	image.inputResolver = inputResolver
 	video := NewVolcengineVideoRuntime(cfg, httpClient, pollInterval, maxPoll)
 	video.inputResolver = inputResolver
 	return VolcengineProductionRuntime{
 		text:   NewVolcengineTextRuntime(cfg),
-		image:  NewVolcengineImageRuntime(cfg, httpClient),
+		image:  image,
 		video:  video,
 		legacy: legacy,
 	}

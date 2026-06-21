@@ -20,6 +20,10 @@ const propertyPanel = readFileSync(
   new URL("../components/PropertyPanel.tsx", import.meta.url),
   "utf8",
 );
+const artifactViewer = readFileSync(
+  new URL("./artifactViewer.ts", import.meta.url),
+  "utf8",
+);
 
 describe("canvas layering", () => {
   it("keeps node production popover above animated connection lines", () => {
@@ -122,14 +126,15 @@ describe("canvas layering", () => {
     );
   });
 
-  it("declares fullscreen asset review and node expand affordances", () => {
+  it("opens fullscreen asset review in a separate browser tab", () => {
     assert.ok(
-      css.includes(".asset-review-overlay"),
-      "fullscreen asset review overlay CSS should be present",
+      propertyPanel.includes("openArtifactVersionInNewTab"),
+      "version fullscreen review should open the asset in a new tab",
     );
-    assert.ok(
-      css.includes(".asset-review-content"),
-      "fullscreen asset review content CSS should be present",
+    assert.equal(
+      propertyPanel.includes("AssetReviewOverlay"),
+      false,
+      "fullscreen review should not render an in-page overlay",
     );
     assert.ok(
       css.includes(".media-node-expand-button"),
@@ -138,6 +143,15 @@ describe("canvas layering", () => {
     assert.ok(
       mediaShapeUtil.includes("clip-anvil:node-review-request"),
       "node expand button should dispatch an asset review request",
+    );
+    assert.ok(
+      artifactViewer.includes("renderArtifactViewerHTML"),
+      "fullscreen review should open a ClipAnvil viewer document instead of navigating to a downloadable asset URL",
+    );
+    assert.equal(
+      artifactViewer.includes("return source.accessUrl"),
+      false,
+      "fullscreen review must not navigate the new tab directly to the asset URL",
     );
   });
 
@@ -168,6 +182,33 @@ describe("canvas layering", () => {
     assert.ok(
       workspaceDetail.includes('operation_type: "manual"'),
       "manual text source nodes should use manual operation",
+    );
+  });
+
+  it("routes dropped files through ClipAnvil upload instead of tldraw assets", () => {
+    assert.ok(
+      workspaceDetail.includes('registerExternalContentHandler("files"'),
+      "tldraw file drops should be overridden so they create persisted media nodes",
+    );
+    assert.ok(
+      fileDropZone.includes("onUploadFiles"),
+      "the drop overlay should share the persisted upload path",
+    );
+    assert.equal(
+      fileDropZone.includes("void uploadFiles(files, point)"),
+      false,
+      "window drop handling should not race tldraw's default local asset insertion",
+    );
+  });
+
+  it("prevents media previews from being dragged out as tldraw URL content", () => {
+    assert.ok(
+      mediaShapeUtil.includes("preventNativeMediaDrag"),
+      "canvas media previews should block native dragstart events",
+    );
+    assert.ok(
+      mediaShapeUtil.includes("draggable={false}"),
+      "canvas media preview elements should not expose draggable image or video URLs",
     );
   });
 

@@ -25,9 +25,10 @@ type arkImageGenerator interface {
 type arkImageModelFactory func(ctx context.Context, config *ark.ImageGenerationConfig) (arkImageGenerator, error)
 
 type VolcengineImageRuntime struct {
-	cfg        VolcengineProviderConfig
-	factory    arkImageModelFactory
-	httpClient *http.Client
+	cfg           VolcengineProviderConfig
+	factory       arkImageModelFactory
+	httpClient    *http.Client
+	inputResolver ProviderInputResolver
 }
 
 func NewVolcengineImageRuntime(cfg VolcengineProviderConfig, httpClient *http.Client) VolcengineImageRuntime {
@@ -85,8 +86,20 @@ func (r VolcengineImageRuntime) generate(ctx context.Context, model arkImageGene
 	if rendered == "" {
 		rendered = "empty prompt"
 	}
+	if r.inputResolver != nil {
+		resolved, err := r.inputResolver.ResolveInputRefs(ctx, job, intent)
+		if err != nil {
+			events <- ProductionEvent{Type: ProductionEventJobFailed, Progress: 100, Err: err}
+			return
+		}
+		intent = resolved
+	}
+	if err := validateProviderReachableImageInputs(intent); err != nil {
+		events <- ProductionEvent{Type: ProductionEventJobFailed, Progress: 100, Err: err}
+		return
+	}
 	events <- ProductionEvent{Type: ProductionEventProviderProgress, Progress: 20, Payload: map[string]any{"stage": "image_generation_started"}}
-	msg, err := model.Generate(ctx, []*schema.Message{schema.UserMessage(rendered)})
+	msg, err := model.Generate(ctx, imageGenerationMessages(rendered, intent))
 	if err != nil {
 		events <- ProductionEvent{Type: ProductionEventJobFailed, Progress: 100, Err: fmt.Errorf("%w: generate ark image: %v", ErrProviderExecution, err)}
 		return
@@ -114,10 +127,70 @@ func (r VolcengineImageRuntime) generate(ctx context.Context, model arkImageGene
 				"operation_type": intent.OperationType,
 				"prompt":         rendered,
 				"params":         intent.Params,
+				"input_images":   imageInputSummaries(intent),
 			},
 			ResponseSummary: map[string]any{"provider": "volcengine", "source": image.source},
 		},
 	}
+}
+
+func imageGenerationMessages(rendered string, intent GenerationIntent) []*schema.Message {
+	imageRefs := imageInputRefs(intent)
+	if len(imageRefs) == 0 {
+		return []*schema.Message{schema.UserMessage(rendered)}
+	}
+	parts := []schema.ChatMessagePart{{
+		Type: schema.ChatMessagePartTypeText,
+		Text: rendered,
+	}}
+	for _, ref := range imageRefs {
+		parts = append(parts, schema.ChatMessagePart{
+			Type: schema.ChatMessagePartTypeImageURL,
+			ImageURL: &schema.ChatMessageImageURL{
+				URL: strings.TrimSpace(ref.StorageURL),
+			},
+		})
+	}
+	return []*schema.Message{{
+		Role:         schema.User,
+		Content:      rendered,
+		MultiContent: parts,
+	}}
+}
+
+func validateProviderReachableImageInputs(intent GenerationIntent) error {
+	for _, ref := range imageInputRefs(intent) {
+		if strings.HasPrefix(ref.StorageURL, "http://") || strings.HasPrefix(ref.StorageURL, "https://") {
+			continue
+		}
+		return fmt.Errorf("%w: image input %s must be staged to a provider-reachable URL before image generation", ErrProviderConfig, uuidToString(ref.NodeID))
+	}
+	return nil
+}
+
+func imageInputSummaries(intent GenerationIntent) []map[string]any {
+	refs := imageInputRefs(intent)
+	summaries := make([]map[string]any, 0, len(refs))
+	for _, ref := range refs {
+		summaries = append(summaries, map[string]any{
+			"node_id":  uuidToString(ref.NodeID),
+			"asset_id": ref.AssetID,
+			"mime":     ref.Mime,
+			"url":      strings.TrimSpace(ref.StorageURL),
+		})
+	}
+	return summaries
+}
+
+func imageInputRefs(intent GenerationIntent) []InputRef {
+	refs := []InputRef{}
+	for _, ref := range intent.InputRefs {
+		if ref.NodeType != "image" || strings.TrimSpace(ref.StorageURL) == "" {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	return refs
 }
 
 type providerImageOutput struct {

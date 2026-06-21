@@ -33,6 +33,7 @@ import {
   versionHasCallRecord,
   versionRows,
 } from "../lib/productionPreview";
+import { openArtifactVersionInNewTab } from "../lib/artifactViewer";
 import {
   isManualTextMaterialNode,
   isSourceMaterialNode,
@@ -69,7 +70,6 @@ interface PropertyPanelProps {
   isUpdatingReferencePackItems: boolean;
   isUpdatingGroupMembers: boolean;
   isUpdatingNode: boolean;
-  assetReviewRequestKey?: number;
   modelCapabilities: ModelCapability[];
   nodeProductionState: NodeProductionState | null;
   referencePackItems: ReferencePackItem[];
@@ -128,7 +128,6 @@ export function PropertyPanel({
   isUpdatingReferencePackItems,
   isUpdatingGroupMembers,
   isUpdatingNode,
-  assetReviewRequestKey = 0,
   modelCapabilities,
   nodeProductionState,
   referencePackItems,
@@ -191,7 +190,6 @@ export function PropertyPanel({
         isSelectingVersion={isSelectingVersion}
         isUpdatingReferencePackItems={isUpdatingReferencePackItems}
         isUpdatingNode={isUpdatingNode}
-        assetReviewRequestKey={assetReviewRequestKey}
         modelCapabilities={modelCapabilities}
         node={selectedNode}
         nodeProductionState={nodeProductionState}
@@ -491,7 +489,6 @@ function NodePropertyPanel({
   isSelectingVersion,
   isUpdatingReferencePackItems,
   isUpdatingNode,
-  assetReviewRequestKey,
   modelCapabilities,
   node,
   nodeProductionState,
@@ -513,7 +510,6 @@ function NodePropertyPanel({
   isSelectingVersion: boolean;
   isUpdatingReferencePackItems: boolean;
   isUpdatingNode: boolean;
-  assetReviewRequestKey: number;
   modelCapabilities: ModelCapability[];
   node: MediaNode;
   nodeProductionState: NodeProductionState | null;
@@ -565,7 +561,6 @@ function NodePropertyPanel({
   const [previewVersionId, setPreviewVersionId] = useState<string | null>(null);
   const [isTitleEditing, setIsTitleEditing] = useState(false);
   const [detailVersionId, setDetailVersionId] = useState<string | null>(null);
-  const [reviewVersionId, setReviewVersionId] = useState<string | null>(null);
   const titleValueRef = useRef(titleValue);
   const nodeTitleRef = useRef(node.title);
   const onUpdateNodeRef = useRef(onUpdateNode);
@@ -587,7 +582,6 @@ function NodePropertyPanel({
     nodeTitleRef.current = node.title;
     setPreviewVersionId(null);
     setDetailVersionId(null);
-    setReviewVersionId(null);
     setIsTitleEditing(false);
   }, [node.id, node.title]);
 
@@ -622,20 +616,9 @@ function NodePropertyPanel({
     };
   }, [commitTitle]);
 
-  useEffect(() => {
-    if (!assetReviewRequestKey || !previewVersion) {
-      return;
-    }
-    setReviewVersionId(previewVersion.id);
-  }, [assetReviewRequestKey, previewVersion]);
-
   const detailVersion =
     (detailVersionId
       ? versions.find((version) => version.id === detailVersionId)
-      : null) ?? null;
-  const reviewVersion =
-    (reviewVersionId
-      ? versions.find((version) => version.id === reviewVersionId)
       : null) ?? null;
 
   return (
@@ -894,7 +877,6 @@ function NodePropertyPanel({
                       current === versionId ? null : versionId,
                     )
                   }
-                  onOpenReview={(versionId) => setReviewVersionId(versionId)}
                   onSelectVersion={onSelectVersion}
                   version={previewVersion}
                 />
@@ -945,18 +927,6 @@ function NodePropertyPanel({
           <p className="property-empty">当前节点没有 active stale reason。</p>
         )}
       </details>
-      {reviewVersion ? (
-        <AssetReviewOverlay
-          currentVersionId={currentVersion?.id ?? null}
-          isSelectingVersion={isSelectingVersion}
-          nodeTitle={titleValue || node.title}
-          nodeId={node.id}
-          onClose={() => setReviewVersionId(null)}
-          onOpenDetails={(versionId) => setDetailVersionId(versionId)}
-          onSelectVersion={onSelectVersion}
-          version={reviewVersion}
-        />
-      ) : null}
     </aside>
   );
 }
@@ -968,7 +938,6 @@ function VersionPreviewPanel({
   nodeId,
   version,
   onOpenDetails,
-  onOpenReview,
   onSelectVersion,
 }: {
   currentVersionId: string | null;
@@ -977,7 +946,6 @@ function VersionPreviewPanel({
   nodeId: string;
   version: ArtifactVersion | null;
   onOpenDetails: (versionId: string) => void;
-  onOpenReview: (versionId: string) => void;
   onSelectVersion: (nodeId: string, versionId: string) => void;
 }) {
   if (!version) {
@@ -995,7 +963,10 @@ function VersionPreviewPanel({
           <span>{isCurrent ? "current" : version.status}</span>
         </div>
         <div className="property-version-actions">
-          <button onClick={() => onOpenReview(version.id)} type="button">
+          <button
+            onClick={() => openArtifactVersionInNewTab(version)}
+            type="button"
+          >
             全屏查看
           </button>
           {versionHasCallRecord(version) ? (
@@ -1042,87 +1013,6 @@ function VersionDetailPanel({ version }: { version: ArtifactVersion }) {
       ) : (
         <p className="property-empty">该版本没有调用记录详情。</p>
       )}
-    </div>
-  );
-}
-
-function AssetReviewOverlay({
-  currentVersionId,
-  isSelectingVersion,
-  nodeId,
-  nodeTitle,
-  version,
-  onClose,
-  onOpenDetails,
-  onSelectVersion,
-}: {
-  currentVersionId: string | null;
-  isSelectingVersion: boolean;
-  nodeId: string;
-  nodeTitle: string;
-  version: ArtifactVersion;
-  onClose: () => void;
-  onOpenDetails: (versionId: string) => void;
-  onSelectVersion: (nodeId: string, versionId: string) => void;
-}) {
-  const isCurrent = version.id === currentVersionId;
-  const canSelect =
-    version.status === "succeeded" && Boolean(version.asset) && !isCurrent;
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
-  return (
-    <div
-      className="asset-review-overlay"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${nodeTitle} v${version.version_no} 全屏查看`}
-    >
-      <div
-        className="asset-review-content"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="asset-review-header">
-          <div>
-            <p>{nodeTitle}</p>
-            <h2>
-              v{version.version_no} · {isCurrent ? "current" : version.status}
-            </h2>
-          </div>
-          <div className="asset-review-actions">
-            {versionHasCallRecord(version) ? (
-              <button onClick={() => onOpenDetails(version.id)} type="button">
-                详情
-              </button>
-            ) : null}
-            {canSelect ? (
-              <button
-                disabled={isSelectingVersion}
-                onClick={() => onSelectVersion(nodeId, version.id)}
-                type="button"
-              >
-                设为当前
-              </button>
-            ) : null}
-            <button onClick={onClose} type="button">
-              关闭
-            </button>
-          </div>
-        </header>
-        <div className="asset-review-body">
-          <VersionPreviewBody version={version} />
-        </div>
-      </div>
     </div>
   );
 }

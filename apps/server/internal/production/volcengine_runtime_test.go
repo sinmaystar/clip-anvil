@@ -58,3 +58,15 @@ func TestNewVolcengineProductionRuntimePassesInputResolverToVideoRuntime(t *test
 		t.Fatal("expected video runtime to receive input resolver")
 	}
 }
+
+func TestNewVolcengineProductionRuntimePassesInputResolverToImageRuntime(t *testing.T) {
+	resolver := &fakeProviderInputResolver{url: "https://signed.example/input.png"}
+	runtime := NewVolcengineProductionRuntime(VolcengineProviderConfig{}, nil, time.Second, time.Minute, nil, resolver)
+	image, ok := runtime.image.(VolcengineImageRuntime)
+	if !ok {
+		t.Fatalf("image runtime = %T", runtime.image)
+	}
+	if image.inputResolver != resolver {
+		t.Fatal("expected image runtime to receive input resolver")
+	}
+}

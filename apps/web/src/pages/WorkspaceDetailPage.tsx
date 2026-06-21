@@ -58,7 +58,10 @@ import {
   ConnectionOverlay,
   type DragConnection,
 } from "../components/ConnectionOverlay";
-import { FileDropZone } from "../components/FileDropZone";
+import {
+  FileDropZone,
+  useCanvasFileUpload,
+} from "../components/FileDropZone";
 import { PropertyPanel } from "../components/PropertyPanel";
 import { ResourceTree } from "../components/ResourceTree";
 import {
@@ -93,6 +96,10 @@ import {
 } from "../lib/promptRefs";
 import { mergeNodeUpdateResponse } from "../lib/productionPanel";
 import { isReferencePackMemberDependency } from "../lib/referencePack";
+import {
+  openArtifactViewInNewTab,
+  type ArtifactViewSource,
+} from "../lib/artifactViewer";
 import { useAppearanceStore } from "../stores/appearance";
 import { useAuthStore } from "../stores/auth";
 import { workspaceModeRoute } from "../lib/workspaceRoutes";
@@ -108,7 +115,7 @@ interface SelectNodeEvent {
   nodeId: string;
 }
 
-interface NodeReviewRequestEvent {
+interface NodeReviewRequestEvent extends ArtifactViewSource {
   nodeId: string;
 }
 
@@ -237,10 +244,6 @@ export function WorkspaceDetailPage() {
   const [textCreateMenuOpen, setTextCreateMenuOpen] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [assetReviewRequest, setAssetReviewRequest] = useState<{
-    nodeId: string;
-    key: number;
-  } | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [nodeEditorPosition, setNodeEditorPosition] =
     useState<NodeEditorPosition | null>(null);
@@ -809,6 +812,15 @@ export function WorkspaceDetailPage() {
     [id, queryClient, selectNode],
   );
 
+  const {
+    isUploading: isUploadingAsset,
+    uploadError: assetUploadError,
+    uploadFiles: uploadAssetFiles,
+  } = useCanvasFileUpload({
+    workspaceId: id ?? "",
+    onAssetNodeCreated: appendAssetNodeToCanvas,
+  });
+
   const applyCanvasEvent = useCallback(
     (event: CanvasEvent) => {
       if (!id) {
@@ -1160,6 +1172,12 @@ export function WorkspaceDetailPage() {
 
       editorRef.current = editor;
       setEditor(editor);
+      editor.registerExternalContentHandler("files", async ({ files, point }) => {
+        await uploadAssetFiles(
+          files,
+          point ?? editor.getViewportPageBounds().center,
+        );
+      });
       const groupShapes = effectiveCanvas.groups.map((group) =>
         groupToShape(group, effectiveCanvas.nodes),
       );
@@ -1537,7 +1555,7 @@ export function WorkspaceDetailPage() {
         setEditor(null);
       };
     },
-    [effectiveCanvas, id, queryClient],
+    [effectiveCanvas, id, queryClient, uploadAssetFiles],
   );
 
   const openCanvasMenu = useCallback((event: MouseEvent<HTMLElement>) => {
@@ -1613,7 +1631,7 @@ export function WorkspaceDetailPage() {
         return;
       }
       selectNode(detail.nodeId);
-      setAssetReviewRequest({ nodeId: detail.nodeId, key: Date.now() });
+      openArtifactViewInNewTab(detail);
     };
 
     window.addEventListener(
@@ -2235,11 +2253,6 @@ export function WorkspaceDetailPage() {
               isSelectingVersion={selectVersionMutation.isPending}
               isUpdatingGroupMembers={false}
               isUpdatingNode={updateNodeMutation.isPending}
-              assetReviewRequestKey={
-                assetReviewRequest?.nodeId === selectedNodeId
-                  ? assetReviewRequest.key
-                  : 0
-              }
               isUpdatingReferencePackItems={
                 replaceReferencePackItemsMutation.isPending
               }
@@ -2275,8 +2288,11 @@ export function WorkspaceDetailPage() {
         {id ? (
           <FileDropZone
             editor={editor}
-            onAssetNodeCreated={appendAssetNodeToCanvas}
-            workspaceId={id}
+            isUploading={isUploadingAsset}
+            onUploadFiles={(files, point) => {
+              void uploadAssetFiles(files, point);
+            }}
+            uploadError={assetUploadError}
           />
         ) : null}
         <AutoLayoutControls

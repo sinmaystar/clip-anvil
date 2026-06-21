@@ -254,9 +254,19 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
     event.stopPropagation();
     window.dispatchEvent(
       new CustomEvent("clip-anvil:node-review-request", {
-        detail: { nodeId: shape.props.nodeId },
+        detail: {
+          accessUrl: previewAssetUrl || thumbnailUrl,
+          nodeId: shape.props.nodeId,
+          text: nodeType === "text" ? previewText || promptValue : undefined,
+          type: previewAssetType || nodeType,
+        },
       }),
     );
+  };
+
+  const preventNativeMediaDrag = (event: SyntheticEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
   };
 
   const hasPreviewContent =
@@ -327,6 +337,8 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
                 {previewAssetUrl || thumbnailUrl ? (
                   <img
                     alt={titleValue || typeMeta.emptyTitle}
+                    draggable={false}
+                    onDragStart={preventNativeMediaDrag}
                     src={previewAssetUrl || thumbnailUrl}
                   />
                 ) : (
@@ -342,6 +354,8 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
                 {previewAssetUrl ? (
                   <video
                     controls
+                    draggable={false}
+                    onDragStart={preventNativeMediaDrag}
                     poster={previewThumbnailUrl || thumbnailUrl}
                     preload="metadata"
                     src={previewAssetUrl}
