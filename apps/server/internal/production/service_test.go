@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -92,6 +93,24 @@ func TestProviderRegistrySelectsMockProvider(t *testing.T) {
 	}
 	if result.RenderedPrompt != "write a short ad" {
 		t.Fatalf("rendered prompt = %q", result.RenderedPrompt)
+	}
+}
+
+func TestMockProviderUsesRenderedPrompt(t *testing.T) {
+	result, err := (MockProvider{}).Run(context.Background(), GenerationIntent{
+		PromptTemplate: "use @视频脚本",
+		RenderedPrompt: "[视频脚本]\n第一幕：机场大厅。",
+		OutputType:     "text",
+		Model:          ModelSpec{Provider: "mock", ModelID: "mock-text"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.TextContent, "@视频脚本") {
+		t.Fatalf("text content = %q, should not contain raw prompt ref mention", result.TextContent)
+	}
+	if !strings.Contains(result.TextContent, "第一幕：机场大厅。") {
+		t.Fatalf("text content = %q, want rendered prompt content", result.TextContent)
 	}
 }
 
@@ -251,6 +270,231 @@ func TestCapabilityValidatorRejectsLimitMismatch(t *testing.T) {
 	err := ValidateCapability(intent, capability)
 	if !errors.Is(err, ErrCapabilityMismatch) {
 		t.Fatalf("error = %v, want ErrCapabilityMismatch", err)
+	}
+}
+
+func TestCapabilityValidatorRejectsUnsupportedInputNodeType(t *testing.T) {
+	capability := Capability{
+		ProviderID:              "mock",
+		ModelID:                 "mock-image-only",
+		OutputTypes:             []string{"image"},
+		SupportedOperations:     []string{"text_to_image"},
+		SupportedInputNodeTypes: []string{"text"},
+		Limits:                  CapabilityLimits{MaxAttempts: 3},
+	}
+	intent := GenerationIntent{
+		OutputType:     "image",
+		OperationType:  "text_to_image",
+		PromptTemplate: "make an image",
+		InputRefs: []InputRef{
+			{Kind: "dependency", NodeType: "video"},
+		},
+		Model:  ModelSpec{Provider: "mock", ModelID: "mock-image-only"},
+		Params: map[string]any{},
+	}
+
+	err := ValidateCapability(intent, capability)
+	if !errors.Is(err, ErrCapabilityMismatch) {
+		t.Fatalf("error = %v, want ErrCapabilityMismatch", err)
+	}
+	if !strings.Contains(err.Error(), "does not support input node type video") {
+		t.Fatalf("error = %q, want unsupported input node type message", err.Error())
+	}
+}
+
+func TestPromptRefKindForDirectDependency(t *testing.T) {
+	depID := pgtype.UUID{Bytes: [16]byte{0x31}, Valid: true}
+	target := db.MediaNode{
+		ID:         pgtype.UUID{Bytes: [16]byte{0x32}, Valid: true},
+		PromptRefs: []byte(`{"version":1,"refs":[{"node_id":"31000000-0000-0000-0000-000000000000","label":"A","node_type":"image"}]}`),
+	}
+	dep := db.MediaNode{ID: depID, NodeType: db.NodeTypeImage}
+
+	if got := inputKindForDependency(target, dep); got != InputKindExplicit {
+		t.Fatalf("kind = %q, want explicit", got)
+	}
+}
+
+func TestPromptRefKindForImplicitDependency(t *testing.T) {
+	target := db.MediaNode{
+		ID:         pgtype.UUID{Bytes: [16]byte{0x33}, Valid: true},
+		PromptRefs: []byte(`{"version":1,"refs":[]}`),
+	}
+	dep := db.MediaNode{ID: pgtype.UUID{Bytes: [16]byte{0x34}, Valid: true}, NodeType: db.NodeTypeImage}
+
+	if got := inputKindForDependency(target, dep); got != InputKindImplicit {
+		t.Fatalf("kind = %q, want implicit", got)
+	}
+}
+
+func TestPromptRefsInvalidWhenRefIsNotUpstream(t *testing.T) {
+	target := db.MediaNode{
+		ID:         pgtype.UUID{Bytes: [16]byte{0x35}, Valid: true},
+		PromptRefs: []byte(`{"version":1,"refs":[{"node_id":"36000000-0000-0000-0000-000000000000","label":"Missing edge","node_type":"image"}]}`),
+	}
+	upstream := []db.MediaNode{
+		{ID: pgtype.UUID{Bytes: [16]byte{0x37}, Valid: true}, NodeType: db.NodeTypeImage},
+	}
+
+	invalid, err := invalidPromptRefs(target, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invalid) != 1 {
+		t.Fatalf("invalid len = %d, want 1", len(invalid))
+	}
+	if invalid[0].NodeID != "36000000-0000-0000-0000-000000000000" {
+		t.Fatalf("invalid node id = %q", invalid[0].NodeID)
+	}
+}
+
+func TestRenderPromptRefsExpandsTextDependencyWinner(t *testing.T) {
+	depID := pgtype.UUID{Bytes: [16]byte{0x31}, Valid: true}
+	intent := GenerationIntent{
+		PromptTemplate: "根据如下脚本生成九宫格图片\n\n@视频脚本",
+	}
+	inputs := []InputRef{
+		{
+			NodeID:      depID,
+			Kind:        InputKindExplicit,
+			NodeType:    "text",
+			AssetType:   "text",
+			TextContent: "第一幕：机场大厅。\n第二幕：三个行李箱。",
+		},
+	}
+
+	rendered, err := renderPromptRefs(intent, []byte(`{"version":1,"refs":[{"node_id":"31000000-0000-0000-0000-000000000000","label":"视频脚本","node_type":"text"}]}`), inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(rendered.RenderedPrompt, "@视频脚本") {
+		t.Fatalf("rendered prompt still contains prompt ref mention: %q", rendered.RenderedPrompt)
+	}
+	if !strings.Contains(rendered.RenderedPrompt, "第一幕：机场大厅。") {
+		t.Fatalf("rendered prompt = %q, want dependency text content", rendered.RenderedPrompt)
+	}
+	if rendered.PromptTemplate != intent.PromptTemplate {
+		t.Fatalf("prompt template = %q, want original template", rendered.PromptTemplate)
+	}
+}
+
+func TestRenderPromptRefsReplacesImageDependencyWithStableAlias(t *testing.T) {
+	imageID := pgtype.UUID{Bytes: [16]byte{0x29}, Valid: true}
+	textID := pgtype.UUID{Bytes: [16]byte{0x31}, Valid: true}
+	intent := GenerationIntent{
+		PromptTemplate: "根据 @视频脚本 和 @分镜图 生成TVC视频",
+		InputRefs: []InputRef{
+			{
+				NodeID:     imageID,
+				Kind:       InputKindExplicit,
+				NodeType:   "image",
+				AssetType:  "image",
+				StorageURL: "workspace-a/production/storyboard.jpg",
+			},
+			{
+				NodeID:      textID,
+				Kind:        InputKindExplicit,
+				NodeType:    "text",
+				AssetType:   "text",
+				TextContent: "第一幕：机场大厅。",
+			},
+		},
+	}
+
+	rendered, err := renderPromptRefs(intent, []byte(`{"version":1,"refs":[{"node_id":"31000000-0000-0000-0000-000000000000","label":"视频脚本","node_type":"text"},{"node_id":"29000000-0000-0000-0000-000000000000","label":"分镜图","node_type":"image"}]}`), intent.InputRefs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(rendered.RenderedPrompt, "@视频脚本") || strings.Contains(rendered.RenderedPrompt, "@分镜图") {
+		t.Fatalf("rendered prompt still contains prompt ref mention: %q", rendered.RenderedPrompt)
+	}
+	if !strings.Contains(rendered.RenderedPrompt, "第一幕：机场大厅。") {
+		t.Fatalf("rendered prompt = %q, want text dependency content", rendered.RenderedPrompt)
+	}
+	if !strings.Contains(rendered.RenderedPrompt, "图1") {
+		t.Fatalf("rendered prompt = %q, want image alias", rendered.RenderedPrompt)
+	}
+	if len(rendered.InputRefs) != 2 || rendered.InputRefs[1].NodeType != "image" {
+		t.Fatalf("input refs = %#v, want image ref preserved after text ref", rendered.InputRefs)
+	}
+}
+
+type fakeSourceInputQueries struct {
+	asset db.MediaAsset
+}
+
+func (q fakeSourceInputQueries) ListUpstreamDependencyNodes(context.Context, pgtype.UUID) ([]db.MediaNode, error) {
+	return nil, nil
+}
+
+func (q fakeSourceInputQueries) ListReferencePackItemNodes(context.Context, pgtype.UUID) ([]db.MediaNode, error) {
+	return nil, nil
+}
+
+func (q fakeSourceInputQueries) GetArtifactVersionByID(context.Context, pgtype.UUID) (db.ArtifactVersion, error) {
+	return db.ArtifactVersion{}, errors.New("unexpected version lookup")
+}
+
+func (q fakeSourceInputQueries) GetMediaAssetByID(context.Context, pgtype.UUID) (db.MediaAsset, error) {
+	return q.asset, nil
+}
+
+func TestLoadNodeInputFactUsesManualTextSourceNode(t *testing.T) {
+	node := db.MediaNode{
+		ID:            pgtype.UUID{Bytes: [16]byte{0x41}, Valid: true},
+		NodeType:      db.NodeTypeText,
+		Title:         "视频脚本",
+		Prompt:        "第一幕：机场大厅。\n第二幕：商品特写。",
+		OperationType: "manual",
+		Status:        db.NodeStatusSucceeded,
+	}
+
+	fact, ref, err := loadNodeInputFact(context.Background(), fakeSourceInputQueries{}, node, InputKindExplicit)
+	if err != nil {
+		t.Fatalf("resolve source text ref: %v", err)
+	}
+	if ref.TextContent != node.Prompt {
+		t.Fatalf("text content = %q, want prompt content", ref.TextContent)
+	}
+	if ref.AssetType != "text" {
+		t.Fatalf("asset type = %q, want text", ref.AssetType)
+	}
+	if fact.InputHash == "" {
+		t.Fatal("manual text source should contribute input hash")
+	}
+}
+
+func TestLoadNodeInputFactUsesUploadedAssetNode(t *testing.T) {
+	assetID := pgtype.UUID{Bytes: [16]byte{0x42}, Valid: true}
+	asset := db.MediaAsset{
+		ID:         assetID,
+		Type:       db.AssetTypeImage,
+		Mime:       "image/png",
+		StorageUrl: pgtype.Text{String: "workspace-a/assets/product.png", Valid: true},
+	}
+	node := db.MediaNode{
+		ID:            pgtype.UUID{Bytes: [16]byte{0x43}, Valid: true},
+		NodeType:      db.NodeTypeImage,
+		Title:         "商品主图",
+		OperationType: "upload",
+		AssetID:       assetID,
+		Status:        db.NodeStatusSucceeded,
+	}
+
+	fact, ref, err := loadNodeInputFact(context.Background(), fakeSourceInputQueries{asset: asset}, node, InputKindExplicit)
+	if err != nil {
+		t.Fatalf("resolve upload source ref: %v", err)
+	}
+	if ref.AssetID != uuidToString(assetID) || ref.StorageURL != asset.StorageUrl.String {
+		t.Fatalf("asset ref = %#v, want uploaded asset", ref)
+	}
+	if ref.AssetType != "image" || ref.Mime != "image/png" {
+		t.Fatalf("asset type/mime = %q/%q, want image/png", ref.AssetType, ref.Mime)
+	}
+	if fact.InputHash == "" {
+		t.Fatal("uploaded source asset should contribute input hash")
 	}
 }
 

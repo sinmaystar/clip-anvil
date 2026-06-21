@@ -10,6 +10,38 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
     chunkSizeWarningLimit: 1800,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) {
+            return;
+          }
+          if (id.includes("/tldraw/") || id.includes("/@tldraw/")) {
+            return "vendor-tldraw";
+          }
+          if (
+            id.includes("/react-markdown/") ||
+            id.includes("/remark-gfm/") ||
+            id.includes("/micromark") ||
+            id.includes("/mdast") ||
+            id.includes("/hast") ||
+            id.includes("/unified/")
+          ) {
+            return "vendor-markdown";
+          }
+          if (id.includes("/@tanstack/react-query/")) {
+            return "vendor-query";
+          }
+          if (
+            id.includes("/react/") ||
+            id.includes("/react-dom/") ||
+            id.includes("/react-router/")
+          ) {
+            return "vendor-react";
+          }
+        },
+      },
+    },
   },
   server: {
     port: webPort,

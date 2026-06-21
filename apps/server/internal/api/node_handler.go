@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/sinmaystar/clip-anvil/internal/promptrefs"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -83,11 +84,14 @@ type updateNodeRequest struct {
 	ModelProvider *string          `json:"model_provider"`
 	ModelID       *string          `json:"model_id"`
 	ModelParams   *json.RawMessage `json:"model_params"`
+	PromptRefs    *json.RawMessage `json:"prompt_refs"`
+	PromptRich    *json.RawMessage `json:"prompt_rich"`
 }
 
 func (r updateNodeRequest) hasChanges() bool {
 	return r.Title != nil || r.Prompt != nil || r.Status != nil || r.GroupID != nil ||
-		r.OperationType != nil || r.ModelProvider != nil || r.ModelID != nil || r.ModelParams != nil
+		r.OperationType != nil || r.ModelProvider != nil || r.ModelID != nil || r.ModelParams != nil ||
+		r.PromptRefs != nil || r.PromptRich != nil
 }
 
 type positionRequest struct {
@@ -170,6 +174,7 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 			NodeType:    nodeType,
 			Title:       title,
 			Prompt:      req.Prompt,
+			Status:      status,
 			AssetID:     assetID,
 			CanvasX:     req.CanvasX,
 			CanvasY:     req.CanvasY,
@@ -201,7 +206,7 @@ func (h *NodeHandler) Create(ctx context.Context, c *app.RequestContext) {
 	}
 	h.broadcast(node.WorkspaceID, "NodeCreated", map[string]any{"node": node})
 
-	c.JSON(consts.StatusOK, node)
+	c.JSON(consts.StatusOK, toMediaNodeResponse(node))
 }
 
 func (h *NodeHandler) assetIDForCreate(
@@ -247,7 +252,7 @@ func (h *NodeHandler) Get(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(consts.StatusOK, node)
+	c.JSON(consts.StatusOK, toMediaNodeResponse(node))
 }
 
 func (h *NodeHandler) Update(ctx context.Context, c *app.RequestContext) {
@@ -286,10 +291,34 @@ func (h *NodeHandler) Update(ctx context.Context, c *app.RequestContext) {
 			return
 		}
 	}
-	if req.Prompt != nil {
+	if req.Prompt != nil || req.PromptRefs != nil || req.PromptRich != nil {
+		prompt := node.PromptTemplate
+		if req.Prompt != nil {
+			prompt = *req.Prompt
+		}
+		promptRefs := node.PromptRefs
+		if req.PromptRefs != nil {
+			_, normalized, err := promptrefs.Normalize([]byte(*req.PromptRefs))
+			if err != nil {
+				writeError(c, consts.StatusBadRequest, "invalid prompt refs")
+				return
+			}
+			promptRefs = normalized
+		}
+		promptRich := node.PromptRich
+		if req.PromptRich != nil {
+			normalized, err := promptrefs.NormalizeRich([]byte(*req.PromptRich), prompt)
+			if err != nil {
+				writeError(c, consts.StatusBadRequest, "invalid prompt rich")
+				return
+			}
+			promptRich = normalized
+		}
 		node, err = h.queries.UpdateMediaNodePrompt(ctx, db.UpdateMediaNodePromptParams{
-			ID:     node.ID,
-			Prompt: *req.Prompt,
+			ID:         node.ID,
+			Prompt:     prompt,
+			PromptRefs: promptRefs,
+			PromptRich: promptRich,
 		})
 		if err != nil {
 			writeError(c, consts.StatusInternalServerError, "failed to update node")
@@ -384,7 +413,7 @@ func (h *NodeHandler) Update(ctx context.Context, c *app.RequestContext) {
 	}
 	h.broadcast(node.WorkspaceID, "NodeUpdated", map[string]any{"node": node})
 
-	c.JSON(consts.StatusOK, node)
+	c.JSON(consts.StatusOK, toMediaNodeResponse(node))
 }
 
 func (h *NodeHandler) Inputs(ctx context.Context, c *app.RequestContext) {
@@ -531,15 +560,15 @@ func nodeForAccountByQueries(ctx context.Context, queries *db.Queries, id string
 func defaultNodeSize(nodeType db.NodeType) (float32, float32) {
 	switch nodeType {
 	case db.NodeTypeText:
-		return 200, 120
+		return 360, 300
 	case db.NodeTypeImage:
-		return 200, 160
+		return 380, 280
 	case db.NodeTypeVideo:
-		return 240, 180
+		return 420, 280
 	case db.NodeTypeAudio:
-		return 200, 80
+		return 320, 120
 	default:
-		return 200, 120
+		return 320, 180
 	}
 }
 

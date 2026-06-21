@@ -56,6 +56,21 @@ func TestWouldCreateCycleAllowsAcyclicEdge(t *testing.T) {
 	}
 }
 
+func TestReferencePackContainsMemberDetectsDirectMember(t *testing.T) {
+	packID := testUUID(0x04)
+	memberID := testUUID(0x05)
+	items := []db.ReferencePackItem{
+		{PackNodeID: packID, MemberNodeID: memberID},
+	}
+
+	if !referencePackContainsMember(items, memberID) {
+		t.Fatal("expected pack member dependency to be detected")
+	}
+	if referencePackContainsMember(items, testUUID(0x06)) {
+		t.Fatal("unexpected non-member dependency detection")
+	}
+}
+
 func testUUID(value byte) pgtype.UUID {
 	return pgtype.UUID{Bytes: [16]byte{value}, Valid: true}
 }

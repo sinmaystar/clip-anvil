@@ -79,6 +79,38 @@ describe("layout", () => {
       112,
     );
   });
+
+  it("uses adaptive preview dimensions so auto layout does not overlap expanded nodes", () => {
+    const markdown = Array.from(
+      { length: 24 },
+      (_, index) => `## Scene ${index + 1}\n- action\n- camera`,
+    ).join("\n\n");
+    const result = computeDagreLayout({
+      direction: "LR",
+      edges: [edge("alpha-beta", "alpha", "beta")],
+      groups: [],
+      nodes: [
+        {
+          ...node("alpha", 0, 0),
+          production_preview: { text: markdown },
+        },
+        {
+          ...node("beta", 240, 0),
+          production_preview: { text: markdown },
+        },
+      ],
+    });
+
+    const alpha = result.positions.find((position) => position.id === "alpha");
+    const beta = result.positions.find((position) => position.id === "beta");
+
+    assert.ok(alpha);
+    assert.ok(beta);
+    assert.ok(
+      beta.canvas_x - alpha.canvas_x >= 340 + 80,
+      `expected beta to be placed after expanded alpha, got delta ${beta.canvas_x - alpha.canvas_x}`,
+    );
+  });
 });
 
 function isPointInside(point, bounds) {

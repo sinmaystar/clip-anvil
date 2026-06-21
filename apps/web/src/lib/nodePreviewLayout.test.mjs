@@ -1,0 +1,97 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+  adaptiveMediaNodeSize,
+  mediaNodeHeaderHeight,
+  mediaNodePreviewLimits,
+} from "../../dist-test/lib/nodePreviewLayout.js";
+
+const baseNode = {
+  node_type: "text",
+  canvas_w: 0,
+  canvas_h: 0,
+  prompt: "",
+  production_preview: undefined,
+  reference_pack_preview: undefined,
+};
+
+describe("adaptive media node layout", () => {
+  it("grows text nodes for long generated markdown within max bounds", () => {
+    const markdown = Array.from(
+      { length: 30 },
+      (_, index) => `## Scene ${index + 1}\n- action\n- camera`,
+    ).join("\n\n");
+    const size = adaptiveMediaNodeSize({
+      ...baseNode,
+      production_preview: { text: markdown },
+    });
+
+    assert.equal(size.w, 340);
+    assert.ok(size.h <= 300, `height ${size.h} should stay compact`);
+    assert.ok(size.h <= mediaNodePreviewLimits.text.maxH);
+  });
+
+  it("fits image nodes to preview aspect ratio inside max bounds", () => {
+    const size = adaptiveMediaNodeSize({
+      ...baseNode,
+      node_type: "image",
+      production_preview: {
+        asset_type: "image",
+        width: 1600,
+        height: 900,
+      },
+    });
+
+    assert.ok(size.w <= mediaNodePreviewLimits.image.maxW);
+    assert.ok(size.h <= mediaNodePreviewLimits.image.maxH);
+    assert.ok(size.w <= 380, `width ${size.w} should stay compact`);
+    assert.ok(Math.abs(size.w / mediaContentHeight(size.h) - 16 / 9) < 0.05);
+  });
+
+  it("fits vertical images without cropping by height", () => {
+    const size = adaptiveMediaNodeSize({
+      ...baseNode,
+      node_type: "image",
+      production_preview: {
+        asset_type: "image",
+        width: 900,
+        height: 1600,
+      },
+    });
+
+    assert.ok(size.h <= mediaNodePreviewLimits.image.maxH);
+    assert.ok(size.h <= 420, `height ${size.h} should stay compact`);
+    assert.ok(Math.abs(size.w / mediaContentHeight(size.h) - 9 / 16) < 0.05);
+  });
+
+  it("keeps obviously persisted larger sizes", () => {
+    const size = adaptiveMediaNodeSize({
+      ...baseNode,
+      node_type: "text",
+      canvas_w: 700,
+      canvas_h: 560,
+      production_preview: { text: "short" },
+    });
+
+    assert.deepEqual(size, { w: 700, h: 560, sizeMode: "persisted" });
+  });
+
+  it("uses a stable video ratio", () => {
+    const size = adaptiveMediaNodeSize({
+      ...baseNode,
+      node_type: "video",
+      production_preview: {
+        asset_type: "video",
+        width: 1280,
+        height: 720,
+      },
+    });
+
+    assert.ok(size.w <= 420, `width ${size.w} should stay compact`);
+    assert.ok(Math.abs(size.w / mediaContentHeight(size.h) - 16 / 9) < 0.05);
+  });
+});
+
+function mediaContentHeight(nodeHeight) {
+  return nodeHeight - mediaNodeHeaderHeight;
+}

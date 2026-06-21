@@ -27,11 +27,12 @@ type SandboxJobInput struct {
 }
 
 type SandboxJobResult struct {
-	Job   db.SandboxJob
-	Exec  ExecResult
-	Asset ArtifactObject
-	MIME  string
-	Size  int64
+	Job       db.SandboxJob
+	Exec      ExecResult
+	Asset     ArtifactObject
+	Thumbnail ArtifactObject
+	MIME      string
+	Size      int64
 }
 
 type SandboxAssetInput struct {
@@ -52,6 +53,13 @@ type ExtractFrameInput struct {
 	TargetNodeID pgtype.UUID
 	Source       SandboxAssetInput
 	Mode         FrameMode
+}
+
+type RemoteAssetInput struct {
+	WorkspaceID  pgtype.UUID
+	TargetNodeID pgtype.UUID
+	SourceURL    string
+	MimeHint     string
 }
 
 type JobRepository interface {
@@ -358,6 +366,213 @@ func (s *JobService) ExtractFrame(ctx context.Context, input ExtractFrameInput) 
 	return SandboxJobResult{Job: job, Exec: execResult, Asset: asset, MIME: info.Mime, Size: info.SizeBytes}, nil
 }
 
+func (s *JobService) ImportRemoteAsset(ctx context.Context, input RemoteAssetInput) (SandboxJobResult, error) {
+	if s.manager == nil || s.client == nil || s.repo == nil || s.storage == nil {
+		return SandboxJobResult{}, errors.New("sandbox remote asset import is not configured")
+	}
+	sourceURL := strings.TrimSpace(input.SourceURL)
+	if err := validatePresignedURL(sourceURL); err != nil {
+		return SandboxJobResult{}, err
+	}
+	inputJSON, err := json.Marshal(map[string]any{
+		"source_url": sourceURL,
+		"mime_hint":  strings.TrimSpace(input.MimeHint),
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	job, err := s.repo.CreateSandboxJob(ctx, db.CreateSandboxJobParams{
+		WorkspaceID:   input.WorkspaceID,
+		TargetNodeID:  input.TargetNodeID,
+		JobType:       "provider_asset",
+		OperationType: "import_remote_asset",
+		Input:         inputJSON,
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	workspaceSandbox, err := s.manager.EnsureSandbox(ctx, input.WorkspaceID)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_unavailable", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+	if err := EnsureWorkspaceLayout(ctx, s.client, workspaceSandbox.SandboxID); err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_layout_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+
+	assetPath := path.Join(AssetsDir, "provider-"+uuidString(job.ID)+extensionForMIME(input.MimeHint))
+	job, err = s.repo.MarkSandboxJobRunning(ctx, db.MarkSandboxJobRunningParams{
+		ID:        job.ID,
+		SandboxID: pgtype.Text{String: workspaceSandbox.SandboxID, Valid: true},
+		Command:   "curl -sS -f -L -o " + shellQuote(assetPath) + " " + shellQuote(sourceURL),
+		Cwd:       DefaultWorkdir,
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	downloadResult, err := DownloadURLToSandbox(ctx, s.client, workspaceSandbox.SandboxID, sourceURL, assetPath)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_provider_download_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: downloadResult}, err
+	}
+	if downloadResult.ExitCode != 0 {
+		message := strings.TrimSpace(downloadResult.Stderr)
+		failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_provider_download_failed", message, nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: downloadResult}, fmt.Errorf("sandbox provider download failed: %s", message)
+	}
+	info, err := InspectArtifact(ctx, s.client, workspaceSandbox.SandboxID, assetPath)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_provider_asset_inspect_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: downloadResult}, err
+	}
+	if err := ValidateArtifactSize(info.SizeBytes); err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_provider_asset_too_large", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: downloadResult}, err
+	}
+	if err := s.storage.EnsureBucket(ctx, input.WorkspaceID); err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_output_upload_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: downloadResult}, err
+	}
+	var thumbnail ArtifactObject
+	if isVideoMIME(info.Mime) {
+		thumbnailPath := path.Join(OutputDir, "thumbnail-"+uuidString(job.ID)+".png")
+		execResult, err := RunExec(ctx, s.client, workspaceSandbox.SandboxID, ExecInput{
+			Command:        frameExtractCommand(assetPath, thumbnailPath, FrameFirst),
+			Cwd:            DefaultWorkdir,
+			TimeoutSeconds: MaxExecTimeoutSeconds,
+		})
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_thumbnail_extract_failed", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: execResult}, err
+		}
+		if execResult.ExitCode != 0 {
+			message := strings.TrimSpace(execResult.Stderr)
+			failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_thumbnail_extract_failed", message, nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: execResult}, fmt.Errorf("sandbox thumbnail extraction failed: %s", message)
+		}
+		thumbnailInfo, err := InspectArtifact(ctx, s.client, workspaceSandbox.SandboxID, thumbnailPath)
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_thumbnail_inspect_failed", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: execResult}, err
+		}
+		if thumbnailInfo.Mime != "image/png" {
+			err := fmt.Errorf("unexpected thumbnail MIME %q", thumbnailInfo.Mime)
+			failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_thumbnail_invalid", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: execResult}, err
+		}
+		thumbnailKey := "production/" + uuidString(input.TargetNodeID) + "/" + uuidString(job.ID) + "-thumbnail.png"
+		putURL, err := s.storage.PresignedSandboxPutURL(ctx, input.WorkspaceID, thumbnailKey, time.Hour)
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_thumbnail_upload_failed", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: execResult}, err
+		}
+		uploadResult, err := UploadToMinIO(ctx, s.client, workspaceSandbox.SandboxID, thumbnailPath, putURL)
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, uploadResult, "sandbox_thumbnail_upload_failed", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: uploadResult}, err
+		}
+		if uploadResult.ExitCode != 0 {
+			message := strings.TrimSpace(uploadResult.Stderr)
+			failed, failErr := s.markFailed(ctx, job.ID, uploadResult, "sandbox_thumbnail_upload_failed", message, nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: uploadResult}, fmt.Errorf("sandbox thumbnail upload failed: %s", message)
+		}
+		thumbnail = ArtifactObject{StorageURL: s.storage.StorageURL(input.WorkspaceID, thumbnailKey)}
+	}
+	objectKey := "production/" + uuidString(input.TargetNodeID) + "/" + uuidString(job.ID) + extensionForMIME(info.Mime)
+	putURL, err := s.storage.PresignedSandboxPutURL(ctx, input.WorkspaceID, objectKey, time.Hour)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_output_upload_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: downloadResult}, err
+	}
+	uploadResult, err := UploadToMinIO(ctx, s.client, workspaceSandbox.SandboxID, assetPath, putURL)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, uploadResult, "sandbox_output_upload_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: uploadResult}, err
+	}
+	if uploadResult.ExitCode != 0 {
+		message := strings.TrimSpace(uploadResult.Stderr)
+		failed, failErr := s.markFailed(ctx, job.ID, uploadResult, "sandbox_output_upload_failed", message, nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: uploadResult}, fmt.Errorf("sandbox output upload failed: %s", message)
+	}
+
+	asset := ArtifactObject{StorageURL: s.storage.StorageURL(input.WorkspaceID, objectKey)}
+	outputJSON, err := json.Marshal(map[string]any{
+		"source_url":    sourceURL,
+		"asset_path":    assetPath,
+		"storage_url":   asset.StorageURL,
+		"thumbnail_url": thumbnail.StorageURL,
+		"mime":          info.Mime,
+		"size_bytes":    info.SizeBytes,
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	job, err = s.repo.MarkSandboxJobSucceeded(ctx, db.MarkSandboxJobSucceededParams{
+		ID:         job.ID,
+		Output:     outputJSON,
+		ExitCode:   pgtype.Int4{Int32: int32(uploadResult.ExitCode), Valid: true},
+		Stdout:     uploadResult.Stdout,
+		Stderr:     uploadResult.Stderr,
+		DurationMs: int32(uploadResult.DurationMS),
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	return SandboxJobResult{Job: job, Exec: uploadResult, Asset: asset, Thumbnail: thumbnail, MIME: info.Mime, Size: info.SizeBytes}, nil
+}
+
 func (s *JobService) markFailed(ctx context.Context, jobID pgtype.UUID, result ExecResult, code string, message string, output map[string]any) (db.SandboxJob, error) {
 	if output == nil {
 		output = map[string]any{}
@@ -418,8 +633,21 @@ func extensionForMIME(mime string) string {
 		return ".png"
 	case "image/jpeg":
 		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
 	default:
 		return ".bin"
+	}
+}
+
+func isVideoMIME(mime string) bool {
+	switch strings.TrimSpace(mime) {
+	case "video/mp4", "video/quicktime", "video/webm":
+		return true
+	default:
+		return false
 	}
 }
 

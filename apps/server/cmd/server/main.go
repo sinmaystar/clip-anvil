@@ -75,7 +75,7 @@ func main() {
 	authMiddleware := auth.Middleware(cfg.JWT.Secret)
 	canvasHub := api.NewCanvasHub()
 	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
-	canvasHandler := api.NewCanvasHandler(queries)
+	canvasHandler := api.NewCanvasHandler(queries, storageService)
 	nodeHandler := api.NewNodeHandler(pgPool, queries, canvasHub)
 	providerRegistry := production.NewProviderRegistry(production.ProviderConfig{
 		ProviderMode:     cfg.Production.ProviderMode,
@@ -84,14 +84,69 @@ func main() {
 		Volcengine: production.VolcengineProviderConfig{
 			APIKey:     cfg.Production.Volcengine.APIKey,
 			BaseURL:    cfg.Production.Volcengine.BaseURL,
+			Region:     cfg.Production.Volcengine.Region,
 			TextModel:  cfg.Production.Volcengine.TextModel,
 			ImageModel: cfg.Production.Volcengine.ImageModel,
 			VideoModel: cfg.Production.Volcengine.VideoModel,
+			AudioModel: cfg.Production.Volcengine.AudioModel,
 		},
 	})
 	sandboxJobService := sandbox.NewJobService(sandboxManager, sandboxClient, queries, storageService)
 	providerRegistry.Register("internal_ffmpeg", production.NewInternalFFmpegProvider(sandboxJobService))
 	productionService := production.NewService(pgPool, queries, providerRegistry, storageService)
+	productionService.SetRemoteAssetImporter(sandboxJobService)
+	legacyProductionRuntime := production.NewLegacyProviderRuntime(providerRegistry)
+	var productionRuntime production.EinoProductionRuntime = legacyProductionRuntime
+	if cfg.Production.ProviderMode == "real" && cfg.Production.DefaultProvider == "volcengine" {
+		var inputResolver production.ProviderInputResolver
+		tosCfg := cfg.Production.Volcengine.TOS
+		if strings.TrimSpace(tosCfg.AccessKeyID) != "" || strings.TrimSpace(tosCfg.SecretAccessKey) != "" {
+			tosStore, err := production.NewTOSStagingStore(production.TOSStagingStoreConfig{
+				AccessKeyID:     tosCfg.AccessKeyID,
+				SecretAccessKey: tosCfg.SecretAccessKey,
+				Bucket:          tosCfg.Bucket,
+				Endpoint:        tosCfg.Endpoint,
+				Region:          tosCfg.Region,
+				PublicBaseURL:   tosCfg.PublicBaseURL,
+			})
+			if err != nil {
+				slog.Error("failed to create volcengine tos staging store", "error", err)
+				os.Exit(1)
+			}
+			inputResolver = production.NewTOSProviderAssetResolver(
+				tosStore,
+				http.DefaultClient,
+				production.TOSProviderAssetResolverConfig{
+					URLTTL: time.Duration(tosCfg.SignedURLTTLSeconds) * time.Second,
+				},
+				storageService,
+			)
+		}
+		productionRuntime = production.NewVolcengineProductionRuntime(
+			production.VolcengineProviderConfig{
+				APIKey:     cfg.Production.Volcengine.APIKey,
+				BaseURL:    cfg.Production.Volcengine.BaseURL,
+				Region:     cfg.Production.Volcengine.Region,
+				TextModel:  cfg.Production.Volcengine.TextModel,
+				ImageModel: cfg.Production.Volcengine.ImageModel,
+				VideoModel: cfg.Production.Volcengine.VideoModel,
+				AudioModel: cfg.Production.Volcengine.AudioModel,
+			},
+			http.DefaultClient,
+			time.Duration(cfg.Production.ProviderPollIntervalSeconds)*time.Second,
+			time.Duration(cfg.Production.ProviderMaxPollSeconds)*time.Second,
+			legacyProductionRuntime,
+			inputResolver,
+		)
+	}
+	productionRunner := production.NewProductionRunner(
+		productionService,
+		productionRuntime,
+		cfg.Production.WorkerConcurrency,
+		api.NewProductionBroadcaster(canvasHub),
+	)
+	productionService.SetRunner(productionRunner)
+	productionRunner.Start(ctx)
 	runHandler := api.NewRunHandler(productionService, queries, storageService)
 	modelHandler := api.NewModelHandler(queries)
 	referencePackHandler := api.NewReferencePackHandler(pgPool, queries, productionService)
@@ -174,6 +229,7 @@ func main() {
 	h.PATCH("/api/nodes/batch-position", authMiddleware, nodeHandler.BatchUpdatePosition)
 	h.POST("/api/nodes/:id/run", authMiddleware, runHandler.RunNode)
 	h.GET("/api/nodes/:id/versions", authMiddleware, runHandler.ListNodeVersions)
+	h.POST("/api/nodes/:id/versions/:versionID/select", authMiddleware, runHandler.SelectNodeVersion)
 	h.GET("/api/nodes/:id/production-state", authMiddleware, runHandler.GetNodeProductionState)
 	h.GET("/api/nodes/:id/jobs", authMiddleware, runHandler.ListNodeJobs)
 	h.GET("/api/nodes/:id/stale-reasons", authMiddleware, runHandler.ListStaleReasons)

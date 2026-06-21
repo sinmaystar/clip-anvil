@@ -8,20 +8,181 @@ const mediaShapeUtil = readFileSync(
   new URL("../shapes/MediaShapeUtil.tsx", import.meta.url),
   "utf8",
 );
+const fileDropZone = readFileSync(
+  new URL("../components/FileDropZone.tsx", import.meta.url),
+  "utf8",
+);
+const workspaceDetail = readFileSync(
+  new URL("../pages/WorkspaceDetailPage.tsx", import.meta.url),
+  "utf8",
+);
+const propertyPanel = readFileSync(
+  new URL("../components/PropertyPanel.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("canvas layering", () => {
-  it("keeps node inline editor above animated connection lines", () => {
+  it("keeps node production popover above animated connection lines", () => {
     assert.ok(
       zIndex(".node-editor-overlay") > zIndex(".connection-overlay"),
-      "node inline editor must be layered above connection overlay",
+      "node production popover must be layered above connection overlay",
     );
   });
 
-  it("renders node inline editor outside individual tldraw shapes", () => {
+  it("renders node production popover outside individual tldraw shapes", () => {
     assert.equal(
-      mediaShapeUtil.includes("media-node-inline-editor"),
+      mediaShapeUtil.includes("node-production-popover"),
       false,
-      "node inline editor should not be trapped inside a tldraw shape container",
+      "node production popover should not be trapped inside a tldraw shape container",
+    );
+  });
+
+  it("declares reference pack as a supported media node type", () => {
+    assert.ok(
+      mediaShapeUtil.includes(
+        'nodeType: T.literalEnum("text", "image", "video", "audio", "reference_pack")',
+      ),
+      "reference_pack must be accepted by the tldraw media shape validator",
+    );
+    assert.ok(
+      mediaShapeUtil.includes("reference_pack:"),
+      "reference_pack must have node display metadata",
+    );
+  });
+
+  it("renders production preview text and stale reason count on media shapes", () => {
+    assert.ok(
+      mediaShapeUtil.includes("previewText"),
+      "media shape must render production preview text",
+    );
+    assert.ok(
+      mediaShapeUtil.includes("activeStaleReasonCount"),
+      "media shape must render active stale reason count",
+    );
+    assert.ok(
+      mediaShapeUtil.includes("media-node-stale-badge"),
+      "media shape must expose a stale badge",
+    );
+  });
+
+  it("keeps media node cards focused on the generated artifact instead of footer metadata", () => {
+    assert.equal(
+      mediaShapeUtil.includes("media-node-footer"),
+      false,
+      "media nodes should not spend canvas space on type/prompt footer metadata",
+    );
+    assert.ok(
+      css.includes("grid-template-rows: 42px minmax(0, 1fr);"),
+      "media node layout should reserve the remaining card area for artifact preview",
+    );
+  });
+
+  it("renders text media nodes through a Markdown preview component", () => {
+    assert.ok(
+      mediaShapeUtil.includes("MarkdownPreview"),
+      "text media nodes should render MarkdownPreview",
+    );
+  });
+
+  it("uses dedicated media frames that contain generated assets", () => {
+    assert.ok(
+      mediaShapeUtil.includes("media-node-media-frame"),
+      "image and video previews should render through a dedicated media frame",
+    );
+    assert.ok(
+      css.includes(".media-node-media-frame"),
+      "media frame CSS should be present",
+    );
+    assert.ok(
+      css.includes("object-fit: contain"),
+      "image previews should render the full asset without cropping",
+    );
+    assert.ok(
+      css.includes("display: flex;"),
+      "media frames should not let images stretch outside the preview area",
+    );
+    assert.ok(
+      css.includes("max-height: 100%;"),
+      "image previews should be constrained to the media frame height",
+    );
+  });
+
+  it("renders video previews as playable media with poster support", () => {
+    assert.ok(
+      mediaShapeUtil.includes("<video"),
+      "video nodes should render a playable video element",
+    );
+    assert.ok(
+      mediaShapeUtil.includes("poster={previewThumbnailUrl || thumbnailUrl}"),
+      "video nodes should use the generated first frame as a poster",
+    );
+    assert.ok(
+      css.includes(".media-node-media-frame video"),
+      "video previews should share media frame sizing rules",
+    );
+  });
+
+  it("declares fullscreen asset review and node expand affordances", () => {
+    assert.ok(
+      css.includes(".asset-review-overlay"),
+      "fullscreen asset review overlay CSS should be present",
+    );
+    assert.ok(
+      css.includes(".asset-review-content"),
+      "fullscreen asset review content CSS should be present",
+    );
+    assert.ok(
+      css.includes(".media-node-expand-button"),
+      "media nodes should expose a compact fullscreen affordance",
+    );
+    assert.ok(
+      mediaShapeUtil.includes("clip-anvil:node-review-request"),
+      "node expand button should dispatch an asset review request",
+    );
+  });
+
+  it("declares source material labels as first-class node identity", () => {
+    assert.ok(
+      mediaShapeUtil.includes("materialKindLabel"),
+      "media shape should use source material labels",
+    );
+    assert.ok(
+      !mediaShapeUtil.includes("图片 PROMPT"),
+      "source media nodes must not render prompt footer labels",
+    );
+  });
+
+  it("creates uploaded media and manual text as source material nodes", () => {
+    assert.ok(
+      fileDropZone.includes('operation_type: "upload"'),
+      "uploaded files should create upload source nodes",
+    );
+    assert.ok(
+      fileDropZone.includes('status: "succeeded"'),
+      "uploaded source nodes should be immediately usable",
+    );
+    assert.ok(
+      workspaceDetail.includes("文本素材"),
+      "toolbar should expose manual text source creation",
+    );
+    assert.ok(
+      workspaceDetail.includes('operation_type: "manual"'),
+      "manual text source nodes should use manual operation",
+    );
+  });
+
+  it("renders source material inspector without generation controls", () => {
+    assert.ok(
+      propertyPanel.includes("SourceMaterialPanel"),
+      "property panel should branch source material nodes",
+    );
+    assert.ok(
+      propertyPanel.includes("内容"),
+      "manual text source editor should label text as content",
+    );
+    assert.ok(
+      propertyPanel.includes("isSourceMaterialNode"),
+      "property panel should use source material helper",
     );
   });
 });

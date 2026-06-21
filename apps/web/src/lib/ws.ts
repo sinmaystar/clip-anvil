@@ -12,7 +12,25 @@ export type CanvasEvent =
   | { type: "EdgeDeleted"; payload: { edge_id: string } }
   | { type: "GroupCreated"; payload: { group: unknown } }
   | { type: "GroupUpdated"; payload: { group: unknown } }
-  | { type: "GroupDeleted"; payload: { group_id: string } };
+  | { type: "GroupDeleted"; payload: { group_id: string } }
+  | { type: "production.job.updated"; payload: ProductionJobEventPayload }
+  | { type: "production.model.delta"; payload: ProductionJobEventPayload };
+
+export interface ProductionJobEventPayload {
+  workspace_id: string;
+  node_id: string;
+  job_id: string;
+  status:
+    | "pending"
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "cancelled";
+  progress: number;
+  delta?: string;
+  [key: string]: unknown;
+}
 
 interface ConnectCanvasSocketInput {
   workspaceId: string;

@@ -5,13 +5,14 @@ INSERT INTO media_node (
     title,
     prompt,
     prompt_template,
+    status,
     asset_id,
     canvas_x,
     canvas_y,
     canvas_w,
     canvas_h
 )
-VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: CreateMediaNodeWithID :one
@@ -72,6 +73,8 @@ RETURNING *;
 UPDATE media_node
 SET prompt = $2,
     prompt_template = $2,
+    prompt_refs = $3,
+    prompt_rich = $4,
     updated_at = now()
 WHERE id = $1
 RETURNING *;

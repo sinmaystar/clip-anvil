@@ -9,11 +9,11 @@ import (
 
 func TestDefaultNodeSizeForText(t *testing.T) {
 	w, h := defaultNodeSize(db.NodeTypeText)
-	if w != 200 {
-		t.Fatalf("width = %v, want 200", w)
+	if w != 360 {
+		t.Fatalf("width = %v, want 360", w)
 	}
-	if h != 120 {
-		t.Fatalf("height = %v, want 120", h)
+	if h != 300 {
+		t.Fatalf("height = %v, want 300", h)
 	}
 }
 
@@ -23,10 +23,10 @@ func TestDefaultNodeSizeForM1xNodeTypes(t *testing.T) {
 		width    float32
 		height   float32
 	}{
-		{nodeType: db.NodeTypeText, width: 200, height: 120},
-		{nodeType: db.NodeTypeImage, width: 200, height: 160},
-		{nodeType: db.NodeTypeVideo, width: 240, height: 180},
-		{nodeType: db.NodeTypeAudio, width: 200, height: 80},
+		{nodeType: db.NodeTypeText, width: 360, height: 300},
+		{nodeType: db.NodeTypeImage, width: 380, height: 280},
+		{nodeType: db.NodeTypeVideo, width: 420, height: 280},
+		{nodeType: db.NodeTypeAudio, width: 320, height: 120},
 	}
 
 	for _, tc := range testCases {
@@ -93,6 +93,16 @@ func TestNodePatchRequestDetectsGroupIDField(t *testing.T) {
 	}
 }
 
+func TestNodePatchRequestDetectsPromptRefsFields(t *testing.T) {
+	promptRefs := json.RawMessage(`{"version":1,"refs":[]}`)
+	promptRich := json.RawMessage(`{"version":1,"source":"textarea-at","text":"hello"}`)
+	req := updateNodeRequest{PromptRefs: &promptRefs, PromptRich: &promptRich}
+
+	if !req.hasChanges() {
+		t.Fatal("expected request with prompt refs to have changes")
+	}
+}
+
 func TestNodePatchRequestRejectsNoFields(t *testing.T) {
 	req := updateNodeRequest{}
 	if req.hasChanges() {
@@ -121,6 +131,46 @@ func TestCreateNodeRequestAcceptsRestoreFields(t *testing.T) {
 	}
 	if status != db.NodeStatusDraft {
 		t.Fatalf("status = %q, want draft", status)
+	}
+}
+
+func TestCreateNodeRequestAcceptsUploadSourceMaterial(t *testing.T) {
+	req := createNodeRequest{
+		WorkspaceID:   "018f6ef0-5f4f-7e86-9f8c-100000000001",
+		NodeType:      "image",
+		Title:         "商品主图",
+		Status:        "succeeded",
+		AssetID:       "018f6ef0-5f4f-7e86-9f8c-100000000002",
+		OperationType: "upload",
+		CanvasX:       120,
+		CanvasY:       160,
+	}
+
+	status, ok := req.nodeStatus()
+	if !ok || status != db.NodeStatusSucceeded {
+		t.Fatalf("status = %q, %v, want succeeded", status, ok)
+	}
+	if !req.hasProductionConfig() {
+		t.Fatal("upload source node should persist production config")
+	}
+}
+
+func TestCreateNodeRequestAcceptsManualTextSourceMaterial(t *testing.T) {
+	req := createNodeRequest{
+		WorkspaceID:   "018f6ef0-5f4f-7e86-9f8c-100000000001",
+		NodeType:      "text",
+		Title:         "视频脚本",
+		Prompt:        "第一幕：机场大厅。",
+		Status:        "succeeded",
+		OperationType: "manual",
+	}
+
+	status, ok := req.nodeStatus()
+	if !ok || status != db.NodeStatusSucceeded {
+		t.Fatalf("status = %q, %v, want succeeded", status, ok)
+	}
+	if !req.hasProductionConfig() {
+		t.Fatal("manual text source node should persist production config")
 	}
 }
 

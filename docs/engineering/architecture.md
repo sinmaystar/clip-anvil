@@ -39,7 +39,7 @@
 | 配置 | viper |
 | 日志 | slog（标准库） |
 | 鉴权 | JWT（注册/登录/token 签发校验） |
-| AI 服务 | 阿里 DashScope（LLM + 文生图/图生视频） |
+| AI 服务 | Mock provider（本地测试）+ Volcengine/Doubao 文本、图片、视频生成；音频生成暂 hold |
 
 ### 基础设施
 
@@ -49,26 +49,27 @@
 | Redis 7 | 缓存、会话 |
 | MinIO | 对象存储（图片、视频、中间产物） |
 | Nginx | 反向代理、静态托管（prod）、WS 升级 |
-| OpenSandbox | workspace 级长生命周期沙箱，执行 ffmpeg 等媒体处理命令 |
+| OpenSandbox | workspace 级长生命周期沙箱，执行 ffmpeg、远程媒体下载和不可预测资源消耗任务 |
+| Volcengine TOS | 真实 provider 输入暂存，供 Volcengine 下载图片/视频参考资源 |
 
 ## 模块边界
 
-### 当前实现快照（M1.x + OpenSandbox 基础）
+### 当前实现快照（M5 已完成）
 
-截至 2026-06-17，当前代码已落地 Studio M1.x 的核心 DAG 编辑能力，并已接入 OpenSandbox 基础设施：
+截至 2026-06-21，当前代码已落地 M3-M5 的核心 Studio 生产能力，并已接入真实 Volcengine provider：
 
-- 前端：登录/注册页、项目列表/创建弹窗、Studio 画布页、可折叠左侧资源树、明暗外观切换、tldraw 自定义 `MediaShape` 和 `GroupContainerShape`、文本/图片/视频/音频节点、节点编辑面板、右侧属性面板、文件拖拽上传、依赖连线、分组、Dagre 自动布局、`/ws/canvas` 连接状态与重连。
-- 后端：JWT 鉴权、Workspace API、Canvas API、MediaNode API、MediaEdge API、MediaGroup API、Upload/Storage API、Canvas WebSocket Hub、goose 迁移、sqlc 查询生成、MinIO 上传与预签名访问 URL、OpenSandbox workspace manager、sandbox exec、artifact submit。
-- 数据库：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`、`workspace_sandbox`。
-- 尚未落地：Agent 模式、生成任务、产物版本、自动评审、`/ws/chat`、reference/sequence 的完整前端配置、模型供应商调用。
+- 前端：登录/注册页、项目列表/创建弹窗、Studio/Agent mode 路由分流、Studio 画布页、可折叠左侧资源树、明暗外观切换、tldraw 自定义 `MediaShape` 和 `GroupContainerShape`、文本/图片/视频/音频/参考包节点、用户源素材节点、依赖连线、分组、Dagre 自动布局、浮层 Inspector、Prompt `@`、Reference Pack 成员管理、手动运行、版本预览/选择、调用记录详情、全屏素材查看、`/ws/canvas` 连接状态与重连。
+- 后端：JWT 鉴权、Workspace API、Canvas API、MediaNode API、MediaEdge API、MediaGroup API、Upload/Storage API、Canvas WebSocket Hub、Production API、Prompt Reference API、Reference Pack API、goose 迁移、sqlc 查询生成、MinIO 上传与预签名访问 URL、OpenSandbox workspace manager、sandbox exec、artifact submit、sandbox-backed remote asset ingest、mock provider、Volcengine provider adapter、TOS staging。
+- 数据库：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`、`workspace_sandbox`、`generation_job`、`artifact_version`、`model_provider`、`model_capability`、`node_stale_reason`、`reference_pack_item`、`sandbox_job`。
+- 尚未落地：完整 Agent 对话生产模式、`/ws/chat`、Producer/Craftsman/Worker/Composer、自动评审与成片 Composer 闭环。
 
 ### `packages/canvas-schema`（核心契约层）
 
 Studio 和 Agent 模式共享的画布定义：
 
-- 当前 M1.x：媒体节点类型枚举、节点状态枚举、`MediaShape` props（含 `thumbnailUrl`）、`GroupContainerShape` props。
+- 当前 M5：媒体节点类型枚举（含 `reference_pack`）、节点状态枚举、`MediaShape` props（含尺寸、Prompt、production preview、reference pack preview）、`GroupContainerShape` props。
 - tldraw ArrowShape 使用内置 arrow + binding 表达 `media_edge`，边数据仍以业务表为事实源。
-- 后续 M2/M3：进度、评审、版本、Agent 事件等字段。
+- 版本列表、调用记录和模型参数不放入 shape props，通过 selected node 的 Production API 按需加载。
 
 ### 后端模块
 
@@ -78,28 +79,31 @@ apps/server/internal/
 ├── auth/           注册/登录 + JWT 签发/校验/中间件
 ├── config/         viper 配置加载
 ├── store/          sqlc 生成 + 仓储层
+├── production/     GenerationIntent、模型能力校验、异步 runner、provider 适配、版本和 stale
+├── promptrefs/     Prompt @ 引用解析、渲染和校验
 ├── agent/          规划中：MultiAgent 编排（eino: Producer → Sub-Agents）
 ├── sandbox/        OpenSandbox SDK 封装、workspace sandbox、exec、文件预置、artifact submit
 ├── storage/        MinIO 上传、预签名 URL、对象访问
-├── media/          规划中：生成产物业务管理
-└── dashscope/      规划中：DashScope API 封装（LLM / 文生图 / 图生视频）
+└── media/          媒体资产和生成产物管理边界
 ```
 
 ## 数据流
 
-### Studio 模式（目标态）
+### Studio 模式（当前）
 
 ```
 用户操作画布（创建节点 / 连线 / 编辑 Prompt / 提交生成）
-  → REST API（POST /api/nodes, POST /api/edges, POST /api/generation 等）
-  → command 模块执行业务命令 → 写 PostgreSQL
+  → REST API（POST /api/nodes, POST /api/edges, POST /api/nodes/:id/run 等）
+  → api / production 模块执行业务命令 → 写 PostgreSQL
   → 广播 /ws/canvas 事件 → 前端更新 tldraw store
-  → 生成任务异步执行（目标态）→ DashScope API → 结果写回 DB
-  → 中间产物存 MinIO，元数据存 Postgres
-  → /ws/canvas 推送进度和完成状态（生成阶段目标态）
+  → 生成任务异步执行
+  → mock provider / Volcengine provider / sandbox-backed internal provider
+  → 远程图片和视频通过 sandbox 下载并存 MinIO，元数据存 PostgreSQL
+  → generation_job + artifact_version 更新状态、进度、provider request/response
+  → /ws/canvas 推送节点状态和预览更新
 ```
 
-> 当前 Studio 数据流是 REST + `/ws/canvas`：用户操作先经 HTTP API 写库，后端广播节点、连线、分组事件；前端以 React Query 数据和 tldraw store 做投影同步。Camera 和批量坐标更新仍走 HTTP。
+Prompt `@` 渲染时，文本输入会内联进 `rendered_prompt`；图片/视频等媒体输入会以 `图1`、`图2` 等可读占位进入 prompt，同时作为 provider input refs 传入模型请求。上游节点默认读取其 `current_version_id` 指向的版本；用户源素材节点则读取自身 `asset_id` 或手动文本内容。
 
 ### Agent 模式（目标态）
 
@@ -142,11 +146,11 @@ apps/server/internal/
 |---|---|---|
 | M0 基建 | Monorepo 骨架 + compose + 前后端 hello world | ✅ 已完成 |
 | M1 Studio 画布基础 | 注册登录 + Workspace + 文本节点画布 + 坐标持久化 | 用户可创建项目、创建文本节点、拖拽后刷新保持位置 |
-| M1.x Studio 增量 | image/video/audio 节点 + 连线 + 分组 + 资源树 + 属性面板 + WebSocket + 上传 + 自动布局 | ✅ 已完成核心 DAG 编辑能力；生成/版本仍后续 |
+| M1.x Studio 增量 | image/video/audio 节点 + 连线 + 分组 + 资源树 + 属性面板 + WebSocket + 上传 + 自动布局 | ✅ 已完成核心 DAG 编辑能力 |
 | M2 OpenSandbox 工作区沙箱 | OpenSandbox Server + workspace_sandbox + sandbox exec + MinIO 传输 + artifact submit | ✅ 基础链路已部分落地；端到端 Agent 集成仍后续 |
 | M3 Workspace 模式入口 | Studio / Agent Workspace 入口、路由分流和权限边界 | ✅ 已完成 |
 | M4 共享生产底座 | GenerationIntent、Provider Bridge、Sandbox Job Service、版本、stale、失败重试、Production Read API | ✅ 已完成 |
-| M5 Studio 专业手动模式 | 富属性面板、Prompt `@`、Reference Pack UI、手动运行和版本管理 | 待实施 |
+| M5 Studio 专业手动模式 | 浮层 Inspector、Prompt `@`、Reference Pack、手动运行、版本/调用记录、真实 Volcengine 文本/图片/视频、源素材节点 | ✅ 已完成 |
 | M6 Agent 自动生产模式 | Producer / Craftsman / Worker / Composer 复用 M4 生产底座完成自动生产 | 待实施 |
 
 详见 [整体业务交互设计 — 实施路线](../design/overview.md)。

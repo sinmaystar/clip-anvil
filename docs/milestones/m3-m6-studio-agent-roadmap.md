@@ -1,7 +1,7 @@
 # M3-M6 Studio / Agent 生产体系路线图
 
-**状态**：M3-M4 已完成，M5-M6 待实施
-**日期**：2026-06-18
+**状态**：M3-M5 已完成，M6 待实施
+**日期**：2026-06-18；M5 状态更新于 2026-06-21
 **目标**：自底向上建设 Studio / Agent 双模式：先明确 Workspace 入口和权限边界，再建设共享生产底座，随后分别完成专业手动 Studio 和自动化 Agent 模式。
 
 参考设计见本文末尾附录。本文只保留里程碑拆分、目标、工作项、可验收标准和 E2E 测试，不重复展开完整设计细节。
@@ -21,7 +21,7 @@
 |---|---|---|---|---|
 | M3 | 已完成 | Workspace 模式入口 | 从创建入口、路由和权限上区分 Studio / Agent | `workspace.mode`、创建入口、路由分流、Agent 只读画布 |
 | M4 | 已完成 | 共享生产底座 | 建立 Studio / Agent 共用的生产数据和执行链路 | 节点目标态、GenerationIntent、Provider Bridge、Sandbox Job Service、版本、Stale、失败重试、Production Read API |
-| M5 | 待实施 | Studio 专业手动模式 | 让专业用户可手动创建、引用、运行和重跑节点 | 富属性面板、Prompt `@`、Reference Pack、手动运行、级联 Stale |
+| M5 | 已完成 | Studio 专业手动模式 | 让专业用户可手动创建、引用、运行和重跑节点 | 浮层 Inspector、Prompt `@`、Reference Pack、手动运行、版本/调用记录、真实 Volcengine、源素材节点、级联 Stale |
 | M6 | 待实施 | Agent 自动生产模式 | Producer/Craftsman/Worker 复用共享底座完成分镜到成片 | Eino runtime、PSS、shot、HITL、Craftsman、评审重试、Composer |
 
 ---
@@ -293,6 +293,10 @@ E2E / smoke 结果：
 
 # M5 Studio 专业手动模式
 
+**状态**：已完成（2026-06-21）
+
+分阶段设计与工作项见：[M5 Studio Manual Production](../superpowers/specs/2026-06-18-m5-studio-manual-production-design.md)。
+
 ## 目标
 
 把 Studio 做成专业用户可手动使用的生产工具。用户可以在画布上组织素材、创建节点、连线、在 Prompt 中 `@` 引用依赖、选择模型、运行节点、查看版本、处理 stale 和重试。
@@ -348,6 +352,19 @@ E2E / smoke 结果：
 - 单节点运行能产生版本，失败能重跑。
 - 上游变化后下游 stale 在 UI 中清晰可见。
 
+## 完成记录
+
+- Studio 画布已支持文本、图片、视频、音频、Reference Pack 和用户源素材节点。
+- 右侧常驻 Inspector 已收敛为节点附近的浮层 Inspector，核心区域聚焦 Prompt、模型、参数和运行；标题可在顶部编辑，版本/调用记录进入版本详情。
+- 文本节点支持 Markdown 摘要预览；图片节点按原始比例自适应；图片/视频/文本素材支持全屏预览。
+- 手动运行会立即创建 `generation_job(status=queued)` 和 `artifact_version(status=queued)`，版本和运行记录一一绑定；运行中、成功、失败状态会同步到画布和 Inspector。
+- Prompt `@` 引用已支持内联编辑器和 Inspector：文本依赖渲染进 `rendered_prompt`，图片/视频依赖以 `图1`、`图2` 等可读占位进入 prompt，并作为 provider input refs 传入模型；失效引用会阻断运行。
+- Reference Pack 已作为一等节点支持成员管理、画布预览、整体作为输入、成员变化触发下游 stale；参考包不能把自身成员反向作为自己的输入。
+- 用户源素材节点已落地：手动文本、上传图片/视频/音频不展示模型运行入口，但可作为普通依赖或 Reference Pack 成员。
+- 真实 provider 已接入：mock provider 保留本地测试；Volcengine/Doubao 文本、图片、视频模型可真实运行；音频生成模型暂 hold。
+- Volcengine 输入媒体通过 TOS 暂存，生成图片/视频远程 URL 会由 sandbox 下载并存入 MinIO，最终画布和版本引用 ClipAnvil 自有资产。
+- 已通过 mock provider、真实 provider 和浏览器 E2E 验证 Reference Pack / Prompt `@` / stale / 版本 / 源素材等核心闭环。
+
 ## E2E 测试
 
 1. **商品参考包**
@@ -382,6 +399,19 @@ E2E / smoke 结果：
    - 创建 image node，operation 为 `extract_first_frame`。
    - 运行后画布显示提取出的图片。
    - 验证抽帧对应的 `sandbox_job` 成功，且应用进程未本地执行 ffmpeg。
+
+6. **真实 Volcengine 图片/视频**
+   - 配置 Volcengine API key 和 TOS。
+   - 文本节点生成脚本。
+   - 图片节点 `@` 文本节点生成图片。
+   - 视频节点 `@` 文本节点和图片节点生成视频。
+   - 预期 `rendered_prompt` 可追溯，图片/视频输入进入 provider request，远程产物被 sandbox 下载到 MinIO。
+
+7. **用户源素材**
+   - 拖拽上传商品图或视频到画布。
+   - 预期创建源素材节点，不展示运行按钮。
+   - 将源素材加入 Reference Pack，或被下游节点 `@` 引用。
+   - 预期下游 provider input refs 使用该素材资产。
 
 ## 建议验证命令
 

@@ -1,5 +1,6 @@
 import dagre from "@dagrejs/dagre";
 import type { MediaEdge, MediaGroup, MediaNode } from "./api";
+import { adaptiveMediaNodeSize } from "./nodePreviewLayout.js";
 
 export type LayoutDirection = "LR" | "TB";
 
@@ -68,9 +69,10 @@ export function computeDagreLayout(input: {
     }
     const containerId = containerIdForNode(node.id);
     containerByNodeId.set(node.id, containerId);
+    const size = displaySizeForNode(node);
     graph.setNode(containerId, {
-      width: node.canvas_w,
-      height: node.canvas_h,
+      width: size.w,
+      height: size.h,
     });
   }
 
@@ -133,10 +135,11 @@ export function computeDagreLayout(input: {
     if (!layoutNode) {
       continue;
     }
+    const size = displaySizeForNode(node);
     positions.push({
       id: node.id,
-      canvas_x: layoutNode.x - node.canvas_w / 2,
-      canvas_y: layoutNode.y - node.canvas_h / 2,
+      canvas_x: layoutNode.x - size.w / 2,
+      canvas_y: layoutNode.y - size.h / 2,
     });
   }
 
@@ -201,8 +204,12 @@ function boundsForGroup(group: MediaGroup, nodes: MediaNode[]): GroupBounds {
   }
   const minX = Math.min(...members.map((node) => node.canvas_x));
   const minY = Math.min(...members.map((node) => node.canvas_y));
-  const maxX = Math.max(...members.map((node) => node.canvas_x + node.canvas_w));
-  const maxY = Math.max(...members.map((node) => node.canvas_y + node.canvas_h));
+  const maxX = Math.max(
+    ...members.map((node) => node.canvas_x + displaySizeForNode(node).w),
+  );
+  const maxY = Math.max(
+    ...members.map((node) => node.canvas_y + displaySizeForNode(node).h),
+  );
   return {
     groupId: group.id,
     x: minX - 20,
@@ -210,4 +217,8 @@ function boundsForGroup(group: MediaGroup, nodes: MediaNode[]): GroupBounds {
     w: Math.max(240, maxX - minX + 40),
     h: Math.max(120, maxY - minY + 64),
   };
+}
+
+function displaySizeForNode(node: MediaNode) {
+  return adaptiveMediaNodeSize(node);
 }

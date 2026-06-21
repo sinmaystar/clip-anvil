@@ -37,7 +37,7 @@ func (p InternalFFmpegProvider) Run(ctx context.Context, intent GenerationIntent
 	}
 	if boolParam(intent.Params, "mock_extract") {
 		return ProviderResult{
-			RenderedPrompt: intent.PromptTemplate,
+			RenderedPrompt: intent.EffectivePrompt(),
 			AssetContent:   onePixelPNG,
 			AssetMIME:      "image/png",
 			AssetMetadata: map[string]any{
@@ -82,7 +82,7 @@ func (p InternalFFmpegProvider) Run(ctx context.Context, intent GenerationIntent
 		}
 	}
 	return ProviderResult{
-		RenderedPrompt:  intent.PromptTemplate,
+		RenderedPrompt:  intent.EffectivePrompt(),
 		AssetStorageURL: result.Asset.StorageURL,
 		AssetMIME:       result.MIME,
 		AssetSizeBytes:  result.Size,

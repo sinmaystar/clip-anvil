@@ -6,12 +6,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const (
+	InputKindExplicit            = "explicit"
+	InputKindImplicit            = "implicit"
+	InputKindReferencePack       = "reference_pack"
+	InputKindReferencePackMember = "reference_pack_member"
+)
+
 type GenerationIntent struct {
 	WorkspaceID    pgtype.UUID    `json:"workspace_id"`
 	TargetNodeID   pgtype.UUID    `json:"target_node_id"`
 	OutputType     string         `json:"output_type"`
 	OperationType  string         `json:"operation_type"`
 	PromptTemplate string         `json:"prompt_template"`
+	RenderedPrompt string         `json:"rendered_prompt,omitempty"`
 	InputRefs      []InputRef     `json:"input_refs"`
 	Model          ModelSpec      `json:"model"`
 	Params         map[string]any `json:"params"`
@@ -29,6 +37,7 @@ type InputRef struct {
 	Mime             string      `json:"mime,omitempty"`
 	StorageURL       string      `json:"storage_url,omitempty"`
 	InputHash        string      `json:"input_hash,omitempty"`
+	TextContent      string      `json:"-"`
 }
 
 type ModelSpec struct {
@@ -42,19 +51,28 @@ type RequestedBy struct {
 }
 
 type ProviderResult struct {
-	RenderedPrompt   string
-	TextContent      string
-	AssetContent     []byte
-	AssetMIME        string
-	AssetStorageURL  string
-	AssetSizeBytes   int64
-	AssetMetadata    map[string]any
-	ProviderRequest  map[string]any
-	ProviderResponse map[string]any
+	RenderedPrompt    string
+	TextContent       string
+	AssetContent      []byte
+	AssetSourceURL    string
+	AssetMIME         string
+	AssetStorageURL   string
+	AssetThumbnailURL string
+	AssetSizeBytes    int64
+	AssetMetadata     map[string]any
+	ProviderRequest   map[string]any
+	ProviderResponse  map[string]any
 }
 
 type ProviderBridge interface {
 	Run(ctx context.Context, intent GenerationIntent) (ProviderResult, error)
+}
+
+func (intent GenerationIntent) EffectivePrompt() string {
+	if intent.RenderedPrompt != "" {
+		return intent.RenderedPrompt
+	}
+	return intent.PromptTemplate
 }
 
 type ProviderRunError struct {

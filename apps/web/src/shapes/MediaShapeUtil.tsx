@@ -11,6 +11,8 @@ import {
   MEDIA_SHAPE_TYPE,
   type MediaShape,
 } from "@clip-anvil/canvas-schema";
+import { MarkdownPreview } from "../components/MarkdownPreview";
+import { materialKindLabel, materialStatusLabel } from "../lib/sourceMaterial";
 
 const statusText: Record<MediaShape["props"]["status"], string> = {
   draft: "草稿",
@@ -31,6 +33,11 @@ const nodeTypeMeta: Record<
   image: { icon: "参考", label: "图片", emptyTitle: "未命名图片" },
   video: { icon: "视频", label: "视频", emptyTitle: "未命名视频" },
   audio: { icon: "音频", label: "音频", emptyTitle: "未命名音频" },
+  reference_pack: {
+    icon: "参考包",
+    label: "参考包",
+    emptyTitle: "未命名参考包",
+  },
 };
 
 let activeMediaNodeId: string | null = null;
@@ -40,7 +47,11 @@ export class MediaShapeUtil extends ShapeUtil<MediaShape> {
 
   static override props: RecordProps<MediaShape> = {
     nodeId: T.string,
-    nodeType: T.literalEnum("text", "image", "video", "audio"),
+    nodeType: T.literalEnum("text", "image", "video", "audio", "reference_pack"),
+    operationType: T.optional(T.string),
+    assetId: T.optional(T.string),
+    nodeTypeLabel: T.optional(T.string),
+    sourceMaterialStatusLabel: T.optional(T.string),
     title: T.string,
     prompt: T.string,
     status: T.literalEnum(
@@ -54,6 +65,15 @@ export class MediaShapeUtil extends ShapeUtil<MediaShape> {
       "user_editing",
     ),
     thumbnailUrl: T.optional(T.string),
+    previewText: T.optional(T.string),
+    previewAssetType: T.optional(T.string),
+    previewAssetUrl: T.optional(T.string),
+    previewThumbnailUrl: T.optional(T.string),
+    previewVersionNo: T.optional(T.number),
+    previewWidth: T.optional(T.number),
+    previewHeight: T.optional(T.number),
+    previewDurationMs: T.optional(T.number),
+    activeStaleReasonCount: T.optional(T.number),
     w: T.number,
     h: T.number,
   };
@@ -108,8 +128,42 @@ export class MediaShapeUtil extends ShapeUtil<MediaShape> {
 }
 
 function MediaNodeShape({ shape }: { shape: MediaShape }) {
-  const { title, prompt, status, nodeType, thumbnailUrl, w, h } = shape.props;
+  const {
+    title,
+    prompt,
+    status,
+    nodeType,
+    operationType,
+    assetId,
+    nodeTypeLabel,
+    sourceMaterialStatusLabel,
+    thumbnailUrl,
+    previewText,
+    previewAssetType,
+    previewAssetUrl,
+    previewThumbnailUrl,
+    previewVersionNo,
+    activeStaleReasonCount,
+    w,
+    h,
+  } = shape.props;
   const typeMeta = nodeTypeMeta[nodeType];
+  const typeLabel =
+    nodeTypeLabel ??
+    materialKindLabel({
+      asset_id: assetId ?? null,
+      node_type: nodeType,
+      operation_type: operationType ?? "",
+      status,
+    });
+  const sourceStatusLabel =
+    sourceMaterialStatusLabel ||
+    materialStatusLabel({
+      asset_id: assetId ?? null,
+      node_type: nodeType,
+      operation_type: operationType ?? "",
+      status,
+    });
   const [activeNodeId, setActiveNodeId] = useState(activeMediaNodeId);
   const [titleValue, setTitleValue] = useState(title);
   const [promptValue, setPromptValue] = useState(prompt);
@@ -195,6 +249,22 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
     dispatchConnectionStart(null);
   };
 
+  const requestAssetReview = (event: SyntheticEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    window.dispatchEvent(
+      new CustomEvent("clip-anvil:node-review-request", {
+        detail: { nodeId: shape.props.nodeId },
+      }),
+    );
+  };
+
+  const hasPreviewContent =
+    Boolean(previewText) ||
+    Boolean(previewAssetUrl) ||
+    Boolean(previewThumbnailUrl) ||
+    Boolean(thumbnailUrl);
+
   return (
     <HTMLContainer>
       <div
@@ -219,40 +289,89 @@ function MediaNodeShape({ shape }: { shape: MediaShape }) {
           >
             +
           </button>
+          {hasPreviewContent ? (
+            <button
+              aria-label={`全屏查看 ${titleValue || typeMeta.emptyTitle}`}
+              className="media-node-expand-button"
+              onClick={requestAssetReview}
+              type="button"
+            >
+              ↗
+            </button>
+          ) : null}
           <div className="media-node-header">
-            <span className="media-node-icon">{typeMeta.icon}</span>
+            <span className="media-node-icon">{typeLabel}</span>
             <p className="media-node-title">
               {titleValue || typeMeta.emptyTitle}
             </p>
-            <span className="media-node-status">{statusText[status]}</span>
+            <span className="media-node-status">
+              {sourceStatusLabel || statusText[status]}
+            </span>
+            {status === "stale" || Number(activeStaleReasonCount) > 0 ? (
+              <span className="media-node-stale-badge">
+                stale
+                {activeStaleReasonCount
+                  ? ` · ${activeStaleReasonCount}`
+                  : ""}
+              </span>
+            ) : null}
           </div>
           <div className="media-node-content" data-type={nodeType}>
             {nodeType === "text" ? (
-              <p>{promptValue || "等待输入 prompt"}</p>
+              <MarkdownPreview
+                value={previewText || promptValue || "等待输入 prompt"}
+                variant="canvas"
+              />
             ) : nodeType === "image" ? (
-              thumbnailUrl ? (
-                <img
-                  alt={titleValue || typeMeta.emptyTitle}
-                  src={thumbnailUrl}
-                />
-              ) : (
-                <div className="media-node-placeholder">图片占位</div>
-              )
+              <div className="media-node-media-frame" data-kind="image">
+                {previewAssetUrl || thumbnailUrl ? (
+                  <img
+                    alt={titleValue || typeMeta.emptyTitle}
+                    src={previewAssetUrl || thumbnailUrl}
+                  />
+                ) : (
+                  <div className="media-node-placeholder">
+                    {previewVersionNo
+                      ? `image v${previewVersionNo}`
+                      : "图片占位"}
+                  </div>
+                )}
+              </div>
             ) : nodeType === "video" ? (
+              <div className="media-node-media-frame" data-kind="video">
+                {previewAssetUrl ? (
+                  <video
+                    controls
+                    poster={previewThumbnailUrl || thumbnailUrl}
+                    preload="metadata"
+                    src={previewAssetUrl}
+                  />
+                ) : (
+                  <div className="media-node-placeholder">
+                    <span>播放预览</span>
+                    <span>
+                      {previewAssetType
+                        ? `${previewAssetType} v${previewVersionNo ?? "-"}`
+                        : "0:00"}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : nodeType === "audio" ? (
               <div className="media-node-placeholder">
-                <span>播放预览</span>
-                <span>0:00</span>
+                <span className="media-node-waveform" />
+                <span>
+                  {previewAssetType
+                    ? `${previewAssetType} v${previewVersionNo ?? "-"}`
+                    : "0:00"}
+                </span>
               </div>
             ) : (
               <div className="media-node-placeholder">
-                <span className="media-node-waveform" />
-                <span>0:00</span>
+                <span>Reference Pack</span>
+                <span>{previewText || "等待成员"}</span>
               </div>
             )}
-          </div>
-          <div className="media-node-footer">
-            <span>{typeMeta.label}</span>
-            <span>Prompt</span>
           </div>
         </div>
       </div>

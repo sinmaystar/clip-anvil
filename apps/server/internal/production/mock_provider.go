@@ -29,7 +29,7 @@ func (MockProvider) Run(ctx context.Context, intent GenerationIntent) (ProviderR
 	default:
 	}
 
-	rendered := intent.PromptTemplate
+	rendered := intent.EffectivePrompt()
 	if rendered == "" {
 		rendered = "empty prompt"
 	}

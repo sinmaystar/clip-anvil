@@ -19,6 +19,7 @@ const filters: Array<{ value: "all" | MediaType; label: string }> = [
   { value: "image", label: "图片" },
   { value: "video", label: "视频" },
   { value: "audio", label: "音频" },
+  { value: "reference_pack", label: "参考包" },
 ];
 
 const nodeTypeLabel: Record<MediaType, string> = {
@@ -26,6 +27,7 @@ const nodeTypeLabel: Record<MediaType, string> = {
   image: "参考",
   video: "视频",
   audio: "音频",
+  reference_pack: "参考包",
 };
 
 export function ResourceTree({

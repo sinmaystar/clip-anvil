@@ -1,3 +1,6 @@
+import { adaptiveMediaNodeSize } from "./nodePreviewLayout.js";
+import type { MediaType, ProductionPreview, ReferencePackPreview } from "./api";
+
 export interface ConnectionNodeBounds {
   id: string;
   x: number;
@@ -8,10 +11,14 @@ export interface ConnectionNodeBounds {
 
 export interface CanvasNodeLike {
   id: string;
+  node_type?: MediaType | string;
   canvas_x: number;
   canvas_y: number;
   canvas_w: number;
   canvas_h: number;
+  prompt?: string;
+  production_preview?: ProductionPreview;
+  reference_pack_preview?: ReferencePackPreview;
 }
 
 export interface Point {
@@ -23,12 +30,13 @@ export function mediaNodeBounds(
   node: CanvasNodeLike,
   livePosition?: Point | null,
 ): ConnectionNodeBounds {
+  const size = displaySizeForNode(node);
   return {
     id: node.id,
     x: livePosition?.x ?? node.canvas_x,
     y: livePosition?.y ?? node.canvas_y,
-    w: node.canvas_w,
-    h: node.canvas_h,
+    w: size.w,
+    h: size.h,
   };
 }
 
@@ -65,4 +73,32 @@ export function isValidConnectionTarget(
 
 function round(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function displaySizeForNode(node: CanvasNodeLike) {
+  const adaptiveNode = toAdaptiveNode(node);
+  if (adaptiveNode) {
+    return adaptiveMediaNodeSize(adaptiveNode);
+  }
+  return { w: node.canvas_w, h: node.canvas_h };
+}
+
+function toAdaptiveNode(node: CanvasNodeLike): Parameters<typeof adaptiveMediaNodeSize>[0] | null {
+  if (
+    node.node_type === "text" ||
+    node.node_type === "image" ||
+    node.node_type === "video" ||
+    node.node_type === "audio" ||
+    node.node_type === "reference_pack"
+  ) {
+    return {
+      node_type: node.node_type,
+      canvas_w: node.canvas_w,
+      canvas_h: node.canvas_h,
+      prompt: node.prompt ?? "",
+      production_preview: node.production_preview,
+      reference_pack_preview: node.reference_pack_preview,
+    };
+  }
+  return null;
 }

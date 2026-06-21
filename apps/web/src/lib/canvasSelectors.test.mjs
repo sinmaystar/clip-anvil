@@ -161,4 +161,27 @@ describe("canvas selectors", () => {
     );
     assert.deepEqual(sections.ungroupedNodes, []);
   });
+
+  it("filters reference pack nodes as a first-class resource type", () => {
+    const pack = {
+      ...node("pack", "商品身份包"),
+      node_type: "reference_pack",
+    };
+    const sections = getResourceTreeSections([...nodes, pack], groups, {
+      query: "",
+      type: "reference_pack",
+    });
+
+    assert.deepEqual(
+      sections.groups.map((section) => [
+        section.group.id,
+        section.nodes.map((item) => item.id),
+      ]),
+      [["group-a", []]],
+    );
+    assert.deepEqual(
+      sections.ungroupedNodes.map((item) => item.id),
+      ["pack"],
+    );
+  });
 });
