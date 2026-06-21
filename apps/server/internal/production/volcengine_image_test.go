@@ -12,11 +12,13 @@ import (
 )
 
 type fakeArkImageGenerator struct {
-	msg *schema.Message
-	err error
+	messages []*schema.Message
+	msg      *schema.Message
+	err      error
 }
 
-func (f fakeArkImageGenerator) Generate(context.Context, []*schema.Message, ...einoModel.Option) (*schema.Message, error) {
+func (f *fakeArkImageGenerator) Generate(_ context.Context, messages []*schema.Message, _ ...einoModel.Option) (*schema.Message, error) {
+	f.messages = messages
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -27,7 +29,7 @@ func TestImageRuntimeReturnsURLForSandboxPersistence(t *testing.T) {
 	url := "https://provider.invalid/image.png"
 	runtime := newVolcengineImageRuntimeForTest(
 		VolcengineProviderConfig{APIKey: "test-key", ImageModel: "doubao-seedream-5-0-260128"},
-		fakeArkImageGenerator{msg: imageMessageWithURL(url)},
+		&fakeArkImageGenerator{msg: imageMessageWithURL(url)},
 		nil,
 	)
 	output := runImageRuntime(t, runtime)
@@ -55,7 +57,7 @@ func TestImageRuntimeDecodesBase64AndProducesAssetContent(t *testing.T) {
 	encoded := base64.StdEncoding.EncodeToString(onePixelPNG)
 	runtime := newVolcengineImageRuntimeForTest(
 		VolcengineProviderConfig{APIKey: "test-key", ImageModel: "doubao-seedream-5-0-260128"},
-		fakeArkImageGenerator{msg: imageMessageWithBase64(encoded, "image/png")},
+		&fakeArkImageGenerator{msg: imageMessageWithBase64(encoded, "image/png")},
 		nil,
 	)
 	output := runImageRuntime(t, runtime)
@@ -73,7 +75,7 @@ func TestImageRuntimeDecodesBase64AndProducesAssetContent(t *testing.T) {
 func TestImageRuntimeRejectsUnexpectedMIME(t *testing.T) {
 	runtime := newVolcengineImageRuntimeForTest(
 		VolcengineProviderConfig{APIKey: "test-key", ImageModel: "doubao-seedream-5-0-260128"},
-		fakeArkImageGenerator{msg: imageMessageWithBase64(base64.StdEncoding.EncodeToString([]byte("plain text")), "text/plain")},
+		&fakeArkImageGenerator{msg: imageMessageWithBase64(base64.StdEncoding.EncodeToString([]byte("plain text")), "text/plain")},
 		nil,
 	)
 	stream, err := runtime.Start(context.Background(), ProductionJob{}, imageIntent())
@@ -90,9 +92,48 @@ func TestImageRuntimeRejectsUnexpectedMIME(t *testing.T) {
 	}
 }
 
+func TestImageRuntimeSendsReferenceImagesToArk(t *testing.T) {
+	model := &fakeArkImageGenerator{msg: imageMessageWithURL("https://provider.invalid/image.png")}
+	runtime := newVolcengineImageRuntimeForTest(
+		VolcengineProviderConfig{APIKey: "test-key", ImageModel: "doubao-seedream-5-0-260128"},
+		model,
+		nil,
+	)
+	intent := imageIntent()
+	intent.OperationType = "image_to_image"
+	intent.InputRefs = []InputRef{{
+		NodeType:   "image",
+		StorageURL: "https://assets.example/reference.png",
+		Mime:       "image/png",
+	}}
+
+	output := runImageRuntimeWithIntent(t, runtime, intent)
+	if len(model.messages) != 1 {
+		t.Fatalf("messages = %#v", model.messages)
+	}
+	parts := model.messages[0].MultiContent
+	if len(parts) != 2 {
+		t.Fatalf("multi content = %#v", parts)
+	}
+	if parts[0].Type != schema.ChatMessagePartTypeText || parts[0].Text != "A simple studio desk with one lamp." {
+		t.Fatalf("text part = %#v", parts[0])
+	}
+	if parts[1].Type != schema.ChatMessagePartTypeImageURL || parts[1].ImageURL.URL != "https://assets.example/reference.png" {
+		t.Fatalf("image part = %#v", parts[1])
+	}
+	inputImages, ok := output.RequestSummary["input_images"].([]map[string]any)
+	if !ok || len(inputImages) != 1 || inputImages[0]["url"] != "https://assets.example/reference.png" {
+		t.Fatalf("request summary input images = %#v", output.RequestSummary["input_images"])
+	}
+}
+
 func runImageRuntime(t *testing.T, runtime VolcengineImageRuntime) ProductionOutput {
+	return runImageRuntimeWithIntent(t, runtime, imageIntent())
+}
+
+func runImageRuntimeWithIntent(t *testing.T, runtime VolcengineImageRuntime, intent GenerationIntent) ProductionOutput {
 	t.Helper()
-	stream, err := runtime.Start(context.Background(), ProductionJob{}, imageIntent())
+	stream, err := runtime.Start(context.Background(), ProductionJob{}, intent)
 	if err != nil {
 		t.Fatal(err)
 	}
