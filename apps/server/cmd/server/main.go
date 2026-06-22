@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	agentcraftsman "github.com/sinmaystar/clip-anvil/internal/agent/craftsman"
 	agenthitl "github.com/sinmaystar/clip-anvil/internal/agent/hitl"
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
 	agentproducer "github.com/sinmaystar/clip-anvil/internal/agent/producer"
@@ -24,6 +25,7 @@ import (
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	agentstoryboard "github.com/sinmaystar/clip-anvil/internal/agent/storyboard"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
+	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
 	"github.com/sinmaystar/clip-anvil/internal/api"
 	"github.com/sinmaystar/clip-anvil/internal/auth"
 	"github.com/sinmaystar/clip-anvil/internal/config"
@@ -96,57 +98,6 @@ func main() {
 	hitlService := agenthitl.NewService(agentRuntime)
 	producerPSSBuilder := agentpss.NewBuilder(queries)
 	storyboardService := agentstoryboard.NewService(pgPool, queries)
-	agentToolRegistry, err := agenttools.NewRegistry(
-		agenttools.NewReadWorkspaceContextTool(queries),
-		agenttools.NewGetProductionStateTool(producerPSSBuilder),
-		agenttools.NewUpdateStoryboardTool(storyboardService),
-		agenttools.NewCreateAgentTextNodeTool(queries, agentCanvasNodeBroadcaster{hub: canvasHub}),
-		agenttools.NewRequestUserDecisionTool(agenthitl.NewToolDecisionRequester(hitlService)),
-	)
-	if err != nil {
-		slog.Error("failed to create agent tool registry", "error", err)
-		os.Exit(1)
-	}
-	agentToolExecutor := agentproducer.NewRegistryToolExecutor(agentproducer.RegistryToolExecutorConfig{
-		Registry:    agentToolRegistry,
-		Runtime:     agentRuntime,
-		Broadcaster: agentBroadcaster,
-	})
-	producerGraph, err := agentproducer.NewGraph(agentproducer.GraphConfig{
-		Loader: agentproducer.RuntimeContextLoader{
-			Runtime:        agentRuntime,
-			Queries:        queries,
-			ImageReader:    storageService,
-			ModelSelection: agentModelSelection,
-			PSSBuilder:     producerPSSBuilder,
-		},
-		Responder: agentproducer.NewVolcengineModelResponder(agentproducer.VolcengineModelResponderConfig{
-			APIKey:      cfg.Production.Volcengine.APIKey,
-			BaseURL:     cfg.Production.Volcengine.BaseURL,
-			Region:      cfg.Production.Volcengine.Region,
-			Model:       cfg.Production.Volcengine.TextModel,
-			MaxTokens:   1200,
-			Temperature: 0.3,
-		}),
-		ToolExecutor: agentToolExecutor,
-		ToolRegistry: agentToolRegistry,
-	})
-	if err != nil {
-		slog.Error("failed to create producer graph", "error", err)
-		os.Exit(1)
-	}
-	producerExecutor := agentproducer.NewExecutor(agentproducer.ExecutorConfig{
-		Runtime:      agentRuntime,
-		Graph:        producerGraph,
-		Broadcaster:  agentBroadcaster,
-		MaxToolCalls: cfg.Agent.ProducerMaxToolCalls,
-		ToolTimeout:  time.Duration(cfg.Agent.ToolTimeoutSeconds) * time.Second,
-	})
-	agentHandler := api.NewAgentHandler(queries, agentRuntime, agentHub, producerExecutor)
-	agentHandler.SetAttachmentStorage(storageService)
-	agentHandler.SetCanvasHub(canvasHub)
-	agentHandler.SetModelSelectionService(agentModelSelection)
-	agentHandler.SetHITLService(hitlService)
 	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
 	canvasHandler := api.NewCanvasHandler(queries, storageService)
 	nodeHandler := api.NewNodeHandler(pgPool, queries, canvasHub)
@@ -220,6 +171,89 @@ func main() {
 	)
 	productionService.SetRunner(productionRunner)
 	productionRunner.Start(ctx)
+	workerExecutor := agentworker.NewExecutor(agentworker.ExecutorConfig{
+		Runtime:    agentRuntime,
+		Store:      queries,
+		Production: productionService,
+	})
+	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
+	craftsmanGraph, err := agentcraftsman.NewGraph(agentcraftsman.GraphConfig{
+		Loader: agentcraftsman.ContextLoader{
+			Store:   queries,
+			Runtime: agentRuntime,
+		},
+		Responder: agentcraftsman.NewVolcengineModelResponder(agentcraftsman.VolcengineModelResponderConfig{
+			APIKey:      cfg.Production.Volcengine.APIKey,
+			BaseURL:     cfg.Production.Volcengine.BaseURL,
+			Region:      cfg.Production.Volcengine.Region,
+			Model:       cfg.Production.Volcengine.TextModel,
+			MaxTokens:   1000,
+			Temperature: 0.4,
+		}),
+		Runtime:        agentRuntime,
+		WorkerEnqueuer: workerEnqueuer,
+	})
+	if err != nil {
+		slog.Error("failed to create craftsman graph", "error", err)
+		os.Exit(1)
+	}
+	craftsmanExecutor := agentcraftsman.NewExecutor(agentcraftsman.ExecutorConfig{
+		Runtime: agentRuntime,
+		Graph:   craftsmanGraph,
+	})
+	craftsmanEnqueuer := agentCraftsmanTaskEnqueuer{executor: craftsmanExecutor}
+	agentToolRegistry, err := agenttools.NewRegistry(
+		agenttools.NewReadWorkspaceContextTool(queries),
+		agenttools.NewGetProductionStateTool(producerPSSBuilder),
+		agenttools.NewUpdateStoryboardTool(storyboardService),
+		agenttools.NewCreateAgentTextNodeTool(queries, agentCanvasNodeBroadcaster{hub: canvasHub}),
+		agenttools.NewDispatchCraftsmanTool(queries, agentRuntime, craftsmanEnqueuer),
+		agenttools.NewRequestUserDecisionTool(agenthitl.NewToolDecisionRequester(hitlService)),
+	)
+	if err != nil {
+		slog.Error("failed to create agent tool registry", "error", err)
+		os.Exit(1)
+	}
+	agentToolExecutor := agentproducer.NewRegistryToolExecutor(agentproducer.RegistryToolExecutorConfig{
+		Registry:    agentToolRegistry,
+		Runtime:     agentRuntime,
+		Broadcaster: agentBroadcaster,
+	})
+	producerGraph, err := agentproducer.NewGraph(agentproducer.GraphConfig{
+		Loader: agentproducer.RuntimeContextLoader{
+			Runtime:        agentRuntime,
+			Queries:        queries,
+			ImageReader:    storageService,
+			ModelSelection: agentModelSelection,
+			PSSBuilder:     producerPSSBuilder,
+		},
+		Responder: agentproducer.NewVolcengineModelResponder(agentproducer.VolcengineModelResponderConfig{
+			APIKey:      cfg.Production.Volcengine.APIKey,
+			BaseURL:     cfg.Production.Volcengine.BaseURL,
+			Region:      cfg.Production.Volcengine.Region,
+			Model:       cfg.Production.Volcengine.TextModel,
+			MaxTokens:   1200,
+			Temperature: 0.3,
+		}),
+		ToolExecutor: agentToolExecutor,
+		ToolRegistry: agentToolRegistry,
+	})
+	if err != nil {
+		slog.Error("failed to create producer graph", "error", err)
+		os.Exit(1)
+	}
+	producerExecutor := agentproducer.NewExecutor(agentproducer.ExecutorConfig{
+		Runtime:      agentRuntime,
+		Graph:        producerGraph,
+		Broadcaster:  agentBroadcaster,
+		MaxToolCalls: cfg.Agent.ProducerMaxToolCalls,
+		ToolTimeout:  time.Duration(cfg.Agent.ToolTimeoutSeconds) * time.Second,
+	})
+	agentHandler := api.NewAgentHandler(queries, agentRuntime, agentHub, producerExecutor)
+	agentHandler.SetAttachmentStorage(storageService)
+	agentHandler.SetCanvasHub(canvasHub)
+	agentHandler.SetModelSelectionService(agentModelSelection)
+	agentHandler.SetHITLService(hitlService)
 	go func() {
 		tasks, err := agentRuntime.ListQueuedProducerTasksAcrossWorkspaces(context.Background(), 50)
 		if err != nil {
@@ -236,6 +270,8 @@ func main() {
 			}
 		}
 	}()
+	go recoverQueuedCraftsmanTasks(craftsmanExecutor, agentRuntime)
+	go recoverQueuedWorkerTasks(workerExecutor, agentRuntime)
 	runHandler := api.NewRunHandler(productionService, queries, storageService)
 	modelHandler := api.NewModelHandler(queries)
 	referencePackHandler := api.NewReferencePackHandler(pgPool, queries, productionService)
@@ -370,6 +406,78 @@ func (b agentCanvasNodeBroadcaster) BroadcastAgentNodeCreated(workspaceID pgtype
 		return
 	}
 	b.hub.Broadcast(workspaceID, api.CanvasEvent{Type: "NodeCreated", Payload: map[string]any{"node": node}})
+}
+
+type agentCraftsmanTaskEnqueuer struct {
+	executor *agentcraftsman.Executor
+}
+
+func (e agentCraftsmanTaskEnqueuer) EnqueueCraftsmanTask(_ context.Context, task db.AgentTask) {
+	if e.executor == nil {
+		return
+	}
+	go func() {
+		if err := e.executor.RunTask(context.Background(), agentcraftsman.RunTaskInput{
+			WorkspaceID: task.WorkspaceID,
+			ThreadID:    task.ThreadID,
+			TaskID:      task.ID,
+			ShotID:      task.ScopeID,
+		}); err != nil {
+			slog.Warn("failed to run craftsman task", "task_id", task.ID, "error", err)
+		}
+	}()
+}
+
+type agentWorkerTaskEnqueuer struct {
+	executor *agentworker.Executor
+}
+
+func (e agentWorkerTaskEnqueuer) EnqueueWorkerTask(_ context.Context, task db.AgentTask) {
+	if e.executor == nil {
+		return
+	}
+	go func() {
+		if err := e.executor.RunTask(context.Background(), agentworker.RunTaskInput{Task: task}); err != nil {
+			slog.Warn("failed to run worker task", "task_id", task.ID, "error", err)
+		}
+	}()
+}
+
+func recoverQueuedCraftsmanTasks(executor *agentcraftsman.Executor, runtime *agentruntime.Service) {
+	if executor == nil || runtime == nil {
+		return
+	}
+	tasks, err := runtime.ListQueuedCraftsmanTasksAcrossWorkspaces(context.Background(), 50)
+	if err != nil {
+		slog.Warn("skipping queued craftsman recovery", "error", err)
+		return
+	}
+	for _, task := range tasks {
+		if err := executor.RunTask(context.Background(), agentcraftsman.RunTaskInput{
+			WorkspaceID: task.WorkspaceID,
+			ThreadID:    task.ThreadID,
+			TaskID:      task.ID,
+			ShotID:      task.ScopeID,
+		}); err != nil {
+			slog.Warn("failed to recover queued craftsman task", "task_id", task.ID, "error", err)
+		}
+	}
+}
+
+func recoverQueuedWorkerTasks(executor *agentworker.Executor, runtime *agentruntime.Service) {
+	if executor == nil || runtime == nil {
+		return
+	}
+	tasks, err := runtime.ListQueuedWorkerTasksAcrossWorkspaces(context.Background(), 50)
+	if err != nil {
+		slog.Warn("skipping queued worker recovery", "error", err)
+		return
+	}
+	for _, task := range tasks {
+		if err := executor.RunTask(context.Background(), agentworker.RunTaskInput{Task: task}); err != nil {
+			slog.Warn("failed to recover queued worker task", "task_id", task.ID, "error", err)
+		}
+	}
 }
 
 func checkSandboxServerHealth(ctx context.Context, client *http.Client, endpoint string) error {
