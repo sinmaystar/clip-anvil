@@ -107,6 +107,32 @@ describe("canvas layering", () => {
     );
   });
 
+  it("disables native browser drag for media previews inside nodes", () => {
+    assert.ok(
+      mediaShapeUtil.includes("draggable={false}"),
+      "node media previews must not start native browser image/video drags",
+    );
+    assert.ok(
+      mediaShapeUtil.includes("onDragStart={preventNativeMediaDrag}"),
+      "node media previews must cancel dragstart events",
+    );
+    assert.ok(
+      css.includes("-webkit-user-drag: none"),
+      "media preview CSS should also disable WebKit native dragging",
+    );
+  });
+
+  it("hides studio-only node affordances in the agent readonly canvas", () => {
+    assert.ok(
+      css.includes(".agent-readonly-tldraw .media-node-connect-button"),
+      "Agent readonly canvas should not show Studio dependency handles",
+    );
+    assert.ok(
+      css.includes(".agent-readonly-tldraw .media-node-expand-button"),
+      "Agent readonly canvas should not show Studio expand controls",
+    );
+  });
+
   it("renders video previews as playable media with poster support", () => {
     assert.ok(
       mediaShapeUtil.includes("<video"),

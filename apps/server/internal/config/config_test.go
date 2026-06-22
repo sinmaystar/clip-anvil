@@ -296,6 +296,85 @@ production:
 	}
 }
 
+func TestLoadBindsAgentExecutionConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	configData := []byte(`
+server:
+  port: 9999
+postgres:
+  dsn: "postgres://test:test@localhost:5432/test?sslmode=disable"
+redis:
+  addr: "localhost:6379"
+minio:
+  endpoint: "localhost:9000"
+  sandbox_endpoint: "host.docker.internal:9000"
+  access_key: "clipanvil"
+  secret_key: "clipanvil_dev"
+  use_ssl: false
+jwt:
+  secret: "test-secret"
+  expire_hours: 12
+agent:
+  producer_max_tool_calls: 50
+  tool_timeout_seconds: 300
+`)
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Chdir(dir)
+	t.Setenv("CLIPANVIL_AGENT_PRODUCER_MAX_TOOL_CALLS", "77")
+	t.Setenv("CLIPANVIL_AGENT_TOOL_TIMEOUT_SECONDS", "321")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Agent.ProducerMaxToolCalls != 77 {
+		t.Fatalf("ProducerMaxToolCalls = %d, want 77", cfg.Agent.ProducerMaxToolCalls)
+	}
+	if cfg.Agent.ToolTimeoutSeconds != 321 {
+		t.Fatalf("ToolTimeoutSeconds = %d, want 321", cfg.Agent.ToolTimeoutSeconds)
+	}
+}
+
+func TestLoadDefaultsAgentExecutionConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	configData := []byte(`
+server:
+  port: 9999
+postgres:
+  dsn: "postgres://test:test@localhost:5432/test?sslmode=disable"
+redis:
+  addr: "localhost:6379"
+minio:
+  endpoint: "localhost:9000"
+  sandbox_endpoint: "host.docker.internal:9000"
+  access_key: "clipanvil"
+  secret_key: "clipanvil_dev"
+  use_ssl: false
+jwt:
+  secret: "test-secret"
+  expire_hours: 12
+`)
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Chdir(dir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Agent.ProducerMaxToolCalls != 50 {
+		t.Fatalf("ProducerMaxToolCalls = %d, want 50", cfg.Agent.ProducerMaxToolCalls)
+	}
+	if cfg.Agent.ToolTimeoutSeconds != 300 {
+		t.Fatalf("ToolTimeoutSeconds = %d, want 300", cfg.Agent.ToolTimeoutSeconds)
+	}
+}
+
 func TestLoadProductionConfigReadsDotEnv(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

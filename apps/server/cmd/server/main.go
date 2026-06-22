@@ -13,9 +13,17 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	agenthitl "github.com/sinmaystar/clip-anvil/internal/agent/hitl"
+	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
+	agentproducer "github.com/sinmaystar/clip-anvil/internal/agent/producer"
+	agentpss "github.com/sinmaystar/clip-anvil/internal/agent/pss"
+	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	agentstoryboard "github.com/sinmaystar/clip-anvil/internal/agent/storyboard"
+	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	"github.com/sinmaystar/clip-anvil/internal/api"
 	"github.com/sinmaystar/clip-anvil/internal/auth"
 	"github.com/sinmaystar/clip-anvil/internal/config"
@@ -74,6 +82,71 @@ func main() {
 	authHandler := api.NewAuthHandler(queries, cfg.JWT.Secret, cfg.JWT.ExpireHours)
 	authMiddleware := auth.Middleware(cfg.JWT.Secret)
 	canvasHub := api.NewCanvasHub()
+	agentHub := api.NewAgentHub()
+	agentRuntime, err := agentruntime.NewService(pgPool, queries)
+	if err != nil {
+		slog.Error("failed to create agent runtime", "error", err)
+		os.Exit(1)
+	}
+	agentModelSelection := modelselection.NewService(queries, modelselection.Defaults{
+		ProducerProviderID: "volcengine",
+		ProducerModelID:    cfg.Production.Volcengine.TextModel,
+	})
+	agentBroadcaster := api.NewAgentBroadcaster(agentHub)
+	hitlService := agenthitl.NewService(agentRuntime)
+	producerPSSBuilder := agentpss.NewBuilder(queries)
+	storyboardService := agentstoryboard.NewService(pgPool, queries)
+	agentToolRegistry, err := agenttools.NewRegistry(
+		agenttools.NewReadWorkspaceContextTool(queries),
+		agenttools.NewGetProductionStateTool(producerPSSBuilder),
+		agenttools.NewUpdateStoryboardTool(storyboardService),
+		agenttools.NewCreateAgentTextNodeTool(queries, agentCanvasNodeBroadcaster{hub: canvasHub}),
+		agenttools.NewRequestUserDecisionTool(agenthitl.NewToolDecisionRequester(hitlService)),
+	)
+	if err != nil {
+		slog.Error("failed to create agent tool registry", "error", err)
+		os.Exit(1)
+	}
+	agentToolExecutor := agentproducer.NewRegistryToolExecutor(agentproducer.RegistryToolExecutorConfig{
+		Registry:    agentToolRegistry,
+		Runtime:     agentRuntime,
+		Broadcaster: agentBroadcaster,
+	})
+	producerGraph, err := agentproducer.NewGraph(agentproducer.GraphConfig{
+		Loader: agentproducer.RuntimeContextLoader{
+			Runtime:        agentRuntime,
+			Queries:        queries,
+			ImageReader:    storageService,
+			ModelSelection: agentModelSelection,
+			PSSBuilder:     producerPSSBuilder,
+		},
+		Responder: agentproducer.NewVolcengineModelResponder(agentproducer.VolcengineModelResponderConfig{
+			APIKey:      cfg.Production.Volcengine.APIKey,
+			BaseURL:     cfg.Production.Volcengine.BaseURL,
+			Region:      cfg.Production.Volcengine.Region,
+			Model:       cfg.Production.Volcengine.TextModel,
+			MaxTokens:   1200,
+			Temperature: 0.3,
+		}),
+		ToolExecutor: agentToolExecutor,
+		ToolRegistry: agentToolRegistry,
+	})
+	if err != nil {
+		slog.Error("failed to create producer graph", "error", err)
+		os.Exit(1)
+	}
+	producerExecutor := agentproducer.NewExecutor(agentproducer.ExecutorConfig{
+		Runtime:      agentRuntime,
+		Graph:        producerGraph,
+		Broadcaster:  agentBroadcaster,
+		MaxToolCalls: cfg.Agent.ProducerMaxToolCalls,
+		ToolTimeout:  time.Duration(cfg.Agent.ToolTimeoutSeconds) * time.Second,
+	})
+	agentHandler := api.NewAgentHandler(queries, agentRuntime, agentHub, producerExecutor)
+	agentHandler.SetAttachmentStorage(storageService)
+	agentHandler.SetCanvasHub(canvasHub)
+	agentHandler.SetModelSelectionService(agentModelSelection)
+	agentHandler.SetHITLService(hitlService)
 	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
 	canvasHandler := api.NewCanvasHandler(queries, storageService)
 	nodeHandler := api.NewNodeHandler(pgPool, queries, canvasHub)
@@ -147,6 +220,22 @@ func main() {
 	)
 	productionService.SetRunner(productionRunner)
 	productionRunner.Start(ctx)
+	go func() {
+		tasks, err := agentRuntime.ListQueuedProducerTasksAcrossWorkspaces(context.Background(), 50)
+		if err != nil {
+			slog.Warn("skipping queued producer recovery", "error", err)
+			return
+		}
+		for _, task := range tasks {
+			if err := producerExecutor.RunTask(context.Background(), agentproducer.RunTaskInput{
+				WorkspaceID: task.WorkspaceID,
+				ThreadID:    task.ThreadID,
+				TaskID:      task.ID,
+			}); err != nil {
+				slog.Warn("failed to recover queued producer task", "task_id", task.ID, "error", err)
+			}
+		}
+	}()
 	runHandler := api.NewRunHandler(productionService, queries, storageService)
 	modelHandler := api.NewModelHandler(queries)
 	referencePackHandler := api.NewReferencePackHandler(pgPool, queries, productionService)
@@ -155,6 +244,7 @@ func main() {
 	uploadHandler := api.NewUploadHandler(queries, storageService)
 	storageHandler := api.NewStorageHandler(queries, storageService)
 	canvasWSHandler := api.NewCanvasWSHandler(queries, canvasHub, cfg.JWT.Secret)
+	agentWSHandler := api.NewAgentWSHandler(queries, agentHub, cfg.JWT.Secret)
 	artifactService := sandbox.NewArtifactService(
 		sandboxClient,
 		queries,
@@ -223,6 +313,13 @@ func main() {
 	h.POST("/api/workspaces/:id/storage/complete-upload", authMiddleware, storageHandler.CompleteUpload)
 	h.GET("/api/workspaces/:id", authMiddleware, workspaceHandler.Get)
 	h.GET("/api/model-capabilities", authMiddleware, modelHandler.ListCapabilities)
+	h.GET("/api/agent/workspaces/:workspaceID/thread", authMiddleware, agentHandler.GetThread)
+	h.GET("/api/agent/workspaces/:workspaceID/messages", authMiddleware, agentHandler.ListMessages)
+	h.GET("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.GetModelSelection)
+	h.PUT("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.PutModelSelection)
+	h.POST("/api/agent/workspaces/:workspaceID/attachments", authMiddleware, agentHandler.PostAttachment)
+	h.POST("/api/agent/workspaces/:workspaceID/decisions/:eventID/respond", authMiddleware, agentHandler.PostDecision)
+	h.POST("/api/agent/workspaces/:workspaceID/messages", authMiddleware, agentHandler.PostMessage)
 
 	h.POST("/api/nodes", authMiddleware, nodeHandler.Create)
 	h.POST("/api/nodes/", authMiddleware, nodeHandler.Create)
@@ -258,9 +355,21 @@ func main() {
 	h.GET("/api/sandbox-jobs/:id", authMiddleware, runHandler.GetSandboxJob)
 
 	h.GET("/ws/canvas", canvasWSHandler.Canvas)
+	h.GET("/ws/agent", agentWSHandler.Agent)
 
 	slog.Info("server starting", "port", cfg.Server.Port)
 	h.Spin()
+}
+
+type agentCanvasNodeBroadcaster struct {
+	hub *api.CanvasHub
+}
+
+func (b agentCanvasNodeBroadcaster) BroadcastAgentNodeCreated(workspaceID pgtype.UUID, node db.MediaNode) {
+	if b.hub == nil {
+		return
+	}
+	b.hub.Broadcast(workspaceID, api.CanvasEvent{Type: "NodeCreated", Payload: map[string]any{"node": node}})
 }
 
 func checkSandboxServerHealth(ctx context.Context, client *http.Client, endpoint string) error {

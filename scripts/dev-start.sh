@@ -46,6 +46,11 @@ shell_quote() {
   printf '%q' "$1"
 }
 
+is_pid_running() {
+  local pid=${1:-}
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
 default_name="$(default_profile_name)"
 DEV_NAME="${CLIPANVIL_DEV_NAME:-$default_name}"
 SERVER_HOST="${CLIPANVIL_SERVER_HOST:-localhost}"
@@ -112,12 +117,50 @@ wait_for() {
   fail "$desc 启动超时（${max}s）"
 }
 
+start_detached() {
+  local pid_file=$1 pgid_file=$2 log_file=$3
+  shift 3
+  python3 - "$pid_file" "$pgid_file" "$log_file" "$@" <<'PY'
+import os
+import subprocess
+import sys
+
+pid_file, pgid_file, log_file, *cmd = sys.argv[1:]
+with open(log_file, "wb") as log:
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        close_fds=True,
+        start_new_session=True,
+    )
+with open(pid_file, "w", encoding="utf-8") as file:
+    file.write(f"{proc.pid}\n")
+with open(pgid_file, "w", encoding="utf-8") as file:
+    file.write(f"{os.getpgid(proc.pid)}\n")
+PY
+}
+
+cleanup_stale_pid_dir() {
+  local server_pid web_pid
+  server_pid="$(cat "$PID_DIR/server.pid" 2>/dev/null || true)"
+  web_pid="$(cat "$PID_DIR/web.pid" 2>/dev/null || true)"
+  if is_pid_running "$server_pid" || is_pid_running "$web_pid"; then
+    fail "开发环境 profile '$DEV_NAME' 已在运行，先执行 CLIPANVIL_DEV_NAME=$DEV_NAME ./scripts/dev-stop.sh"
+  fi
+  rm -rf "$PID_DIR"
+}
+
 # 检查是否已在运行
-if [[ -d "$PID_DIR" ]] && kill -0 "$(cat "$PID_DIR/server.pid" 2>/dev/null)" 2>/dev/null; then
-  fail "开发环境 profile '$DEV_NAME' 已在运行，先执行 CLIPANVIL_DEV_NAME=$DEV_NAME ./scripts/dev-stop.sh"
+if [[ -d "$PID_DIR" ]]; then
+  cleanup_stale_pid_dir
 fi
 
 mkdir -p "$PID_DIR"
+echo "$SERVER_PORT" > "$PID_DIR/server.port"
+echo "$WEB_PORT" > "$PID_DIR/web.port"
+echo "$SERVER_HOST" > "$PID_DIR/server.host"
 
 echo ""
 echo "========================================="
@@ -144,11 +187,11 @@ echo "--- 后端 ---"
 cd "$ROOT_DIR/apps/server"
 go build -o "$ROOT_DIR/bin/server" ./cmd/server
 cd "$ROOT_DIR"
-CLIPANVIL_SERVER_PORT="$SERVER_PORT" ./bin/server > "$SERVER_LOG" 2>&1 &
-echo $! > "$PID_DIR/server.pid"
+CLIPANVIL_SERVER_PORT="$SERVER_PORT" \
+  start_detached "$PID_DIR/server.pid" "$PID_DIR/server.pgid" "$SERVER_LOG" ./bin/server
 
 wait_for "http://$SERVER_HOST:$SERVER_PORT/api/health" 20 "Go server"
-log "后端已启动 (PID: $(cat "$PID_DIR/server.pid"), port: $SERVER_PORT)"
+log "后端已启动 (PID: $(cat "$PID_DIR/server.pid"), PGID: $(cat "$PID_DIR/server.pgid"), port: $SERVER_PORT)"
 
 # 3. 前端
 echo ""
@@ -156,11 +199,10 @@ echo "--- 前端 ---"
 CLIPANVIL_WEB_PORT="$WEB_PORT" \
 CLIPANVIL_SERVER_PORT="$SERVER_PORT" \
 CLIPANVIL_SERVER_HOST="$SERVER_HOST" \
-  pnpm --filter @clip-anvil/web dev > "$WEB_LOG" 2>&1 &
-echo $! > "$PID_DIR/web.pid"
+  start_detached "$PID_DIR/web.pid" "$PID_DIR/web.pgid" "$WEB_LOG" pnpm --filter @clip-anvil/web dev
 
 wait_for "http://localhost:$WEB_PORT" 15 "Vite dev server"
-log "前端已启动 (PID: $(cat "$PID_DIR/web.pid"), port: $WEB_PORT)"
+log "前端已启动 (PID: $(cat "$PID_DIR/web.pid"), PGID: $(cat "$PID_DIR/web.pgid"), port: $WEB_PORT)"
 
 # 4. 健康检查
 echo ""

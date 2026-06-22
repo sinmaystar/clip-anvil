@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "test:connections": "tsc -p tsconfig.test.json && node --test src/lib/apiErrors.test.mjs src/lib/canvasLayering.test.mjs src/lib/canvasRunState.test.mjs src/lib/canvasSelectors.test.mjs src/lib/connectionFeedback.test.mjs src/lib/connectionGeometry.test.mjs src/lib/groupLayout.test.mjs src/lib/layout.test.mjs src/lib/nodePreviewLayout.test.mjs src/lib/promptRefs.test.mjs src/lib/productionPanel.test.mjs src/lib/productionPreview.test.mjs src/lib/referencePack.test.mjs src/lib/sourceMaterial.test.mjs"
+    "test:connections": "tsc -p tsconfig.test.json && node --test src/lib/agentAttachments.test.mjs src/lib/agentDecision.test.mjs src/lib/agentLayout.test.mjs src/lib/agentMessageBlocks.test.mjs src/lib/agentMessages.test.mjs src/lib/agentModelSelection.test.mjs src/lib/agentReadonlyCanvas.test.mjs src/lib/agentStreaming.test.mjs src/lib/agentTasks.test.mjs src/lib/agentThinking.test.mjs src/lib/apiErrors.test.mjs src/lib/canvasLayering.test.mjs src/lib/canvasRunState.test.mjs src/lib/canvasSelectors.test.mjs src/lib/clientMessageId.test.mjs src/lib/connectionFeedback.test.mjs src/lib/connectionGeometry.test.mjs src/lib/groupLayout.test.mjs src/lib/layout.test.mjs src/lib/nodePreviewLayout.test.mjs src/lib/promptRefs.test.mjs src/lib/productionPanel.test.mjs src/lib/productionPreview.test.mjs src/lib/referencePack.test.mjs src/lib/sourceMaterial.test.mjs"
   },
   "dependencies": {
     "@clip-anvil/canvas-schema": "workspace:*",

@@ -15,6 +15,7 @@ type Config struct {
 	JWT        JWTConfig
 	Sandbox    SandboxConfig
 	Production ProductionConfig
+	Agent      AgentConfig
 }
 
 type ServerConfig struct {
@@ -55,6 +56,11 @@ type SandboxConfig struct {
 type SandboxResourceLimits struct {
 	CPU    string
 	Memory string
+}
+
+type AgentConfig struct {
+	ProducerMaxToolCalls int `mapstructure:"producer_max_tool_calls"`
+	ToolTimeoutSeconds   int `mapstructure:"tool_timeout_seconds"`
 }
 
 type ProductionConfig struct {
@@ -114,6 +120,12 @@ func Load() (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, err
 	}
+	if cfg.Agent.ProducerMaxToolCalls <= 0 {
+		cfg.Agent.ProducerMaxToolCalls = 50
+	}
+	if cfg.Agent.ToolTimeoutSeconds <= 0 {
+		cfg.Agent.ToolTimeoutSeconds = 300
+	}
 	return &cfg, nil
 }
 
@@ -137,6 +149,8 @@ func bindEnv(v *viper.Viper) error {
 		"sandbox.use_server_proxy",
 		"sandbox.resource_limits.cpu",
 		"sandbox.resource_limits.memory",
+		"agent.producer_max_tool_calls",
+		"agent.tool_timeout_seconds",
 		"production.provider_mode",
 		"production.default_provider",
 		"production.default_text_model",

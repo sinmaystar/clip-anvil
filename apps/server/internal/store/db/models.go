@@ -247,6 +247,70 @@ type Account struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AgentEvent struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ThreadID    pgtype.UUID        `json:"thread_id"`
+	TaskID      pgtype.UUID        `json:"task_id"`
+	EventType   string             `json:"event_type"`
+	SourceRole  string             `json:"source_role"`
+	TargetRole  pgtype.Text        `json:"target_role"`
+	Scope       []byte             `json:"scope"`
+	Payload     []byte             `json:"payload"`
+	Status      string             `json:"status"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	HandledAt   pgtype.Timestamptz `json:"handled_at"`
+}
+
+type AgentMessage struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ThreadID    pgtype.UUID        `json:"thread_id"`
+	Seq         int64              `json:"seq"`
+	Role        string             `json:"role"`
+	MessageType string             `json:"message_type"`
+	Content     []byte             `json:"content"`
+	RawMessage  []byte             `json:"raw_message"`
+	TaskID      pgtype.UUID        `json:"task_id"`
+	EventID     pgtype.UUID        `json:"event_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentTask struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	ThreadID     pgtype.UUID        `json:"thread_id"`
+	Role         string             `json:"role"`
+	ScopeType    string             `json:"scope_type"`
+	ScopeID      pgtype.UUID        `json:"scope_id"`
+	TaskType     string             `json:"task_type"`
+	Status       string             `json:"status"`
+	Attempt      int32              `json:"attempt"`
+	MaxAttempts  int32              `json:"max_attempts"`
+	Input        []byte             `json:"input"`
+	Output       []byte             `json:"output"`
+	ErrorCode    pgtype.Text        `json:"error_code"`
+	ErrorMessage pgtype.Text        `json:"error_message"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	StartedAt    pgtype.Timestamptz `json:"started_at"`
+	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+}
+
+type AgentThread struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	Role                 string             `json:"role"`
+	ScopeType            string             `json:"scope_type"`
+	ScopeID              pgtype.UUID        `json:"scope_id"`
+	RuntimeProvider      string             `json:"runtime_provider"`
+	RuntimeAgentName     string             `json:"runtime_agent_name"`
+	CurrentCheckpointKey pgtype.Text        `json:"current_checkpoint_key"`
+	Status               string             `json:"status"`
+	Summary              string             `json:"summary"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ArtifactVersion struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
@@ -277,6 +341,17 @@ type CanvasDocument struct {
 	CameraZoom    float32            `json:"camera_zoom"`
 	LayoutVersion int32              `json:"layout_version"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EinoCheckpoint struct {
+	Key         string             `json:"key"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ThreadID    pgtype.UUID        `json:"thread_id"`
+	TaskID      pgtype.UUID        `json:"task_id"`
+	Value       []byte             `json:"value"`
+	Metadata    []byte             `json:"metadata"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type GenerationJob struct {
@@ -364,6 +439,7 @@ type MediaNode struct {
 	ModelParams      []byte             `json:"model_params"`
 	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
 	Metadata         []byte             `json:"metadata"`
+	ShotID           pgtype.UUID        `json:"shot_id"`
 }
 
 type ModelCapability struct {
@@ -438,6 +514,36 @@ type SandboxJob struct {
 	StartedAt       pgtype.Timestamptz `json:"started_at"`
 	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type Shot struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ClientKey         string             `json:"client_key"`
+	SortOrder         int32              `json:"sort_order"`
+	Title             string             `json:"title"`
+	Brief             []byte             `json:"brief"`
+	DurationSec       pgtype.Float8      `json:"duration_sec"`
+	NarrativePurpose  string             `json:"narrative_purpose"`
+	Status            string             `json:"status"`
+	CraftsmanThreadID pgtype.UUID        `json:"craftsman_thread_id"`
+	ArchivedAt        pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ShotDependency struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	FromShotID       pgtype.UUID        `json:"from_shot_id"`
+	ToShotID         pgtype.UUID        `json:"to_shot_id"`
+	DependencyType   string             `json:"dependency_type"`
+	RequiredArtifact string             `json:"required_artifact"`
+	InjectionRole    string             `json:"injection_role"`
+	BlockingPhase    string             `json:"blocking_phase"`
+	StalePolicy      string             `json:"stale_policy"`
+	Reason           string             `json:"reason"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type Workspace struct {

@@ -1,0 +1,68 @@
+package uimessage
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestEnvelopeSchemaAndBlocks(t *testing.T) {
+	envelope := Envelope{
+		Schema: SchemaV1,
+		Blocks: []Block{
+			MarkdownBlock{BaseBlock: BaseBlock{ID: "blk_text"}, Text: "hello"},
+		},
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if decoded["schema"] != "clipanvil.agent.message.v1" {
+		t.Fatalf("schema = %#v", decoded["schema"])
+	}
+	blocks, ok := decoded["blocks"].([]any)
+	if !ok || len(blocks) != 1 {
+		t.Fatalf("blocks = %#v", decoded["blocks"])
+	}
+	first := blocks[0].(map[string]any)
+	if first["type"] != "markdown" || first["text"] != "hello" {
+		t.Fatalf("first block = %#v", first)
+	}
+}
+
+func TestExtractMarkdownTextSkipsThinkingAndToolStatus(t *testing.T) {
+	raw := []byte(`{
+	  "schema":"clipanvil.agent.message.v1",
+	  "blocks":[
+	    {"id":"blk_thinking","type":"thinking","text":"hidden reasoning","status":"done","default_collapsed":true},
+	    {"id":"blk_answer","type":"markdown","text":"visible answer"},
+	    {"id":"blk_tool","type":"tool_status","tool_call_id":"call_1","tool_name":"read_workspace_context","label":"done","status":"succeeded"}
+	  ]
+	}`)
+	texts := ExtractMarkdownTexts(raw)
+	if len(texts) != 1 || texts[0] != "visible answer" {
+		t.Fatalf("texts = %#v, want visible answer only", texts)
+	}
+}
+
+func TestExtractAttachmentsFromBlocks(t *testing.T) {
+	raw := []byte(`{
+	  "schema":"clipanvil.agent.message.v1",
+	  "blocks":[
+	    {"id":"blk_text","type":"markdown","text":"see image"},
+	    {"id":"blk_attachment","type":"attachment","attachments":[
+	      {"asset_id":"asset-1","node_id":"node-1","kind":"image","name":"hero.png","mime":"image/png","size_bytes":123}
+	    ]}
+	  ]
+	}`)
+	attachments := ExtractAttachments(raw)
+	if len(attachments) != 1 {
+		t.Fatalf("attachments len = %d, want 1", len(attachments))
+	}
+	if attachments[0].AssetID != "asset-1" || attachments[0].Kind != "image" {
+		t.Fatalf("attachment = %#v", attachments[0])
+	}
+}

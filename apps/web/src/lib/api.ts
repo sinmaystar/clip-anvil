@@ -78,6 +78,7 @@ export interface MediaNode {
   model_id?: string | null;
   model_params?: unknown;
   current_version_id?: string | null;
+  shot_id?: string | null;
   production_preview?: ProductionPreview;
   reference_pack_preview?: ReferencePackPreview;
   active_stale_reason_count?: number;

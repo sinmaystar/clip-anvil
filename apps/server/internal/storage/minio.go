@@ -94,6 +94,33 @@ func (s *Service) StatObject(ctx context.Context, workspaceID pgtype.UUID, key s
 	return ObjectRef{Bucket: bucket, Key: key, StorageURL: bucket + "/" + key, Size: info.Size, MIME: info.ContentType}, nil
 }
 
+func (s *Service) ReadObject(ctx context.Context, workspaceID pgtype.UUID, key string, maxBytes int64) ([]byte, ObjectRef, error) {
+	ref, err := s.StatObject(ctx, workspaceID, key)
+	if err != nil {
+		return nil, ObjectRef{}, err
+	}
+	if maxBytes > 0 && ref.Size > maxBytes {
+		return nil, ObjectRef{}, fmt.Errorf("object exceeds max read size")
+	}
+	object, err := s.client.GetObject(ctx, ref.Bucket, ref.Key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, ObjectRef{}, err
+	}
+	defer func() { _ = object.Close() }()
+	reader := io.Reader(object)
+	if maxBytes > 0 {
+		reader = io.LimitReader(object, maxBytes+1)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, ObjectRef{}, err
+	}
+	if maxBytes > 0 && int64(len(data)) > maxBytes {
+		return nil, ObjectRef{}, fmt.Errorf("object exceeds max read size")
+	}
+	return data, ref, nil
+}
+
 func (s *Service) PresignedGetURL(ctx context.Context, workspaceID pgtype.UUID, key string, expiry time.Duration) (string, error) {
 	return s.presignedGetURL(ctx, s.client, workspaceID, key, expiry)
 }

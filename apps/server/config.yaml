@@ -29,6 +29,10 @@ sandbox:
     cpu: "2"
     memory: "4Gi"
 
+agent:
+  producer_max_tool_calls: 50
+  tool_timeout_seconds: 300
+
 production:
   provider_mode: "mock"
   default_provider: "mock"
