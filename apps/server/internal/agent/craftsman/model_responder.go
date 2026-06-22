@@ -1,0 +1,170 @@
+package craftsman
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/cloudwego/eino-ext/components/model/ark"
+	einoModel "github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
+)
+
+func ParseStrategy(raw string) (Strategy, error) {
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "```json")
+	raw = strings.TrimPrefix(raw, "```")
+	raw = strings.TrimSuffix(raw, "```")
+	raw = strings.TrimSpace(raw)
+	var strategy Strategy
+	if err := json.Unmarshal([]byte(raw), &strategy); err != nil {
+		return Strategy{}, fmt.Errorf("%w: parse strategy json: %v", ErrInvalidStrategy, err)
+	}
+	if err := ValidateStrategy(strategy); err != nil {
+		return Strategy{}, err
+	}
+	if strategy.Params == nil {
+		strategy.Params = map[string]any{}
+	}
+	return strategy, nil
+}
+
+func ValidateStrategy(strategy Strategy) error {
+	if strings.TrimSpace(strategy.Strategy) == "" || strings.TrimSpace(strategy.PreviewPrompt) == "" {
+		return fmt.Errorf("%w: strategy and preview_prompt are required", ErrInvalidStrategy)
+	}
+	for _, ref := range strategy.InputNodeRefs {
+		if strings.TrimSpace(ref) == "" {
+			return fmt.Errorf("%w: input_node_refs cannot contain empty values", ErrInvalidStrategy)
+		}
+	}
+	return nil
+}
+
+type StaticResponder struct {
+	Strategy Strategy
+	Metadata map[string]any
+	Err      error
+}
+
+func (r StaticResponder) DraftPreviewStrategy(context.Context, Context) (Strategy, map[string]any, error) {
+	if r.Err != nil {
+		return Strategy{}, nil, r.Err
+	}
+	return r.Strategy, r.Metadata, nil
+}
+
+type arkChatStreamer interface {
+	Stream(ctx context.Context, in []*schema.Message, opts ...einoModel.Option) (*schema.StreamReader[*schema.Message], error)
+}
+
+type arkChatModelFactory func(ctx context.Context, config *ark.ChatModelConfig) (arkChatStreamer, error)
+
+type VolcengineModelResponderConfig struct {
+	APIKey      string
+	BaseURL     string
+	Region      string
+	Model       string
+	MaxTokens   int
+	Temperature float32
+	Factory     arkChatModelFactory
+}
+
+type VolcengineModelResponder struct {
+	cfg     VolcengineModelResponderConfig
+	factory arkChatModelFactory
+}
+
+func NewVolcengineModelResponder(cfg VolcengineModelResponderConfig) VolcengineModelResponder {
+	factory := cfg.Factory
+	if factory == nil {
+		factory = func(ctx context.Context, config *ark.ChatModelConfig) (arkChatStreamer, error) {
+			return ark.NewChatModel(ctx, config)
+		}
+	}
+	return VolcengineModelResponder{cfg: cfg, factory: factory}
+}
+
+func (r VolcengineModelResponder) DraftPreviewStrategy(ctx context.Context, craftsmanContext Context) (Strategy, map[string]any, error) {
+	apiKey := strings.TrimSpace(r.cfg.APIKey)
+	if apiKey == "" {
+		return Strategy{}, nil, fmt.Errorf("CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY is required for Craftsman model")
+	}
+	modelID := strings.TrimSpace(r.cfg.Model)
+	if modelID == "" {
+		return Strategy{}, nil, fmt.Errorf("CLIPANVIL_PRODUCTION_VOLCENGINE_TEXT_MODEL is required for Craftsman model")
+	}
+	config := &ark.ChatModelConfig{
+		APIKey:  apiKey,
+		BaseURL: strings.TrimSpace(r.cfg.BaseURL),
+		Region:  strings.TrimSpace(r.cfg.Region),
+		Model:   modelID,
+		Timeout: durationPtr(10 * time.Minute),
+	}
+	if r.cfg.MaxTokens > 0 {
+		config.MaxTokens = &r.cfg.MaxTokens
+	}
+	if r.cfg.Temperature > 0 {
+		config.Temperature = &r.cfg.Temperature
+	}
+	model, err := r.factory(ctx, config)
+	if err != nil {
+		return Strategy{}, nil, fmt.Errorf("create craftsman ark chat model: %w", err)
+	}
+	stream, err := model.Stream(ctx, craftsmanPromptMessages(craftsmanContext))
+	if err != nil {
+		return Strategy{}, nil, fmt.Errorf("stream craftsman ark chat model: %w", err)
+	}
+	defer stream.Close()
+
+	chunks := []*schema.Message{}
+	for {
+		chunk, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return Strategy{}, nil, fmt.Errorf("receive craftsman ark chat stream: %w", err)
+		}
+		if chunk != nil {
+			chunks = append(chunks, chunk)
+		}
+	}
+	final, err := schema.ConcatMessages(chunks)
+	if err != nil {
+		return Strategy{}, nil, fmt.Errorf("concatenate craftsman ark chat stream: %w", err)
+	}
+	strategy, err := ParseStrategy(final.Content)
+	if err != nil {
+		return Strategy{}, nil, err
+	}
+	return strategy, map[string]any{
+		"provider": "volcengine",
+		"model_id": modelID,
+	}, nil
+}
+
+func craftsmanPromptMessages(craftsmanContext Context) []*schema.Message {
+	return []*schema.Message{
+		{
+			Role: schema.System,
+			Content: strings.TrimSpace(`You are ClipAnvil CraftsmanGraph for one video shot.
+Create one preview image generation strategy for the target shot.
+Return JSON only. Do not wrap the response in Markdown.
+Required JSON fields: strategy, preview_prompt.
+Optional JSON fields: negative_prompt, style_notes, input_node_refs, model, params.`),
+		},
+		{
+			Role:    schema.User,
+			Content: craftsmanContext.Text,
+		},
+	}
+}
+
+func durationPtr(value time.Duration) *time.Duration {
+	return &value
+}
