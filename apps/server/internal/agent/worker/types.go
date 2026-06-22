@@ -3,8 +3,6 @@ package worker
 import (
 	"errors"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -44,11 +42,4 @@ type GenerationOutput struct {
 	GenerationJobID   string `json:"generation_job_id"`
 	ArtifactVersionID string `json:"artifact_version_id"`
 	OperationType     string `json:"operation_type"`
-}
-
-func nullableUUIDString(id pgtype.UUID) string {
-	if !id.Valid {
-		return ""
-	}
-	return uuidString(id)
 }

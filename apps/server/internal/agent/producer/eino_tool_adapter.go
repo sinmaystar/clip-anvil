@@ -57,16 +57,6 @@ func (s *einoToolRunState) result(toolCallID string) (ToolExecutionResult, bool)
 	return result, ok
 }
 
-func (s *einoToolRunState) definition(name string) (agenttools.Definition, bool) {
-	if s == nil || name == "" {
-		return agenttools.Definition{}, false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	def, ok := s.definitions[name]
-	return def, ok
-}
-
 func (s *einoToolRunState) anyInterrupted() (ToolExecutionResult, bool) {
 	if s == nil {
 		return ToolExecutionResult{}, false
