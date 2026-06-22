@@ -76,6 +76,44 @@ func (s *Service) GetOrCreateProducerThread(ctx context.Context, workspaceID pgt
 	return db.AgentThread{}, err
 }
 
+func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
+	if !workspaceID.Valid || !shotID.Valid {
+		return db.AgentThread{}, ErrInvalidRequest
+	}
+
+	params := db.GetActiveAgentThreadByScopeParams{
+		WorkspaceID: workspaceID,
+		Role:        "craftsman",
+		ScopeType:   "shot",
+		ScopeID:     shotID,
+	}
+	thread, err := s.queries.GetActiveAgentThreadByScope(ctx, params)
+	if err == nil {
+		return thread, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.AgentThread{}, err
+	}
+
+	thread, err = s.CreateThread(ctx, CreateThreadParams{
+		WorkspaceID:      workspaceID,
+		Role:             "craftsman",
+		ScopeType:        "shot",
+		ScopeID:          shotID,
+		RuntimeProvider:  "eino",
+		RuntimeAgentName: "CraftsmanGraph",
+	})
+	if err == nil {
+		return thread, nil
+	}
+
+	existing, getErr := s.queries.GetActiveAgentThreadByScope(ctx, params)
+	if getErr == nil {
+		return existing, nil
+	}
+	return db.AgentThread{}, err
+}
+
 func (s *Service) CreateThread(ctx context.Context, params CreateThreadParams) (db.AgentThread, error) {
 	if !params.WorkspaceID.Valid || !validThreadRole(params.Role) {
 		return db.AgentThread{}, ErrInvalidRequest
@@ -249,6 +287,26 @@ func (s *Service) ListQueuedProducerTasksAcrossWorkspaces(ctx context.Context, l
 		limit = 200
 	}
 	return s.queries.ListQueuedProducerTasksAcrossWorkspaces(ctx, limit)
+}
+
+func (s *Service) ListQueuedCraftsmanTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	return s.queries.ListQueuedCraftsmanTasksAcrossWorkspaces(ctx, limit)
+}
+
+func (s *Service) ListQueuedWorkerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	return s.queries.ListQueuedWorkerTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error) {
@@ -483,7 +541,7 @@ func validTaskScope(value string) bool {
 
 func validTaskType(value string) bool {
 	switch value {
-	case "producer_turn", "tool_call", "decision_resume":
+	case "producer_turn", "tool_call", "decision_resume", "craftsman_turn", "worker_generation":
 		return true
 	default:
 		return false

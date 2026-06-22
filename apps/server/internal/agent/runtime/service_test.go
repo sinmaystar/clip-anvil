@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,41 @@ func TestCreateTaskRejectsInvalidAttempts(t *testing.T) {
 	}
 }
 
+func TestCreateTaskAllowsCraftsmanAndWorkerTaskTypes(t *testing.T) {
+	svc, err := NewService(&fakeBeginner{}, db.New(fakeDBTX{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceID := uuidWithByte(1)
+	threadID := uuidWithByte(2)
+	shotID := uuidWithByte(3)
+
+	cases := []struct {
+		role     string
+		taskType string
+	}{
+		{role: "craftsman", taskType: "craftsman_turn"},
+		{role: "worker", taskType: "worker_generation"},
+	}
+	for _, tc := range cases {
+		task, err := svc.CreateTask(context.Background(), CreateTaskParams{
+			WorkspaceID: workspaceID,
+			ThreadID:    threadID,
+			Role:        tc.role,
+			ScopeType:   "shot",
+			ScopeID:     shotID,
+			TaskType:    tc.taskType,
+			MaxAttempts: 3,
+		})
+		if err != nil {
+			t.Fatalf("%s rejected: %v", tc.taskType, err)
+		}
+		if task.TaskType != tc.taskType {
+			t.Fatalf("task type = %q, want %q", task.TaskType, tc.taskType)
+		}
+	}
+}
+
 func TestListQueuedProducerTasksRejectsMissingWorkspace(t *testing.T) {
 	svc, err := NewService(&fakeBeginner{}, db.New(fakeDBTX{}))
 	if err != nil {
@@ -141,7 +177,28 @@ func (fakeDBTX) Query(context.Context, string, ...interface{}) (pgx.Rows, error)
 	return nil, nil
 }
 
-func (fakeDBTX) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+func (fakeDBTX) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	if strings.Contains(query, "INSERT INTO agent_task") {
+		return fakeRow{values: []any{
+			uuidWithByte(8),
+			args[0].(pgtype.UUID),
+			args[1].(pgtype.UUID),
+			args[2].(string),
+			args[3].(string),
+			args[4].(pgtype.UUID),
+			args[5].(string),
+			"queued",
+			int32(0),
+			args[6].(int32),
+			args[7].([]byte),
+			[]byte("{}"),
+			pgtype.Text{},
+			pgtype.Text{},
+			pgtype.Timestamptz{Time: time.Unix(1, 0), Valid: true},
+			pgtype.Timestamptz{},
+			pgtype.Timestamptz{},
+		}}
+	}
 	return fakeRow{}
 }
 
@@ -198,9 +255,13 @@ func (f *fakeTx) Conn() *pgx.Conn { return nil }
 
 type fakeRow struct {
 	values []any
+	err    error
 }
 
 func (r fakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
 	for i := range dest {
 		switch d := dest[i].(type) {
 		case *pgtype.UUID:
@@ -215,6 +276,8 @@ func (r fakeRow) Scan(dest ...any) error {
 			*d = r.values[i].([]byte)
 		case *pgtype.Timestamptz:
 			*d = r.values[i].(pgtype.Timestamptz)
+		case *pgtype.Text:
+			*d = r.values[i].(pgtype.Text)
 		default:
 			return errors.New("unsupported fake scan destination")
 		}
