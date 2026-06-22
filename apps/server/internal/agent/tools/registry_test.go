@@ -36,12 +36,13 @@ func TestRegistryFindsRequiredM6Tools(t *testing.T) {
 		NewReadWorkspaceContextTool(nil),
 		NewCreateAgentTextNodeTool(nil, nil),
 		NewRequestUserDecisionTool(nil),
+		NewDispatchCraftsmanTool(nil, nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"read_workspace_context", "create_agent_text_node", "request_user_decision"} {
+	for _, name := range []string{"read_workspace_context", "create_agent_text_node", "request_user_decision", "dispatch_craftsman"} {
 		if _, ok := registry.Definition(name); !ok {
 			t.Fatalf("missing required tool %s", name)
 		}
