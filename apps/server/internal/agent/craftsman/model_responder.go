@@ -20,9 +20,26 @@ func ParseStrategy(raw string) (Strategy, error) {
 	raw = strings.TrimPrefix(raw, "```")
 	raw = strings.TrimSuffix(raw, "```")
 	raw = strings.TrimSpace(raw)
-	var strategy Strategy
-	if err := json.Unmarshal([]byte(raw), &strategy); err != nil {
+	var decoded struct {
+		Strategy       string         `json:"strategy"`
+		PreviewPrompt  string         `json:"preview_prompt"`
+		NegativePrompt string         `json:"negative_prompt"`
+		StyleNotes     any            `json:"style_notes"`
+		InputNodeRefs  any            `json:"input_node_refs"`
+		Model          any            `json:"model"`
+		Params         map[string]any `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		return Strategy{}, fmt.Errorf("%w: parse strategy json: %v", ErrInvalidStrategy, err)
+	}
+	strategy := Strategy{
+		Strategy:       decoded.Strategy,
+		PreviewPrompt:  decoded.PreviewPrompt,
+		NegativePrompt: decoded.NegativePrompt,
+		StyleNotes:     flexibleStringSlice(decoded.StyleNotes),
+		InputNodeRefs:  flexibleStringSlice(decoded.InputNodeRefs),
+		Model:          flexibleModelSpec(decoded.Model),
+		Params:         decoded.Params,
 	}
 	if err := ValidateStrategy(strategy); err != nil {
 		return Strategy{}, err
@@ -43,6 +60,76 @@ func ValidateStrategy(strategy Strategy) error {
 		}
 	}
 	return nil
+}
+
+func flexibleStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return nil
+		}
+		return []string{trimmed}
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if !ok {
+				continue
+			}
+			text = strings.TrimSpace(text)
+			if text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func flexibleModelSpec(value any) ModelSpec {
+	switch typed := value.(type) {
+	case nil:
+		return ModelSpec{}
+	case string:
+		return ModelSpec{ModelID: flexibleModelID(typed)}
+	case map[string]any:
+		return ModelSpec{
+			Provider: stringFromAny(typed["provider"]),
+			ModelID:  flexibleModelID(firstNonEmptyString(stringFromAny(typed["model_id"]), stringFromAny(typed["model"]))),
+		}
+	default:
+		return ModelSpec{}
+	}
+}
+
+func flexibleModelID(value string) string {
+	text := strings.TrimSpace(value)
+	switch strings.ToLower(text) {
+	case "", "default", "auto", "production_default":
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(text), "doubao-") {
+		return text
+	}
+	return ""
+}
+
+func stringFromAny(value any) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 type StaticResponder struct {

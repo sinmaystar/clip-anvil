@@ -39,6 +39,48 @@ func TestParseCraftsmanStrategyRejectsEmptyPrompt(t *testing.T) {
 	}
 }
 
+func TestParseCraftsmanStrategyAcceptsStringStyleNotes(t *testing.T) {
+	strategy, err := ParseStrategy(`{
+		"strategy": "方向",
+		"preview_prompt": "prompt",
+		"style_notes": "commercial, clean"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strategy.StyleNotes) != 1 || strategy.StyleNotes[0] != "commercial, clean" {
+		t.Fatalf("style notes = %#v", strategy.StyleNotes)
+	}
+}
+
+func TestParseCraftsmanStrategyAcceptsStringModel(t *testing.T) {
+	strategy, err := ParseStrategy(`{
+		"strategy": "方向",
+		"preview_prompt": "prompt",
+		"model": "doubao-seedream-5-0-260128"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strategy.Model.Provider != "" || strategy.Model.ModelID != "doubao-seedream-5-0-260128" {
+		t.Fatalf("model = %#v", strategy.Model)
+	}
+}
+
+func TestParseCraftsmanStrategyIgnoresLooseModelAlias(t *testing.T) {
+	strategy, err := ParseStrategy(`{
+		"strategy": "方向",
+		"preview_prompt": "prompt",
+		"model": {"provider": "volcengine", "model": "stable-diffusion-xl"}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strategy.Model.Provider != "volcengine" || strategy.Model.ModelID != "" {
+		t.Fatalf("model = %#v", strategy.Model)
+	}
+}
+
 func TestVolcengineCraftsmanResponderParsesStreamedStrategy(t *testing.T) {
 	streamer := &fakeCraftsmanArkStreamer{chunks: []*schema.Message{{
 		Content: `{"strategy":"明亮商品特写","preview_prompt":"A bright product close-up"}`,
