@@ -2,6 +2,7 @@ package pss
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -19,6 +20,8 @@ type Store interface {
 	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
 	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
 	ListAgentEventsByWorkspaceStatus(ctx context.Context, params db.ListAgentEventsByWorkspaceStatusParams) ([]db.AgentEvent, error)
+	ListGenerationJobsByNode(ctx context.Context, nodeID pgtype.UUID) ([]db.GenerationJob, error)
+	ListArtifactVersionsByNode(ctx context.Context, nodeID pgtype.UUID) ([]db.ArtifactVersion, error)
 }
 
 type Builder struct {
@@ -65,18 +68,22 @@ func (b *Builder) BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID)
 	if err != nil {
 		return ProducerPSS{}, err
 	}
+	previewByShot, err := b.previewNodesByShot(ctx, nodes)
+	if err != nil {
+		return ProducerPSS{}, err
+	}
 
 	sort.Slice(shots, func(i, j int) bool { return shots[i].SortOrder < shots[j].SortOrder })
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Title < nodes[j].Title })
 
-	text := renderPSS(workspace, nodes, shots, deps, tasks, events)
+	text := renderPSS(workspace, nodes, shots, deps, tasks, events, previewByShot)
 	return ProducerPSS{
 		Text: text,
 		Structured: map[string]any{
 			"workspace":         workspaceSummary(workspace),
 			"source_materials":  nodeSummaries(nodes),
 			"nodes":             nodeSummaries(nodes),
-			"shots":             shotSummaries(shots),
+			"shots":             shotSummaries(shots, previewByShot),
 			"shot_dependencies": dependencySummaries(deps, shots),
 			"pending_decisions": eventSummaries(events),
 			"running_tasks":     taskSummaries(tasks),
@@ -84,7 +91,37 @@ func (b *Builder) BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID)
 	}, nil
 }
 
-func renderPSS(workspace db.Workspace, nodes []db.MediaNode, shots []db.Shot, deps []db.ShotDependency, tasks []db.AgentTask, events []db.AgentEvent) string {
+type previewNodeState struct {
+	Node     db.MediaNode
+	Jobs     []db.GenerationJob
+	Versions []db.ArtifactVersion
+}
+
+func (b *Builder) previewNodesByShot(ctx context.Context, nodes []db.MediaNode) (map[pgtype.UUID][]previewNodeState, error) {
+	out := map[pgtype.UUID][]previewNodeState{}
+	for _, node := range nodes {
+		if !node.ShotID.Valid || !isPreviewNode(node) {
+			continue
+		}
+		jobs, err := b.store.ListGenerationJobsByNode(ctx, node.ID)
+		if err != nil {
+			return nil, err
+		}
+		versions, err := b.store.ListArtifactVersionsByNode(ctx, node.ID)
+		if err != nil {
+			return nil, err
+		}
+		out[node.ShotID] = append(out[node.ShotID], previewNodeState{Node: node, Jobs: jobs, Versions: versions})
+	}
+	for shotID := range out {
+		sort.Slice(out[shotID], func(i, j int) bool {
+			return out[shotID][i].Node.CreatedAt.Time.Before(out[shotID][j].Node.CreatedAt.Time)
+		})
+	}
+	return out, nil
+}
+
+func renderPSS(workspace db.Workspace, nodes []db.MediaNode, shots []db.Shot, deps []db.ShotDependency, tasks []db.AgentTask, events []db.AgentEvent, previewByShot map[pgtype.UUID][]previewNodeState) string {
 	var b strings.Builder
 	b.WriteString("当前项目\n")
 	b.WriteString("- Workspace: " + workspace.Name + "\n")
@@ -113,6 +150,18 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, shots []db.Shot, de
 			}
 			if summary := briefSummary(shot.Brief); summary != "" {
 				b.WriteString("  Brief: " + summary + "\n")
+			}
+			for _, preview := range previewByShot[shot.ID] {
+				fmt.Fprintf(&b, "  Preview: %s, node_status=%s", preview.Node.Title, preview.Node.Status)
+				if len(preview.Jobs) > 0 {
+					latestJob := preview.Jobs[len(preview.Jobs)-1]
+					fmt.Fprintf(&b, ", job=%s", latestJob.Status)
+				}
+				if len(preview.Versions) > 0 {
+					latestVersion := preview.Versions[len(preview.Versions)-1]
+					fmt.Fprintf(&b, ", version=%s", latestVersion.Status)
+				}
+				b.WriteString("\n")
 			}
 		}
 	}
@@ -178,7 +227,7 @@ func nodeSummaries(nodes []db.MediaNode) []map[string]any {
 	return out
 }
 
-func shotSummaries(shots []db.Shot) []map[string]any {
+func shotSummaries(shots []db.Shot, previewByShot map[pgtype.UUID][]previewNodeState) []map[string]any {
 	out := make([]map[string]any, 0, len(shots))
 	for _, shot := range shots {
 		out = append(out, map[string]any{
@@ -188,7 +237,32 @@ func shotSummaries(shots []db.Shot) []map[string]any {
 			"title":             shot.Title,
 			"status":            shot.Status,
 			"narrative_purpose": shot.NarrativePurpose,
+			"preview_nodes":     previewSummaries(previewByShot[shot.ID]),
 		})
+	}
+	return out
+}
+
+func previewSummaries(previews []previewNodeState) []map[string]any {
+	out := make([]map[string]any, 0, len(previews))
+	for _, preview := range previews {
+		summary := map[string]any{
+			"node_id":   uuidString(preview.Node.ID),
+			"title":     preview.Node.Title,
+			"status":    string(preview.Node.Status),
+			"operation": preview.Node.OperationType,
+		}
+		if len(preview.Jobs) > 0 {
+			latestJob := preview.Jobs[len(preview.Jobs)-1]
+			summary["job_id"] = uuidString(latestJob.ID)
+			summary["job_status"] = string(latestJob.Status)
+		}
+		if len(preview.Versions) > 0 {
+			latestVersion := preview.Versions[len(preview.Versions)-1]
+			summary["version_id"] = uuidString(latestVersion.ID)
+			summary["version_status"] = string(latestVersion.Status)
+		}
+		out = append(out, summary)
 	}
 	return out
 }
@@ -245,6 +319,19 @@ func briefSummary(raw []byte) string {
 		return ""
 	}
 	return text
+}
+
+func isPreviewNode(node db.MediaNode) bool {
+	if node.NodeType != db.NodeTypeImage || node.Source != "agent" || node.OperationType != "text_to_image" {
+		return false
+	}
+	var metadata map[string]any
+	if len(node.Metadata) > 0 && json.Unmarshal(node.Metadata, &metadata) == nil {
+		if metadata["agent_artifact_kind"] == "preview_image" {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(node.Title), "preview")
 }
 
 func uuidString(id pgtype.UUID) string {

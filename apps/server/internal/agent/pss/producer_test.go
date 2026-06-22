@@ -57,6 +57,47 @@ func TestProducerPSSListsShotsAndDependencies(t *testing.T) {
 	}
 }
 
+func TestProducerPSSListsPreviewGenerationState(t *testing.T) {
+	shot := db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SortOrder: 1, Title: "开场", Status: "planned"}
+	node := db.MediaNode{
+		ID:            uuidWithByte(4),
+		WorkspaceID:   uuidWithByte(1),
+		ShotID:        shot.ID,
+		Title:         "shot-01 preview image",
+		NodeType:      db.NodeTypeImage,
+		Source:        "agent",
+		Status:        "queued",
+		OperationType: "text_to_image",
+		Metadata:      []byte(`{"agent_artifact_kind":"preview_image"}`),
+	}
+	builder := NewBuilder(fakeStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Name: "agent-ws", Mode: db.WorkspaceModeAgent},
+		shots:     []db.Shot{shot},
+		nodes:     []db.MediaNode{node},
+		jobs: map[pgtype.UUID][]db.GenerationJob{
+			node.ID: {{ID: uuidWithByte(5), TargetNodeID: node.ID, OperationType: "text_to_image", Status: db.JobStatusQueued}},
+		},
+		versions: map[pgtype.UUID][]db.ArtifactVersion{
+			node.ID: {{ID: uuidWithByte(6), NodeID: node.ID, Status: db.JobStatusQueued}},
+		},
+	})
+
+	pss, err := builder.BuildProducerPSS(context.Background(), uuidWithByte(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Preview: shot-01 preview image", "job=queued", "version=queued"} {
+		if !strings.Contains(pss.Text, want) {
+			t.Fatalf("PSS missing %q:\n%s", want, pss.Text)
+		}
+	}
+	shots := pss.Structured["shots"].([]map[string]any)
+	previewNodes := shots[0]["preview_nodes"].([]map[string]any)
+	if len(previewNodes) != 1 || previewNodes[0]["job_status"] != "queued" {
+		t.Fatalf("preview_nodes = %#v", previewNodes)
+	}
+}
+
 type fakeStore struct {
 	workspace    db.Workspace
 	nodes        []db.MediaNode
@@ -64,6 +105,8 @@ type fakeStore struct {
 	dependencies []db.ShotDependency
 	tasks        []db.AgentTask
 	events       []db.AgentEvent
+	jobs         map[pgtype.UUID][]db.GenerationJob
+	versions     map[pgtype.UUID][]db.ArtifactVersion
 }
 
 func (f fakeStore) GetWorkspaceByID(context.Context, pgtype.UUID) (db.Workspace, error) {
@@ -88,6 +131,14 @@ func (f fakeStore) ListActiveAgentTasksByWorkspace(context.Context, pgtype.UUID)
 
 func (f fakeStore) ListAgentEventsByWorkspaceStatus(context.Context, db.ListAgentEventsByWorkspaceStatusParams) ([]db.AgentEvent, error) {
 	return f.events, nil
+}
+
+func (f fakeStore) ListGenerationJobsByNode(_ context.Context, nodeID pgtype.UUID) ([]db.GenerationJob, error) {
+	return f.jobs[nodeID], nil
+}
+
+func (f fakeStore) ListArtifactVersionsByNode(_ context.Context, nodeID pgtype.UUID) ([]db.ArtifactVersion, error) {
+	return f.versions[nodeID], nil
 }
 
 func uuidWithByte(b byte) pgtype.UUID {
