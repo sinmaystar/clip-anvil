@@ -26,6 +26,17 @@ WHERE workspace_id = $1
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: GetActiveAgentThreadByScope :one
+SELECT *
+FROM agent_thread
+WHERE workspace_id = $1
+  AND role = $2
+  AND scope_type = $3
+  AND scope_id = $4
+  AND status = 'active'
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: ListAgentThreadsByWorkspace :many
 SELECT *
 FROM agent_thread

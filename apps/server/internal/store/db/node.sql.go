@@ -52,6 +52,95 @@ func (q *Queries) ClearMediaNodeGroup(ctx context.Context, id pgtype.UUID) (Medi
 	return i, err
 }
 
+const createAgentGenerationNode = `-- name: CreateAgentGenerationNode :one
+INSERT INTO media_node (
+    workspace_id,
+    node_type,
+    title,
+    prompt,
+    prompt_template,
+    operation_type,
+    status,
+    source,
+    canvas_x,
+    canvas_y,
+    canvas_w,
+    canvas_h,
+    shot_id,
+    model_provider,
+    model_id,
+    model_params,
+    metadata
+)
+VALUES ($1, $2, $3, $4, $4, $5, 'queued', 'agent', $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+`
+
+type CreateAgentGenerationNodeParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	NodeType      NodeType    `json:"node_type"`
+	Title         string      `json:"title"`
+	Prompt        string      `json:"prompt"`
+	OperationType string      `json:"operation_type"`
+	CanvasX       float32     `json:"canvas_x"`
+	CanvasY       float32     `json:"canvas_y"`
+	CanvasW       float32     `json:"canvas_w"`
+	CanvasH       float32     `json:"canvas_h"`
+	ShotID        pgtype.UUID `json:"shot_id"`
+	ModelProvider pgtype.Text `json:"model_provider"`
+	ModelID       pgtype.Text `json:"model_id"`
+	ModelParams   []byte      `json:"model_params"`
+	Metadata      []byte      `json:"metadata"`
+}
+
+func (q *Queries) CreateAgentGenerationNode(ctx context.Context, arg CreateAgentGenerationNodeParams) (MediaNode, error) {
+	row := q.db.QueryRow(ctx, createAgentGenerationNode,
+		arg.WorkspaceID,
+		arg.NodeType,
+		arg.Title,
+		arg.Prompt,
+		arg.OperationType,
+		arg.CanvasX,
+		arg.CanvasY,
+		arg.CanvasW,
+		arg.CanvasH,
+		arg.ShotID,
+		arg.ModelProvider,
+		arg.ModelID,
+		arg.ModelParams,
+		arg.Metadata,
+	)
+	var i MediaNode
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.NodeType,
+		&i.Title,
+		&i.Status,
+		&i.Prompt,
+		&i.Source,
+		&i.CanvasX,
+		&i.CanvasY,
+		&i.CanvasW,
+		&i.CanvasH,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.GroupID,
+		&i.AssetID,
+		&i.OperationType,
+		&i.PromptTemplate,
+		&i.PromptRich,
+		&i.PromptRefs,
+		&i.ModelProvider,
+		&i.ModelID,
+		&i.ModelParams,
+		&i.CurrentVersionID,
+		&i.Metadata,
+		&i.ShotID,
+	)
+	return i, err
+}
+
 const createAgentMediaNode = `-- name: CreateAgentMediaNode :one
 INSERT INTO media_node (
     workspace_id,

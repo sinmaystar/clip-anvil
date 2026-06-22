@@ -50,6 +50,24 @@ WHERE role = 'producer'
 ORDER BY created_at ASC
 LIMIT $1;
 
+-- name: ListQueuedCraftsmanTasksAcrossWorkspaces :many
+SELECT *
+FROM agent_task
+WHERE role = 'craftsman'
+  AND task_type = 'craftsman_turn'
+  AND status = 'queued'
+ORDER BY created_at ASC
+LIMIT $1;
+
+-- name: ListQueuedWorkerTasksAcrossWorkspaces :many
+SELECT *
+FROM agent_task
+WHERE role = 'worker'
+  AND task_type = 'worker_generation'
+  AND status = 'queued'
+ORDER BY created_at ASC
+LIMIT $1;
+
 -- name: MarkAgentTaskRunning :one
 UPDATE agent_task
 SET status = 'running',

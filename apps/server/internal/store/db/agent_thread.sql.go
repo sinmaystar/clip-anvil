@@ -63,6 +63,50 @@ func (q *Queries) CreateAgentThread(ctx context.Context, arg CreateAgentThreadPa
 	return i, err
 }
 
+const getActiveAgentThreadByScope = `-- name: GetActiveAgentThreadByScope :one
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+FROM agent_thread
+WHERE workspace_id = $1
+  AND role = $2
+  AND scope_type = $3
+  AND scope_id = $4
+  AND status = 'active'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetActiveAgentThreadByScopeParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Role        string      `json:"role"`
+	ScopeType   string      `json:"scope_type"`
+	ScopeID     pgtype.UUID `json:"scope_id"`
+}
+
+func (q *Queries) GetActiveAgentThreadByScope(ctx context.Context, arg GetActiveAgentThreadByScopeParams) (AgentThread, error) {
+	row := q.db.QueryRow(ctx, getActiveAgentThreadByScope,
+		arg.WorkspaceID,
+		arg.Role,
+		arg.ScopeType,
+		arg.ScopeID,
+	)
+	var i AgentThread
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Role,
+		&i.ScopeType,
+		&i.ScopeID,
+		&i.RuntimeProvider,
+		&i.RuntimeAgentName,
+		&i.CurrentCheckpointKey,
+		&i.Status,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getActiveProducerThreadByWorkspace = `-- name: GetActiveProducerThreadByWorkspace :one
 SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
 FROM agent_thread

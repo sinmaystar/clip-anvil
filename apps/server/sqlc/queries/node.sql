@@ -52,6 +52,29 @@ INSERT INTO media_node (
 VALUES ($1, $2, $3, $4, $4, 'upload', 'succeeded', 'agent', $5, $6, $7, $8, $9)
 RETURNING *;
 
+-- name: CreateAgentGenerationNode :one
+INSERT INTO media_node (
+    workspace_id,
+    node_type,
+    title,
+    prompt,
+    prompt_template,
+    operation_type,
+    status,
+    source,
+    canvas_x,
+    canvas_y,
+    canvas_w,
+    canvas_h,
+    shot_id,
+    model_provider,
+    model_id,
+    model_params,
+    metadata
+)
+VALUES ($1, $2, $3, $4, $4, $5, 'queued', 'agent', $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING *;
+
 -- name: ListMediaNodesByWorkspace :many
 SELECT *
 FROM media_node

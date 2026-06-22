@@ -199,6 +199,54 @@ func (q *Queries) ListAgentTasksByWorkspaceStatus(ctx context.Context, arg ListA
 	return items, nil
 }
 
+const listQueuedCraftsmanTasksAcrossWorkspaces = `-- name: ListQueuedCraftsmanTasksAcrossWorkspaces :many
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+FROM agent_task
+WHERE role = 'craftsman'
+  AND task_type = 'craftsman_turn'
+  AND status = 'queued'
+ORDER BY created_at ASC
+LIMIT $1
+`
+
+func (q *Queries) ListQueuedCraftsmanTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]AgentTask, error) {
+	rows, err := q.db.Query(ctx, listQueuedCraftsmanTasksAcrossWorkspaces, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTask{}
+	for rows.Next() {
+		var i AgentTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ThreadID,
+			&i.Role,
+			&i.ScopeType,
+			&i.ScopeID,
+			&i.TaskType,
+			&i.Status,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.Input,
+			&i.Output,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQueuedProducerTasks = `-- name: ListQueuedProducerTasks :many
 SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
 FROM agent_task
@@ -265,6 +313,54 @@ LIMIT $1
 
 func (q *Queries) ListQueuedProducerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]AgentTask, error) {
 	rows, err := q.db.Query(ctx, listQueuedProducerTasksAcrossWorkspaces, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTask{}
+	for rows.Next() {
+		var i AgentTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ThreadID,
+			&i.Role,
+			&i.ScopeType,
+			&i.ScopeID,
+			&i.TaskType,
+			&i.Status,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.Input,
+			&i.Output,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQueuedWorkerTasksAcrossWorkspaces = `-- name: ListQueuedWorkerTasksAcrossWorkspaces :many
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+FROM agent_task
+WHERE role = 'worker'
+  AND task_type = 'worker_generation'
+  AND status = 'queued'
+ORDER BY created_at ASC
+LIMIT $1
+`
+
+func (q *Queries) ListQueuedWorkerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]AgentTask, error) {
+	rows, err := q.db.Query(ctx, listQueuedWorkerTasksAcrossWorkspaces, limit)
 	if err != nil {
 		return nil, err
 	}
