@@ -85,9 +85,27 @@ export function CanvasFlowSurface({
     setEdges(derivedEdges);
   }, [derivedEdges]);
 
-  const handleNodesChange = useCallback((changes: NodeChange<CanvasFlowNode>[]) => {
-    setNodes((current) => applyNodeChanges(changes, current));
-  }, []);
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<CanvasFlowNode>[]) => {
+      setNodes((current) => applyNodeChanges(changes, current));
+      const settledPositions = changes.flatMap((change) => {
+        if (change.type !== "position" || change.dragging || !change.position) {
+          return [];
+        }
+        return [
+          {
+            id: change.id,
+            canvas_x: change.position.x,
+            canvas_y: change.position.y,
+          },
+        ];
+      });
+      if (settledPositions.length > 0) {
+        onNodePositionsChange?.(settledPositions);
+      }
+    },
+    [onNodePositionsChange],
+  );
 
   const handleEdgesChange = useCallback((changes: EdgeChange<CanvasFlowEdge>[]) => {
     setEdges((current) => applyEdgeChanges(changes, current));

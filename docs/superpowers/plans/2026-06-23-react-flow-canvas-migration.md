@@ -873,7 +873,8 @@ Open `agent_url` from the smoke output. Verify:
 Phase 3 run notes:
 - Browser verified Agent uses React Flow, has no tldraw host, opens shared inspector, has no connect handles/buttons, and disables run/edit controls.
 - Browser/API verified Agent content edit, run, and delete return `403`, while layout position update returns `204`.
-- Browser verified refresh restores the changed backend node position. MCP `dragTo` did not trigger React Flow pointer dragging, so drag callback coverage is from source tests plus the layout API persistence check.
+- Browser verified React Flow settled position changes persist: selecting the Agent node and moving it with arrow keys changed `(120,120)` to `(130,130)`, updated backend canvas coordinates, and survived refresh.
+- MCP `dragTo` and DevTools a11y drag do not trigger React Flow pointer dragging, so pointer drag itself remains covered by the same settled-position persistence path plus source tests.
 
 - [x] **Step 8: Commit Phase 3**
 

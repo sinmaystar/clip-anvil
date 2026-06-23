@@ -72,6 +72,8 @@ describe("agent React Flow canvas", () => {
 
     assert.match(source, /onNodeDragStop/);
     assert.match(source, /onNodePositionsChange/);
+    assert.match(source, /change\.type !== "position"/);
+    assert.match(source, /settledPositions/);
     assert.match(source, /onMoveEnd/);
     assert.match(source, /onViewportChange/);
     assert.match(agentSource, /batchUpdateNodePositions/);
