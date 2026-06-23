@@ -88,6 +88,38 @@ func TestEinoToolsNodeInvokesProducerToolExecutor(t *testing.T) {
 	}
 }
 
+func TestEinoToolsNodeInterruptsForDecisionTool(t *testing.T) {
+	registry, err := agenttools.NewRegistry(adapterDefinitionTool{name: "request_user_decision"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &recordingNativeToolExecutor{interrupted: true}
+	node, _, err := newEinoProducerToolNode(context.Background(), ProducerContext{}, registry, executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = node.Invoke(context.Background(), &schema.Message{
+		Role: schema.Assistant,
+		ToolCalls: []schema.ToolCall{
+			{
+				ID:   "call-decision",
+				Type: "function",
+				Function: schema.FunctionCall{
+					Name:      "request_user_decision",
+					Arguments: `{"title":"确认","message":"继续吗"}`,
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected interrupt error")
+	}
+	if !strings.Contains(err.Error(), "interrupt signal") {
+		t.Fatalf("error is not an Eino interrupt signal: %v", err)
+	}
+}
+
 type adapterDefinitionTool struct {
 	name string
 }
@@ -114,10 +146,11 @@ func (t adapterDefinitionTool) Execute(context.Context, agenttools.ExecuteInput)
 }
 
 type recordingNativeToolExecutor struct {
-	calledName string
-	calledID   string
-	calledArgs map[string]any
-	summary    string
+	calledName  string
+	calledID    string
+	calledArgs  map[string]any
+	summary     string
+	interrupted bool
 }
 
 func (e *recordingNativeToolExecutor) ExecuteProducerTool(_ context.Context, _ ProducerContext, call ToolCall) (ToolExecutionResult, error) {
@@ -125,10 +158,11 @@ func (e *recordingNativeToolExecutor) ExecuteProducerTool(_ context.Context, _ P
 	e.calledID = call.ID
 	e.calledArgs = call.Arguments
 	return ToolExecutionResult{
-		Result:     map[string]any{"ok": true},
-		Summary:    e.summary,
-		ToolCallID: call.ID,
-		ToolName:   call.Name,
+		Result:      map[string]any{"ok": true},
+		Summary:     e.summary,
+		Interrupted: e.interrupted,
+		ToolCallID:  call.ID,
+		ToolName:    call.Name,
 	}, nil
 }
 

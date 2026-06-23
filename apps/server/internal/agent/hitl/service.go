@@ -23,6 +23,7 @@ type Runtime interface {
 	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
 	MarkTaskWaitingForUser(ctx context.Context, taskID pgtype.UUID) (db.AgentTask, error)
 	GetAgentEventForWorkspace(ctx context.Context, eventID, workspaceID pgtype.UUID) (db.AgentEvent, error)
+	ListAgentEventsByWorkspace(ctx context.Context, workspaceID pgtype.UUID, limit int32) ([]db.AgentEvent, error)
 	MarkEventHandled(ctx context.Context, eventID pgtype.UUID) (db.AgentEvent, error)
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 }
@@ -199,6 +200,16 @@ func (s *Service) RespondDecision(ctx context.Context, input RespondDecisionInpu
 	if err != nil {
 		return RespondDecisionOutput{}, err
 	}
+	checkpointKey, interruptIDs := resumeCheckpointFromEvents(ctx, s.runtime, event)
+	resumeDecision := map[string]any{
+		"decision_event_id":  uuidString(event.ID),
+		"resolved_event_id":  uuidString(resolved.ID),
+		"original_task_id":   uuidString(event.TaskID),
+		"checkpoint_key":     checkpointKey,
+		"interrupt_ids":      interruptIDs,
+		"selected_option_id": input.SelectedOptionID,
+		"free_text":          strings.TrimSpace(input.FreeText),
+	}
 	task, err := s.runtime.CreateTask(ctx, agentruntime.CreateTaskParams{
 		WorkspaceID: input.WorkspaceID,
 		ThreadID:    event.ThreadID,
@@ -206,17 +217,45 @@ func (s *Service) RespondDecision(ctx context.Context, input RespondDecisionInpu
 		ScopeType:   "workspace",
 		TaskType:    "decision_resume",
 		MaxAttempts: 1,
-		Input: mustJSON(map[string]any{
-			"decision_event_id":  uuidString(event.ID),
-			"resolved_event_id":  uuidString(resolved.ID),
-			"selected_option_id": input.SelectedOptionID,
-			"free_text":          strings.TrimSpace(input.FreeText),
-		}),
+		Input:       mustJSON(resumeDecision),
 	})
 	if err != nil {
 		return RespondDecisionOutput{}, err
 	}
 	return RespondDecisionOutput{DecisionEvent: handled, ResolvedEvent: resolved, Message: message, Task: task}, nil
+}
+
+func resumeCheckpointFromEvents(ctx context.Context, runtime Runtime, decisionEvent db.AgentEvent) (string, []string) {
+	events, err := runtime.ListAgentEventsByWorkspace(ctx, decisionEvent.WorkspaceID, 50)
+	if err != nil {
+		return checkpointKeyFromPayload(decisionEvent.Payload), nil
+	}
+	decisionCheckpoint := checkpointKeyFromPayload(decisionEvent.Payload)
+	for _, event := range events {
+		if event.EventType != "graph_interrupted" || event.TaskID != decisionEvent.TaskID {
+			continue
+		}
+		var payload struct {
+			CheckpointKey string   `json:"checkpoint_key"`
+			InterruptIDs  []string `json:"interrupt_ids"`
+		}
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			continue
+		}
+		if payload.CheckpointKey == "" || (decisionCheckpoint != "" && payload.CheckpointKey != decisionCheckpoint) {
+			continue
+		}
+		return payload.CheckpointKey, payload.InterruptIDs
+	}
+	return decisionCheckpoint, nil
+}
+
+func checkpointKeyFromPayload(raw []byte) string {
+	var payload struct {
+		CheckpointKey string `json:"checkpoint_key"`
+	}
+	_ = json.Unmarshal(raw, &payload)
+	return strings.TrimSpace(payload.CheckpointKey)
 }
 
 func decisionPayload(args map[string]any, checkpointKey string) []byte {

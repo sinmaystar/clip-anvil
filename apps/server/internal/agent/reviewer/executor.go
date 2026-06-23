@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -14,10 +15,11 @@ type ExecutorRuntime interface {
 	MarkTaskRunning(ctx context.Context, taskID pgtype.UUID) (db.AgentTask, error)
 	MarkTaskSucceeded(ctx context.Context, taskID pgtype.UUID, output []byte) (db.AgentTask, error)
 	MarkTaskFailed(ctx context.Context, taskID pgtype.UUID, code, message string) (db.AgentTask, error)
+	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
 }
 
 type Runner interface {
-	Run(ctx context.Context, input GraphInput) (GraphOutput, error)
+	Run(ctx context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error)
 }
 
 type ExecutorConfig struct {
@@ -49,12 +51,14 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if err != nil {
 		return e.fail(ctx, task.ID, "reviewer_invalid_input", err)
 	}
-	out, err := e.graph.Run(ctx, GraphInput{
+	graphInput := GraphInput{
 		WorkspaceID: task.WorkspaceID,
 		ThreadID:    task.ThreadID,
 		TaskID:      task.ID,
 		Task:        taskInput,
-	})
+	}
+	checkpointKey := agenteino.CheckpointKey("reviewer_preview", task.WorkspaceID, task.ThreadID, task.ID)
+	out, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{CheckPointID: checkpointKey})
 	if err != nil {
 		return e.fail(ctx, task.ID, "reviewer_failed", err)
 	}
@@ -65,6 +69,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	})
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, task.ID, rawOutput); err != nil {
 		return err
+	}
+	if _, err := e.runtime.SetThreadCheckpoint(ctx, task.ThreadID, checkpointKey); err != nil {
+		return e.fail(ctx, task.ID, "reviewer_checkpoint_update_failed", err)
 	}
 	return nil
 }

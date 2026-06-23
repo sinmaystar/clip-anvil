@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -40,7 +41,7 @@ type NodeBroadcaster interface {
 }
 
 type Runner interface {
-	Run(ctx context.Context, input GraphInput) (GraphOutput, error)
+	Run(ctx context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error)
 }
 
 type ExecutorConfig struct {
@@ -72,18 +73,23 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if err != nil {
 		return e.fail(ctx, task, "composer_invalid_input", err)
 	}
-	out, err := e.graph.Run(ctx, GraphInput{
+	graphInput := GraphInput{
 		WorkspaceID: task.WorkspaceID,
 		ThreadID:    task.ThreadID,
 		TaskID:      task.ID,
 		Input:       compositionInput,
-	})
+	}
+	checkpointKey := agenteino.CheckpointKey("composer_final", task.WorkspaceID, task.ThreadID, task.ID)
+	out, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{CheckPointID: checkpointKey})
 	if err != nil {
 		return e.fail(ctx, task, "composer_failed", err)
 	}
 	rawOutput, _ := json.Marshal(out.Output)
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, task.ID, rawOutput); err != nil {
 		return err
+	}
+	if _, err := e.runtime.SetThreadCheckpoint(ctx, task.ThreadID, checkpointKey); err != nil {
+		return e.fail(ctx, task, "composer_checkpoint_update_failed", err)
 	}
 	return nil
 }

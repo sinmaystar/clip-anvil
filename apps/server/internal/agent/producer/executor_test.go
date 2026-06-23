@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -19,9 +20,10 @@ import (
 func TestExecutorPersistsAssistantMessageOnSuccess(t *testing.T) {
 	runtime := &fakeRuntime{}
 	broadcaster := &fakeBroadcaster{}
+	graph := &fakeGraph{output: ProducerTurnOutput{AssistantText: "assistant reply"}}
 	executor := NewExecutor(ExecutorConfig{
 		Runtime:     runtime,
-		Graph:       fakeGraph{output: ProducerTurnOutput{AssistantText: "assistant reply"}},
+		Graph:       graph,
 		Broadcaster: broadcaster,
 	})
 
@@ -47,6 +49,13 @@ func TestExecutorPersistsAssistantMessageOnSuccess(t *testing.T) {
 	if broadcaster.messageCount != 1 || broadcaster.taskCount == 0 {
 		t.Fatalf("broadcast counts = messages %d tasks %d", broadcaster.messageCount, broadcaster.taskCount)
 	}
+	wantCheckpoint := "agent:eino:producer_turn:01000000-0000-0000-0000-000000000000:02000000-0000-0000-0000-000000000000:03000000-0000-0000-0000-000000000000"
+	if graph.runOptions.CheckPointID != wantCheckpoint {
+		t.Fatalf("checkpoint id = %q, want %q", graph.runOptions.CheckPointID, wantCheckpoint)
+	}
+	if runtime.threadCheckpoint != wantCheckpoint {
+		t.Fatalf("thread checkpoint = %q, want %q", runtime.threadCheckpoint, wantCheckpoint)
+	}
 }
 
 func TestExecutorBroadcastsStreamDeltasBeforeFinalMessage(t *testing.T) {
@@ -54,7 +63,7 @@ func TestExecutorBroadcastsStreamDeltasBeforeFinalMessage(t *testing.T) {
 	broadcaster := &fakeBroadcaster{}
 	executor := NewExecutor(ExecutorConfig{
 		Runtime: runtime,
-		Graph: fakeGraph{
+		Graph: &fakeGraph{
 			output: ProducerTurnOutput{AssistantText: "streamed reply"},
 			deltas: []string{"streamed ", "reply"},
 		},
@@ -83,7 +92,7 @@ func TestExecutorPersistsSelectedModelMetadata(t *testing.T) {
 	runtime := &fakeRuntime{}
 	executor := NewExecutor(ExecutorConfig{
 		Runtime: runtime,
-		Graph: fakeGraph{output: ProducerTurnOutput{
+		Graph: &fakeGraph{output: ProducerTurnOutput{
 			AssistantText: "assistant reply",
 			Metadata: map[string]any{
 				"provider":           "volcengine",
@@ -112,11 +121,51 @@ func TestExecutorPersistsSelectedModelMetadata(t *testing.T) {
 	}
 }
 
+func TestExecutorMarksTaskWaitingForNativeInterrupt(t *testing.T) {
+	runtime := &fakeRuntime{}
+	registry := mustTestToolRegistry(t, "request_user_decision")
+	graph, err := NewGraph(GraphConfig{
+		Loader: fakeContextLoader{context: ProducerContext{LatestUserText: "需要决策"}},
+		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
+			nativeToolCallOutput("call-decision", "request_user_decision", `{"title":"确认","message":"继续吗"}`),
+		}},
+		ToolExecutor:    interruptingToolExecutor{},
+		ToolRegistry:    registry,
+		CheckPointStore: fakeEinoCheckpointStore{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+
+	err = executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID:      uuidWithByte(1),
+		ThreadID:         uuidWithByte(2),
+		TaskID:           uuidWithByte(3),
+		TriggerMessageID: uuidWithByte(4),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.waitingTask != uuidWithByte(3) {
+		t.Fatalf("waiting task = %v", runtime.waitingTask)
+	}
+	if runtime.failedTask.Valid {
+		t.Fatalf("task should not fail, failed=%v", runtime.failedTask)
+	}
+	if runtime.assistantMessageType != "" {
+		t.Fatalf("assistant message type = %q", runtime.assistantMessageType)
+	}
+	if !containsString(runtime.eventTypes, "graph_interrupted") {
+		t.Fatalf("events = %#v", runtime.eventTypes)
+	}
+}
+
 func TestExecutorUsesAgentModelUnavailableErrorCode(t *testing.T) {
 	runtime := &fakeRuntime{}
 	executor := NewExecutor(ExecutorConfig{
 		Runtime: runtime,
-		Graph:   fakeGraph{err: NewAgentError("agent_model_unavailable", "model disabled")},
+		Graph:   &fakeGraph{err: NewAgentError("agent_model_unavailable", "model disabled")},
 	})
 
 	err := executor.RunTask(context.Background(), RunTaskInput{
@@ -138,7 +187,7 @@ func TestExecutorPersistsErrorMessageOnFailure(t *testing.T) {
 	broadcaster := &fakeBroadcaster{}
 	executor := NewExecutor(ExecutorConfig{
 		Runtime:     runtime,
-		Graph:       fakeGraph{err: errors.New("model unavailable")},
+		Graph:       &fakeGraph{err: errors.New("model unavailable")},
 		Broadcaster: broadcaster,
 	})
 
@@ -172,7 +221,7 @@ func TestExecutorLogsTaskFailureContext(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	executor := NewExecutor(ExecutorConfig{
 		Runtime: runtime,
-		Graph:   fakeGraph{err: NewAgentError("agent_model_unavailable", "model disabled")},
+		Graph:   &fakeGraph{err: NewAgentError("agent_model_unavailable", "model disabled")},
 		Logger:  logger,
 	})
 
@@ -199,12 +248,16 @@ func uuidWithByte(b byte) pgtype.UUID {
 }
 
 type fakeGraph struct {
-	output ProducerTurnOutput
-	deltas []string
-	err    error
+	output     ProducerTurnOutput
+	deltas     []string
+	err        error
+	runOptions agenteino.RunOptions
 }
 
-func (f fakeGraph) Run(ctx context.Context, input ProducerTurnInput) (ProducerTurnOutput, error) {
+func (f *fakeGraph) Run(ctx context.Context, input ProducerTurnInput, options ...agenteino.RunOptions) (ProducerTurnOutput, error) {
+	if len(options) > 0 {
+		f.runOptions = options[0]
+	}
 	for _, delta := range f.deltas {
 		if input.EmitDelta != nil {
 			if err := input.EmitDelta(ctx, ProducerStreamDelta{Delta: delta}); err != nil {
@@ -245,12 +298,15 @@ func (f *fakeBroadcaster) BroadcastAgentMessageDelta(_ pgtype.UUID, delta Produc
 
 type fakeRuntime struct {
 	runningTask          pgtype.UUID
+	waitingTask          pgtype.UUID
 	succeededTask        pgtype.UUID
 	failedTask           pgtype.UUID
 	failedCode           string
 	assistantText        string
 	assistantMessageType string
 	assistantRawMessage  []byte
+	threadCheckpoint     string
+	eventTypes           []string
 }
 
 func (f *fakeRuntime) MarkTaskRunning(_ context.Context, taskID pgtype.UUID) (db.AgentTask, error) {
@@ -267,6 +323,16 @@ func (f *fakeRuntime) MarkTaskFailed(_ context.Context, taskID pgtype.UUID, code
 	f.failedTask = taskID
 	f.failedCode = code
 	return db.AgentTask{ID: taskID, WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), Role: "producer", TaskType: "producer_turn", Status: "failed"}, nil
+}
+
+func (f *fakeRuntime) MarkTaskWaitingForUser(_ context.Context, taskID pgtype.UUID) (db.AgentTask, error) {
+	f.waitingTask = taskID
+	return db.AgentTask{ID: taskID, WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), Role: "producer", TaskType: "producer_turn", Status: "waiting_for_user"}, nil
+}
+
+func (f *fakeRuntime) SetThreadCheckpoint(_ context.Context, _ pgtype.UUID, checkpointKey string) (db.AgentThread, error) {
+	f.threadCheckpoint = checkpointKey
+	return db.AgentThread{CurrentCheckpointKey: pgtype.Text{String: checkpointKey, Valid: checkpointKey != ""}}, nil
 }
 
 func (f *fakeRuntime) AppendMessage(_ context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error) {
@@ -288,6 +354,7 @@ func (f *fakeRuntime) AppendMessage(_ context.Context, params agentruntime.Appen
 }
 
 func (f *fakeRuntime) CreateEvent(_ context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
+	f.eventTypes = append(f.eventTypes, params.EventType)
 	return db.AgentEvent{
 		ID:          uuidWithByte(8),
 		WorkspaceID: params.WorkspaceID,
@@ -296,4 +363,35 @@ func (f *fakeRuntime) CreateEvent(_ context.Context, params agentruntime.CreateE
 		EventType:   params.EventType,
 		SourceRole:  params.SourceRole,
 	}, nil
+}
+
+type interruptingToolExecutor struct{}
+
+func (interruptingToolExecutor) ExecuteProducerTool(_ context.Context, _ ProducerContext, call ToolCall) (ToolExecutionResult, error) {
+	return ToolExecutionResult{
+		Result:      map[string]any{"status": "waiting_for_user"},
+		Summary:     "等待用户决策",
+		Interrupted: true,
+		ToolCallID:  call.ID,
+		ToolName:    call.Name,
+	}, nil
+}
+
+type fakeEinoCheckpointStore struct{}
+
+func (fakeEinoCheckpointStore) Get(context.Context, string) ([]byte, bool, error) {
+	return nil, false, nil
+}
+
+func (fakeEinoCheckpointStore) Set(context.Context, string, []byte) error {
+	return nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

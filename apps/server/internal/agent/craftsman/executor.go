@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -19,10 +20,11 @@ type ExecutorRuntime interface {
 	MarkTaskFailed(ctx context.Context, taskID pgtype.UUID, code, message string) (db.AgentTask, error)
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
+	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
 }
 
 type Runner interface {
-	Run(ctx context.Context, input GraphInput) (GraphOutput, error)
+	Run(ctx context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error)
 }
 
 type ExecutorConfig struct {
@@ -60,7 +62,7 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if err != nil {
 		return e.fail(ctx, input, "craftsman_invalid_input", err)
 	}
-	out, err := e.graph.Run(ctx, GraphInput{
+	graphInput := GraphInput{
 		WorkspaceID:  input.WorkspaceID,
 		ThreadID:     input.ThreadID,
 		TaskID:       input.TaskID,
@@ -68,7 +70,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		Mode:         taskInput.Mode,
 		MaxAttempts:  taskInput.MaxAttempts,
 		WorkerParams: taskInput.WorkerParams,
-	})
+	}
+	checkpointKey := agenteino.CheckpointKey("craftsman_generation", input.WorkspaceID, input.ThreadID, input.TaskID)
+	out, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{CheckPointID: checkpointKey})
 	if err != nil {
 		return e.fail(ctx, input, "craftsman_failed", err)
 	}
@@ -81,6 +85,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	})
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, input.TaskID, rawOutput); err != nil {
 		return err
+	}
+	if _, err := e.runtime.SetThreadCheckpoint(ctx, input.ThreadID, checkpointKey); err != nil {
+		return e.fail(ctx, input, "craftsman_checkpoint_update_failed", err)
 	}
 	_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: input.WorkspaceID,

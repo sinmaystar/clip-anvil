@@ -162,7 +162,7 @@ func (e *RegistryToolExecutor) ExecuteProducerTool(ctx context.Context, producer
 	return ToolExecutionResult{
 		Result:      output.Result,
 		Summary:     strings.TrimSpace(output.Summary),
-		Interrupted: definition.Safety.RequiresHITL,
+		Interrupted: output.Interrupted || definition.Safety.RequiresHITL,
 		ToolCallID:  toolCallID,
 		ToolName:    call.Name,
 	}, nil

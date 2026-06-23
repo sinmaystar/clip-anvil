@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cloudwego/eino/compose"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -60,6 +62,31 @@ func TestComposerGraphSubmitsCompositionAndPersistsCheckpoint(t *testing.T) {
 	}
 	if len(runtime.eventsByType["composition_submitted"]) != 1 {
 		t.Fatalf("events = %#v", runtime.eventsByType)
+	}
+}
+
+func TestComposerGraphCompileCapturesGraphInfo(t *testing.T) {
+	registry := agenteino.NewGraphInfoRegistry()
+	_, err := NewGraph(GraphConfig{
+		Runtime:    &fakeComposerRuntime{},
+		Store:      composerStoreWithSourceVideo(sourceShotVideoNode(21, "shot-01 shot video")),
+		Production: &fakeComposerProduction{result: production.RunResult{Node: db.MediaNode{ID: uuidWithByte(50)}, Job: db.GenerationJob{ID: uuidWithByte(60)}, Version: db.ArtifactVersion{ID: uuidWithByte(70)}}},
+		CompileCallbacks: []compose.GraphCompileCallback{
+			registry.CompileCallback(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, ok := registry.Get("composer_final")
+	if !ok {
+		t.Fatal("composer graph info was not captured")
+	}
+	for _, node := range []string{"load_composition_context", "create_final_node", "submit_composition_intent", "persist_checkpoint_and_events"} {
+		if _, ok := info.Nodes[node]; !ok {
+			t.Fatalf("node %q missing from graph info", node)
+		}
 	}
 }
 

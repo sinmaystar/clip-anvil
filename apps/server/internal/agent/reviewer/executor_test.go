@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -41,12 +42,20 @@ func TestReviewerExecutorRunsReviewerTurnTask(t *testing.T) {
 	if graph.input.Task.NodeID != input.NodeID {
 		t.Fatalf("graph input = %#v", graph.input)
 	}
+	wantCheckpoint := "agent:eino:reviewer_preview:01000000-0000-0000-0000-000000000000:08000000-0000-0000-0000-000000000000:09000000-0000-0000-0000-000000000000"
+	if graph.runOptions.CheckPointID != wantCheckpoint {
+		t.Fatalf("checkpoint id = %q, want %q", graph.runOptions.CheckPointID, wantCheckpoint)
+	}
+	if runtime.threadCheckpoint != wantCheckpoint {
+		t.Fatalf("thread checkpoint = %q, want %q", runtime.threadCheckpoint, wantCheckpoint)
+	}
 }
 
 type fakeReviewerExecutorRuntime struct {
-	running   bool
-	succeeded bool
-	failed    bool
+	running          bool
+	succeeded        bool
+	failed           bool
+	threadCheckpoint string
 }
 
 func (f *fakeReviewerExecutorRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
@@ -64,12 +73,21 @@ func (f *fakeReviewerExecutorRuntime) MarkTaskFailed(context.Context, pgtype.UUI
 	return db.AgentTask{}, nil
 }
 
-type fakeReviewerRunner struct {
-	input  GraphInput
-	output GraphOutput
+func (f *fakeReviewerExecutorRuntime) SetThreadCheckpoint(_ context.Context, _ pgtype.UUID, checkpointKey string) (db.AgentThread, error) {
+	f.threadCheckpoint = checkpointKey
+	return db.AgentThread{CurrentCheckpointKey: pgtype.Text{String: checkpointKey, Valid: checkpointKey != ""}}, nil
 }
 
-func (f *fakeReviewerRunner) Run(_ context.Context, input GraphInput) (GraphOutput, error) {
+type fakeReviewerRunner struct {
+	input      GraphInput
+	output     GraphOutput
+	runOptions agenteino.RunOptions
+}
+
+func (f *fakeReviewerRunner) Run(_ context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
 	f.input = input
+	if len(options) > 0 {
+		f.runOptions = options[0]
+	}
 	return f.output, nil
 }

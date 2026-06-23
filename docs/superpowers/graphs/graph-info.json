@@ -1,0 +1,48 @@
+{
+  "composer_final": {
+    "name": "composer_final",
+    "nodes": [
+      "START",
+      "load_composition_context",
+      "create_final_node",
+      "submit_composition_intent",
+      "persist_checkpoint_and_events",
+      "END"
+    ],
+    "edges": {
+      "START": ["load_composition_context"],
+      "load_composition_context": ["create_final_node"],
+      "create_final_node": ["submit_composition_intent"],
+      "submit_composition_intent": ["persist_checkpoint_and_events"],
+      "persist_checkpoint_and_events": ["END"]
+    }
+  },
+  "craftsman_generation": {
+    "name": "craftsman_generation",
+    "nodes": ["START", "load_shot_context", "draft_generation_strategy", "END"],
+    "edges": {
+      "START": ["load_shot_context"],
+      "load_shot_context": ["draft_generation_strategy"],
+      "draft_generation_strategy": ["END"]
+    }
+  },
+  "producer_turn": {
+    "name": "producer_turn",
+    "nodes": ["START", "load_context", "draft_response", "finalize_response", "END"],
+    "edges": {
+      "START": ["load_context"],
+      "load_context": ["draft_response"],
+      "draft_response": ["finalize_response"],
+      "finalize_response": ["END"]
+    }
+  },
+  "reviewer_preview": {
+    "name": "reviewer_preview",
+    "nodes": ["START", "load_review_context", "review_artifact", "END"],
+    "edges": {
+      "START": ["load_review_context"],
+      "load_review_context": ["review_artifact"],
+      "review_artifact": ["END"]
+    }
+  }
+}

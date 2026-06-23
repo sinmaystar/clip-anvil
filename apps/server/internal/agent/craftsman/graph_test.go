@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cloudwego/eino/compose"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -55,6 +57,34 @@ func TestCraftsmanGraphPersistsStrategyAndCreatesWorkerTask(t *testing.T) {
 	}
 	if len(workerEnqueuer.tasks) != 1 {
 		t.Fatalf("enqueued = %d", len(workerEnqueuer.tasks))
+	}
+}
+
+func TestCraftsmanGraphCompileCapturesGraphInfo(t *testing.T) {
+	registry := agenteino.NewGraphInfoRegistry()
+	_, err := NewGraph(GraphConfig{
+		Loader: fakeGraphLoader{context: Context{
+			Input: GraphInput{WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(3), TaskID: uuidWithByte(4), ShotID: uuidWithByte(2), MaxAttempts: 3},
+			Shot:  db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01"},
+		}},
+		Responder: StaticResponder{Strategy: Strategy{Strategy: "方向", PreviewPrompt: "prompt"}},
+		Runtime:   &fakeCraftsmanGraphRuntime{},
+		CompileCallbacks: []compose.GraphCompileCallback{
+			registry.CompileCallback(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, ok := registry.Get("craftsman_generation")
+	if !ok {
+		t.Fatal("craftsman graph info was not captured")
+	}
+	for _, node := range []string{"load_shot_context", "draft_generation_strategy"} {
+		if _, ok := info.Nodes[node]; !ok {
+			t.Fatalf("node %q missing from graph info", node)
+		}
 	}
 }
 

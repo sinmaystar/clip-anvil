@@ -1,0 +1,8 @@
+flowchart TD
+  START["START"]
+  load_shot_context["load_shot_context"]
+  draft_generation_strategy["draft_generation_strategy"]
+  END["END"]
+  START --> load_shot_context
+  load_shot_context --> draft_generation_strategy
+  draft_generation_strategy --> END

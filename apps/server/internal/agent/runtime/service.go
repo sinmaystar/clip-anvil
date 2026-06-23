@@ -514,6 +514,19 @@ func (s *Service) GetAgentEventForWorkspace(ctx context.Context, eventID, worksp
 	})
 }
 
+func (s *Service) ListAgentEventsByWorkspace(ctx context.Context, workspaceID pgtype.UUID, limit int32) ([]db.AgentEvent, error) {
+	if !workspaceID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.queries.ListAgentEventsByWorkspace(ctx, db.ListAgentEventsByWorkspaceParams{
+		WorkspaceID: workspaceID,
+		Limit:       limit,
+	})
+}
+
 type UpsertCheckpointParams struct {
 	Key         string
 	WorkspaceID pgtype.UUID

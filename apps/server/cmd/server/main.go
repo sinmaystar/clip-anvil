@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -19,6 +20,7 @@ import (
 
 	agentcomposer "github.com/sinmaystar/clip-anvil/internal/agent/composer"
 	agentcraftsman "github.com/sinmaystar/clip-anvil/internal/agent/craftsman"
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agenthitl "github.com/sinmaystar/clip-anvil/internal/agent/hitl"
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
 	agentproducer "github.com/sinmaystar/clip-anvil/internal/agent/producer"
@@ -93,6 +95,8 @@ func main() {
 		slog.Error("failed to create agent runtime", "error", err)
 		os.Exit(1)
 	}
+	agentEinoCheckpointStore := agenteino.NewCheckpointStore(agentRuntime, slog.Default().With("component", "eino_checkpoint_store"))
+	agentGraphInfoRegistry := agenteino.NewGraphInfoRegistry()
 	agentModelSelection := modelselection.NewService(queries, modelselection.Defaults{
 		ProducerProviderID: "volcengine",
 		ProducerModelID:    cfg.Production.Volcengine.TextModel,
@@ -185,10 +189,12 @@ func main() {
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
 	composerGraph, err := agentcomposer.NewGraph(agentcomposer.GraphConfig{
-		Runtime:     agentRuntime,
-		Store:       queries,
-		Production:  productionService,
-		Broadcaster: agentCanvasBroadcaster,
+		Runtime:          agentRuntime,
+		Store:            queries,
+		Production:       productionService,
+		Broadcaster:      agentCanvasBroadcaster,
+		CheckPointStore:  agentEinoCheckpointStore,
+		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
 	if err != nil {
 		slog.Error("failed to create composer graph", "error", err)
@@ -212,8 +218,10 @@ func main() {
 			MaxTokens:   1000,
 			Temperature: 0.4,
 		}),
-		Runtime:        agentRuntime,
-		WorkerEnqueuer: workerEnqueuer,
+		Runtime:          agentRuntime,
+		WorkerEnqueuer:   workerEnqueuer,
+		CheckPointStore:  agentEinoCheckpointStore,
+		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
 	if err != nil {
 		slog.Error("failed to create craftsman graph", "error", err)
@@ -240,11 +248,13 @@ func main() {
 			MaxTokens:   1600,
 			Temperature: 0.1,
 		}),
-		Runtime:         agentRuntime,
-		Store:           queries,
-		Selector:        productionService,
-		RetryDispatcher: agentReviewerRetryDispatcher{tool: retryGenerationTool},
-		Dependency:      dependencyDispatcher,
+		Runtime:          agentRuntime,
+		Store:            queries,
+		Selector:         productionService,
+		RetryDispatcher:  agentReviewerRetryDispatcher{tool: retryGenerationTool},
+		Dependency:       dependencyDispatcher,
+		CheckPointStore:  agentEinoCheckpointStore,
+		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
 	if err != nil {
 		slog.Error("failed to create reviewer graph", "error", err)
@@ -293,8 +303,10 @@ func main() {
 			MaxTokens:   1200,
 			Temperature: 0.3,
 		}),
-		ToolExecutor: agentToolExecutor,
-		ToolRegistry: agentToolRegistry,
+		ToolExecutor:     agentToolExecutor,
+		ToolRegistry:     agentToolRegistry,
+		CheckPointStore:  agentEinoCheckpointStore,
+		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
 	if err != nil {
 		slog.Error("failed to create producer graph", "error", err)

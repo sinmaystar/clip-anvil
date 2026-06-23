@@ -43,8 +43,9 @@ type ExecuteInput struct {
 }
 
 type ExecuteOutput struct {
-	Result  map[string]any
-	Summary string
+	Result      map[string]any
+	Summary     string
+	Interrupted bool
 }
 
 type Executor interface {

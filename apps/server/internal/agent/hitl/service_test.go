@@ -253,6 +253,10 @@ func (f *fakeDecisionRuntime) GetAgentEventForWorkspace(_ context.Context, event
 	return f.event, nil
 }
 
+func (f *fakeDecisionRuntime) ListAgentEventsByWorkspace(context.Context, pgtype.UUID, int32) ([]db.AgentEvent, error) {
+	return []db.AgentEvent{f.event}, nil
+}
+
 func (f *fakeDecisionRuntime) MarkEventHandled(_ context.Context, eventID pgtype.UUID) (db.AgentEvent, error) {
 	f.handledEvent = eventID
 	f.event.Status = "handled"

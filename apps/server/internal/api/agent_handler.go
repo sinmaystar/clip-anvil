@@ -386,12 +386,7 @@ func (h *AgentHandler) PostDecision(ctx context.Context, c *app.RequestContext) 
 
 	if h.producerRunner != nil {
 		go func() {
-			_ = h.producerRunner.RunTask(context.Background(), agentproducer.RunTaskInput{
-				WorkspaceID:      workspace.ID,
-				ThreadID:         output.Task.ThreadID,
-				TaskID:           output.Task.ID,
-				TriggerMessageID: output.Message.ID,
-			})
+			_ = h.producerRunner.RunTask(context.Background(), producerDecisionResumeRunInput(workspace.ID, output.Task, output.Message.ID))
 		}()
 	}
 
@@ -444,12 +439,7 @@ func (h *AgentHandler) respondPendingDecisionWithMessage(ctx context.Context, c 
 
 	if h.producerRunner != nil {
 		go func() {
-			_ = h.producerRunner.RunTask(context.Background(), agentproducer.RunTaskInput{
-				WorkspaceID:      workspaceID,
-				ThreadID:         output.Task.ThreadID,
-				TaskID:           output.Task.ID,
-				TriggerMessageID: output.Message.ID,
-			})
+			_ = h.producerRunner.RunTask(context.Background(), producerDecisionResumeRunInput(workspaceID, output.Task, output.Message.ID))
 		}()
 	}
 
@@ -966,6 +956,48 @@ func producerTurnTaskInput(msg db.AgentMessage) []byte {
 		return []byte("{}")
 	}
 	return raw
+}
+
+func producerDecisionResumeRunInput(workspaceID pgtype.UUID, task db.AgentTask, triggerMessageID pgtype.UUID) agentproducer.RunTaskInput {
+	out := agentproducer.RunTaskInput{
+		WorkspaceID:      workspaceID,
+		ThreadID:         task.ThreadID,
+		TaskID:           task.ID,
+		TriggerMessageID: triggerMessageID,
+	}
+	var input struct {
+		DecisionEventID  string   `json:"decision_event_id"`
+		ResolvedEventID  string   `json:"resolved_event_id"`
+		OriginalTaskID   string   `json:"original_task_id"`
+		CheckpointKey    string   `json:"checkpoint_key"`
+		InterruptIDs     []string `json:"interrupt_ids"`
+		SelectedOptionID string   `json:"selected_option_id"`
+		FreeText         string   `json:"free_text"`
+	}
+	if err := json.Unmarshal(task.Input, &input); err != nil {
+		return out
+	}
+	out.ResumeCheckpointID = strings.TrimSpace(input.CheckpointKey)
+	if originalTaskID, ok := uuidFromString(input.OriginalTaskID); ok {
+		out.OriginalTaskID = originalTaskID
+	}
+	if len(input.InterruptIDs) > 0 {
+		data := map[string]any{
+			"decision_event_id":       input.DecisionEventID,
+			"resolved_event_id":       input.ResolvedEventID,
+			"selected_option_id":      input.SelectedOptionID,
+			"free_text":               strings.TrimSpace(input.FreeText),
+			"decision_resume_task_id": uuidToString(task.ID),
+		}
+		out.ResumeData = map[string]any{}
+		for _, interruptID := range input.InterruptIDs {
+			interruptID = strings.TrimSpace(interruptID)
+			if interruptID != "" {
+				out.ResumeData[interruptID] = data
+			}
+		}
+	}
+	return out
 }
 
 func producerTurnQueuedPayload(msg db.AgentMessage, task db.AgentTask) []byte {

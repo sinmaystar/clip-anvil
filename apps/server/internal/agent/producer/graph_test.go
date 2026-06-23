@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -48,6 +50,28 @@ func TestGraphRunReturnsAssistantText(t *testing.T) {
 
 	if !strings.Contains(out.AssistantText, "一条运动鞋短片") {
 		t.Fatalf("assistant text = %q", out.AssistantText)
+	}
+}
+
+func TestProducerGraphCompileCapturesGraphInfo(t *testing.T) {
+	registry := agenteino.NewGraphInfoRegistry()
+	_, err := NewGraph(GraphConfig{
+		Loader:           fakeContextLoader{context: ProducerContext{LatestUserText: "brief"}},
+		Responder:        DeterministicResponder{},
+		CompileCallbacks: []compose.GraphCompileCallback{registry.CompileCallback()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, ok := registry.Get("producer_turn")
+	if !ok {
+		t.Fatal("producer graph info was not captured")
+	}
+	for _, node := range []string{"load_context", "draft_response", "finalize_response"} {
+		if _, ok := info.Nodes[node]; !ok {
+			t.Fatalf("node %q missing from graph info", node)
+		}
 	}
 }
 
@@ -110,6 +134,48 @@ func TestProducerGraphExecutesUpdateStoryboardTool(t *testing.T) {
 	}
 	if toolExecutor.calledName != "update_storyboard" {
 		t.Fatalf("called tool = %q", toolExecutor.calledName)
+	}
+}
+
+func TestProducerGraphNativeDecisionInterruptResumes(t *testing.T) {
+	registry := mustTestToolRegistry(t, "request_user_decision")
+	responder := &sequenceResponder{outputs: []ProducerTurnOutput{
+		nativeToolCallOutput("call-decision", "request_user_decision", `{"title":"确认","message":"继续吗"}`),
+		{AssistantText: "已根据你的选择继续。"},
+	}}
+	graph, err := NewGraph(GraphConfig{
+		Loader:          fakeContextLoader{context: ProducerContext{LatestUserText: "需要决策"}},
+		Responder:       responder,
+		ToolExecutor:    interruptingToolExecutor{},
+		ToolRegistry:    registry,
+		CheckPointStore: newMemoryCheckpointStore(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointKey := agenteino.CheckpointKey("producer_turn", uuidWithByte(1), uuidWithByte(2), uuidWithByte(3))
+	input := ProducerTurnInput{WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3), MaxToolCalls: 50}
+
+	_, err = graph.Run(context.Background(), input, agenteino.RunOptions{CheckPointID: checkpointKey})
+	if err == nil {
+		t.Fatal("expected graph interrupt")
+	}
+	interruptInfo, ok := compose.ExtractInterruptInfo(err)
+	if !ok || len(interruptInfo.InterruptContexts) == 0 {
+		t.Fatalf("interrupt info = %#v err=%v", interruptInfo, err)
+	}
+
+	out, err := graph.Run(context.Background(), input, agenteino.RunOptions{
+		CheckPointID: checkpointKey,
+		ResumeData: map[string]any{
+			interruptInfo.InterruptContexts[0].ID: map[string]any{"selected_option_id": "continue"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.AssistantText != "已根据你的选择继续。" {
+		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
 }
 
@@ -356,4 +422,22 @@ func (e *echoToolExecutor) ExecuteProducerTool(_ context.Context, _ ProducerCont
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 	}, nil
+}
+
+type memoryCheckpointStore struct {
+	values map[string][]byte
+}
+
+func newMemoryCheckpointStore() *memoryCheckpointStore {
+	return &memoryCheckpointStore{values: map[string][]byte{}}
+}
+
+func (s *memoryCheckpointStore) Get(_ context.Context, key string) ([]byte, bool, error) {
+	value, ok := s.values[key]
+	return value, ok, nil
+}
+
+func (s *memoryCheckpointStore) Set(_ context.Context, key string, value []byte) error {
+	s.values[key] = append([]byte(nil), value...)
+	return nil
 }

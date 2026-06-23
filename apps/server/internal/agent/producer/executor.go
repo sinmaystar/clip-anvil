@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/cloudwego/eino/compose"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -20,12 +23,14 @@ type Runtime interface {
 	MarkTaskRunning(ctx context.Context, taskID pgtype.UUID) (db.AgentTask, error)
 	MarkTaskSucceeded(ctx context.Context, taskID pgtype.UUID, output []byte) (db.AgentTask, error)
 	MarkTaskFailed(ctx context.Context, taskID pgtype.UUID, code, message string) (db.AgentTask, error)
+	MarkTaskWaitingForUser(ctx context.Context, taskID pgtype.UUID) (db.AgentTask, error)
+	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
 }
 
 type Runner interface {
-	Run(ctx context.Context, input ProducerTurnInput) (ProducerTurnOutput, error)
+	Run(ctx context.Context, input ProducerTurnInput, options ...agenteino.RunOptions) (ProducerTurnOutput, error)
 }
 
 type Broadcaster interface {
@@ -55,10 +60,13 @@ type Executor struct {
 }
 
 type RunTaskInput struct {
-	WorkspaceID      pgtype.UUID
-	ThreadID         pgtype.UUID
-	TaskID           pgtype.UUID
-	TriggerMessageID pgtype.UUID
+	WorkspaceID        pgtype.UUID
+	ThreadID           pgtype.UUID
+	TaskID             pgtype.UUID
+	TriggerMessageID   pgtype.UUID
+	ResumeCheckpointID string
+	ResumeData         map[string]any
+	OriginalTaskID     pgtype.UUID
 }
 
 func NewExecutor(config ExecutorConfig) *Executor {
@@ -127,8 +135,15 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		e.broadcastMessageDelta(input.WorkspaceID, delta)
 		return nil
 	}
-	output, err := e.graph.Run(ctx, graphInput)
+	checkpointKey := agenteino.CheckpointKey("producer_turn", input.WorkspaceID, input.ThreadID, input.TaskID)
+	if strings.TrimSpace(input.ResumeCheckpointID) != "" {
+		checkpointKey = strings.TrimSpace(input.ResumeCheckpointID)
+	}
+	output, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{CheckPointID: checkpointKey, ResumeData: input.ResumeData})
 	if err != nil {
+		if interruptInfo, ok := compose.ExtractInterruptInfo(err); ok {
+			return e.interruptTask(ctx, input, checkpointKey, interruptInfo)
+		}
 		return e.failTask(ctx, input, errorCode(err, "producer_turn_failed"), err.Error())
 	}
 
@@ -168,15 +183,68 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		return e.failTask(ctx, input, "producer_event_persist_failed", err.Error())
 	}
 
+	if _, err := e.runtime.SetThreadCheckpoint(ctx, input.ThreadID, checkpointKey); err != nil {
+		return e.failTask(ctx, input, "producer_checkpoint_update_failed", err.Error())
+	}
+
 	succeededTask, err := e.runtime.MarkTaskSucceeded(ctx, input.TaskID, mustJSON(output.Metadata))
 	if err != nil {
 		return err
+	}
+	if input.OriginalTaskID.Valid && input.OriginalTaskID != input.TaskID {
+		_, _ = e.runtime.MarkTaskSucceeded(ctx, input.OriginalTaskID, mustJSON(map[string]any{
+			"resumed_by_task_id": uuidString(input.TaskID),
+			"checkpoint_key":     checkpointKey,
+		}))
 	}
 
 	e.broadcastMessage(input.WorkspaceID, msg, completed)
 	e.broadcastEvent(input.WorkspaceID, completed)
 	e.broadcastTask(input.WorkspaceID, succeededTask)
 	return nil
+}
+
+func (e *Executor) interruptTask(ctx context.Context, input RunTaskInput, checkpointKey string, interruptInfo *compose.InterruptInfo) error {
+	if _, err := e.runtime.SetThreadCheckpoint(ctx, input.ThreadID, checkpointKey); err != nil {
+		return e.failTask(ctx, input, "producer_checkpoint_update_failed", err.Error())
+	}
+	event, err := e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
+		WorkspaceID: input.WorkspaceID,
+		ThreadID:    input.ThreadID,
+		TaskID:      input.TaskID,
+		EventType:   "graph_interrupted",
+		SourceRole:  "producer",
+		TargetRole:  "user",
+		Payload: mustJSON(map[string]any{
+			"checkpoint_key":  checkpointKey,
+			"interrupt_count": len(interruptInfo.InterruptContexts),
+			"interrupt_ids":   interruptIDs(interruptInfo),
+			"rerun_nodes":     interruptInfo.RerunNodes,
+		}),
+	})
+	if err != nil {
+		return e.failTask(ctx, input, "producer_interrupt_event_failed", err.Error())
+	}
+	waitingTask, err := e.runtime.MarkTaskWaitingForUser(ctx, input.TaskID)
+	if err != nil {
+		return e.failTask(ctx, input, "producer_waiting_state_failed", err.Error())
+	}
+	e.broadcastEvent(input.WorkspaceID, event)
+	e.broadcastTask(input.WorkspaceID, waitingTask)
+	return nil
+}
+
+func interruptIDs(info *compose.InterruptInfo) []string {
+	if info == nil {
+		return nil
+	}
+	out := make([]string, 0, len(info.InterruptContexts))
+	for _, interruptCtx := range info.InterruptContexts {
+		if interruptCtx != nil && interruptCtx.ID != "" {
+			out = append(out, interruptCtx.ID)
+		}
+	}
+	return out
 }
 
 func (e *Executor) failTask(ctx context.Context, input RunTaskInput, code string, message string) error {

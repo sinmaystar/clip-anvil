@@ -1,0 +1,8 @@
+flowchart TD
+  START["START"]
+  load_review_context["load_review_context"]
+  review_artifact["review_artifact"]
+  END["END"]
+  START --> load_review_context
+  load_review_context --> review_artifact
+  review_artifact --> END

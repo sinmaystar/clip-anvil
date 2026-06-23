@@ -10,6 +10,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 )
 
@@ -25,6 +26,8 @@ type GraphConfig struct {
 	ToolExecutor                   ToolExecutor
 	ToolRegistry                   *agenttools.Registry
 	EnableLegacyToolParserFallback bool
+	CheckPointStore                compose.CheckPointStore
+	CompileCallbacks               []compose.GraphCompileCallback
 }
 
 type Graph struct {
@@ -80,7 +83,14 @@ func NewGraph(config GraphConfig) (*Graph, error) {
 		return nil, err
 	}
 
-	runnable, err := g.Compile(context.Background(), compose.WithGraphName("producer_turn"))
+	compileOptions := []compose.GraphCompileOption{compose.WithGraphName("producer_turn")}
+	if config.CheckPointStore != nil {
+		compileOptions = append(compileOptions, compose.WithCheckPointStore(config.CheckPointStore))
+	}
+	if len(config.CompileCallbacks) > 0 {
+		compileOptions = append(compileOptions, compose.WithGraphCompileCallbacks(config.CompileCallbacks...))
+	}
+	runnable, err := g.Compile(context.Background(), compileOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -261,6 +271,11 @@ func toolCallArgumentsMap(call schema.ToolCall) map[string]any {
 	return args
 }
 
-func (g *Graph) Run(ctx context.Context, input ProducerTurnInput) (ProducerTurnOutput, error) {
-	return g.runnable.Invoke(ctx, input)
+func (g *Graph) Run(ctx context.Context, input ProducerTurnInput, options ...agenteino.RunOptions) (ProducerTurnOutput, error) {
+	runOptions := agenteino.RunOptions{}
+	if len(options) > 0 {
+		runOptions = options[0]
+	}
+	ctx, callOptions := agenteino.ApplyRunOptions(ctx, runOptions)
+	return g.runnable.Invoke(ctx, input, callOptions...)
 }

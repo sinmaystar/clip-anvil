@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -39,6 +40,13 @@ func TestCraftsmanExecutorRunsGraphAndMarksTaskSucceeded(t *testing.T) {
 	if output["worker_task_id"] == "" {
 		t.Fatalf("output = %#v", output)
 	}
+	wantCheckpoint := "agent:eino:craftsman_generation:01000000-0000-0000-0000-000000000000:03000000-0000-0000-0000-000000000000:04000000-0000-0000-0000-000000000000"
+	if graph.runOptions.CheckPointID != wantCheckpoint {
+		t.Fatalf("checkpoint id = %q, want %q", graph.runOptions.CheckPointID, wantCheckpoint)
+	}
+	if runtime.threadCheckpoint != wantCheckpoint {
+		t.Fatalf("thread checkpoint = %q, want %q", runtime.threadCheckpoint, wantCheckpoint)
+	}
 }
 
 func TestCraftsmanExecutorPassesTaskInputToGraph(t *testing.T) {
@@ -70,20 +78,25 @@ func TestCraftsmanExecutorPassesTaskInputToGraph(t *testing.T) {
 }
 
 type fakeCraftsmanRunner struct {
-	output GraphOutput
-	err    error
-	input  GraphInput
+	output     GraphOutput
+	err        error
+	input      GraphInput
+	runOptions agenteino.RunOptions
 }
 
-func (f *fakeCraftsmanRunner) Run(_ context.Context, input GraphInput) (GraphOutput, error) {
+func (f *fakeCraftsmanRunner) Run(_ context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
 	f.input = input
+	if len(options) > 0 {
+		f.runOptions = options[0]
+	}
 	return f.output, f.err
 }
 
 type fakeCraftsmanExecutorRuntime struct {
-	running   bool
-	succeeded bool
-	output    []byte
+	running          bool
+	succeeded        bool
+	output           []byte
+	threadCheckpoint string
 }
 
 func (f *fakeCraftsmanExecutorRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
@@ -107,4 +120,9 @@ func (f *fakeCraftsmanExecutorRuntime) AppendMessage(context.Context, agentrunti
 
 func (f *fakeCraftsmanExecutorRuntime) CreateEvent(context.Context, agentruntime.CreateEventParams) (db.AgentEvent, error) {
 	return db.AgentEvent{}, nil
+}
+
+func (f *fakeCraftsmanExecutorRuntime) SetThreadCheckpoint(_ context.Context, _ pgtype.UUID, checkpointKey string) (db.AgentThread, error) {
+	f.threadCheckpoint = checkpointKey
+	return db.AgentThread{CurrentCheckpointKey: pgtype.Text{String: checkpointKey, Valid: checkpointKey != ""}}, nil
 }

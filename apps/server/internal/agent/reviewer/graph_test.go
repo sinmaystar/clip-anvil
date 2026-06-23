@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/compose"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -70,6 +72,43 @@ func TestReviewerGraphAcceptsAndSelectsVersion(t *testing.T) {
 	}
 	if !dependency.called || dependency.phase != "review" || dependency.shotID != uuidWithByte(2) {
 		t.Fatalf("dependency notifier = %#v", dependency)
+	}
+}
+
+func TestReviewerGraphCompileCapturesGraphInfo(t *testing.T) {
+	registry := agenteino.NewGraphInfoRegistry()
+	input := GraphInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(8),
+		TaskID:      uuidWithByte(9),
+		Task: TaskInput{
+			TargetPhase:       TargetPhasePreviewImage,
+			ShotID:            uuidString(uuidWithByte(2)),
+			NodeID:            uuidString(uuidWithByte(3)),
+			ArtifactVersionID: uuidString(uuidWithByte(4)),
+		},
+	}
+	_, err := NewGraph(GraphConfig{
+		Loader:    fakeReviewLoader{context: Context{Input: input}},
+		Responder: fakeReviewResponder{result: passingReviewResult()},
+		Runtime:   &fakeReviewerRuntime{},
+		Store:     &fakeReviewStore{},
+		CompileCallbacks: []compose.GraphCompileCallback{
+			registry.CompileCallback(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, ok := registry.Get("reviewer_preview")
+	if !ok {
+		t.Fatal("reviewer graph info was not captured")
+	}
+	for _, node := range []string{"load_review_context", "review_artifact"} {
+		if _, ok := info.Nodes[node]; !ok {
+			t.Fatalf("node %q missing from graph info", node)
+		}
 	}
 }
 

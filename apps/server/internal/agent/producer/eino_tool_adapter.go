@@ -155,6 +155,26 @@ func (t *einoProducerTool) InvokableRun(ctx context.Context, argumentsInJSON str
 	if t.executor == nil {
 		return "", NewAgentError("agent_tool_executor_missing", "producer tool executor is not configured")
 	}
+	if wasInterrupted, _, state := einotool.GetInterruptState[map[string]any](ctx); wasInterrupted {
+		if isResumeTarget, hasData, data := einotool.GetResumeContext[map[string]any](ctx); isResumeTarget {
+			result := map[string]any{
+				"status": "user_decision_received",
+			}
+			if hasData {
+				result["decision"] = data
+			}
+			raw, err := json.Marshal(result)
+			if err != nil {
+				return "", fmt.Errorf("encode decision resume result: %w", err)
+			}
+			return string(raw), nil
+		}
+		info := map[string]any{
+			"tool_name":    state["tool_name"],
+			"tool_call_id": state["tool_call_id"],
+		}
+		return "", einotool.StatefulInterrupt(ctx, info, state)
+	}
 	args := map[string]any{}
 	if argumentsInJSON != "" {
 		if err := json.Unmarshal([]byte(argumentsInJSON), &args); err != nil {
@@ -180,6 +200,20 @@ func (t *einoProducerTool) InvokableRun(ctx context.Context, argumentsInJSON str
 		result.ToolName = t.definition.Name
 	}
 	t.runState.record(result)
+	if result.Interrupted {
+		interruptInfo := map[string]any{
+			"tool_name":    result.ToolName,
+			"tool_call_id": result.ToolCallID,
+			"summary":      strings.TrimSpace(result.Summary),
+		}
+		interruptState := map[string]any{
+			"tool_name":    result.ToolName,
+			"tool_call_id": result.ToolCallID,
+			"arguments":    args,
+			"result":       result.Result,
+		}
+		return "", einotool.StatefulInterrupt(ctx, interruptInfo, interruptState)
+	}
 	if strings.TrimSpace(result.Summary) != "" {
 		return strings.TrimSpace(result.Summary), nil
 	}

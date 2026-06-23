@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -33,7 +34,7 @@ func TestComposerCreatesFinalVideoNodeAndSubmitsComposeIntent(t *testing.T) {
 			Version: db.ArtifactVersion{ID: uuidWithByte(70), NodeID: uuidWithByte(50), JobID: uuidWithByte(60), Status: db.JobStatusQueued},
 		},
 	}
-	graph, err := NewGraph(GraphConfig{Runtime: runtime, Store: store, Production: productionService})
+	graph, err := NewGraph(GraphConfig{Runtime: runtime, Store: store, Production: productionService, CheckPointStore: fakeEinoCheckpointStore{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +65,25 @@ func TestComposerCreatesFinalVideoNodeAndSubmitsComposeIntent(t *testing.T) {
 	}
 }
 
+func TestComposerExecutorPassesDeterministicCheckpointID(t *testing.T) {
+	runtime := &fakeComposerRuntime{}
+	graph := &fakeComposerRunner{output: GraphOutput{Output: CompositionOutput{Status: "submitted"}}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+	task := composerTaskWithInput(t, CompositionInput{VideoNodeRefs: []string{"shot-01 shot video"}})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "agent:eino:composer_final:01000000-0000-0000-0000-000000000000:02000000-0000-0000-0000-000000000000:0a000000-0000-0000-0000-000000000000"
+	if graph.runOptions.CheckPointID != want {
+		t.Fatalf("checkpoint id = %q, want %q", graph.runOptions.CheckPointID, want)
+	}
+	if runtime.threadCheckpoint != want {
+		t.Fatalf("thread checkpoint = %q, want %q", runtime.threadCheckpoint, want)
+	}
+}
+
 func composerTaskWithInput(t *testing.T, input CompositionInput) db.AgentTask {
 	t.Helper()
 	raw, err := json.Marshal(input)
@@ -79,6 +99,30 @@ type fakeComposerRuntime struct {
 	checkpointValue  []byte
 	threadCheckpoint string
 	eventsByType     map[string][]agentruntime.CreateEventParams
+}
+
+type fakeComposerRunner struct {
+	input      GraphInput
+	output     GraphOutput
+	runOptions agenteino.RunOptions
+}
+
+type fakeEinoCheckpointStore struct{}
+
+func (fakeEinoCheckpointStore) Get(context.Context, string) ([]byte, bool, error) {
+	return nil, false, nil
+}
+
+func (fakeEinoCheckpointStore) Set(context.Context, string, []byte) error {
+	return nil
+}
+
+func (f *fakeComposerRunner) Run(_ context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
+	f.input = input
+	if len(options) > 0 {
+		f.runOptions = options[0]
+	}
+	return f.output, nil
 }
 
 func (f *fakeComposerRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {

@@ -8,6 +8,7 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
 	"github.com/sinmaystar/clip-anvil/internal/production"
@@ -15,10 +16,12 @@ import (
 )
 
 type GraphConfig struct {
-	Runtime     Runtime
-	Store       Store
-	Production  ProductionSubmitter
-	Broadcaster NodeBroadcaster
+	Runtime          Runtime
+	Store            Store
+	Production       ProductionSubmitter
+	Broadcaster      NodeBroadcaster
+	CheckPointStore  compose.CheckPointStore
+	CompileCallbacks []compose.GraphCompileCallback
 }
 
 type Graph struct {
@@ -76,18 +79,30 @@ func NewGraph(config GraphConfig) (*Graph, error) {
 	if err := g.AddEdge("persist_checkpoint_and_events", compose.END); err != nil {
 		return nil, err
 	}
-	runnable, err := g.Compile(context.Background(), compose.WithGraphName("composer_final"))
+	compileOptions := []compose.GraphCompileOption{compose.WithGraphName("composer_final")}
+	if config.CheckPointStore != nil {
+		compileOptions = append(compileOptions, compose.WithCheckPointStore(config.CheckPointStore))
+	}
+	if len(config.CompileCallbacks) > 0 {
+		compileOptions = append(compileOptions, compose.WithGraphCompileCallbacks(config.CompileCallbacks...))
+	}
+	runnable, err := g.Compile(context.Background(), compileOptions...)
 	if err != nil {
 		return nil, err
 	}
 	return &Graph{runnable: runnable}, nil
 }
 
-func (g *Graph) Run(ctx context.Context, input GraphInput) (GraphOutput, error) {
+func (g *Graph) Run(ctx context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
 	if g == nil || g.runnable == nil {
 		return GraphOutput{}, ErrInvalidConfig
 	}
-	return g.runnable.Invoke(ctx, input)
+	runOptions := agenteino.RunOptions{}
+	if len(options) > 0 {
+		runOptions = options[0]
+	}
+	ctx, callOptions := agenteino.ApplyRunOptions(ctx, runOptions)
+	return g.runnable.Invoke(ctx, input, callOptions...)
 }
 
 func loadCompositionContext(ctx context.Context, config GraphConfig, input GraphInput) (GraphInput, error) {

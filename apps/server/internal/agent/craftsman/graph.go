@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -31,10 +32,12 @@ type WorkerTaskEnqueuer interface {
 }
 
 type GraphConfig struct {
-	Loader         Loader
-	Responder      ModelResponder
-	Runtime        Runtime
-	WorkerEnqueuer WorkerTaskEnqueuer
+	Loader           Loader
+	Responder        ModelResponder
+	Runtime          Runtime
+	WorkerEnqueuer   WorkerTaskEnqueuer
+	CheckPointStore  compose.CheckPointStore
+	CompileCallbacks []compose.GraphCompileCallback
 }
 
 type Graph struct {
@@ -65,18 +68,30 @@ func NewGraph(config GraphConfig) (*Graph, error) {
 	if err := g.AddEdge("draft_generation_strategy", compose.END); err != nil {
 		return nil, err
 	}
-	runnable, err := g.Compile(context.Background(), compose.WithGraphName("craftsman_generation"))
+	compileOptions := []compose.GraphCompileOption{compose.WithGraphName("craftsman_generation")}
+	if config.CheckPointStore != nil {
+		compileOptions = append(compileOptions, compose.WithCheckPointStore(config.CheckPointStore))
+	}
+	if len(config.CompileCallbacks) > 0 {
+		compileOptions = append(compileOptions, compose.WithGraphCompileCallbacks(config.CompileCallbacks...))
+	}
+	runnable, err := g.Compile(context.Background(), compileOptions...)
 	if err != nil {
 		return nil, err
 	}
 	return &Graph{runnable: runnable}, nil
 }
 
-func (g *Graph) Run(ctx context.Context, input GraphInput) (GraphOutput, error) {
+func (g *Graph) Run(ctx context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
 	if g == nil || g.runnable == nil {
 		return GraphOutput{}, ErrInvalidConfig
 	}
-	return g.runnable.Invoke(ctx, input)
+	runOptions := agenteino.RunOptions{}
+	if len(options) > 0 {
+		runOptions = options[0]
+	}
+	ctx, callOptions := agenteino.ApplyRunOptions(ctx, runOptions)
+	return g.runnable.Invoke(ctx, input, callOptions...)
 }
 
 func runCraftsmanStrategy(ctx context.Context, config GraphConfig, craftsmanContext Context) (GraphOutput, error) {

@@ -1,0 +1,10 @@
+flowchart TD
+  START["START"]
+  load_context["load_context"]
+  draft_response["draft_response"]
+  finalize_response["finalize_response"]
+  END["END"]
+  START --> load_context
+  load_context --> draft_response
+  draft_response --> finalize_response
+  finalize_response --> END
