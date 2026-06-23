@@ -19,6 +19,14 @@ const fileDropZoneUrl = new URL(
   "../components/FileDropZone.tsx",
   import.meta.url,
 );
+const canvasViewModelUrl = new URL(
+  "../components/canvas-flow/canvasViewModel.ts",
+  import.meta.url,
+);
+const groupFlowNodeUrl = new URL(
+  "../components/canvas-flow/GroupFlowNode.tsx",
+  import.meta.url,
+);
 
 describe("studio React Flow canvas", () => {
   it("renders Studio through the shared React Flow surface instead of tldraw", async () => {
@@ -53,15 +61,73 @@ describe("studio React Flow canvas", () => {
   });
 
   it("keeps Studio selection synced with Resource Tree state", async () => {
+    const surfaceSource = await readFile(canvasSurfaceUrl, "utf8");
     const pageSource = await readFile(workspacePageUrl, "utf8");
 
     assert.match(pageSource, /selectedNodeId=\{selectedNodeId\}/);
+    assert.match(pageSource, /selectedGroupId=\{selectedGroupId\}/);
     assert.match(pageSource, /selectedEdgeId=\{selectedEdgeId\}/);
     assert.match(pageSource, /onSelectNode=\{\(nodeId\) =>/);
     assert.match(pageSource, /selectOrConnectNode\(nodeId\)/);
     assert.match(pageSource, /hideActiveNodeEditor\(\)/);
+    assert.match(pageSource, /onSelectGroup=\{\(groupId\) =>/);
+    assert.match(pageSource, /selectGroup\(groupId\)/);
     assert.match(pageSource, /onSelectEdge=\{\(edgeId\) =>/);
     assert.match(pageSource, /selectEdge\(edgeId\)/);
     assert.match(pageSource, /setSelectedEdgeId\(null\)/);
+    assert.doesNotMatch(
+      surfaceSource,
+      /onEdgeClick=\{[\s\S]{0,120}onSelectNode\(null\)/,
+    );
+    assert.doesNotMatch(
+      surfaceSource,
+      /node\.type === "group"[\s\S]{0,180}onSelectNode\(null\)/,
+    );
+  });
+
+  it("wires React Flow edge creation and explicit delete mutations", async () => {
+    const surfaceSource = await readFile(canvasSurfaceUrl, "utf8");
+    const studioSource = await readFile(studioFlowCanvasUrl, "utf8");
+    const pageSource = await readFile(workspacePageUrl, "utf8");
+
+    assert.match(surfaceSource, /onConnect=\{/);
+    assert.match(surfaceSource, /onConnectNodes\?\./);
+    assert.match(surfaceSource, /deleteKeyCode=\{null\}/);
+    assert.match(studioSource, /onConnectNodes/);
+    assert.match(pageSource, /deleteMediaNode/);
+    assert.match(pageSource, /deleteNodeById/);
+    assert.match(pageSource, /deleteEdgeById/);
+  });
+
+  it("moves groups by persisting member node positions", async () => {
+    const surfaceSource = await readFile(canvasSurfaceUrl, "utf8");
+    const studioSource = await readFile(studioFlowCanvasUrl, "utf8");
+    const pageSource = await readFile(workspacePageUrl, "utf8");
+    const viewModelSource = await readFile(canvasViewModelUrl, "utf8");
+    const groupNodeSource = await readFile(groupFlowNodeUrl, "utf8");
+
+    assert.match(surfaceSource, /onNodeDragStart/);
+    assert.match(surfaceSource, /onGroupMove\?\./);
+    assert.match(surfaceSource, /node\.type === "group"/);
+    assert.match(surfaceSource, /node\.type !== "media"/);
+    assert.match(studioSource, /onGroupMove/);
+    assert.match(viewModelSource, /dragHandle:\s*"\.group-flow-drag-handle"/);
+    assert.match(groupNodeSource, /group-flow-drag-handle/);
+    assert.match(pageSource, /getGroupMemberMovePositions/);
+    assert.match(pageSource, /moveGroupMembers/);
+  });
+
+  it("restores group editing and deletion through the shared Studio panel", async () => {
+    const pageSource = await readFile(workspacePageUrl, "utf8");
+
+    assert.match(pageSource, /replaceMediaGroupNodes/);
+    assert.match(pageSource, /updateMediaGroup/);
+    assert.match(pageSource, /deleteMediaGroup/);
+    assert.match(pageSource, /onAddGroupMember/);
+    assert.match(pageSource, /onRemoveGroupMember/);
+    assert.match(pageSource, /onDeleteGroup/);
+    assert.match(pageSource, /onRenameGroup/);
+    assert.match(pageSource, /selectedGroupId=\{selectedGroupId\}/);
+    assert.match(pageSource, /selectedEdgeId=\{selectedEdgeId\}/);
   });
 });

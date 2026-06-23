@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -7,6 +7,7 @@ import {
   applyEdgeChanges,
   applyNodeChanges,
   useReactFlow,
+  type Connection,
   type EdgeChange,
   type EdgeTypes,
   type NodeChange,
@@ -38,18 +39,26 @@ export interface CanvasFlowSurfaceProps {
   canvas: CanvasPayload;
   mode: CanvasFlowMode;
   selectedNodeId: string | null;
+  selectedGroupId?: string | null;
   selectedEdgeId: string | null;
   onSelectNode: (nodeId: string | null) => void;
+  onSelectGroup?: (groupId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
   onNodePositionsChange?: (
     positions: Array<{ id: string; canvas_x: number; canvas_y: number }>,
   ) => void;
+  onGroupMove?: (input: {
+    groupId: string;
+    deltaX: number;
+    deltaY: number;
+  }) => void;
   onViewportChange?: (camera: CanvasCamera) => void;
   onCreateNodeAtPoint?: (input: {
     flowPoint: { x: number; y: number };
     screenX: number;
     screenY: number;
   }) => void;
+  onConnectNodes?: (input: { fromNodeId: string; toNodeId: string }) => void;
 }
 
 export function CanvasFlowSurface(props: CanvasFlowSurfaceProps) {
@@ -64,22 +73,30 @@ function CanvasFlowSurfaceContent({
   canvas,
   mode,
   selectedNodeId,
+  selectedGroupId,
   selectedEdgeId,
   onSelectNode,
+  onSelectGroup,
   onSelectEdge,
   onNodePositionsChange,
+  onGroupMove,
   onViewportChange,
   onCreateNodeAtPoint,
+  onConnectNodes,
 }: CanvasFlowSurfaceProps) {
   const policy = policyForCanvasMode(mode);
   const { screenToFlowPosition } = useReactFlow<CanvasFlowNode, CanvasFlowEdge>();
+  const dragStartPositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const derivedNodes = useMemo(
     () =>
       canvasToFlowNodes(canvas).map((node) => ({
         ...node,
-        selected: node.id === selectedNodeId,
+        selected:
+          node.type === "group"
+            ? node.id === selectedGroupId
+            : node.id === selectedNodeId,
       })),
-    [canvas, selectedNodeId],
+    [canvas, selectedGroupId, selectedNodeId],
   );
   const derivedEdges = useMemo(
     () =>
@@ -105,7 +122,15 @@ function CanvasFlowSurfaceContent({
     (changes: NodeChange<CanvasFlowNode>[]) => {
       setNodes((current) => applyNodeChanges(changes, current));
       const settledPositions = changes.flatMap((change) => {
-        if (change.type !== "position" || change.dragging || !change.position) {
+        if (
+          change.type !== "position" ||
+          change.dragging ||
+          !change.position
+        ) {
+          return [];
+        }
+        const node = nodes.find((item) => item.id === change.id);
+        if (!node || node.type !== "media") {
           return [];
         }
         return [
@@ -120,12 +145,25 @@ function CanvasFlowSurfaceContent({
         onNodePositionsChange?.(settledPositions);
       }
     },
-    [onNodePositionsChange],
+    [nodes, onNodePositionsChange],
   );
 
   const handleEdgesChange = useCallback((changes: EdgeChange<CanvasFlowEdge>[]) => {
     setEdges((current) => applyEdgeChanges(changes, current));
   }, []);
+
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      if (!policy.canCreateEdges || !connection.source || !connection.target) {
+        return;
+      }
+      onConnectNodes?.({
+        fromNodeId: connection.source,
+        toNodeId: connection.target,
+      });
+    },
+    [onConnectNodes, policy.canCreateEdges],
+  );
 
   return (
     <CanvasFlowPolicyProvider value={policy}>
@@ -143,10 +181,10 @@ function CanvasFlowSurfaceContent({
           nodesConnectable={policy.canCreateEdges}
           nodesDraggable={policy.canDragNodes}
           nodesFocusable={policy.canSelect}
+          onConnect={handleConnect}
           onEdgesChange={handleEdgesChange}
           onEdgeClick={(_, edge) => {
             onSelectEdge(edge.id);
-            onSelectNode(null);
           }}
           onMoveEnd={(_, viewport) => {
             if (policy.canPersistViewport) {
@@ -162,15 +200,39 @@ function CanvasFlowSurfaceContent({
                   canvas_y: node.position.y,
                 },
               ]);
+              return;
             }
+            if (node.type === "group") {
+              const start = dragStartPositionsRef.current.get(node.id);
+              dragStartPositionsRef.current.delete(node.id);
+              if (!start) {
+                return;
+              }
+              const deltaX = node.position.x - start.x;
+              const deltaY = node.position.y - start.y;
+              if (deltaX !== 0 || deltaY !== 0) {
+                onGroupMove?.({ groupId: node.id, deltaX, deltaY });
+              }
+            }
+          }}
+          onNodeDragStart={(_, node) => {
+            dragStartPositionsRef.current.set(node.id, {
+              x: node.position.x,
+              y: node.position.y,
+            });
           }}
           onNodesChange={handleNodesChange}
           onNodeClick={(_, node) => {
-            onSelectNode(node.id);
+            if (node.type === "group") {
+              onSelectGroup?.(node.id);
+            } else {
+              onSelectNode(node.id);
+            }
             onSelectEdge(null);
           }}
           onPaneClick={() => {
             onSelectNode(null);
+            onSelectGroup?.(null);
             onSelectEdge(null);
           }}
           onPaneContextMenu={(event) => {

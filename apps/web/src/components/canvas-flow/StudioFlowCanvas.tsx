@@ -10,13 +10,21 @@ interface StudioFlowCanvasProps {
   workspaceId: string;
   canvas: CanvasPayload;
   selectedNodeId: string | null;
+  selectedGroupId: string | null;
   selectedEdgeId: string | null;
   onSelectNode: (nodeId: string | null) => void;
+  onSelectGroup: (groupId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
   onCreateNodeAtPoint: (input: {
     flowPoint: { x: number; y: number };
     screenX: number;
     screenY: number;
+  }) => void;
+  onConnectNodes: (input: { fromNodeId: string; toNodeId: string }) => void;
+  onGroupMove: (input: {
+    groupId: string;
+    deltaX: number;
+    deltaY: number;
   }) => void;
 }
 
@@ -24,10 +32,14 @@ export function StudioFlowCanvas({
   workspaceId,
   canvas,
   selectedNodeId,
+  selectedGroupId,
   selectedEdgeId,
   onSelectNode,
+  onSelectGroup,
   onSelectEdge,
   onCreateNodeAtPoint,
+  onConnectNodes,
+  onGroupMove,
 }: StudioFlowCanvasProps) {
   const queryClient = useQueryClient();
   const positionMutation = useMutation({
@@ -75,10 +87,14 @@ export function StudioFlowCanvas({
       canvas={canvas}
       mode="studio"
       selectedEdgeId={selectedEdgeId}
+      selectedGroupId={selectedGroupId}
       selectedNodeId={selectedNodeId}
+      onConnectNodes={onConnectNodes}
       onCreateNodeAtPoint={onCreateNodeAtPoint}
+      onGroupMove={onGroupMove}
       onNodePositionsChange={(positions) => positionMutation.mutate(positions)}
       onSelectEdge={onSelectEdge}
+      onSelectGroup={onSelectGroup}
       onSelectNode={onSelectNode}
       onViewportChange={(camera) => cameraMutation.mutate(camera)}
     />

@@ -969,27 +969,30 @@ git commit -m "feat: migrate studio canvas basics to react flow"
 
 **Files:**
 - Modify: `apps/web/src/components/canvas-flow/CanvasFlowSurface.tsx`
+- Modify: `apps/web/src/components/canvas-flow/StudioFlowCanvas.tsx`
 - Modify: `apps/web/src/components/canvas-flow/DependencyFlowEdge.tsx`
 - Modify: `apps/web/src/components/canvas-flow/GroupFlowNode.tsx`
+- Modify: `apps/web/src/components/canvas-flow/canvasViewModel.ts`
 - Modify: `apps/web/src/components/FileDropZone.tsx`
 - Modify: `apps/web/src/pages/WorkspaceDetailPage.tsx`
 - Modify: `apps/web/src/lib/groupLayout.test.mjs`
 - Modify: `apps/web/src/lib/connectionGeometry.test.mjs`
 - Modify: `apps/web/src/lib/canvasFlow.test.mjs`
+- Modify: `apps/web/src/lib/studioCanvas.test.mjs`
 
-- [ ] **Step 1: Wire edge creation**
+- [x] **Step 1: Wire edge creation**
 
 Use React Flow `onConnect` to call existing `createMediaEdge`.
 
-- [ ] **Step 2: Wire edge selection and deletion**
+- [x] **Step 2: Wire edge selection and deletion**
 
 Custom edge hit area calls `onSelectEdge`. Keyboard delete calls `deleteMediaEdge` only when policy allows.
 
-- [ ] **Step 3: Wire node deletion**
+- [x] **Step 3: Wire node deletion**
 
 Keyboard delete calls `deleteMediaNode` only in Studio policy.
 
-- [ ] **Step 4: Wire file drop**
+- [x] **Step 4: Wire file drop**
 
 Replace `Editor.screenToPage` with a callback supplied by `CanvasFlowSurface`:
 
@@ -1000,15 +1003,15 @@ type ScreenToCanvasPoint = (point: { x: number; y: number }) => {
 };
 ```
 
-- [ ] **Step 5: Wire group movement**
+- [x] **Step 5: Wire group movement**
 
 Dragging `GroupFlowNode` computes delta and updates member node positions using existing group layout helpers.
 
-- [ ] **Step 6: Wire auto layout**
+- [x] **Step 6: Wire auto layout**
 
 After `computeDagreLayout`, update React Flow nodes and persist positions.
 
-- [ ] **Step 7: Run verification**
+- [x] **Step 7: Run verification**
 
 ```bash
 pnpm --filter @clip-anvil/web test:connections
@@ -1018,7 +1021,7 @@ pnpm --filter @clip-anvil/web... build
 
 Expected: PASS.
 
-- [ ] **Step 8: Browser E2E**
+- [x] **Step 8: Browser E2E**
 
 Verify:
 - create two nodes and connect them;
@@ -1028,7 +1031,18 @@ Verify:
 - create group, move members, drag group, delete group preserving members;
 - auto layout persists after refresh.
 
-- [ ] **Step 9: Commit Phase 5**
+Run note 2026-06-23:
+- Studio URL `http://127.0.0.1:5177/workspaces/8910c66c-711c-4b75-928f-239c3eb348a5/studio` rendered React Flow with seed nodes, group, handles, and no console errors.
+- Created additional text/image nodes from the Studio context menu; connected nodes through React Flow handles and confirmed the new edge in `/canvas`.
+- Selected edge `f7036d48-40d7-4cc6-a4fd-fa57f489cc50`, deleted it with `Delete`, and confirmed it was gone after refresh.
+- Selected node `2a7c97af-8350-4a0d-9b75-a0350930ab71`, deleted it with `Delete`, and confirmed Resource Tree/API/DOM removed it.
+- Dropped `.playwright-mcp/phase5-drop.png`; uploaded node `bef0355f-00ec-492d-8c5d-5ce09e6d0fb2` appeared as persisted image source material.
+- Created group `863f2958-9951-450b-acd2-5059346582a7`, added `phase5-drop` as member, dragged the group title; member position persisted from `(600,396)` to `(674,451)`.
+- Deleted that group and confirmed member node remained with `group_id: null`.
+- Ran auto layout; positions changed and refreshed DOM matched persisted API positions.
+- Browser console had 0 errors; observed one WebSocket close warning during refresh.
+
+- [x] **Step 9: Commit Phase 5**
 
 ```bash
 git add apps/web/src/components/canvas-flow apps/web/src/components/FileDropZone.tsx apps/web/src/pages/WorkspaceDetailPage.tsx apps/web/src/lib/*test.mjs

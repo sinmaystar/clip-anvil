@@ -14,7 +14,7 @@ export function GroupFlowNode({
       className="group-container-shape group-flow-node"
       data-selected={selected}
     >
-      <div className="group-container-title">
+      <div className="group-container-title group-flow-drag-handle">
         <span>{data.group.name}</span>
         <span>{nodeCount}</span>
       </div>

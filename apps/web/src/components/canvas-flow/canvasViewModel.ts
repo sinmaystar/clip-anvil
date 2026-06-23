@@ -48,6 +48,7 @@ export function groupToFlowNode(
     width: bounds.w,
     height: bounds.h,
     data: { kind: "group", group, nodeIds: group.node_ids },
+    dragHandle: ".group-flow-drag-handle",
     draggable: true,
     selectable: true,
   };

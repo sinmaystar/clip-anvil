@@ -16,16 +16,20 @@ import {
   createMediaGroup,
   createMediaEdge,
   createMediaNode,
+  deleteMediaGroup,
   deleteMediaEdge,
+  deleteMediaNode,
   fetchModelCapabilities,
   fetchNodeProductionState,
   fetchCanvas,
   fetchReferencePackItems,
   fetchWorkspace,
+  replaceMediaGroupNodes,
   replaceReferencePackItems,
   retryJob,
   runNode,
   selectNodeVersion,
+  updateMediaGroup,
   updateMediaNode,
   type CanvasPayload,
   type CreateMediaNodeRequest,
@@ -55,6 +59,7 @@ import {
   type CanvasEvent,
 } from "../lib/ws";
 import { computeDagreLayout, type LayoutDirection } from "../lib/layout";
+import { getGroupMemberMovePositions } from "../lib/groupLayout";
 import { StudioFlowCanvas } from "../components/canvas-flow/StudioFlowCanvas";
 import {
   connectionFailureFeedback,
@@ -233,6 +238,8 @@ export function WorkspaceDetailPage() {
   const groups = canvasQuery.data?.groups ?? [];
   const selectedNode =
     nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const selectedGroup =
+    groups.find((group) => group.id === selectedGroupId) ?? null;
 
   const selectedNodeProductionStateQuery = useQuery({
     queryKey: ["node", selectedNodeId, "production-state"],
@@ -349,6 +356,63 @@ export function WorkspaceDetailPage() {
       setSelectedGroupId(group.id);
       setSelectedNodeId(null);
       announceActiveNode(null);
+    },
+  });
+
+  const replaceGroupNodesMutation = useMutation({
+    mutationFn: async (input: { groupId: string; nodeIds: string[] }) =>
+      replaceMediaGroupNodes(input.groupId, input.nodeIds),
+    onSuccess: (response) => {
+      const group = groupResponseToMediaGroup(response);
+      queryClient.setQueryData<CanvasPayload>(
+        ["workspace", id, "canvas"],
+        (current) => appendCanvasGroup(current, group),
+      );
+      setSelectedGroupId(group.id);
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["workspace", id, "canvas"],
+      });
+    },
+  });
+
+  const renameGroupMutation = useMutation({
+    mutationFn: async (input: { groupId: string; name: string }) =>
+      updateMediaGroup(input.groupId, { name: input.name }),
+    onSuccess: (groupWithoutMembers, input) => {
+      const currentGroup = groups.find((group) => group.id === input.groupId);
+      queryClient.setQueryData<CanvasPayload>(
+        ["workspace", id, "canvas"],
+        (current) =>
+          current
+            ? appendCanvasGroup(current, {
+                ...groupWithoutMembers,
+                node_ids: currentGroup?.node_ids ?? [],
+              })
+            : current,
+      );
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["workspace", id, "canvas"],
+      });
+    },
+  });
+
+  const deleteGroupMutation = useMutation({
+    mutationFn: deleteMediaGroup,
+    onMutate: (groupId) => {
+      setSelectedGroupId(null);
+      queryClient.setQueryData<CanvasPayload>(
+        ["workspace", id, "canvas"],
+        (current) => removeCanvasGroup(current, groupId),
+      );
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["workspace", id, "canvas"],
+      });
     },
   });
 
@@ -685,6 +749,28 @@ export function WorkspaceDetailPage() {
     [id, queryClient],
   );
 
+  const deleteNodeById = useCallback(
+    (nodeId: string) => {
+      if (!id) {
+        return;
+      }
+      setSelectedNodeId((current) => (current === nodeId ? null : current));
+      setSelectedEdgeId(null);
+      setConnectionSourceId((current) => (current === nodeId ? null : current));
+      nodeSnapshotsRef.current.delete(nodeId);
+      queryClient.setQueryData<CanvasPayload>(
+        ["workspace", id, "canvas"],
+        (current) => removeCanvasNode(current, nodeId),
+      );
+      void deleteMediaNode(nodeId).catch(() => {
+        void queryClient.invalidateQueries({
+          queryKey: ["workspace", id, "canvas"],
+        });
+      });
+    },
+    [id, queryClient],
+  );
+
   const appendAssetNodeToCanvas = useCallback(
     (node: MediaNode) => {
       nodeSnapshotsRef.current.set(node.id, node);
@@ -705,6 +791,87 @@ export function WorkspaceDetailPage() {
     workspaceId: id ?? "",
     onAssetNodeCreated: appendAssetNodeToCanvas,
   });
+
+  const replaceGroupMembers = useCallback(
+    (groupId: string, nodeIds: string[]) => {
+      replaceGroupNodesMutation.mutate({ groupId, nodeIds });
+    },
+    [replaceGroupNodesMutation],
+  );
+
+  const addGroupMember = useCallback(
+    (groupId: string, nodeId: string) => {
+      const group = groups.find((item) => item.id === groupId);
+      if (!group) {
+        return;
+      }
+      replaceGroupMembers(groupId, Array.from(new Set([...group.node_ids, nodeId])));
+    },
+    [groups, replaceGroupMembers],
+  );
+
+  const removeGroupMember = useCallback(
+    (groupId: string, nodeId: string) => {
+      const group = groups.find((item) => item.id === groupId);
+      if (!group) {
+        return;
+      }
+      replaceGroupMembers(
+        groupId,
+        group.node_ids.filter((id) => id !== nodeId),
+      );
+    },
+    [groups, replaceGroupMembers],
+  );
+
+  const moveGroupMembers = useCallback(
+    (input: { groupId: string; deltaX: number; deltaY: number }) => {
+      const group = groups.find((item) => item.id === input.groupId);
+      if (!group || !id) {
+        return;
+      }
+      const positions = getGroupMemberMovePositions({
+        group,
+        nodes,
+        deltaX: input.deltaX,
+        deltaY: input.deltaY,
+      });
+      if (positions.length === 0) {
+        return;
+      }
+      const positionById = new Map(
+        positions.map((position) => [position.id, position]),
+      );
+      queryClient.setQueryData<CanvasPayload>(
+        ["workspace", id, "canvas"],
+        (current) => {
+          if (!current) {
+            return current;
+          }
+          const nextNodes = current.nodes.map((node) => {
+            const position = positionById.get(node.id);
+            return position
+              ? {
+                  ...node,
+                  canvas_x: position.canvas_x,
+                  canvas_y: position.canvas_y,
+                }
+              : node;
+          });
+          for (const node of nextNodes) {
+            nodeSnapshotsRef.current.set(node.id, node);
+          }
+          return { ...current, nodes: nextNodes };
+        },
+      );
+      void batchUpdateNodePositions(positions).catch(() => {
+        void queryClient.invalidateQueries({
+          queryKey: ["workspace", id, "canvas"],
+        });
+      });
+    },
+    [groups, id, nodes, queryClient],
+  );
 
   const applyCanvasEvent = useCallback(
     (event: CanvasEvent) => {
@@ -839,7 +1006,7 @@ export function WorkspaceDetailPage() {
   ]);
 
   useEffect(() => {
-    if (!selectedNode || !effectiveCanvas) {
+    if (!selectedNode && !selectedGroup && !selectedEdgeId) {
       setNodeEditorPosition(null);
       return;
     }
@@ -853,6 +1020,14 @@ export function WorkspaceDetailPage() {
       ? nodeEditorSafeLeft.collapsed
       : nodeEditorSafeLeft.expanded;
     const width = Math.min(720, Math.max(520, frameRect.width - safeLeft - 24));
+    if (!selectedNode || !effectiveCanvas) {
+      setNodeEditorPosition({
+        left: safeLeft,
+        top: 112,
+        width: Math.round(width),
+      });
+      return;
+    }
     const bottomLeft = {
       x: selectedNode.canvas_x * effectiveCanvas.camera.zoom + effectiveCanvas.camera.x,
       y:
@@ -867,7 +1042,7 @@ export function WorkspaceDetailPage() {
       top: Math.round(bottomLeft.y + 12),
       width: Math.round(width),
     });
-  }, [effectiveCanvas, isSidebarCollapsed, selectedNode]);
+  }, [effectiveCanvas, isSidebarCollapsed, selectedEdgeId, selectedGroup, selectedNode]);
 
   const selectOrConnectNode = useCallback(
     (nodeId: string) => {
@@ -1246,27 +1421,33 @@ export function WorkspaceDetailPage() {
   }, [hideActiveNodeEditor]);
 
   useEffect(() => {
-    const deleteSelectedEdge = (event: KeyboardEvent) => {
+    const deleteSelectedCanvasItem = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) {
         return;
       }
       if (event.key !== "Delete" && event.key !== "Backspace") {
         return;
       }
-      if (!selectedEdgeId) {
+      if (!selectedEdgeId && !selectedNodeId) {
         return;
       }
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      deleteEdgeById(selectedEdgeId);
+      if (selectedEdgeId) {
+        deleteEdgeById(selectedEdgeId);
+        return;
+      }
+      if (selectedNodeId) {
+        deleteNodeById(selectedNodeId);
+      }
     };
 
-    window.addEventListener("keydown", deleteSelectedEdge, true);
+    window.addEventListener("keydown", deleteSelectedCanvasItem, true);
     return () => {
-      window.removeEventListener("keydown", deleteSelectedEdge, true);
+      window.removeEventListener("keydown", deleteSelectedCanvasItem, true);
     };
-  }, [deleteEdgeById, selectedEdgeId]);
+  }, [deleteEdgeById, deleteNodeById, selectedEdgeId, selectedNodeId]);
 
   useEffect(() => {
     return () => {
@@ -1569,6 +1750,9 @@ export function WorkspaceDetailPage() {
           <div className="studio-canvas-host">
             <StudioFlowCanvas
               canvas={effectiveCanvas ?? canvasQuery.data}
+              onConnectNodes={({ fromNodeId, toNodeId }) => {
+                createDependencyEdge(fromNodeId, toNodeId);
+              }}
               onCreateNodeAtPoint={({ flowPoint, screenX, screenY }) => {
                 setContextMenu({
                   flowPoint,
@@ -1576,6 +1760,7 @@ export function WorkspaceDetailPage() {
                   screenY,
                 });
               }}
+              onGroupMove={moveGroupMembers}
               onSelectEdge={(edgeId) => {
                 if (edgeId) {
                   selectEdge(edgeId);
@@ -1590,7 +1775,15 @@ export function WorkspaceDetailPage() {
                   hideActiveNodeEditor();
                 }
               }}
+              onSelectGroup={(groupId) => {
+                if (groupId) {
+                  selectGroup(groupId);
+                } else {
+                  setSelectedGroupId(null);
+                }
+              }}
               selectedEdgeId={selectedEdgeId}
+              selectedGroupId={selectedGroupId}
               selectedNodeId={selectedNodeId}
               workspaceId={id ?? ""}
             />
@@ -1601,7 +1794,7 @@ export function WorkspaceDetailPage() {
           </div>
         )}
 
-        {selectedNode && nodeEditorPosition ? (
+        {(selectedNode || selectedGroup || selectedEdgeId) && nodeEditorPosition ? (
           <div
             className="node-editor-overlay node-production-popover"
             onClick={stopCanvasEvent}
@@ -1628,7 +1821,7 @@ export function WorkspaceDetailPage() {
               isRetryingJob={retryJobMutation.isPending}
               isRunningNode={runNodeMutation.isPending}
               isSelectingVersion={selectVersionMutation.isPending}
-              isUpdatingGroupMembers={false}
+              isUpdatingGroupMembers={replaceGroupNodesMutation.isPending}
               isUpdatingNode={updateNodeMutation.isPending}
               isUpdatingReferencePackItems={
                 replaceReferencePackItemsMutation.isPending
@@ -1637,10 +1830,16 @@ export function WorkspaceDetailPage() {
               nodeProductionState={selectedNodeProductionStateQuery.data ?? null}
               nodes={nodes}
               referencePackItems={selectedReferencePackItemsQuery.data ?? []}
-              selectedEdgeId={null}
-              selectedGroupId={null}
+              selectedEdgeId={selectedEdgeId}
+              selectedGroupId={selectedGroupId}
               selectedNodeId={selectedNodeId}
+              onAddGroupMember={addGroupMember}
               onDeleteEdge={deleteEdgeById}
+              onDeleteGroup={(groupId) => deleteGroupMutation.mutate(groupId)}
+              onRemoveGroupMember={removeGroupMember}
+              onRenameGroup={(groupId, name) =>
+                renameGroupMutation.mutate({ groupId, name })
+              }
               onReplaceReferencePackItems={(packNodeId, memberNodeIds) =>
                 replaceReferencePackItemsMutation.mutate({
                   packNodeId,
@@ -1816,6 +2015,36 @@ function removeCanvasEdge(current: CanvasPayload | undefined, edgeId: string) {
   return {
     ...current,
     edges: current.edges.filter((edge) => edge.id !== edgeId),
+  };
+}
+
+function removeCanvasNode(current: CanvasPayload | undefined, nodeId: string) {
+  if (!current) {
+    return current;
+  }
+  return {
+    ...current,
+    nodes: current.nodes.filter((node) => node.id !== nodeId),
+    edges: current.edges.filter(
+      (edge) => edge.from_node_id !== nodeId && edge.to_node_id !== nodeId,
+    ),
+    groups: current.groups.map((group) => ({
+      ...group,
+      node_ids: group.node_ids.filter((id) => id !== nodeId),
+    })),
+  };
+}
+
+function removeCanvasGroup(current: CanvasPayload | undefined, groupId: string) {
+  if (!current) {
+    return current;
+  }
+  return {
+    ...current,
+    groups: current.groups.filter((group) => group.id !== groupId),
+    nodes: current.nodes.map((node) =>
+      node.group_id === groupId ? { ...node, group_id: null } : node,
+    ),
   };
 }
 
