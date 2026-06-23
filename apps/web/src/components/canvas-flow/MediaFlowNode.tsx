@@ -48,12 +48,14 @@ export function MediaFlowNode({
         <>
           <Handle
             className="media-node-target-handle"
+            isConnectableStart={false}
             position={Position.Left}
             type="target"
           />
           <Handle
             aria-label={`从 ${node.title || materialKindLabel(node)} 创建依赖连线`}
             className="media-node-connect-handle"
+            isConnectableEnd={false}
             position={Position.Right}
             type="source"
           />

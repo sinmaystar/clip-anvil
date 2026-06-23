@@ -39,6 +39,7 @@ const connectionLinePreviewUrl = new URL(
   "../components/canvas-flow/ConnectionLinePreview.tsx",
   import.meta.url,
 );
+const mainCssUrl = new URL("../main.css", import.meta.url);
 const resourceTreeUrl = new URL(
   "../components/ResourceTree.tsx",
   import.meta.url,
@@ -149,12 +150,18 @@ describe("studio React Flow canvas", () => {
     const resourceTreeSource = await readFile(resourceTreeUrl, "utf8");
 
     assert.match(surfaceSource, /connectOnClick=\{false\}/);
+    assert.match(surfaceSource, /connectionDragThreshold=\{0\}/);
+    assert.match(surfaceSource, /connectionMode=\{ConnectionMode\.Strict\}/);
     assert.match(surfaceSource, /onConnectStart=\{/);
     assert.match(surfaceSource, /onConnectEnd=\{/);
+    assert.match(surfaceSource, /connectionState\.fromHandle\?\.nodeId/);
     assert.match(surfaceSource, /document\s*\.\s*elementsFromPoint/);
+    assert.match(surfaceSource, /mediaNodeShellFromConnectionPoint/);
     assert.match(surfaceSource, /media-node-shell/);
     assert.match(mediaSource, /media-node-connect-handle/);
     assert.match(mediaSource, /media-node-target-handle/);
+    assert.match(mediaSource, /isConnectableStart=\{false\}/);
+    assert.match(mediaSource, /isConnectableEnd=\{false\}/);
     assert.doesNotMatch(mediaSource, /media-node-connect-button/);
     assert.doesNotMatch(pageSource, /pendingConnectionRef/);
     assert.doesNotMatch(pageSource, /beginDependencyConnection/);
@@ -162,6 +169,43 @@ describe("studio React Flow canvas", () => {
     assert.doesNotMatch(pageSource, /clip-anvil:connection-start/);
     assert.doesNotMatch(resourceTreeSource, /onStartConnection/);
     assert.doesNotMatch(resourceTreeSource, /studio-resource-connect/);
+  });
+
+  it("anchors dragged dependency lines on the source node edge", async () => {
+    const cssSource = await readFile(mainCssUrl, "utf8");
+
+    assert.match(
+      cssSource,
+      /\.media-node-connect-handle\.react-flow__handle\s*\{[\s\S]*right:\s*-14px;/,
+    );
+    assert.match(
+      cssSource,
+      /\.media-node-connect-handle\.react-flow__handle\s*\{[\s\S]*transform:\s*translate\(0,\s*-50%\)/,
+    );
+    assert.doesNotMatch(cssSource, /right:\s*-16px/);
+    assert.doesNotMatch(cssSource, /transform:\s*translate\(5px,\s*-50%\)/);
+  });
+
+  it("lets the full target node body receive dragged connections", async () => {
+    const cssSource = await readFile(mainCssUrl, "utf8");
+
+    assert.match(
+      cssSource,
+      /\.media-node-target-handle\.react-flow__handle\s*\{[\s\S]*width:\s*100%;/,
+    );
+    assert.match(
+      cssSource,
+      /\.media-node-target-handle\.react-flow__handle\s*\{[\s\S]*height:\s*100%;/,
+    );
+    assert.match(
+      cssSource,
+      /\.media-node-target-handle\.react-flow__handle\s*\{[\s\S]*transform:\s*none;/,
+    );
+    assert.doesNotMatch(cssSource, /media-node-target-handle[\s\S]{0,180}width:\s*1px/);
+    assert.doesNotMatch(
+      cssSource,
+      /media-node-target-handle[\s\S]{0,220}pointer-events:\s*none/,
+    );
   });
 
   it("renders animated source-to-target flow for saved and dragged dependency edges", async () => {

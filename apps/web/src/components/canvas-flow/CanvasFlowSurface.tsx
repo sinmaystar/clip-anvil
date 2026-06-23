@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
+  ConnectionMode,
   Controls,
   ReactFlow,
   ReactFlowProvider,
@@ -188,8 +189,9 @@ function CanvasFlowSurfaceContent({
   );
 
   const handleConnectEnd = useCallback<OnConnectEnd>(
-    (event: MouseEvent | TouchEvent) => {
-      const fromNodeId = connectionSourceRef.current;
+    (event: MouseEvent | TouchEvent, connectionState) => {
+      const fromNodeId =
+        connectionState.fromHandle?.nodeId ?? connectionSourceRef.current;
       connectionSourceRef.current = null;
       if (!policy.canCreateEdges || !fromNodeId) {
         return;
@@ -202,15 +204,8 @@ function CanvasFlowSurfaceContent({
       if (!point) {
         return;
       }
-      const target = document
-        .elementsFromPoint(point.x, point.y)
-        .find(
-          (element): element is HTMLElement =>
-            element instanceof HTMLElement &&
-            Boolean(element.closest(".media-node-shell")),
-        )
-        ?.closest(".media-node-shell");
-      if (!(target instanceof HTMLElement)) {
+      const target = mediaNodeShellFromConnectionPoint(point);
+      if (!target) {
         return;
       }
       const toNodeId = target.dataset.nodeId;
@@ -227,7 +222,9 @@ function CanvasFlowSurfaceContent({
       <div className="canvas-flow-surface" data-mode={mode}>
         <ReactFlow
           connectOnClick={false}
+          connectionDragThreshold={0}
           connectionLineComponent={ConnectionLinePreview}
+          connectionMode={ConnectionMode.Strict}
           connectionRadius={96}
           defaultViewport={cameraToViewport(canvas.camera)}
           deleteKeyCode={null}
@@ -345,4 +342,16 @@ function clientPointFromConnectionEvent(event: MouseEvent | TouchEvent) {
     return touch ? { x: touch.clientX, y: touch.clientY } : null;
   }
   return { x: event.clientX, y: event.clientY };
+}
+
+function mediaNodeShellFromConnectionPoint(point: { x: number; y: number }) {
+  const shell = document
+    .elementsFromPoint(point.x, point.y)
+    .find(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement &&
+        Boolean(element.closest(".media-node-shell")),
+    )
+    ?.closest(".media-node-shell");
+  return shell instanceof HTMLElement ? shell : null;
 }
