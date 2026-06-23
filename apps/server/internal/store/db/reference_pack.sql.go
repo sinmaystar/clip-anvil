@@ -64,7 +64,7 @@ func (q *Queries) DeleteReferencePackItems(ctx context.Context, packNodeID pgtyp
 }
 
 const listReferencePackItemNodes = `-- name: ListReferencePackItemNodes :many
-SELECT media_node.id, media_node.workspace_id, media_node.node_type, media_node.title, media_node.status, media_node.prompt, media_node.source, media_node.canvas_x, media_node.canvas_y, media_node.canvas_w, media_node.canvas_h, media_node.created_at, media_node.updated_at, media_node.group_id, media_node.asset_id, media_node.operation_type, media_node.prompt_template, media_node.prompt_rich, media_node.prompt_refs, media_node.model_provider, media_node.model_id, media_node.model_params, media_node.current_version_id, media_node.metadata
+SELECT media_node.id, media_node.workspace_id, media_node.node_type, media_node.title, media_node.status, media_node.prompt, media_node.source, media_node.canvas_x, media_node.canvas_y, media_node.canvas_w, media_node.canvas_h, media_node.created_at, media_node.updated_at, media_node.group_id, media_node.asset_id, media_node.operation_type, media_node.prompt_template, media_node.prompt_rich, media_node.prompt_refs, media_node.model_provider, media_node.model_id, media_node.model_params, media_node.current_version_id, media_node.metadata, media_node.shot_id
 FROM reference_pack_item
 JOIN media_node ON media_node.id = reference_pack_item.member_node_id
 WHERE reference_pack_item.pack_node_id = $1
@@ -105,6 +105,7 @@ func (q *Queries) ListReferencePackItemNodes(ctx context.Context, packNodeID pgt
 			&i.ModelParams,
 			&i.CurrentVersionID,
 			&i.Metadata,
+			&i.ShotID,
 		); err != nil {
 			return nil, err
 		}
@@ -153,7 +154,7 @@ func (q *Queries) ListReferencePackItems(ctx context.Context, packNodeID pgtype.
 }
 
 const listReferencePacksByMember = `-- name: ListReferencePacksByMember :many
-SELECT media_node.id, media_node.workspace_id, media_node.node_type, media_node.title, media_node.status, media_node.prompt, media_node.source, media_node.canvas_x, media_node.canvas_y, media_node.canvas_w, media_node.canvas_h, media_node.created_at, media_node.updated_at, media_node.group_id, media_node.asset_id, media_node.operation_type, media_node.prompt_template, media_node.prompt_rich, media_node.prompt_refs, media_node.model_provider, media_node.model_id, media_node.model_params, media_node.current_version_id, media_node.metadata
+SELECT media_node.id, media_node.workspace_id, media_node.node_type, media_node.title, media_node.status, media_node.prompt, media_node.source, media_node.canvas_x, media_node.canvas_y, media_node.canvas_w, media_node.canvas_h, media_node.created_at, media_node.updated_at, media_node.group_id, media_node.asset_id, media_node.operation_type, media_node.prompt_template, media_node.prompt_rich, media_node.prompt_refs, media_node.model_provider, media_node.model_id, media_node.model_params, media_node.current_version_id, media_node.metadata, media_node.shot_id
 FROM reference_pack_item
 JOIN media_node ON media_node.id = reference_pack_item.pack_node_id
 WHERE reference_pack_item.member_node_id = $1
@@ -194,6 +195,7 @@ func (q *Queries) ListReferencePacksByMember(ctx context.Context, memberNodeID p
 			&i.ModelParams,
 			&i.CurrentVersionID,
 			&i.Metadata,
+			&i.ShotID,
 		); err != nil {
 			return nil, err
 		}

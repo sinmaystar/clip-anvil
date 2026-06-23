@@ -29,6 +29,28 @@ export function isActiveNodeRunStatus(status: MediaNode["status"]) {
   return status === "queued" || status === "running";
 }
 
+export function isTerminalGenerationStatus(status: GenerationJob["status"] | string) {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+export function shouldPollCanvasForProductionUpdates(
+  payload: CanvasPayload | undefined,
+) {
+  if (!payload) {
+    return false;
+  }
+  return payload.nodes.some((node) => {
+    if (isActiveNodeRunStatus(node.status)) {
+      return true;
+    }
+    return (
+      node.status === "succeeded" &&
+      Boolean(node.current_version_id) &&
+      !node.production_preview
+    );
+  });
+}
+
 export function overlayActiveNodeStatuses(
   nodes: MediaNode[],
   statuses: Record<string, MediaNode["status"] | undefined>,

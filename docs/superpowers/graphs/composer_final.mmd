@@ -1,0 +1,12 @@
+flowchart TD
+  START["START"]
+  load_composition_context["load_composition_context"]
+  create_final_node["create_final_node"]
+  submit_composition_intent["submit_composition_intent"]
+  persist_checkpoint_and_events["persist_checkpoint_and_events"]
+  END["END"]
+  START --> load_composition_context
+  load_composition_context --> create_final_node
+  create_final_node --> submit_composition_intent
+  submit_composition_intent --> persist_checkpoint_and_events
+  persist_checkpoint_and_events --> END

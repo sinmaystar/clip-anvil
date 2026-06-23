@@ -1,0 +1,83 @@
+-- name: CreateReviewRecord :one
+INSERT INTO review_record (
+    workspace_id,
+    shot_id,
+    node_id,
+    artifact_version_id,
+    generation_job_id,
+    reviewer_thread_id,
+    reviewer_task_id,
+    parent_review_record_id,
+    target_phase,
+    status,
+    attempt_no,
+    max_attempts,
+    model_provider,
+    model_id
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8,
+    $9, 'running', $10, $11, $12, $13
+) RETURNING *;
+
+-- name: CompleteReviewRecord :one
+UPDATE review_record
+SET status = $2,
+    overall_score = $3,
+    rubric = $4,
+    critique = $5,
+    retry_recommendation = $6,
+    error_code = '',
+    error_message = '',
+    completed_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: FailReviewRecord :one
+UPDATE review_record
+SET status = 'failed',
+    error_code = $2,
+    error_message = $3,
+    completed_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: GetReviewRecordByID :one
+SELECT *
+FROM review_record
+WHERE id = $1;
+
+-- name: ListReviewRecordsByWorkspace :many
+SELECT *
+FROM review_record
+WHERE workspace_id = $1
+ORDER BY created_at DESC
+LIMIT $2;
+
+-- name: ListReviewRecordsByShotPhase :many
+SELECT *
+FROM review_record
+WHERE workspace_id = $1
+  AND shot_id = $2
+  AND target_phase = $3
+ORDER BY created_at DESC;
+
+-- name: ListReviewRecordsByNode :many
+SELECT *
+FROM review_record
+WHERE node_id = $1
+ORDER BY created_at DESC;
+
+-- name: ListReviewRecordsByArtifactVersion :many
+SELECT *
+FROM review_record
+WHERE artifact_version_id = $1
+ORDER BY created_at DESC;
+
+-- name: CountReviewAttemptsByShotPhase :one
+SELECT COUNT(*)::int
+FROM review_record
+WHERE workspace_id = $1
+  AND shot_id = $2
+  AND target_phase = $3
+  AND status IN ('accepted', 'rejected', 'failed');

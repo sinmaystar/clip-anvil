@@ -6,7 +6,13 @@ import {
   type Geometry2d,
   type RecordProps,
 } from "tldraw";
-import { useEffect, useState, type PointerEvent, type SyntheticEvent } from "react";
+import {
+  useEffect,
+  useState,
+  type DragEvent,
+  type PointerEvent,
+  type SyntheticEvent,
+} from "react";
 import {
   MEDIA_SHAPE_TYPE,
   type MediaShape,
@@ -41,6 +47,10 @@ const nodeTypeMeta: Record<
 };
 
 let activeMediaNodeId: string | null = null;
+
+function preventNativeMediaDrag(event: DragEvent<HTMLImageElement | HTMLVideoElement>) {
+  event.preventDefault();
+}
 
 export class MediaShapeUtil extends ShapeUtil<MediaShape> {
   static override type = MEDIA_SHAPE_TYPE;

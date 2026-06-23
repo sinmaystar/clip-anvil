@@ -5,6 +5,7 @@ import {
   overlayActiveNodeStatuses,
   productionStateWithSubmittedJob,
   runningNodeForShapeUpdate,
+  shouldPollCanvasForProductionUpdates,
 } from "../../dist-test/lib/canvasRunState.js";
 
 const baseNode = {
@@ -174,5 +175,48 @@ describe("canvas run state", () => {
     );
 
     assert.equal(node.status, "running");
+  });
+
+  it("polls canvas while production nodes are active or missing previews", () => {
+    assert.equal(
+      shouldPollCanvasForProductionUpdates({
+        camera: { x: 0, y: 0, zoom: 1 },
+        nodes: [{ ...baseNode, status: "queued" }],
+        edges: [],
+        groups: [],
+      }),
+      true,
+    );
+    assert.equal(
+      shouldPollCanvasForProductionUpdates({
+        camera: { x: 0, y: 0, zoom: 1 },
+        nodes: [
+          {
+            ...baseNode,
+            status: "succeeded",
+            current_version_id: "version-1",
+          },
+        ],
+        edges: [],
+        groups: [],
+      }),
+      true,
+    );
+    assert.equal(
+      shouldPollCanvasForProductionUpdates({
+        camera: { x: 0, y: 0, zoom: 1 },
+        nodes: [
+          {
+            ...baseNode,
+            status: "succeeded",
+            current_version_id: "version-1",
+            production_preview: { version_id: "version-1", version_no: 1 },
+          },
+        ],
+        edges: [],
+        groups: [],
+      }),
+      false,
+    );
   });
 });

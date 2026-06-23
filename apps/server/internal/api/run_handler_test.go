@@ -138,6 +138,34 @@ func TestRunNodeResponseCanRepresentAsyncQueuedJob(t *testing.T) {
 	}
 }
 
+func TestToReviewRecordResponseExposesRubricAndCritique(t *testing.T) {
+	record := db.ReviewRecord{
+		ID:                  pgtype.UUID{Bytes: [16]byte{0x61}, Valid: true},
+		ShotID:              pgtype.UUID{Bytes: [16]byte{0x62}, Valid: true},
+		NodeID:              pgtype.UUID{Bytes: [16]byte{0x63}, Valid: true},
+		ArtifactVersionID:   pgtype.UUID{Bytes: [16]byte{0x64}, Valid: true},
+		TargetPhase:         "preview_image",
+		Status:              "rejected",
+		AttemptNo:           1,
+		MaxAttempts:         3,
+		OverallScore:        pgtype.Float4{Float32: 0.52, Valid: true},
+		Rubric:              []byte(`{"visual_quality":{"score":0.4,"pass":false}}`),
+		Critique:            "商品不够清晰",
+		RetryRecommendation: []byte(`{"should_retry":true}`),
+	}
+
+	resp := toReviewRecordResponse(record)
+	if resp.Status != "rejected" || resp.OverallScore == nil || *resp.OverallScore != 0.52 {
+		t.Fatalf("response = %#v", resp)
+	}
+	if resp.Rubric["visual_quality"].(map[string]any)["pass"] != false {
+		t.Fatalf("rubric = %#v", resp.Rubric)
+	}
+	if resp.Critique != "商品不够清晰" || resp.RetryRecommendation["should_retry"] != true {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
 func TestStatusForProductionEvent(t *testing.T) {
 	cases := map[string]string{
 		production.ProductionEventJobStarted:   "running",
@@ -148,6 +176,27 @@ func TestStatusForProductionEvent(t *testing.T) {
 	for eventType, want := range cases {
 		if got := statusForProductionEvent(eventType); got != want {
 			t.Fatalf("statusForProductionEvent(%q) = %q, want %q", eventType, got, want)
+		}
+	}
+}
+
+func TestShouldBroadcastProductionNodeSnapshot(t *testing.T) {
+	for _, eventType := range []string{
+		production.ProductionEventJobSucceeded,
+		production.ProductionEventJobFailed,
+		production.ProductionEventJobCancelled,
+	} {
+		if !shouldBroadcastProductionNodeSnapshot(eventType) {
+			t.Fatalf("expected node snapshot for %s", eventType)
+		}
+	}
+	for _, eventType := range []string{
+		production.ProductionEventJobStarted,
+		production.ProductionEventProviderProgress,
+		production.ProductionEventModelStreamDelta,
+	} {
+		if shouldBroadcastProductionNodeSnapshot(eventType) {
+			t.Fatalf("did not expect node snapshot for %s", eventType)
 		}
 	}
 }

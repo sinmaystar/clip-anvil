@@ -497,6 +497,12 @@ func (s *Service) markQueuedJobFailed(ctx context.Context, job db.GenerationJob,
 	}); err != nil {
 		return err
 	}
+	if _, err := qtx.UpdateMediaNodeStatus(ctx, db.UpdateMediaNodeStatusParams{
+		ID:     currentJob.TargetNodeID,
+		Status: db.NodeStatusFailed,
+	}); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -1392,6 +1398,12 @@ func (s *Service) createFailedJob(
 		if err := linkSandboxJobToGenerationJob(ctx, qtx, runErrorResponse, job.ID); err != nil {
 			return db.GenerationJob{}, err
 		}
+	}
+	if _, err := qtx.UpdateMediaNodeStatus(ctx, db.UpdateMediaNodeStatusParams{
+		ID:     node.ID,
+		Status: db.NodeStatusFailed,
+	}); err != nil {
+		return db.GenerationJob{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.GenerationJob{}, err

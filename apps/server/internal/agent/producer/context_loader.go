@@ -1,0 +1,209 @@
+package producer
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
+	agentpss "github.com/sinmaystar/clip-anvil/internal/agent/pss"
+	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
+	"github.com/sinmaystar/clip-anvil/internal/storage"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
+)
+
+const maxAgentVisionImageBytes = 10 << 20
+const minAgentVisionImageDimension = 14
+
+type ImageObjectReader interface {
+	ReadObject(ctx context.Context, workspaceID pgtype.UUID, key string, maxBytes int64) ([]byte, storage.ObjectRef, error)
+}
+
+type RuntimeContextLoader struct {
+	Runtime        *agentruntime.Service
+	Queries        *db.Queries
+	ImageReader    ImageObjectReader
+	ModelSelection interface {
+		ResolveProducerModel(ctx context.Context, workspace db.Workspace) (modelselection.Option, error)
+	}
+	PSSBuilder interface {
+		BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID) (agentpss.ProducerPSS, error)
+	}
+}
+
+func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input ProducerTurnInput) (ProducerContext, error) {
+	messages, err := l.Runtime.ListMessages(ctx, input.ThreadID, 0, 20)
+	if err != nil {
+		return ProducerContext{}, err
+	}
+	model, err := l.loadModel(ctx, input.WorkspaceID)
+	if err != nil {
+		return ProducerContext{}, err
+	}
+	imageAttachments := l.loadImageAttachments(ctx, messages)
+	pssText, structuredState, err := l.loadProductionState(ctx, input.WorkspaceID)
+	if err != nil {
+		return ProducerContext{}, err
+	}
+	return ProducerContext{
+		Input:               input,
+		Messages:            messages,
+		LatestUserText:      latestUserTextFromMessages(messages),
+		Model:               model,
+		ImageAttachments:    imageAttachments,
+		ProductionStateText: pssText,
+		ProductionState:     structuredState,
+		EmitDelta:           input.EmitDelta,
+	}, nil
+}
+
+func (l RuntimeContextLoader) loadProductionState(ctx context.Context, workspaceID pgtype.UUID) (string, map[string]any, error) {
+	if l.PSSBuilder == nil {
+		return "", nil, nil
+	}
+	state, err := l.PSSBuilder.BuildProducerPSS(ctx, workspaceID)
+	if err != nil {
+		return "", nil, AgentError{Code: "agent_pss_unavailable", Message: "build Producer PSS", Cause: err}
+	}
+	return state.Text, state.Structured, nil
+}
+
+func (l RuntimeContextLoader) loadModel(ctx context.Context, workspaceID pgtype.UUID) (ProducerModelSelection, error) {
+	if l.Queries == nil || l.ModelSelection == nil {
+		return ProducerModelSelection{}, nil
+	}
+	workspace, err := l.Queries.GetWorkspaceByID(ctx, workspaceID)
+	if err != nil {
+		return ProducerModelSelection{}, err
+	}
+	option, err := l.ModelSelection.ResolveProducerModel(ctx, workspace)
+	if err != nil {
+		return ProducerModelSelection{}, AgentError{Code: "agent_model_unavailable", Message: "resolve Producer model", Cause: err}
+	}
+	return ProducerModelSelection{
+		ProviderID:          option.ProviderID,
+		ModelID:             option.ModelID,
+		DisplayName:         option.DisplayName,
+		ReasoningEffort:     option.DefaultReasoningEffort,
+		SupportsThinking:    option.SupportsThinking,
+		MaxCompletionTokens: option.MaxCompletionTokens,
+	}, nil
+}
+
+func (l RuntimeContextLoader) loadImageAttachments(ctx context.Context, messages []db.AgentMessage) map[string]ProducerImageAttachment {
+	out := map[string]ProducerImageAttachment{}
+	if l.Queries == nil {
+		return out
+	}
+	for _, msg := range messages {
+		for _, attachment := range uimessage.ExtractAttachments(msg.Content) {
+			if strings.TrimSpace(attachment.Kind) != "image" {
+				continue
+			}
+			assetID := strings.TrimSpace(attachment.AssetID)
+			if assetID == "" {
+				continue
+			}
+			assetUUID, ok := pgUUIDFromString(assetID)
+			if !ok {
+				continue
+			}
+			asset, err := l.Queries.GetMediaAssetByID(ctx, assetUUID)
+			if err != nil || !asset.StorageUrl.Valid || strings.TrimSpace(asset.StorageUrl.String) == "" {
+				continue
+			}
+			imageURL, mime, ok := l.modelImageReference(ctx, asset)
+			if !ok {
+				continue
+			}
+			out[assetID] = ProducerImageAttachment{
+				AssetID: assetID,
+				NodeID:  strings.TrimSpace(attachment.NodeID),
+				Name:    strings.TrimSpace(attachment.Name),
+				URL:     imageURL,
+				Mime:    mime,
+			}
+		}
+	}
+	return out
+}
+
+func (l RuntimeContextLoader) modelImageReference(ctx context.Context, asset db.MediaAsset) (string, string, bool) {
+	rawURL := strings.TrimSpace(asset.StorageUrl.String)
+	mime := strings.TrimSpace(asset.Mime)
+	if isModelImageReference(rawURL) {
+		return rawURL, mime, true
+	}
+	if l.ImageReader == nil {
+		return "", "", false
+	}
+	key, err := storage.KeyFromStorageURL(asset.WorkspaceID, rawURL)
+	if err != nil {
+		return "", "", false
+	}
+	data, ref, err := l.ImageReader.ReadObject(ctx, asset.WorkspaceID, key, maxAgentVisionImageBytes)
+	if err != nil {
+		return "", "", false
+	}
+	if !agentVisionImageDimensionsAllowed(data) {
+		return "", "", false
+	}
+	if mime == "" {
+		mime = strings.TrimSpace(ref.MIME)
+	}
+	return imageDataURL(mime, data), mime, true
+}
+
+func isModelImageReference(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "http://") ||
+		strings.HasPrefix(value, "https://") ||
+		strings.HasPrefix(value, "data:image/")
+}
+
+func imageDataURL(mime string, data []byte) string {
+	mime = strings.TrimSpace(mime)
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
+func agentVisionImageDimensionsAllowed(data []byte) bool {
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
+	return config.Width >= minAgentVisionImageDimension &&
+		config.Height >= minAgentVisionImageDimension
+}
+
+func latestUserTextFromMessages(messages []db.AgentMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			continue
+		}
+		texts := uimessage.ExtractMarkdownTexts(messages[i].Content)
+		if len(texts) > 0 && strings.TrimSpace(texts[len(texts)-1]) != "" {
+			return strings.TrimSpace(texts[len(texts)-1])
+		}
+	}
+	return ""
+}
+
+func pgUUIDFromString(value string) (pgtype.UUID, bool) {
+	parsed, err := uuid.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	return pgtype.UUID{Bytes: parsed, Valid: true}, true
+}

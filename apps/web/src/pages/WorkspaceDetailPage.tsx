@@ -828,7 +828,22 @@ export function WorkspaceDetailPage() {
       }
       switch (event.type) {
         case "NodeCreated":
-        case "NodeUpdated":
+        case "NodeUpdated": {
+          const node = canvasNodeFromEventPayload(event.payload.node);
+          if (node) {
+            queryClient.setQueryData<CanvasPayload>(
+              ["workspace", id, "canvas"],
+              (current) => appendCanvasNode(current, node),
+            );
+            editorRef.current?.store.mergeRemoteChanges(() => {
+              editorRef.current?.updateShapes([nodeToShape(node)]);
+            });
+          }
+          void queryClient.invalidateQueries({
+            queryKey: ["workspace", id, "canvas"],
+          });
+          break;
+        }
         case "NodeDeleted":
         case "EdgeCreated":
         case "EdgeDeleted":
@@ -2438,6 +2453,18 @@ function appendCanvasNode(current: CanvasPayload | undefined, node: MediaNode) {
     return replaceCanvasNode(current, node);
   }
   return { ...current, nodes: [...current.nodes, node] };
+}
+
+function canvasNodeFromEventPayload(node: unknown): MediaNode | null {
+  if (
+    typeof node === "object" &&
+    node !== null &&
+    "id" in node &&
+    typeof (node as { id?: unknown }).id === "string"
+  ) {
+    return node as MediaNode;
+  }
+  return null;
 }
 
 function removeCanvasNode(current: CanvasPayload | undefined, nodeId: string) {
