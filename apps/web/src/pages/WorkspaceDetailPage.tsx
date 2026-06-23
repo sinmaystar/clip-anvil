@@ -66,7 +66,6 @@ import {
   connectionFailureFeedback,
   type ConnectionFeedback,
 } from "../lib/connectionFeedback";
-import { isValidConnectionTarget } from "../lib/connectionGeometry";
 import {
   promptRefRenamePatch,
   promptRefsAfterSelect,
@@ -97,18 +96,6 @@ interface NodeReviewRequestEvent extends ArtifactViewSource {
 
 interface SelectGroupEvent {
   groupId: string;
-}
-
-interface ConnectionStartEvent {
-  clientX?: number;
-  clientY?: number;
-  fromNodeId: string;
-  pointerId: number | null;
-}
-
-interface PendingConnection {
-  fromNodeId: string;
-  pointerId: number | null;
 }
 
 type NodeDraftPatch = Partial<
@@ -184,7 +171,6 @@ export function WorkspaceDetailPage() {
   const nodeSnapshotsRef = useRef(new Map<string, MediaNode>());
   const titleSaveTimersRef = useRef(new Map<string, number>());
   const promptSaveTimersRef = useRef(new Map<string, number>());
-  const pendingConnectionRef = useRef<PendingConnection | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [contextMenu, setContextMenu] = useState<CanvasContextMenu | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -192,9 +178,6 @@ export function WorkspaceDetailPage() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [nodeEditorPosition, setNodeEditorPosition] =
     useState<NodeEditorPosition | null>(null);
-  const [connectionSourceId, setConnectionSourceId] = useState<string | null>(
-    null,
-  );
   const [connectionFeedback, setConnectionFeedback] =
     useState<ConnectionFeedback | null>(null);
   const [connectionStatus, setConnectionStatus] =
@@ -295,27 +278,6 @@ export function WorkspaceDetailPage() {
     setSelectedEdgeId(edgeId);
     announceActiveNode(null);
   }, []);
-
-  const beginDependencyConnection = useCallback(
-    (
-      fromNodeId: string,
-      pointer?: { clientX: number; clientY: number; pointerId: number | null },
-    ) => {
-      pendingConnectionRef.current = {
-        fromNodeId,
-        pointerId: pointer?.pointerId ?? null,
-      };
-      setConnectionSourceId(fromNodeId);
-      setContextMenu(null);
-
-      setConnectionFeedback({
-        title: "选择目标节点",
-        description: "点击另一个 Node 完成连线。",
-        tone: "info",
-      });
-    },
-    [],
-  );
 
   const hideActiveNodeEditor = useCallback(() => {
     setSelectedGroupId(null);
@@ -715,7 +677,6 @@ export function WorkspaceDetailPage() {
       }
       setSelectedNodeId((current) => (current === nodeId ? null : current));
       setSelectedEdgeId(null);
-      setConnectionSourceId((current) => (current === nodeId ? null : current));
       nodeSnapshotsRef.current.delete(nodeId);
       queryClient.setQueryData<CanvasPayload>(
         ["workspace", id, "canvas"],
@@ -965,7 +926,7 @@ export function WorkspaceDetailPage() {
   ]);
 
   useEffect(() => {
-    if (!selectedNode && !selectedGroup && !selectedEdgeId) {
+    if (!selectedNode && !selectedGroup) {
       setNodeEditorPosition(null);
       return;
     }
@@ -1007,22 +968,7 @@ export function WorkspaceDetailPage() {
       width: Math.round(width),
       maxHeight,
     });
-  }, [effectiveCanvas, isSidebarCollapsed, selectedEdgeId, selectedGroup, selectedNode]);
-
-  const selectOrConnectNode = useCallback(
-    (nodeId: string) => {
-      const fromNodeId =
-        pendingConnectionRef.current?.fromNodeId ?? connectionSourceId;
-      if (fromNodeId && fromNodeId !== nodeId) {
-        pendingConnectionRef.current = null;
-        setConnectionSourceId(null);
-        setConnectionFeedback(null);
-        createDependencyEdge(fromNodeId, nodeId);
-      }
-      selectNode(nodeId);
-    },
-    [connectionSourceId, createDependencyEdge, selectNode],
-  );
+  }, [effectiveCanvas, isSidebarCollapsed, selectedGroup, selectedNode]);
 
   const applyNodeDraft = useCallback(
     (nodeId: string, patch: NodeDraftPatch) => {
@@ -1147,7 +1093,7 @@ export function WorkspaceDetailPage() {
     const onSelectNode = (event: Event) => {
       const detail = (event as CustomEvent<SelectNodeEvent>).detail;
       if (detail?.nodeId) {
-        selectOrConnectNode(detail.nodeId);
+        selectNode(detail.nodeId);
       }
     };
 
@@ -1155,7 +1101,7 @@ export function WorkspaceDetailPage() {
     return () => {
       window.removeEventListener("clip-anvil:select-node", onSelectNode);
     };
-  }, [selectOrConnectNode]);
+  }, [selectNode]);
 
   useEffect(() => {
     const onNodeReviewRequest = (event: Event) => {
@@ -1192,157 +1138,6 @@ export function WorkspaceDetailPage() {
       window.removeEventListener("clip-anvil:select-group", onSelectGroup);
     };
   }, [selectGroup]);
-
-  useEffect(() => {
-    const startConnectionFromTarget = (
-      target: EventTarget | null,
-      pointerId: number | null,
-      clientX?: number,
-      clientY?: number,
-    ) => {
-      if (!(target instanceof HTMLElement)) {
-        return false;
-      }
-      const port = target.closest(".media-node-connect-button");
-      if (!(port instanceof HTMLElement)) {
-        return false;
-      }
-      const shell = port.closest(".media-node-shell");
-      if (!(shell instanceof HTMLElement) || !shell.dataset.nodeId) {
-        return false;
-      }
-      if (pointerId !== null && clientX !== undefined && clientY !== undefined) {
-        beginDependencyConnection(shell.dataset.nodeId, {
-          clientX,
-          clientY,
-          pointerId,
-        });
-      } else {
-        beginDependencyConnection(shell.dataset.nodeId);
-      }
-      return true;
-    };
-
-    const onOutputPortPointerDown = (event: PointerEvent) => {
-      if (
-        startConnectionFromTarget(
-          event.target,
-          event.pointerId,
-          event.clientX,
-          event.clientY,
-        )
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-      }
-    };
-
-    const onOutputPortClick = (event: globalThis.MouseEvent) => {
-      if (startConnectionFromTarget(event.target, null)) {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-      }
-    };
-
-    const onConnectionTargetClick = (event: globalThis.MouseEvent) => {
-      if (
-        event.target instanceof HTMLElement &&
-        event.target.closest(".media-node-connect-button")
-      ) {
-        return;
-      }
-      const pending = pendingConnectionRef.current;
-      if (!pending || !(event.target instanceof HTMLElement)) {
-        return;
-      }
-      const target = event.target.closest(".media-node-shell");
-      if (!(target instanceof HTMLElement)) {
-        return;
-      }
-      const toNodeId = target.dataset.nodeId;
-      if (!isValidConnectionTarget(pending.fromNodeId, toNodeId)) {
-        return;
-      }
-      pendingConnectionRef.current = null;
-      setConnectionSourceId(null);
-      setConnectionFeedback(null);
-      createDependencyEdge(pending.fromNodeId, toNodeId);
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-    };
-
-    const onConnectionStart = (event: Event) => {
-      const detail = (event as CustomEvent<ConnectionStartEvent>).detail;
-      if (!detail?.fromNodeId) {
-        return;
-      }
-      if (
-        detail.pointerId !== null &&
-        detail.clientX !== undefined &&
-        detail.clientY !== undefined
-      ) {
-        beginDependencyConnection(detail.fromNodeId, {
-          clientX: detail.clientX,
-          clientY: detail.clientY,
-          pointerId: detail.pointerId,
-        });
-        return;
-      }
-      beginDependencyConnection(detail.fromNodeId);
-    };
-
-    const onConnectionEnd = (event: PointerEvent) => {
-      const pending = pendingConnectionRef.current;
-      if (
-        !pending ||
-        pending.pointerId === null ||
-        pending.pointerId !== event.pointerId
-      ) {
-        return;
-      }
-      pendingConnectionRef.current = null;
-      setConnectionSourceId(null);
-      const target = document
-        .elementFromPoint(event.clientX, event.clientY)
-        ?.closest(".media-node-shell");
-      if (!(target instanceof HTMLElement)) {
-        setConnectionFeedback(null);
-        return;
-      }
-      const toNodeId = target.dataset.nodeId;
-      if (!isValidConnectionTarget(pending.fromNodeId, toNodeId)) {
-        setConnectionFeedback(null);
-        return;
-      }
-      setConnectionFeedback(null);
-      createDependencyEdge(pending.fromNodeId, toNodeId);
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-    };
-
-    window.addEventListener("pointerdown", onOutputPortPointerDown, true);
-    window.addEventListener("click", onOutputPortClick, true);
-    window.addEventListener("click", onConnectionTargetClick, true);
-    window.addEventListener(
-      "clip-anvil:connection-start",
-      onConnectionStart,
-    );
-    window.addEventListener("pointerup", onConnectionEnd, true);
-    return () => {
-      window.removeEventListener("pointerdown", onOutputPortPointerDown, true);
-      window.removeEventListener("click", onOutputPortClick, true);
-      window.removeEventListener("click", onConnectionTargetClick, true);
-      window.removeEventListener(
-        "clip-anvil:connection-start",
-        onConnectionStart,
-      );
-      window.removeEventListener("pointerup", onConnectionEnd, true);
-    };
-  }, [beginDependencyConnection, createDependencyEdge]);
 
   useEffect(() => {
     if (!connectionFeedback) {
@@ -1594,8 +1389,7 @@ export function WorkspaceDetailPage() {
                     selectedNodeId={selectedNodeId}
                     onCreateGroup={() => createGroupMutation.mutate()}
                     onSelectGroup={selectGroup}
-                    onSelectNode={selectOrConnectNode}
-                    onStartConnection={beginDependencyConnection}
+                    onSelectNode={selectNode}
                   />
                 ) : (
                   <div className="rounded-[var(--radius-md)] p-3 text-[12px] leading-5 text-[var(--fg-tertiary)]">
@@ -1631,7 +1425,6 @@ export function WorkspaceDetailPage() {
 
       <section
         className="studio-canvas-frame"
-        data-connection-dragging="false"
         onContextMenuCapture={openCanvasMenu}
         onPointerDownCapture={closeCanvasMenuOnPointerDown}
         ref={canvasFrameRef}
@@ -1664,7 +1457,7 @@ export function WorkspaceDetailPage() {
               }}
               onSelectNode={(nodeId) => {
                 if (nodeId) {
-                  selectOrConnectNode(nodeId);
+                  selectNode(nodeId);
                 } else {
                   hideActiveNodeEditor();
                 }
@@ -1688,7 +1481,7 @@ export function WorkspaceDetailPage() {
           </div>
         )}
 
-        {(selectedNode || selectedGroup || selectedEdgeId) && nodeEditorPosition ? (
+        {(selectedNode || selectedGroup) && nodeEditorPosition ? (
           <div
             className="node-editor-overlay node-production-popover"
             onClick={stopCanvasEvent}

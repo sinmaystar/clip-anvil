@@ -27,6 +27,22 @@ const groupFlowNodeUrl = new URL(
   "../components/canvas-flow/GroupFlowNode.tsx",
   import.meta.url,
 );
+const mediaFlowNodeUrl = new URL(
+  "../components/canvas-flow/MediaFlowNode.tsx",
+  import.meta.url,
+);
+const dependencyFlowEdgeUrl = new URL(
+  "../components/canvas-flow/DependencyFlowEdge.tsx",
+  import.meta.url,
+);
+const connectionLinePreviewUrl = new URL(
+  "../components/canvas-flow/ConnectionLinePreview.tsx",
+  import.meta.url,
+);
+const resourceTreeUrl = new URL(
+  "../components/ResourceTree.tsx",
+  import.meta.url,
+);
 
 describe("studio React Flow canvas", () => {
   it("renders Studio through the shared React Flow surface", async () => {
@@ -61,6 +77,16 @@ describe("studio React Flow canvas", () => {
     assert.match(pageSource, /node-production-popover/);
   });
 
+  it("does not open the Studio property popover for selected dependency edges", async () => {
+    const pageSource = await readFile(workspacePageUrl, "utf8");
+
+    assert.doesNotMatch(
+      pageSource,
+      /\(selectedNode \|\| selectedGroup \|\| selectedEdgeId\)/,
+    );
+    assert.match(pageSource, /\(selectedNode \|\| selectedGroup\)/);
+  });
+
   it("creates Studio nodes from React Flow screen coordinates", async () => {
     const source = await readFile(canvasSurfaceUrl, "utf8");
     const pageSource = await readFile(workspacePageUrl, "utf8");
@@ -85,7 +111,7 @@ describe("studio React Flow canvas", () => {
     assert.match(pageSource, /selectedGroupId=\{selectedGroupId\}/);
     assert.match(pageSource, /selectedEdgeId=\{selectedEdgeId\}/);
     assert.match(pageSource, /onSelectNode=\{\(nodeId\) =>/);
-    assert.match(pageSource, /selectOrConnectNode\(nodeId\)/);
+    assert.match(pageSource, /selectNode\(nodeId\)/);
     assert.match(pageSource, /hideActiveNodeEditor\(\)/);
     assert.match(pageSource, /onSelectGroup=\{\(groupId\) =>/);
     assert.match(pageSource, /selectGroup\(groupId\)/);
@@ -114,6 +140,40 @@ describe("studio React Flow canvas", () => {
     assert.match(pageSource, /deleteMediaNode/);
     assert.match(pageSource, /deleteNodeById/);
     assert.match(pageSource, /deleteEdgeById/);
+  });
+
+  it("uses drag-to-connect instead of legacy click-to-connect pending state", async () => {
+    const surfaceSource = await readFile(canvasSurfaceUrl, "utf8");
+    const mediaSource = await readFile(mediaFlowNodeUrl, "utf8");
+    const pageSource = await readFile(workspacePageUrl, "utf8");
+    const resourceTreeSource = await readFile(resourceTreeUrl, "utf8");
+
+    assert.match(surfaceSource, /connectOnClick=\{false\}/);
+    assert.match(surfaceSource, /onConnectStart=\{/);
+    assert.match(surfaceSource, /onConnectEnd=\{/);
+    assert.match(surfaceSource, /document\s*\.\s*elementsFromPoint/);
+    assert.match(surfaceSource, /media-node-shell/);
+    assert.match(mediaSource, /media-node-connect-handle/);
+    assert.match(mediaSource, /media-node-target-handle/);
+    assert.doesNotMatch(mediaSource, /media-node-connect-button/);
+    assert.doesNotMatch(pageSource, /pendingConnectionRef/);
+    assert.doesNotMatch(pageSource, /beginDependencyConnection/);
+    assert.doesNotMatch(pageSource, /connectionSourceId/);
+    assert.doesNotMatch(pageSource, /clip-anvil:connection-start/);
+    assert.doesNotMatch(resourceTreeSource, /onStartConnection/);
+    assert.doesNotMatch(resourceTreeSource, /studio-resource-connect/);
+  });
+
+  it("renders animated source-to-target flow for saved and dragged dependency edges", async () => {
+    const surfaceSource = await readFile(canvasSurfaceUrl, "utf8");
+    const edgeSource = await readFile(dependencyFlowEdgeUrl, "utf8");
+    const connectionLineSource = await readFile(connectionLinePreviewUrl, "utf8");
+
+    assert.match(surfaceSource, /connectionLineComponent=\{ConnectionLinePreview\}/);
+    assert.match(edgeSource, /connection-overlay-flow/);
+    assert.match(edgeSource, /strokeDashoffset/);
+    assert.match(connectionLineSource, /connection-overlay-preview-flow/);
+    assert.match(connectionLineSource, /getBezierPath/);
   });
 
   it("moves groups by persisting member node positions", async () => {

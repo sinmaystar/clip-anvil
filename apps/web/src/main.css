@@ -3450,28 +3450,6 @@ a:focus-visible {
   color: var(--status-failed);
 }
 
-.studio-resource-connect {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-pill);
-  background: var(--color-surface-2);
-  color: var(--fg-tertiary);
-  font-size: 14px;
-  line-height: 1;
-}
-
-.studio-resource-connect:hover,
-.studio-resource-connect:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-default));
-  background: color-mix(in srgb, var(--accent) 12%, var(--color-surface-2));
-  color: var(--fg-primary);
-  outline: none;
-}
-
 .studio-canvas-frame {
   position: absolute;
   inset: 0;
@@ -3546,12 +3524,12 @@ a:focus-visible {
   stroke-width: 1.15px;
 }
 
-.connection-overlay-edge[data-selected="true"] .connection-overlay-path-shadow {
+.dependency-flow-edge-layer[data-selected="true"] .connection-overlay-path-shadow {
   stroke: color-mix(in srgb, var(--accent) 18%, transparent);
   stroke-width: 4px;
 }
 
-.connection-overlay-edge[data-selected="true"] .connection-overlay-path {
+.dependency-flow-edge-layer[data-selected="true"] .connection-overlay-path {
   stroke-width: 2px;
 }
 
@@ -3902,14 +3880,6 @@ a:focus-visible {
   pointer-events: all;
 }
 
-.studio-canvas-frame[data-connection-dragging="true"] .media-node-shell {
-  pointer-events: all;
-}
-
-.studio-canvas-frame[data-connection-dragging="true"] .media-node {
-  cursor: crosshair;
-}
-
 .media-node-shell[data-active="true"] .media-node {
   box-shadow:
     var(--shadow-card),
@@ -3946,7 +3916,16 @@ a:focus-visible {
   border: 1px solid color-mix(in srgb, var(--status-stale) 58%, var(--border-default));
 }
 
-.media-node-connect-button {
+.media-node-target-handle.react-flow__handle {
+  width: 1px;
+  height: 1px;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.media-node-connect-handle.react-flow__handle {
   position: absolute;
   top: 50%;
   right: -16px;
@@ -3977,23 +3956,26 @@ a:focus-visible {
   backdrop-filter: blur(18px) saturate(1.2);
 }
 
-.media-node-connect-button::after {
+.media-node-connect-handle.react-flow__handle::before {
+  content: "+";
+}
+
+.media-node-connect-handle.react-flow__handle::after {
   position: absolute;
   inset: -10px;
   content: "";
 }
 
-.media-node-shell:hover .media-node-connect-button,
-.media-node-shell[data-active="true"] .media-node-connect-button,
-.studio-canvas-frame[data-connection-dragging="true"] .media-node-connect-button,
-.media-node-connect-button:hover,
-.media-node-connect-button:focus-visible {
+.media-node-shell:hover .media-node-connect-handle.react-flow__handle,
+.media-node-shell[data-active="true"] .media-node-connect-handle.react-flow__handle,
+.media-node-connect-handle.react-flow__handle:hover,
+.media-node-connect-handle.react-flow__handle:focus-visible {
   opacity: 1;
   transform: translate(0, -50%) scale(1);
 }
 
-.media-node-connect-button:hover,
-.media-node-connect-button:focus-visible {
+.media-node-connect-handle.react-flow__handle:hover,
+.media-node-connect-handle.react-flow__handle:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 54%, var(--border-default));
   background: color-mix(in srgb, var(--accent) 13%, var(--color-panel-elevated));
 }

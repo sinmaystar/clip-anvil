@@ -12,10 +12,14 @@ import {
   type EdgeTypes,
   type NodeChange,
   type NodeTypes,
+  type OnConnectEnd,
+  type OnConnectStart,
 } from "@xyflow/react";
 import type { CanvasCamera, CanvasPayload } from "../../lib/api";
+import { isValidConnectionTarget } from "../../lib/connectionGeometry";
 import { canvasToFlowEdges, canvasToFlowNodes } from "./canvasViewModel";
 import { cameraToViewport, viewportToCamera } from "./canvasViewport";
+import { ConnectionLinePreview } from "./ConnectionLinePreview";
 import { DependencyFlowEdge } from "./DependencyFlowEdge";
 import { GroupFlowNode } from "./GroupFlowNode";
 import { MediaFlowNode } from "./MediaFlowNode";
@@ -89,6 +93,8 @@ function CanvasFlowSurfaceContent({
   const policy = policyForCanvasMode(mode);
   const { screenToFlowPosition } = useReactFlow<CanvasFlowNode, CanvasFlowEdge>();
   const dragStartPositionsRef = useRef(new Map<string, { x: number; y: number }>());
+  const connectionSourceRef = useRef<string | null>(null);
+  const connectedOnHandleRef = useRef(false);
   const derivedNodes = useMemo(
     () =>
       canvasToFlowNodes(canvas).map((node) => ({
@@ -159,6 +165,8 @@ function CanvasFlowSurfaceContent({
       if (!policy.canCreateEdges || !connection.source || !connection.target) {
         return;
       }
+      connectedOnHandleRef.current = true;
+      connectionSourceRef.current = null;
       onConnectNodes?.({
         fromNodeId: connection.source,
         toNodeId: connection.target,
@@ -167,10 +175,60 @@ function CanvasFlowSurfaceContent({
     [onConnectNodes, policy.canCreateEdges],
   );
 
+  const handleConnectStart = useCallback<OnConnectStart>(
+    (_, params) => {
+      if (!policy.canCreateEdges || params.handleType !== "source") {
+        connectionSourceRef.current = null;
+        return;
+      }
+      connectionSourceRef.current = params.nodeId ?? null;
+      connectedOnHandleRef.current = false;
+    },
+    [policy.canCreateEdges],
+  );
+
+  const handleConnectEnd = useCallback<OnConnectEnd>(
+    (event: MouseEvent | TouchEvent) => {
+      const fromNodeId = connectionSourceRef.current;
+      connectionSourceRef.current = null;
+      if (!policy.canCreateEdges || !fromNodeId) {
+        return;
+      }
+      if (connectedOnHandleRef.current) {
+        connectedOnHandleRef.current = false;
+        return;
+      }
+      const point = clientPointFromConnectionEvent(event);
+      if (!point) {
+        return;
+      }
+      const target = document
+        .elementsFromPoint(point.x, point.y)
+        .find(
+          (element): element is HTMLElement =>
+            element instanceof HTMLElement &&
+            Boolean(element.closest(".media-node-shell")),
+        )
+        ?.closest(".media-node-shell");
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const toNodeId = target.dataset.nodeId;
+      if (!isValidConnectionTarget(fromNodeId, toNodeId)) {
+        return;
+      }
+      onConnectNodes?.({ fromNodeId, toNodeId });
+    },
+    [onConnectNodes, policy.canCreateEdges],
+  );
+
   return (
     <CanvasFlowPolicyProvider value={policy}>
       <div className="canvas-flow-surface" data-mode={mode}>
         <ReactFlow
+          connectOnClick={false}
+          connectionLineComponent={ConnectionLinePreview}
+          connectionRadius={96}
           defaultViewport={cameraToViewport(canvas.camera)}
           deleteKeyCode={null}
           edgeTypes={edgeTypes}
@@ -184,6 +242,8 @@ function CanvasFlowSurfaceContent({
           nodesDraggable={policy.canDragNodes}
           nodesFocusable={policy.canSelect}
           onConnect={handleConnect}
+          onConnectEnd={handleConnectEnd}
+          onConnectStart={handleConnectStart}
           onEdgesChange={handleEdgesChange}
           onEdgeClick={(_, edge) => {
             onSelectEdge(edge.id);
@@ -278,3 +338,11 @@ function CanvasFlowSurfaceContent({
 function noopRunNode() {}
 
 function noopUpdateNode() {}
+
+function clientPointFromConnectionEvent(event: MouseEvent | TouchEvent) {
+  if ("changedTouches" in event) {
+    const touch = event.changedTouches[0];
+    return touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+  return { x: event.clientX, y: event.clientY };
+}

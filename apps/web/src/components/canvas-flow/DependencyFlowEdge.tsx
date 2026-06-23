@@ -26,13 +26,20 @@ export function DependencyFlowEdge({
   });
 
   return (
-    <BaseEdge
-      id={id}
-      className="connection-overlay-path dependency-flow-edge"
-      data-selected={selected}
-      interactionWidth={24}
-      markerEnd={markerEnd}
-      path={edgePath}
-    />
+    <g className="dependency-flow-edge-layer" data-selected={selected}>
+      <path className="connection-overlay-path-shadow" d={edgePath} />
+      <BaseEdge
+        id={id}
+        className="connection-overlay-path dependency-flow-edge"
+        interactionWidth={24}
+        markerEnd={markerEnd}
+        path={edgePath}
+      />
+      <path
+        className="connection-overlay-flow"
+        d={edgePath}
+        style={{ strokeDashoffset: selected ? -24 : 0 }}
+      />
+    </g>
   );
 }

@@ -10,7 +10,6 @@ interface ResourceTreeProps {
   onCreateGroup: () => void;
   onSelectGroup: (groupId: string) => void;
   onSelectNode: (nodeId: string) => void;
-  onStartConnection: (nodeId: string) => void;
 }
 
 const filters: Array<{ value: "all" | MediaType; label: string }> = [
@@ -38,7 +37,6 @@ export function ResourceTree({
   onCreateGroup,
   onSelectGroup,
   onSelectNode,
-  onStartConnection,
 }: ResourceTreeProps) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | MediaType>("all");
@@ -111,7 +109,6 @@ export function ResourceTree({
                       node={node}
                       selected={node.id === selectedNodeId}
                       onSelectNode={onSelectNode}
-                      onStartConnection={onStartConnection}
                     />
                   ))
                 : null}
@@ -129,7 +126,6 @@ export function ResourceTree({
               node={node}
               selected={node.id === selectedNodeId}
               onSelectNode={onSelectNode}
-              onStartConnection={onStartConnection}
             />
           ))}
         </section>
@@ -142,12 +138,10 @@ function ResourceNodeRow({
   node,
   selected,
   onSelectNode,
-  onStartConnection,
 }: {
   node: MediaNode;
   selected: boolean;
   onSelectNode: (nodeId: string) => void;
-  onStartConnection: (nodeId: string) => void;
 }) {
   return (
     <div className="studio-resource-item" data-selected={selected}>
@@ -160,14 +154,6 @@ function ResourceNodeRow({
         <span className="studio-resource-name">{node.title}</span>
       </button>
       <span className="studio-resource-status" data-status={node.status} />
-      <button
-        aria-label={`从 ${node.title} 设置连线起点`}
-        className="studio-resource-connect"
-        onClick={() => onStartConnection(node.id)}
-        type="button"
-      >
-        →
-      </button>
     </div>
   );
 }

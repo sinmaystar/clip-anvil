@@ -46,15 +46,17 @@ export function MediaFlowNode({
     >
       {policy.canCreateEdges ? (
         <>
-          <Handle type="target" position={Position.Left} />
-          <Handle type="source" position={Position.Right} />
-          <button
+          <Handle
+            className="media-node-target-handle"
+            position={Position.Left}
+            type="target"
+          />
+          <Handle
             aria-label={`从 ${node.title || materialKindLabel(node)} 创建依赖连线`}
-            className="media-node-connect-button nodrag"
-            type="button"
-          >
-            +
-          </button>
+            className="media-node-connect-handle"
+            position={Position.Right}
+            type="source"
+          />
         </>
       ) : null}
       {hasPreviewContent ? (
