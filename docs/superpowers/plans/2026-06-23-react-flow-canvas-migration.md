@@ -710,15 +710,15 @@ git commit -m "feat: add react flow canvas foundation"
 - Create: `apps/web/src/components/canvas-flow/NodeInspectorPopover.tsx`
 - Modify: `apps/web/src/lib/canvasFlow.test.mjs`
 
-- [ ] **Step 1: Implement shared node components**
+- [x] **Step 1: Implement shared node components**
 
 `MediaFlowNode.tsx` 渲染现有 `.media-node` shell，并从节点 data 或父级 context 读取 policy。首版应渲染完整信息内容；连接 handle 只在 policy 允许创建 edge 时显示。
 
-- [ ] **Step 2: Implement custom edge**
+- [x] **Step 2: Implement custom edge**
 
 `DependencyFlowEdge.tsx` 使用 React Flow edge helper，并保留当前 flowing edge 的视觉语言。它会在后续阶段替代 `ConnectionOverlay` 的边渲染职责。
 
-- [ ] **Step 3: Implement shared inspector**
+- [x] **Step 3: Implement shared inspector**
 
 `NodeInspectorPopover.tsx` must accept:
 
@@ -736,7 +736,7 @@ interface NodeInspectorPopoverProps {
 
 Expected behavior: same information layout in Studio and Agent; action controls honor policy.
 
-- [ ] **Step 4: Implement shared surface**
+- [x] **Step 4: Implement shared surface**
 
 `CanvasFlowSurface.tsx` must accept:
 
@@ -753,7 +753,7 @@ interface CanvasFlowSurfaceProps {
 
 它渲染 `<ReactFlow />`，并传入 `nodeTypes`、`edgeTypes`、`nodesDraggable={policy.canDragNodes}`、`nodesConnectable={policy.canCreateEdges}` 和共享 selection 行为。
 
-- [ ] **Step 5: Add source-level tests**
+- [x] **Step 5: Add source-level tests**
 
 Extend `apps/web/src/lib/canvasFlow.test.mjs`:
 
@@ -769,7 +769,7 @@ it("keeps Agent and Studio on the shared CanvasFlowSurface", async () => {
 });
 ```
 
-- [ ] **Step 6: Run verification**
+- [x] **Step 6: Run verification**
 
 ```bash
 pnpm --filter @clip-anvil/web test:connections
@@ -778,7 +778,7 @@ pnpm --filter @clip-anvil/web... build
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Phase 2**
+- [x] **Step 7: Commit Phase 2**
 
 ```bash
 git add apps/web/src/components/canvas-flow apps/web/src/lib/canvasFlow.test.mjs

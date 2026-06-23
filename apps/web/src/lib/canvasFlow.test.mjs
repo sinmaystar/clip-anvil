@@ -55,4 +55,50 @@ describe("React Flow canvas foundation", () => {
     assert.match(source, /x:\s*camera\.x/);
     assert.match(source, /zoom:\s*viewport\.zoom/);
   });
+
+  it("renders Studio and Agent through one shared React Flow surface", async () => {
+    const source = await readCanvasFlowSource("CanvasFlowSurface.tsx");
+
+    assert.match(source, /ReactFlow/);
+    assert.match(source, /canvasToFlowNodes/);
+    assert.match(source, /canvasToFlowEdges/);
+    assert.match(source, /policyForCanvasMode/);
+    assert.match(source, /nodesDraggable=\{policy\.canDragNodes\}/);
+    assert.match(source, /nodesConnectable=\{policy\.canCreateEdges\}/);
+    assert.match(source, /nodeTypes/);
+    assert.match(source, /edgeTypes/);
+  });
+
+  it("keeps shared media nodes policy-driven instead of Agent-specific", async () => {
+    const source = await readCanvasFlowSource("MediaFlowNode.tsx");
+
+    assert.match(source, /CanvasFlowPolicy/);
+    assert.match(source, /media-node/);
+    assert.match(source, /Handle/);
+    assert.match(source, /policy\.canCreateEdges/);
+    assert.doesNotMatch(source, /mode === "agent"|agent-readonly-tldraw/);
+  });
+
+  it("uses a shared inspector while honoring policy-gated actions", async () => {
+    const source = await readCanvasFlowSource("NodeInspectorPopover.tsx");
+
+    assert.match(source, /NodeInspectorPopoverProps/);
+    assert.match(source, /mode:\s*CanvasFlowMode/);
+    assert.match(source, /policy:\s*CanvasFlowPolicy/);
+    assert.match(source, /onRunNode/);
+    assert.match(source, /policy\.canRunNodes/);
+    assert.match(source, /policy\.canEditNodeContent/);
+    assert.doesNotMatch(source, /AgentReadonly|agent-readonly-tldraw/);
+  });
+
+  it("defines group and dependency edge renderers for the shared surface", async () => {
+    const groupSource = await readCanvasFlowSource("GroupFlowNode.tsx");
+    const edgeSource = await readCanvasFlowSource("DependencyFlowEdge.tsx");
+
+    assert.match(groupSource, /group-flow-node/);
+    assert.match(groupSource, /nodeCount/);
+    assert.match(edgeSource, /BaseEdge/);
+    assert.match(edgeSource, /getBezierPath/);
+    assert.match(edgeSource, /dependency-flow-edge/);
+  });
 });

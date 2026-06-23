@@ -1,3 +1,4 @@
+import { createContext, useContext } from "react";
 import type { CanvasFlowMode } from "./flowTypes";
 
 export interface CanvasFlowPolicy {
@@ -47,4 +48,13 @@ export const agentFlowPolicy: CanvasFlowPolicy = {
 
 export function policyForCanvasMode(mode: CanvasFlowMode): CanvasFlowPolicy {
   return mode === "studio" ? studioFlowPolicy : agentFlowPolicy;
+}
+
+const CanvasFlowPolicyContext =
+  createContext<CanvasFlowPolicy>(studioFlowPolicy);
+
+export const CanvasFlowPolicyProvider = CanvasFlowPolicyContext.Provider;
+
+export function useCanvasFlowPolicy(): CanvasFlowPolicy {
+  return useContext(CanvasFlowPolicyContext);
 }
