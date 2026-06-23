@@ -62,6 +62,14 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 	if len(runtime.createdTasks) != 3 || len(enqueuer.tasks) != 3 {
 		t.Fatalf("created tasks = %d, enqueued = %d", len(runtime.createdTasks), len(enqueuer.tasks))
 	}
+	if len(store.statusUpdates) != 3 {
+		t.Fatalf("status updates = %#v", store.statusUpdates)
+	}
+	for _, update := range store.statusUpdates {
+		if update.Status != "preview_running" {
+			t.Fatalf("status update = %#v", update)
+		}
+	}
 	summary, _ := out.Result["summary"].(string)
 	if !strings.Contains(summary, "加入队列") || !strings.Contains(summary, "不表示图片已经生成完成") {
 		t.Fatalf("summary = %q", summary)
@@ -99,9 +107,12 @@ func TestDispatchCraftsmanResolvesShotRefsAndCapsAttempts(t *testing.T) {
 		ThreadID:    uuidWithByte(2),
 		TaskID:      uuidWithByte(3),
 		Arguments: map[string]any{
-			"mode":         "preview_image",
-			"shot_refs":    []any{"shot-02"},
-			"max_attempts": 99.0,
+			"mode":             "preview_image",
+			"shot_refs":        []any{"shot-02"},
+			"max_attempts":     99.0,
+			"review_record_id": "review-1",
+			"critique":         "商品太小",
+			"fix_hints":        []any{"拉近主体"},
 		},
 	})
 	if err != nil {
@@ -117,12 +128,24 @@ func TestDispatchCraftsmanResolvesShotRefsAndCapsAttempts(t *testing.T) {
 	if runtime.createdTasks[0].MaxAttempts != 3 {
 		t.Fatalf("max attempts = %d", runtime.createdTasks[0].MaxAttempts)
 	}
+	var input map[string]any
+	if err := json.Unmarshal(runtime.createdTasks[0].Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["review_record_id"] != "review-1" || input["review_critique"] != "商品太小" {
+		t.Fatalf("task input = %#v", input)
+	}
+	hints, _ := input["review_fix_hints"].([]any)
+	if len(hints) != 1 || hints[0] != "拉近主体" {
+		t.Fatalf("review_fix_hints = %#v", input["review_fix_hints"])
+	}
 }
 
 type fakeCraftsmanDispatchStore struct {
-	workspace db.Workspace
-	shots     []db.Shot
-	linked    []db.SetShotCraftsmanThreadParams
+	workspace     db.Workspace
+	shots         []db.Shot
+	linked        []db.SetShotCraftsmanThreadParams
+	statusUpdates []db.UpdateShotStatusParams
 }
 
 func (f *fakeCraftsmanDispatchStore) GetWorkspaceByID(context.Context, pgtype.UUID) (db.Workspace, error) {
@@ -157,6 +180,17 @@ func (f *fakeCraftsmanDispatchStore) SetShotCraftsmanThread(_ context.Context, p
 		if shot.ID == params.ID {
 			shot.CraftsmanThreadID = params.CraftsmanThreadID
 			return shot, nil
+		}
+	}
+	return db.Shot{}, errShotNotFound
+}
+
+func (f *fakeCraftsmanDispatchStore) UpdateShotStatus(_ context.Context, params db.UpdateShotStatusParams) (db.Shot, error) {
+	f.statusUpdates = append(f.statusUpdates, params)
+	for index, shot := range f.shots {
+		if shot.ID == params.ID && shot.WorkspaceID == params.WorkspaceID {
+			f.shots[index].Status = params.Status
+			return f.shots[index], nil
 		}
 	}
 	return db.Shot{}, errShotNotFound

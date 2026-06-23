@@ -62,7 +62,7 @@ func (r *ProductionRunner) runJob(ctx context.Context, job db.GenerationJob) err
 	}
 	var intent GenerationIntent
 	if err := json.Unmarshal(job.Intent, &intent); err != nil {
-		return r.service.markQueuedJobFailed(ctx, job, fmt.Errorf("%w: invalid generation intent", ErrProviderExecution))
+		return r.failQueuedJob(ctx, job, fmt.Errorf("%w: invalid generation intent", ErrProviderExecution))
 	}
 	started, err := r.service.markQueuedJobRunning(ctx, job, 1, map[string]any{"event": ProductionEventJobStarted})
 	if err != nil {
@@ -78,7 +78,7 @@ func (r *ProductionRunner) runJob(ctx context.Context, job db.GenerationJob) err
 
 	events, err := r.runtime.Start(ctx, ProductionJob{ID: job.ID, WorkspaceID: job.WorkspaceID, TargetNodeID: job.TargetNodeID}, intent)
 	if err != nil {
-		return r.service.markQueuedJobFailed(ctx, job, err)
+		return r.failQueuedJob(ctx, job, err)
 	}
 	for event := range events {
 		event.JobID = job.ID
@@ -87,7 +87,7 @@ func (r *ProductionRunner) runJob(ctx context.Context, job db.GenerationJob) err
 		switch event.Type {
 		case ProductionEventJobSucceeded:
 			if _, err := r.service.persistQueuedJobSuccess(ctx, job.ID, outputToProviderResult(event.Output)); err != nil {
-				return r.service.markQueuedJobFailed(ctx, job, err)
+				return r.failQueuedJob(ctx, job, err)
 			}
 			r.publish(event)
 			return nil
@@ -95,11 +95,7 @@ func (r *ProductionRunner) runJob(ctx context.Context, job db.GenerationJob) err
 			if event.Err == nil {
 				event.Err = fmt.Errorf("%w: provider failed", ErrProviderExecution)
 			}
-			if err := r.service.markQueuedJobFailed(ctx, job, event.Err); err != nil {
-				return err
-			}
-			r.publish(event)
-			return nil
+			return r.failQueuedJob(ctx, job, event.Err)
 		case ProductionEventJobCancelled:
 			event.Err = fmt.Errorf("%w: production job cancelled", ErrProviderExecution)
 			if err := r.service.markQueuedJobFailed(ctx, job, event.Err); err != nil {
@@ -116,12 +112,38 @@ func (r *ProductionRunner) runJob(ctx context.Context, job db.GenerationJob) err
 			}
 		}
 	}
-	return r.service.markQueuedJobFailed(ctx, job, fmt.Errorf("%w: runtime completed without output", ErrProviderExecution))
+	return r.failQueuedJob(ctx, job, fmt.Errorf("%w: runtime completed without output", ErrProviderExecution))
 }
 
 func (r *ProductionRunner) publish(event ProductionEvent) {
 	if r.publisher != nil {
 		r.publisher.PublishProductionEvent(event)
+	}
+}
+
+func (r *ProductionRunner) failQueuedJob(ctx context.Context, job db.GenerationJob, runErr error) error {
+	if runErr == nil {
+		runErr = fmt.Errorf("%w: provider failed", ErrProviderExecution)
+	}
+	err := r.service.markQueuedJobFailed(ctx, job, runErr)
+	r.publish(queuedJobFailureEvent(job, runErr))
+	return err
+}
+
+func queuedJobFailureEvent(job db.GenerationJob, runErr error) ProductionEvent {
+	if runErr == nil {
+		runErr = fmt.Errorf("%w: provider failed", ErrProviderExecution)
+	}
+	return ProductionEvent{
+		JobID:        job.ID,
+		WorkspaceID:  job.WorkspaceID,
+		TargetNodeID: job.TargetNodeID,
+		Type:         ProductionEventJobFailed,
+		Progress:     100,
+		Err:          runErr,
+		Payload: map[string]any{
+			"error": runErr.Error(),
+		},
 	}
 }
 

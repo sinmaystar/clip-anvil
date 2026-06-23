@@ -26,6 +26,17 @@ WHERE workspace_id = $1
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: GetActiveComposerThreadByWorkspace :one
+SELECT *
+FROM agent_thread
+WHERE workspace_id = $1
+  AND role = 'composer'
+  AND scope_type = 'final_output'
+  AND scope_id IS NULL
+  AND status = 'active'
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: GetActiveAgentThreadByScope :one
 SELECT *
 FROM agent_thread

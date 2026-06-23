@@ -139,6 +139,50 @@ func TestJobServiceExtractFrameExecutesFFmpegInsideSandboxAndUploadsOutput(t *te
 	}
 }
 
+func TestJobServiceComposeVideosExecutesFFmpegConcatAndUploadsOutput(t *testing.T) {
+	repo := newFakeSandboxJobRepository()
+	client := &jobServiceFakeClient{
+		result: ExecResult{ExitCode: 0, Stdout: "done", DurationMS: 88},
+		inspect: FileInfo{
+			Path:      "/workspace/output/final-node-1.mp4",
+			SizeBytes: 456,
+			Mime:      "video/mp4",
+		},
+	}
+	manager := NewManager(client, testSandboxConfig(), newFakeBindingStore(Binding{
+		Status:     StatusRunning,
+		SandboxID:  "sandbox-1",
+		VolumeName: "sandbox-ws-aabbccdd-0000-0000-0000-000000000000",
+	}))
+	storage := &fakeSandboxJobStorage{}
+	service := NewJobService(manager, client, repo, storage)
+
+	result, err := service.ComposeVideos(context.Background(), ComposeVideosInput{
+		WorkspaceID:  testWorkspaceID(),
+		TargetNodeID: testNodeID(),
+		Sources: []SandboxAssetInput{
+			{AssetID: "shot-1", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-1.mp4", Mime: "video/mp4"},
+			{AssetID: "shot-2", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-2.mp4", Mime: "video/mp4"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ComposeVideos error = %v", err)
+	}
+	if result.Job.Status != db.JobStatusSucceeded || result.MIME != "video/mp4" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(storage.putKeys) != 1 || !strings.HasSuffix(storage.putKeys[0], ".mp4") {
+		t.Fatalf("put keys = %#v", storage.putKeys)
+	}
+	joined := strings.Join(client.commands, "\n")
+	if strings.Count(joined, "curl -sS -f -L -o") < 2 {
+		t.Fatalf("expected two sandbox download commands, got %q", joined)
+	}
+	if !strings.Contains(joined, "ffmpeg -y -f concat -safe 0 -i") || !strings.Contains(joined, "/workspace/output/final-") {
+		t.Fatalf("expected ffmpeg concat command, got %q", joined)
+	}
+}
+
 func TestJobServiceImportRemoteAssetDownloadsInsideSandboxAndUploadsOutput(t *testing.T) {
 	repo := newFakeSandboxJobRepository()
 	client := &jobServiceFakeClient{

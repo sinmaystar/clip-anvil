@@ -3,6 +3,8 @@ import {
   agentMessageBlocks,
   agentMessageMarkdownText,
   isDecisionCardBlock,
+  isFinalVideoCardBlock,
+  isReviewCardBlock,
   type AgentAttachmentBlock as AgentAttachmentBlockData,
   type AgentErrorBlock as AgentErrorBlockData,
   type AgentMarkdownBlock as AgentMarkdownBlockData,
@@ -17,10 +19,12 @@ import {
 } from "./AgentDecisionCardBlock";
 import { AgentAttachmentBlock } from "./AgentAttachmentBlock";
 import { AgentErrorBlock } from "./AgentErrorBlock";
+import { AgentFinalVideoCardBlock } from "./AgentFinalVideoCardBlock";
 import { AgentMarkdownBlock } from "./AgentMarkdownBlock";
 import { AgentMediaBlock } from "./AgentMediaBlock";
 import { AgentThinkingBlock } from "./AgentThinkingBlock";
 import { AgentToolStatusBlock } from "./AgentToolStatusBlock";
+import { AgentReviewCardBlock } from "./AgentReviewCardBlock";
 
 export type AgentMessageActions = AgentDecisionActions;
 
@@ -66,6 +70,12 @@ function AgentMessageBlockRenderer({
   }
   if (isDecisionCardBlock(block)) {
     return <AgentDecisionCardBlock actions={actions} block={block} />;
+  }
+  if (isReviewCardBlock(block)) {
+    return <AgentReviewCardBlock block={block} />;
+  }
+  if (isFinalVideoCardBlock(block)) {
+    return <AgentFinalVideoCardBlock block={block} />;
   }
   if (isToolStatusBlock(block)) {
     return <AgentToolStatusBlock block={block} />;

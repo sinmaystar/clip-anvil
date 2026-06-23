@@ -107,6 +107,38 @@ func (q *Queries) GetActiveAgentThreadByScope(ctx context.Context, arg GetActive
 	return i, err
 }
 
+const getActiveComposerThreadByWorkspace = `-- name: GetActiveComposerThreadByWorkspace :one
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+FROM agent_thread
+WHERE workspace_id = $1
+  AND role = 'composer'
+  AND scope_type = 'final_output'
+  AND scope_id IS NULL
+  AND status = 'active'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetActiveComposerThreadByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (AgentThread, error) {
+	row := q.db.QueryRow(ctx, getActiveComposerThreadByWorkspace, workspaceID)
+	var i AgentThread
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Role,
+		&i.ScopeType,
+		&i.ScopeID,
+		&i.RuntimeProvider,
+		&i.RuntimeAgentName,
+		&i.CurrentCheckpointKey,
+		&i.Status,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getActiveProducerThreadByWorkspace = `-- name: GetActiveProducerThreadByWorkspace :one
 SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
 FROM agent_thread

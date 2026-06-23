@@ -155,6 +155,83 @@ export interface PostAgentDecisionResponse {
   task: AgentTask;
 }
 
+export type AgentProductionPhase =
+  | "planning"
+  | "preview"
+  | "review"
+  | "video"
+  | "final"
+  | "waiting_confirmation"
+  | "complete"
+  | "needs_attention"
+  | "error";
+
+export type AgentProductionStatus =
+  | "none"
+  | "queued"
+  | "running"
+  | "ready"
+  | "failed";
+
+export interface AgentProductionCounts {
+  shots_total: number;
+  previews_ready: number;
+  reviews_accepted: number;
+  videos_ready: number;
+  final_outputs: number;
+  running_tasks: number;
+  failed_tasks: number;
+  waiting_decisions: number;
+}
+
+export interface AgentProductionShot {
+  id: string;
+  client_key: string;
+  sort_order: number;
+  title: string;
+  duration_sec?: number;
+  status: string;
+  preview_status: AgentProductionStatus;
+  review_status: AgentProductionStatus;
+  video_status: AgentProductionStatus;
+  preview_node_id?: string;
+  video_node_id?: string;
+  review_score?: number;
+}
+
+export interface AgentProductionTimelineItem {
+  id: string;
+  type: string;
+  label: string;
+  status: string;
+  role?: string;
+  scope?: Record<string, unknown>;
+  diagnostics?: Record<string, unknown>;
+  created_at?: string;
+  completed_at?: string;
+}
+
+export interface AgentProductionFinalOutput {
+  node_id: string;
+  version_id?: string;
+  asset_id?: string;
+  title: string;
+  status: AgentProductionStatus;
+  operation: string;
+  completed_at?: string;
+}
+
+export interface AgentProductionOverview {
+  workspace_id: string;
+  phase: AgentProductionPhase | string;
+  counts: AgentProductionCounts;
+  shots: AgentProductionShot[];
+  timeline: AgentProductionTimelineItem[];
+  final_outputs: AgentProductionFinalOutput[];
+  diagnostics?: Record<string, unknown>;
+  updated_at: string;
+}
+
 export function fetchAgentThread(workspaceId: string) {
   return apiFetch<AgentThreadResponse>(
     `/agent/workspaces/${workspaceId}/thread`,
@@ -178,6 +255,12 @@ export function fetchAgentMessages(
 export function fetchAgentModelSelection(workspaceId: string) {
   return apiFetch<AgentModelSelectionResponse>(
     `/agent/workspaces/${workspaceId}/model-selection`,
+  );
+}
+
+export function fetchAgentProductionOverview(workspaceId: string) {
+  return apiFetch<AgentProductionOverview>(
+    `/agent/workspaces/${workspaceId}/production-overview`,
   );
 }
 

@@ -31,7 +31,7 @@ const emptyTitleByType: Record<MediaShape["props"]["nodeType"], string> = {
   reference_pack: "未命名参考包",
 };
 
-function preventNativeMediaDrag(event: DragEvent<HTMLImageElement>) {
+function preventNativeMediaDrag(event: DragEvent<HTMLImageElement | HTMLVideoElement>) {
   event.preventDefault();
 }
 
@@ -154,7 +154,6 @@ function AgentReadonlyMediaNodeShape({ shape }: { shape: MediaShape }) {
     h,
   } = shape.props;
   const displayTitle = title || emptyTitleByType[nodeType];
-  const previewUrl = previewThumbnailUrl || thumbnailUrl || previewAssetUrl;
   const statusLabel = sourceMaterialStatusLabel || statusText[status];
   const selectNodeFromKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Enter" && event.key !== " ") {
@@ -201,15 +200,36 @@ function AgentReadonlyMediaNodeShape({ shape }: { shape: MediaShape }) {
             ) : null}
           </div>
           <div className="agent-readonly-media-node-content" data-type={nodeType}>
-            {nodeType === "image" && previewUrl ? (
-              <img
-                alt={displayTitle}
-                decoding="async"
-                draggable={false}
-                loading="lazy"
-                onDragStart={preventNativeMediaDrag}
-                src={previewUrl}
-              />
+            {nodeType === "image" ? (
+              <div className="media-node-media-frame" data-kind="image">
+                {previewAssetUrl || previewThumbnailUrl || thumbnailUrl ? (
+                  <img
+                    alt={displayTitle}
+                    decoding="async"
+                    draggable={false}
+                    loading="lazy"
+                    onDragStart={preventNativeMediaDrag}
+                    src={previewAssetUrl || previewThumbnailUrl || thumbnailUrl}
+                  />
+                ) : (
+                  <p>{previewText || displayTitle}</p>
+                )}
+              </div>
+            ) : nodeType === "video" ? (
+              <div className="media-node-media-frame" data-kind="video">
+                {previewAssetUrl ? (
+                  <video
+                    controls
+                    draggable={false}
+                    onDragStart={preventNativeMediaDrag}
+                    poster={previewThumbnailUrl || thumbnailUrl}
+                    preload="metadata"
+                    src={previewAssetUrl}
+                  />
+                ) : (
+                  <p>{previewText || displayTitle}</p>
+                )}
+              </div>
             ) : nodeType === "text" ? (
               <p>{previewText || prompt || "等待输入 prompt"}</p>
             ) : (

@@ -17,12 +17,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	agentcomposer "github.com/sinmaystar/clip-anvil/internal/agent/composer"
 	agentcraftsman "github.com/sinmaystar/clip-anvil/internal/agent/craftsman"
 	agenthitl "github.com/sinmaystar/clip-anvil/internal/agent/hitl"
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
 	agentproducer "github.com/sinmaystar/clip-anvil/internal/agent/producer"
 	agentpss "github.com/sinmaystar/clip-anvil/internal/agent/pss"
+	agentreviewer "github.com/sinmaystar/clip-anvil/internal/agent/reviewer"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	agentscheduler "github.com/sinmaystar/clip-anvil/internal/agent/scheduler"
 	agentstoryboard "github.com/sinmaystar/clip-anvil/internal/agent/storyboard"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
@@ -163,21 +166,39 @@ func main() {
 			inputResolver,
 		)
 	}
+	productionBroadcaster := api.NewProductionBroadcaster(canvasHub, queries, storageService)
+	productionBroadcaster.SetAgentPreviewEventSink(agentPreviewEventSink{runtime: agentRuntime, broadcaster: agentBroadcaster})
 	productionRunner := production.NewProductionRunner(
 		productionService,
 		productionRuntime,
 		cfg.Production.WorkerConcurrency,
-		api.NewProductionBroadcaster(canvasHub, queries, storageService),
+		productionBroadcaster,
 	)
 	productionService.SetRunner(productionRunner)
 	productionRunner.Start(ctx)
+	agentCanvasBroadcaster := api.NewAgentCanvasNodeBroadcaster(canvasHub, queries, storageService)
 	workerExecutor := agentworker.NewExecutor(agentworker.ExecutorConfig{
 		Runtime:     agentRuntime,
 		Store:       queries,
 		Production:  productionService,
-		Broadcaster: agentCanvasNodeBroadcaster{hub: canvasHub},
+		Broadcaster: agentCanvasBroadcaster,
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
+	composerGraph, err := agentcomposer.NewGraph(agentcomposer.GraphConfig{
+		Runtime:     agentRuntime,
+		Store:       queries,
+		Production:  productionService,
+		Broadcaster: agentCanvasBroadcaster,
+	})
+	if err != nil {
+		slog.Error("failed to create composer graph", "error", err)
+		os.Exit(1)
+	}
+	composerExecutor := agentcomposer.NewExecutor(agentcomposer.ExecutorConfig{
+		Runtime: agentRuntime,
+		Graph:   composerGraph,
+	})
+	composerEnqueuer := agentComposerTaskEnqueuer{executor: composerExecutor}
 	craftsmanGraph, err := agentcraftsman.NewGraph(agentcraftsman.GraphConfig{
 		Loader: agentcraftsman.ContextLoader{
 			Store:   queries,
@@ -203,12 +224,48 @@ func main() {
 		Graph:   craftsmanGraph,
 	})
 	craftsmanEnqueuer := agentCraftsmanTaskEnqueuer{executor: craftsmanExecutor}
+	retryGenerationTool := agenttools.NewRetryGenerationTool(queries, agentRuntime, craftsmanEnqueuer)
+	dependencyDispatcher := agentscheduler.NewDispatcher(agentscheduler.NewDependencyScheduler(queries), agentRuntime)
+	reviewerGraph, err := agentreviewer.NewGraph(agentreviewer.GraphConfig{
+		Loader: agentreviewer.ContextLoader{
+			Store:       queries,
+			ImageReader: storageService,
+			PSSBuilder:  producerPSSBuilder,
+		},
+		Responder: agentreviewer.NewVolcengineModelResponder(agentreviewer.VolcengineModelResponderConfig{
+			APIKey:      cfg.Production.Volcengine.APIKey,
+			BaseURL:     cfg.Production.Volcengine.BaseURL,
+			Region:      cfg.Production.Volcengine.Region,
+			Model:       cfg.Production.Volcengine.TextModel,
+			MaxTokens:   1600,
+			Temperature: 0.1,
+		}),
+		Runtime:         agentRuntime,
+		Store:           queries,
+		Selector:        productionService,
+		RetryDispatcher: agentReviewerRetryDispatcher{tool: retryGenerationTool},
+		Dependency:      dependencyDispatcher,
+	})
+	if err != nil {
+		slog.Error("failed to create reviewer graph", "error", err)
+		os.Exit(1)
+	}
+	reviewerExecutor := agentreviewer.NewExecutor(agentreviewer.ExecutorConfig{
+		Runtime: agentRuntime,
+		Graph:   reviewerGraph,
+	})
+	reviewerEnqueuer := agentReviewerTaskEnqueuer{executor: reviewerExecutor}
 	agentToolRegistry, err := agenttools.NewRegistry(
 		agenttools.NewReadWorkspaceContextTool(queries),
 		agenttools.NewGetProductionStateTool(producerPSSBuilder),
 		agenttools.NewUpdateStoryboardTool(storyboardService),
-		agenttools.NewCreateAgentTextNodeTool(queries, agentCanvasNodeBroadcaster{hub: canvasHub}),
+		agenttools.NewCreateAgentTextNodeTool(queries, agentCanvasBroadcaster),
 		agenttools.NewDispatchCraftsmanTool(queries, agentRuntime, craftsmanEnqueuer),
+		agenttools.NewGenerateShotVideoTool(queries, agentRuntime, craftsmanEnqueuer),
+		agenttools.NewReviewShotTool(queries, agentRuntime, reviewerEnqueuer),
+		agenttools.NewSelectVersionTool(productionService, agentRuntime, agentCanvasBroadcaster),
+		retryGenerationTool,
+		agenttools.NewComposeFinalTool(queries, agentRuntime, composerEnqueuer),
 		agenttools.NewRequestUserDecisionTool(agenthitl.NewToolDecisionRequester(hitlService)),
 	)
 	if err != nil {
@@ -273,6 +330,8 @@ func main() {
 	}()
 	go recoverQueuedCraftsmanTasks(craftsmanExecutor, agentRuntime)
 	go recoverQueuedWorkerTasks(workerExecutor, agentRuntime)
+	go recoverQueuedReviewerTasks(reviewerExecutor, agentRuntime)
+	go recoverQueuedComposerTasks(composerExecutor, agentRuntime)
 	runHandler := api.NewRunHandler(productionService, queries, storageService)
 	modelHandler := api.NewModelHandler(queries)
 	referencePackHandler := api.NewReferencePackHandler(pgPool, queries, productionService)
@@ -352,6 +411,7 @@ func main() {
 	h.GET("/api/model-capabilities", authMiddleware, modelHandler.ListCapabilities)
 	h.GET("/api/agent/workspaces/:workspaceID/thread", authMiddleware, agentHandler.GetThread)
 	h.GET("/api/agent/workspaces/:workspaceID/messages", authMiddleware, agentHandler.ListMessages)
+	h.GET("/api/agent/workspaces/:workspaceID/production-overview", authMiddleware, agentHandler.GetProductionOverview)
 	h.GET("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.GetModelSelection)
 	h.PUT("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.PutModelSelection)
 	h.POST("/api/agent/workspaces/:workspaceID/attachments", authMiddleware, agentHandler.PostAttachment)
@@ -398,15 +458,23 @@ func main() {
 	h.Spin()
 }
 
-type agentCanvasNodeBroadcaster struct {
-	hub *api.CanvasHub
+type agentPreviewEventSink struct {
+	runtime     *agentruntime.Service
+	broadcaster *api.AgentBroadcaster
 }
 
-func (b agentCanvasNodeBroadcaster) BroadcastAgentNodeCreated(workspaceID pgtype.UUID, node db.MediaNode) {
-	if b.hub == nil {
+func (s agentPreviewEventSink) CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
+	if s.runtime == nil {
+		return db.AgentEvent{}, nil
+	}
+	return s.runtime.CreateEvent(ctx, params)
+}
+
+func (s agentPreviewEventSink) BroadcastAgentEvent(workspaceID pgtype.UUID, event db.AgentEvent) {
+	if s.broadcaster == nil || !event.ID.Valid {
 		return
 	}
-	b.hub.Broadcast(workspaceID, api.CanvasEvent{Type: "NodeCreated", Payload: map[string]any{"node": node}})
+	s.broadcaster.BroadcastAgentEvent(workspaceID, event)
 }
 
 type agentCraftsmanTaskEnqueuer struct {
@@ -423,6 +491,7 @@ func (e agentCraftsmanTaskEnqueuer) EnqueueCraftsmanTask(_ context.Context, task
 			ThreadID:    task.ThreadID,
 			TaskID:      task.ID,
 			ShotID:      task.ScopeID,
+			Input:       task.Input,
 		}); err != nil {
 			slog.Warn("failed to run craftsman task", "task_id", task.ID, "error", err)
 		}
@@ -444,6 +513,60 @@ func (e agentWorkerTaskEnqueuer) EnqueueWorkerTask(_ context.Context, task db.Ag
 	}()
 }
 
+type agentComposerTaskEnqueuer struct {
+	executor *agentcomposer.Executor
+}
+
+func (e agentComposerTaskEnqueuer) EnqueueComposerTask(_ context.Context, task db.AgentTask) {
+	if e.executor == nil {
+		return
+	}
+	go func() {
+		if err := e.executor.RunTask(context.Background(), agentcomposer.RunTaskInput{Task: task}); err != nil {
+			slog.Warn("failed to run composer task", "task_id", task.ID, "error", err)
+		}
+	}()
+}
+
+type agentReviewerTaskEnqueuer struct {
+	executor *agentreviewer.Executor
+}
+
+func (e agentReviewerTaskEnqueuer) EnqueueReviewerTask(_ context.Context, task db.AgentTask) {
+	if e.executor == nil {
+		return
+	}
+	go func() {
+		if err := e.executor.RunTask(context.Background(), agentreviewer.RunTaskInput{Task: task}); err != nil {
+			slog.Warn("failed to run reviewer task", "task_id", task.ID, "error", err)
+		}
+	}()
+}
+
+type agentReviewerRetryDispatcher struct {
+	tool agenttools.RetryGenerationTool
+}
+
+func (d agentReviewerRetryDispatcher) DispatchRetry(ctx context.Context, input agentreviewer.RetryDispatchInput) error {
+	if input.ShotRef == "" {
+		return nil
+	}
+	_, err := d.tool.Execute(ctx, agenttools.ExecuteInput{
+		WorkspaceID: input.WorkspaceID,
+		ThreadID:    input.ThreadID,
+		TaskID:      input.TaskID,
+		Arguments: map[string]any{
+			"shot_ref":         input.ShotRef,
+			"target_phase":     input.TargetPhase,
+			"review_record_id": input.ReviewID,
+			"critique":         input.Critique,
+			"fix_hints":        input.FixHints,
+			"max_attempts":     input.MaxAttempts,
+		},
+	})
+	return err
+}
+
 func recoverQueuedCraftsmanTasks(executor *agentcraftsman.Executor, runtime *agentruntime.Service) {
 	if executor == nil || runtime == nil {
 		return
@@ -459,6 +582,7 @@ func recoverQueuedCraftsmanTasks(executor *agentcraftsman.Executor, runtime *age
 			ThreadID:    task.ThreadID,
 			TaskID:      task.ID,
 			ShotID:      task.ScopeID,
+			Input:       task.Input,
 		}); err != nil {
 			slog.Warn("failed to recover queued craftsman task", "task_id", task.ID, "error", err)
 		}
@@ -477,6 +601,38 @@ func recoverQueuedWorkerTasks(executor *agentworker.Executor, runtime *agentrunt
 	for _, task := range tasks {
 		if err := executor.RunTask(context.Background(), agentworker.RunTaskInput{Task: task}); err != nil {
 			slog.Warn("failed to recover queued worker task", "task_id", task.ID, "error", err)
+		}
+	}
+}
+
+func recoverQueuedComposerTasks(executor *agentcomposer.Executor, runtime *agentruntime.Service) {
+	if executor == nil || runtime == nil {
+		return
+	}
+	tasks, err := runtime.ListQueuedComposerTasksAcrossWorkspaces(context.Background(), 50)
+	if err != nil {
+		slog.Warn("skipping queued composer recovery", "error", err)
+		return
+	}
+	for _, task := range tasks {
+		if err := executor.RunTask(context.Background(), agentcomposer.RunTaskInput{Task: task}); err != nil {
+			slog.Warn("failed to recover queued composer task", "task_id", task.ID, "error", err)
+		}
+	}
+}
+
+func recoverQueuedReviewerTasks(executor *agentreviewer.Executor, runtime *agentruntime.Service) {
+	if executor == nil || runtime == nil {
+		return
+	}
+	tasks, err := runtime.ListQueuedReviewerTasksAcrossWorkspaces(context.Background(), 50)
+	if err != nil {
+		slog.Warn("skipping queued reviewer recovery", "error", err)
+		return
+	}
+	for _, task := range tasks {
+		if err := executor.RunTask(context.Background(), agentreviewer.RunTaskInput{Task: task}); err != nil {
+			slog.Warn("failed to recover queued reviewer task", "task_id", task.ID, "error", err)
 		}
 	}
 }

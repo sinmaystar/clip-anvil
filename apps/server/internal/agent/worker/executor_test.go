@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
@@ -69,6 +70,84 @@ func TestWorkerCreatesPreviewNodeAndSubmitsGenerationIntent(t *testing.T) {
 	}
 }
 
+func TestWorkerCreatesShotVideoNodeAndSubmitsImageToVideoIntent(t *testing.T) {
+	sourceNode := db.MediaNode{
+		ID:            uuidWithByte(51),
+		WorkspaceID:   uuidWithByte(1),
+		NodeType:      db.NodeTypeImage,
+		Title:         "shot-01 preview image",
+		Status:        db.NodeStatusSucceeded,
+		Source:        "agent",
+		OperationType: "text_to_image",
+		AssetID:       uuidWithByte(61),
+	}
+	store := &fakeWorkerStore{
+		nodes: []db.MediaNode{sourceNode},
+		assets: map[pgtype.UUID]db.MediaAsset{
+			uuidWithByte(61): {
+				ID:          uuidWithByte(61),
+				WorkspaceID: uuidWithByte(1),
+				Type:        db.AssetTypeImage,
+				Mime:        "image/png",
+				StorageUrl:  pgtype.Text{String: "workspace/shot-01-preview.png", Valid: true},
+			},
+		},
+	}
+	runtime := &fakeWorkerRuntime{}
+	productionService := &fakeProductionSubmitter{
+		result: production.RunResult{
+			Node:    db.MediaNode{ID: uuidWithByte(20), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeVideo},
+			Job:     db.GenerationJob{ID: uuidWithByte(30), TargetNodeID: uuidWithByte(20), OperationType: "image_to_video", Status: db.JobStatusQueued},
+			Version: db.ArtifactVersion{ID: uuidWithByte(40), NodeID: uuidWithByte(20), JobID: uuidWithByte(30), Status: db.JobStatusQueued},
+		},
+	}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Store: store, Production: productionService})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:              "shot_video",
+		ShotID:            uuidString(uuidWithByte(2)),
+		ShotClientKey:     "shot-01",
+		ShotSortOrder:     1,
+		CraftsmanThreadID: uuidString(uuidWithByte(3)),
+		CraftsmanTaskID:   uuidString(uuidWithByte(4)),
+		Strategy:          "产品开场动态镜头",
+		Prompt:            "Animate the accepted preview into a smooth 4-second product shot",
+		InputNodeRefs:     []string{"shot-01 preview image"},
+		Model:             ModelSpec{Provider: "mock", ModelID: "mock-video"},
+		Params:            map[string]any{"duration_sec": float64(4)},
+		MaxAttempts:       3,
+	})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if store.createdNode.NodeType != db.NodeTypeVideo || store.createdNode.OperationType != "image_to_video" {
+		t.Fatalf("created node = %#v", store.createdNode)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(store.createdNode.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["agent_artifact_kind"] != "shot_video" || metadata["source_phase"] != "preview_image" {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+	intent := productionService.intent
+	if intent.OutputType != "video" || intent.OperationType != "image_to_video" {
+		t.Fatalf("intent = %#v", intent)
+	}
+	if len(intent.InputRefs) != 1 || intent.InputRefs[0].NodeID != sourceNode.ID {
+		t.Fatalf("input refs = %#v", intent.InputRefs)
+	}
+	if len(store.createdEdges) != 1 || store.createdEdges[0].FromNodeID != sourceNode.ID || store.createdEdges[0].ToNodeID != uuidWithByte(20) {
+		t.Fatalf("created edges = %#v", store.createdEdges)
+	}
+	if !runtime.hasEvent("shot_video_submitted") {
+		t.Fatalf("events = %#v", runtime.events)
+	}
+	if runtime.succeededOutput.OperationType != "image_to_video" {
+		t.Fatalf("output = %#v", runtime.succeededOutput)
+	}
+}
+
 func TestWorkerBroadcastsCreatedPreviewNode(t *testing.T) {
 	store := &fakeWorkerStore{}
 	broadcaster := &fakeWorkerNodeBroadcaster{}
@@ -102,10 +181,10 @@ func TestWorkerLaysOutPreviewNodesByShotOrder(t *testing.T) {
 		wantY     float32
 	}{
 		{key: "shot-01", sortOrder: 1, wantX: 140, wantY: 140},
-		{key: "shot-02", sortOrder: 2, wantX: 520, wantY: 140},
-		{key: "shot-03", sortOrder: 3, wantX: 900, wantY: 140},
-		{key: "shot-04", sortOrder: 4, wantX: 140, wantY: 440},
-		{key: "shot-05", sortOrder: 5, wantX: 520, wantY: 440},
+		{key: "shot-02", sortOrder: 2, wantX: 660, wantY: 140},
+		{key: "shot-03", sortOrder: 3, wantX: 1180, wantY: 140},
+		{key: "shot-04", sortOrder: 4, wantX: 140, wantY: 1040},
+		{key: "shot-05", sortOrder: 5, wantX: 660, wantY: 1040},
 	} {
 		t.Run(input.key, func(t *testing.T) {
 			store := &fakeWorkerStore{}
@@ -137,12 +216,18 @@ func TestPreviewNodeLayoutKeepsReadableGap(t *testing.T) {
 	firstX, firstY := previewNodePosition(GenerationInput{ShotSortOrder: 1})
 	secondX, secondY := previewNodePosition(GenerationInput{ShotSortOrder: 2})
 	fourthX, fourthY := previewNodePosition(GenerationInput{ShotSortOrder: 4})
+	_, firstVideoY := nodePosition(GenerationInput{Mode: "shot_video", ShotSortOrder: 1})
 
-	if horizontalGap := secondX - firstX - 320; horizontalGap < 56 {
-		t.Fatalf("horizontal gap = %v, want at least 56", horizontalGap)
+	const maxRenderedImageWidth = 380
+	const maxRenderedImageHeight = 420
+	if horizontalGap := secondX - firstX - maxRenderedImageWidth; horizontalGap < 96 {
+		t.Fatalf("horizontal gap = %v, want at least 96", horizontalGap)
 	}
-	if verticalGap := fourthY - firstY - 220; verticalGap < 64 {
-		t.Fatalf("vertical gap = %v, want at least 64", verticalGap)
+	if previewToVideoGap := firstVideoY - firstY - maxRenderedImageHeight; previewToVideoGap < 48 {
+		t.Fatalf("preview to video gap = %v, want at least 48", previewToVideoGap)
+	}
+	if verticalGap := fourthY - firstY - maxRenderedImageHeight; verticalGap < 96 {
+		t.Fatalf("vertical gap = %v, want at least 96", verticalGap)
 	}
 	if secondY != firstY || fourthX != firstX {
 		t.Fatalf("grid alignment broken: first=(%v,%v) second=(%v,%v) fourth=(%v,%v)", firstX, firstY, secondX, secondY, fourthX, fourthY)
@@ -178,6 +263,62 @@ func TestWorkerUsesExistingTargetNodeWhenProvided(t *testing.T) {
 	}
 }
 
+func TestWorkerResolvesInputNodeRefsIntoGenerationIntentAndEdges(t *testing.T) {
+	sourceNode := db.MediaNode{
+		ID:            uuidWithByte(51),
+		WorkspaceID:   uuidWithByte(1),
+		NodeType:      db.NodeTypeImage,
+		Title:         "product.png",
+		Status:        db.NodeStatusSucceeded,
+		Source:        "agent",
+		OperationType: "upload",
+		AssetID:       uuidWithByte(61),
+	}
+	store := &fakeWorkerStore{
+		nodes: []db.MediaNode{sourceNode},
+		assets: map[pgtype.UUID]db.MediaAsset{
+			uuidWithByte(61): {
+				ID:          uuidWithByte(61),
+				WorkspaceID: uuidWithByte(1),
+				Type:        db.AssetTypeImage,
+				Mime:        "image/png",
+				StorageUrl:  pgtype.Text{String: "workspace/product.png", Valid: true},
+			},
+		},
+	}
+	productionService := &fakeProductionSubmitter{result: production.RunResult{
+		Node:    db.MediaNode{ID: uuidWithByte(20), WorkspaceID: uuidWithByte(1)},
+		Job:     db.GenerationJob{ID: uuidWithByte(30)},
+		Version: db.ArtifactVersion{ID: uuidWithByte(40)},
+	}}
+	executor := NewExecutor(ExecutorConfig{Runtime: &fakeWorkerRuntime{}, Store: store, Production: productionService})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:          "preview_image",
+		ShotID:        uuidString(uuidWithByte(2)),
+		ShotClientKey: "shot-01",
+		Prompt:        "use the product reference",
+		InputNodeRefs: []string{"product.png"},
+		MaxAttempts:   3,
+	})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	refs := productionService.intent.InputRefs
+	if len(refs) != 1 {
+		t.Fatalf("input refs = %#v", refs)
+	}
+	if refs[0].NodeID != sourceNode.ID || refs[0].Kind != production.InputKindExplicit || refs[0].AssetID != uuidString(uuidWithByte(61)) {
+		t.Fatalf("input ref = %#v", refs[0])
+	}
+	if len(store.createdEdges) != 1 {
+		t.Fatalf("created edges = %#v", store.createdEdges)
+	}
+	if store.createdEdges[0].FromNodeID != sourceNode.ID || store.createdEdges[0].ToNodeID != uuidWithByte(20) {
+		t.Fatalf("created edge = %#v", store.createdEdges[0])
+	}
+}
+
 func TestWorkerRetriesSynchronousSubmitFailure(t *testing.T) {
 	store := &fakeWorkerStore{}
 	runtime := &fakeWorkerRuntime{}
@@ -209,6 +350,31 @@ func TestWorkerRetriesSynchronousSubmitFailure(t *testing.T) {
 	}
 }
 
+func TestWorkerMarksShotFailedWhenSynchronousSubmitFails(t *testing.T) {
+	store := &fakeWorkerStore{}
+	runtime := &fakeWorkerRuntime{}
+	productionService := &fakeProductionSubmitter{
+		failuresBeforeSuccess: 3,
+	}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Store: store, Production: productionService})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:        "preview_image",
+		ShotID:      uuidString(uuidWithByte(2)),
+		Prompt:      "prompt",
+		MaxAttempts: 3,
+	})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err == nil {
+		t.Fatal("RunTask succeeded, want failure")
+	}
+	if len(store.statusUpdates) != 1 {
+		t.Fatalf("status updates = %#v", store.statusUpdates)
+	}
+	if store.statusUpdates[0].ID != uuidWithByte(2) || store.statusUpdates[0].Status != "failed" {
+		t.Fatalf("status update = %#v", store.statusUpdates[0])
+	}
+}
+
 func workerTaskWithInput(t *testing.T, input GenerationInput) db.AgentTask {
 	t.Helper()
 	raw, err := json.Marshal(input)
@@ -236,6 +402,7 @@ func uuidWithByte(b byte) pgtype.UUID {
 type fakeWorkerRuntime struct {
 	succeeded       bool
 	succeededOutput GenerationOutput
+	events          []agentruntime.CreateEventParams
 }
 
 func (f *fakeWorkerRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
@@ -252,14 +419,29 @@ func (f *fakeWorkerRuntime) MarkTaskFailed(context.Context, pgtype.UUID, string,
 	return db.AgentTask{}, nil
 }
 
-func (f *fakeWorkerRuntime) CreateEvent(context.Context, agentruntime.CreateEventParams) (db.AgentEvent, error) {
+func (f *fakeWorkerRuntime) CreateEvent(_ context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
+	f.events = append(f.events, params)
 	return db.AgentEvent{}, nil
+}
+
+func (f *fakeWorkerRuntime) hasEvent(eventType string) bool {
+	for _, event := range f.events {
+		if event.EventType == eventType {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeWorkerStore struct {
 	createdNode     db.CreateAgentGenerationNodeParams
 	createNodeCalls int
 	existingNode    db.MediaNode
+	nodes           []db.MediaNode
+	assets          map[pgtype.UUID]db.MediaAsset
+	existingEdges   map[[2]pgtype.UUID]db.MediaEdge
+	createdEdges    []db.CreateMediaEdgeParams
+	statusUpdates   []db.UpdateShotStatusParams
 }
 
 type fakeWorkerNodeBroadcaster struct {
@@ -290,6 +472,48 @@ func (f *fakeWorkerStore) CreateAgentGenerationNode(_ context.Context, params db
 
 func (f *fakeWorkerStore) GetMediaNodeByID(context.Context, pgtype.UUID) (db.MediaNode, error) {
 	return f.existingNode, nil
+}
+
+func (f *fakeWorkerStore) ListMediaNodesByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error) {
+	out := []db.MediaNode{}
+	for _, node := range f.nodes {
+		if node.WorkspaceID == workspaceID {
+			out = append(out, node)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeWorkerStore) GetMediaAssetByID(_ context.Context, id pgtype.UUID) (db.MediaAsset, error) {
+	asset, ok := f.assets[id]
+	if !ok {
+		return db.MediaAsset{}, errors.New("asset not found")
+	}
+	return asset, nil
+}
+
+func (f *fakeWorkerStore) GetArtifactVersionByID(context.Context, pgtype.UUID) (db.ArtifactVersion, error) {
+	return db.ArtifactVersion{}, errors.New("version not found")
+}
+
+func (f *fakeWorkerStore) GetDependencyEdgeByEndpoints(_ context.Context, params db.GetDependencyEdgeByEndpointsParams) (db.MediaEdge, error) {
+	if f.existingEdges != nil {
+		edge, ok := f.existingEdges[[2]pgtype.UUID{params.FromNodeID, params.ToNodeID}]
+		if ok {
+			return edge, nil
+		}
+	}
+	return db.MediaEdge{}, pgx.ErrNoRows
+}
+
+func (f *fakeWorkerStore) CreateMediaEdge(_ context.Context, params db.CreateMediaEdgeParams) (db.MediaEdge, error) {
+	f.createdEdges = append(f.createdEdges, params)
+	return db.MediaEdge{WorkspaceID: params.WorkspaceID, FromNodeID: params.FromNodeID, ToNodeID: params.ToNodeID}, nil
+}
+
+func (f *fakeWorkerStore) UpdateShotStatus(_ context.Context, params db.UpdateShotStatusParams) (db.Shot, error) {
+	f.statusUpdates = append(f.statusUpdates, params)
+	return db.Shot{ID: params.ID, WorkspaceID: params.WorkspaceID, Status: params.Status}, nil
 }
 
 type fakeProductionSubmitter struct {

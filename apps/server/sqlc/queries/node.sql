@@ -167,6 +167,15 @@ WHERE workspace_id = $1
   AND shot_id = $2
 ORDER BY created_at;
 
+-- name: ListSourceMaterialNodesByWorkspace :many
+SELECT *
+FROM media_node
+WHERE workspace_id = $1
+  AND asset_id IS NOT NULL
+  AND source = 'agent'
+  AND operation_type = 'upload'
+ORDER BY created_at;
+
 -- name: ClearMediaNodeGroup :one
 UPDATE media_node
 SET group_id = NULL,

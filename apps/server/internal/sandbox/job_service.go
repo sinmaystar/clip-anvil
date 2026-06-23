@@ -55,6 +55,12 @@ type ExtractFrameInput struct {
 	Mode         FrameMode
 }
 
+type ComposeVideosInput struct {
+	WorkspaceID  pgtype.UUID
+	TargetNodeID pgtype.UUID
+	Sources      []SandboxAssetInput
+}
+
 type RemoteAssetInput struct {
 	WorkspaceID  pgtype.UUID
 	TargetNodeID pgtype.UUID
@@ -366,6 +372,183 @@ func (s *JobService) ExtractFrame(ctx context.Context, input ExtractFrameInput) 
 	return SandboxJobResult{Job: job, Exec: execResult, Asset: asset, MIME: info.Mime, Size: info.SizeBytes}, nil
 }
 
+func (s *JobService) ComposeVideos(ctx context.Context, input ComposeVideosInput) (SandboxJobResult, error) {
+	if s.manager == nil || s.client == nil || s.repo == nil || s.storage == nil {
+		return SandboxJobResult{}, errors.New("sandbox video composition is not configured")
+	}
+	if len(input.Sources) == 0 {
+		return SandboxJobResult{}, errors.New("compose videos requires at least one source")
+	}
+	inputJSON, err := json.Marshal(map[string]any{"source_count": len(input.Sources)})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	job, err := s.repo.CreateSandboxJob(ctx, db.CreateSandboxJobParams{
+		WorkspaceID:   input.WorkspaceID,
+		TargetNodeID:  input.TargetNodeID,
+		JobType:       "internal_media",
+		OperationType: "compose_final_video",
+		Input:         inputJSON,
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	workspaceSandbox, err := s.manager.EnsureSandbox(ctx, input.WorkspaceID)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_unavailable", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+	if err := EnsureWorkspaceLayout(ctx, s.client, workspaceSandbox.SandboxID); err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_layout_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+	sourcePaths := make([]string, 0, len(input.Sources))
+	for index, source := range input.Sources {
+		sourceKey, err := storage.KeyFromStorageURL(input.WorkspaceID, source.StorageURL)
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_input_invalid", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed}, err
+		}
+		getURL, err := s.storage.PresignedSandboxGetURL(ctx, input.WorkspaceID, sourceKey, time.Hour)
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_input_presign_failed", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed}, err
+		}
+		sourcePath := path.Join(AssetsDir, fmt.Sprintf("compose-%02d-%s%s", index+1, safePathComponent(source.AssetID), extensionForMIME(source.Mime)))
+		downloadResult, err := DownloadFromMinIO(ctx, s.client, workspaceSandbox.SandboxID, getURL, sourcePath)
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_input_download_failed", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: downloadResult}, err
+		}
+		if downloadResult.ExitCode != 0 {
+			message := strings.TrimSpace(downloadResult.Stderr)
+			failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_input_download_failed", message, nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: downloadResult}, fmt.Errorf("sandbox input download failed: %s", message)
+		}
+		sourcePaths = append(sourcePaths, sourcePath)
+	}
+
+	outputPath := path.Join(OutputDir, "final-"+uuidString(job.ID)+".mp4")
+	command := composeVideosCommand(sourcePaths, outputPath, path.Join(AssetsDir, "concat-"+uuidString(job.ID)+".txt"))
+	job, err = s.repo.MarkSandboxJobRunning(ctx, db.MarkSandboxJobRunningParams{
+		ID:        job.ID,
+		SandboxID: pgtype.Text{String: workspaceSandbox.SandboxID, Valid: true},
+		Command:   command,
+		Cwd:       DefaultWorkdir,
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	execResult, err := RunExec(ctx, s.client, workspaceSandbox.SandboxID, ExecInput{
+		Command:        command,
+		Cwd:            DefaultWorkdir,
+		TimeoutSeconds: MaxExecTimeoutSeconds,
+	})
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_ffmpeg_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: execResult}, err
+	}
+	if execResult.ExitCode != 0 {
+		message := strings.TrimSpace(execResult.Stderr)
+		failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_ffmpeg_failed", message, nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: execResult}, fmt.Errorf("sandbox ffmpeg failed: %s", message)
+	}
+	info, err := InspectArtifact(ctx, s.client, workspaceSandbox.SandboxID, outputPath)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_output_inspect_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: execResult}, err
+	}
+	if info.Mime != "video/mp4" {
+		err := fmt.Errorf("unexpected composed video MIME %q", info.Mime)
+		failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_output_invalid", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: execResult}, err
+	}
+	objectKey := "production/" + uuidString(input.TargetNodeID) + "/" + uuidString(job.ID) + ".mp4"
+	if err := s.storage.EnsureBucket(ctx, input.WorkspaceID); err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_output_upload_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: execResult}, err
+	}
+	putURL, err := s.storage.PresignedSandboxPutURL(ctx, input.WorkspaceID, objectKey, time.Hour)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, execResult, "sandbox_output_upload_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: execResult}, err
+	}
+	uploadResult, err := UploadToMinIO(ctx, s.client, workspaceSandbox.SandboxID, outputPath, putURL)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, uploadResult, "sandbox_output_upload_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: uploadResult}, err
+	}
+	if uploadResult.ExitCode != 0 {
+		message := strings.TrimSpace(uploadResult.Stderr)
+		failed, failErr := s.markFailed(ctx, job.ID, uploadResult, "sandbox_output_upload_failed", message, nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: uploadResult}, fmt.Errorf("sandbox output upload failed: %s", message)
+	}
+	asset := ArtifactObject{StorageURL: s.storage.StorageURL(input.WorkspaceID, objectKey)}
+	outputJSON, err := json.Marshal(map[string]any{
+		"output_path": outputPath,
+		"storage_url": asset.StorageURL,
+		"mime":        info.Mime,
+		"size_bytes":  info.SizeBytes,
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	job, err = s.repo.MarkSandboxJobSucceeded(ctx, db.MarkSandboxJobSucceededParams{
+		ID:         job.ID,
+		Output:     outputJSON,
+		ExitCode:   pgtype.Int4{Int32: int32(execResult.ExitCode), Valid: true},
+		Stdout:     execResult.Stdout,
+		Stderr:     execResult.Stderr,
+		DurationMs: int32(execResult.DurationMS),
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	return SandboxJobResult{Job: job, Exec: execResult, Asset: asset, MIME: info.Mime, Size: info.SizeBytes}, nil
+}
+
 func (s *JobService) ImportRemoteAsset(ctx context.Context, input RemoteAssetInput) (SandboxJobResult, error) {
 	if s.manager == nil || s.client == nil || s.repo == nil || s.storage == nil {
 		return SandboxJobResult{}, errors.New("sandbox remote asset import is not configured")
@@ -602,6 +785,17 @@ func frameExtractCommand(sourcePath string, outputPath string, mode FrameMode) s
 	return strings.Join(args, " ")
 }
 
+func composeVideosCommand(sourcePaths []string, outputPath string, concatListPath string) string {
+	var list strings.Builder
+	for _, sourcePath := range sourcePaths {
+		fmt.Fprintf(&list, "file %s\n", shellQuote(sourcePath))
+	}
+	return "cat > " + shellQuote(concatListPath) + " <<'EOF'\n" +
+		list.String() +
+		"EOF\n" +
+		"ffmpeg -y -f concat -safe 0 -i " + shellQuote(concatListPath) + " -c copy " + shellQuote(outputPath)
+}
+
 func normalizeFrameMode(mode FrameMode) (FrameMode, error) {
 	switch mode {
 	case FrameFirst, "":
@@ -619,6 +813,14 @@ func safeInputName(assetID string, mime string) string {
 		name = "input"
 	}
 	return name + extensionForMIME(mime)
+}
+
+func safePathComponent(value string) string {
+	name := SafeAssetName(strings.TrimSpace(value))
+	if name == "" {
+		return "input"
+	}
+	return name
 }
 
 func extensionForMIME(mime string) string {

@@ -30,6 +30,13 @@ WHERE workspace_id = $1
   AND status = $2
 ORDER BY created_at DESC;
 
+-- name: ListAgentEventsByWorkspace :many
+SELECT *
+FROM agent_event
+WHERE workspace_id = $1
+ORDER BY created_at DESC
+LIMIT $2;
+
 -- name: MarkAgentEventHandled :one
 UPDATE agent_event
 SET status = 'handled',

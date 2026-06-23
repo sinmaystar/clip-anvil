@@ -17,6 +17,7 @@
     "src/lib/agentMessageBlocks.ts",
     "src/lib/agentMessages.ts",
     "src/lib/agentModelSelection.ts",
+    "src/lib/agentProductionOverview.ts",
     "src/lib/agentStreaming.ts",
     "src/lib/agentThinking.ts",
     "src/lib/apiErrors.ts",

@@ -77,6 +77,35 @@ describe("agent readonly canvas", () => {
     assert.doesNotMatch(readonlyShapeSource, /media-node-expand-button/);
   });
 
+  it("renders readonly video nodes as playable media with poster support", async () => {
+    const readonlyShapeSource = await readFile(
+      new URL(
+        "../shapes/AgentReadonlyMediaShapeUtil.tsx",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    assert.match(readonlyShapeSource, /nodeType === "video"/);
+    assert.match(readonlyShapeSource, /<video/);
+    assert.match(readonlyShapeSource, /controls/);
+    assert.match(readonlyShapeSource, /poster=\{previewThumbnailUrl \|\| thumbnailUrl\}/);
+    assert.match(readonlyShapeSource, /src=\{previewAssetUrl\}/);
+  });
+
+  it("keeps readonly video controls interactive while disabling image drag", async () => {
+    const css = await readFile(new URL("../main.css", import.meta.url), "utf8");
+
+    assert.match(
+      css,
+      /\.agent-readonly-tldraw\s+\.media-node-media-frame\s+img\s*{[\s\S]*pointer-events:\s*none/,
+    );
+    assert.doesNotMatch(
+      css,
+      /\.agent-readonly-tldraw\s+\.media-node-media-frame\s+video\s*{[\s\S]*pointer-events:\s*none/,
+    );
+  });
+
   it("temporarily opens the readonly store only while applying remote canvas snapshots", async () => {
     const source = await readFile(
       new URL("../components/agent/AgentReadonlyCanvas.tsx", import.meta.url),
@@ -88,6 +117,68 @@ describe("agent readonly canvas", () => {
     assert.match(source, /readonlyCollaborationMode\.set\("readonly"\)/);
   });
 
+  it("updates locked readonly shapes when remote canvas snapshots change", async () => {
+    const source = await readFile(
+      new URL("../components/agent/AgentReadonlyCanvas.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /ignoreShapeLock:\s*true/);
+  });
+
+  it("skips tldraw shape updates when the readonly snapshot is unchanged", async () => {
+    const source = await readFile(
+      new URL("../components/agent/AgentReadonlyCanvas.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /readonlyShapeChanged/);
+    assert.match(source, /JSON\.stringify/);
+    assert.match(source, /readonlyShapeChanged\(existing, shape\)/);
+  });
+
+  it("syncs readonly arrow bindings so edge lines stay attached to nodes", async () => {
+    const source = await readFile(
+      new URL("../components/agent/AgentReadonlyCanvas.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /edgeBindings/);
+    assert.match(source, /syncReadonlyArrowBinding/);
+    assert.match(source, /getBindingsFromShape\(binding\.fromId,\s*"arrow"\)/);
+    assert.match(source, /createBinding\(binding\)/);
+    assert.match(source, /updateBinding/);
+  });
+
+  it("ignores presigned URL query churn when comparing readonly shapes", async () => {
+    const source = await readFile(
+      new URL("../components/agent/AgentReadonlyCanvas.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /readonlyComparableShapeValue/);
+    assert.match(source, /stableReadonlyAssetURL/);
+    assert.match(source, /previewAssetUrl/);
+    assert.match(source, /previewThumbnailUrl/);
+    assert.match(source, /thumbnailUrl/);
+    assert.match(source, /\.search = ""/);
+    assert.match(source, /\.hash = ""/);
+  });
+
+  it("does not repeatedly zoom-to-fit when only production status changes", async () => {
+    const source = await readFile(
+      new URL("../components/agent/AgentReadonlyCanvas.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /lastFitSignatureRef/);
+    assert.match(source, /readonlyFitSignature/);
+    assert.match(source, /signature === lastFitSignatureRef\.current/);
+    assert.match(source, /\.map\(\(node\) =>\s*\[\s*node\.id/);
+    assert.doesNotMatch(source, /readonlyFitSignature[\s\S]{0,800}current_version_id/);
+    assert.doesNotMatch(source, /readonlyFitSignature[\s\S]{0,800}status/);
+  });
+
   it("agent workspace no longer renders text-only node cards", async () => {
     const source = await readFile(
       new URL("../pages/AgentWorkspacePage.tsx", import.meta.url),
@@ -96,6 +187,18 @@ describe("agent readonly canvas", () => {
 
     assert.doesNotMatch(source, /agent-node-card/);
     assert.match(source, /AgentReadonlyCanvas/);
+  });
+
+  it("applies a readonly automatic layout before rendering agent canvas snapshots", async () => {
+    const source = await readFile(
+      new URL("../pages/AgentWorkspacePage.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /computeDagreLayout/);
+    assert.match(source, /readonlyAutoLayoutCanvas/);
+    assert.match(source, /direction:\s*"TB"/);
+    assert.match(source, /canvas=\{readonlyCanvas\}/);
   });
 
   it("canvas interactions do not collapse the floating chat panel", async () => {
@@ -190,5 +293,52 @@ describe("agent readonly canvas", () => {
     assert.match(source, /nodeStatusForGenerationStatus/);
     assert.match(source, /updateCanvasNodeStatus/);
     assert.match(source, /event\.payload\.node_id/);
+  });
+
+  it("forces a canvas refetch after terminal production websocket events", async () => {
+    const source = await readFile(
+      new URL("../pages/AgentWorkspacePage.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /isTerminalGenerationStatus/);
+    assert.match(source, /queryClient\.refetchQueries\(\{\s*queryKey:\s*\["workspace",\s*id,\s*"canvas"\]/);
+  });
+
+  it("does not refetch the full agent canvas for non-terminal production websocket events", async () => {
+    const source = await readFile(
+      new URL("../pages/AgentWorkspacePage.tsx", import.meta.url),
+      "utf8",
+    );
+
+    const productionCase = source.match(
+      /case "production\.job\.updated":[\s\S]*?case "production\.model\.delta":[\s\S]*?break;/,
+    )?.[0];
+
+    assert.ok(productionCase, "expected production websocket case");
+    assert.match(productionCase, /isTerminalGenerationStatus/);
+    assert.doesNotMatch(productionCase, /refreshCanvas\(\)/);
+    assert.doesNotMatch(productionCase, /invalidateQueries\(\{\s*queryKey:\s*\["workspace",\s*id,\s*"canvas"\]/);
+  });
+
+  it("refreshes agent canvas after the websocket first connects", async () => {
+    const source = await readFile(
+      new URL("../pages/AgentWorkspacePage.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /onStatusChange:\s*\(status\)\s*=>\s*\{/);
+    assert.match(source, /status\s*===\s*"connected"[\s\S]{0,80}refreshCanvas\(\)/);
+  });
+
+  it("polls agent canvas while async production previews are incomplete", async () => {
+    const source = await readFile(
+      new URL("../pages/AgentWorkspacePage.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /refetchInterval:\s*\(query\)\s*=>/);
+    assert.match(source, /canvasConnectionStatus\s*!==\s*"connected"/);
+    assert.match(source, /shouldPollCanvasForProductionUpdates\(query\.state\.data\)/);
   });
 });

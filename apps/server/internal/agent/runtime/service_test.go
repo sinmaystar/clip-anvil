@@ -99,7 +99,7 @@ func TestCreateTaskRejectsInvalidAttempts(t *testing.T) {
 	}
 }
 
-func TestCreateTaskAllowsCraftsmanAndWorkerTaskTypes(t *testing.T) {
+func TestCreateTaskAllowsScopedAgentTaskTypes(t *testing.T) {
 	svc, err := NewService(&fakeBeginner{}, db.New(fakeDBTX{}))
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +114,8 @@ func TestCreateTaskAllowsCraftsmanAndWorkerTaskTypes(t *testing.T) {
 	}{
 		{role: "craftsman", taskType: "craftsman_turn"},
 		{role: "worker", taskType: "worker_generation"},
+		{role: "reviewer", taskType: "reviewer_turn"},
+		{role: "system", taskType: "dependency_scheduler"},
 	}
 	for _, tc := range cases {
 		task, err := svc.CreateTask(context.Background(), CreateTaskParams{
@@ -131,6 +133,29 @@ func TestCreateTaskAllowsCraftsmanAndWorkerTaskTypes(t *testing.T) {
 		if task.TaskType != tc.taskType {
 			t.Fatalf("task type = %q, want %q", task.TaskType, tc.taskType)
 		}
+	}
+}
+
+func TestCreateTaskAllowsComposerTurn(t *testing.T) {
+	svc, err := NewService(&fakeBeginner{}, db.New(fakeDBTX{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	task, err := svc.CreateTask(context.Background(), CreateTaskParams{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		Role:        "composer",
+		ScopeType:   "final_output",
+		TaskType:    "composer_turn",
+		MaxAttempts: 1,
+		Input:       []byte(`{"shot_ids":["shot-01"]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Role != "composer" || task.TaskType != "composer_turn" {
+		t.Fatalf("task = %#v", task)
 	}
 }
 

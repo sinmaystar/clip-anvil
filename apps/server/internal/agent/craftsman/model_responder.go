@@ -23,9 +23,12 @@ func ParseStrategy(raw string) (Strategy, error) {
 	var decoded struct {
 		Strategy       string         `json:"strategy"`
 		PreviewPrompt  string         `json:"preview_prompt"`
+		VideoPrompt    string         `json:"video_prompt"`
 		NegativePrompt string         `json:"negative_prompt"`
 		StyleNotes     any            `json:"style_notes"`
 		InputNodeRefs  any            `json:"input_node_refs"`
+		OutputType     string         `json:"output_type"`
+		OperationType  string         `json:"operation_type"`
 		Model          any            `json:"model"`
 		Params         map[string]any `json:"params"`
 	}
@@ -35,9 +38,12 @@ func ParseStrategy(raw string) (Strategy, error) {
 	strategy := Strategy{
 		Strategy:       decoded.Strategy,
 		PreviewPrompt:  decoded.PreviewPrompt,
+		VideoPrompt:    decoded.VideoPrompt,
 		NegativePrompt: decoded.NegativePrompt,
 		StyleNotes:     flexibleStringSlice(decoded.StyleNotes),
 		InputNodeRefs:  flexibleStringSlice(decoded.InputNodeRefs),
+		OutputType:     decoded.OutputType,
+		OperationType:  decoded.OperationType,
 		Model:          flexibleModelSpec(decoded.Model),
 		Params:         decoded.Params,
 	}
@@ -51,13 +57,23 @@ func ParseStrategy(raw string) (Strategy, error) {
 }
 
 func ValidateStrategy(strategy Strategy) error {
-	if strings.TrimSpace(strategy.Strategy) == "" || strings.TrimSpace(strategy.PreviewPrompt) == "" {
-		return fmt.Errorf("%w: strategy and preview_prompt are required", ErrInvalidStrategy)
+	if strings.TrimSpace(strategy.Strategy) == "" || (strings.TrimSpace(strategy.PreviewPrompt) == "" && strings.TrimSpace(strategy.VideoPrompt) == "") {
+		return fmt.Errorf("%w: strategy and generation prompt are required", ErrInvalidStrategy)
 	}
 	for _, ref := range strategy.InputNodeRefs {
 		if strings.TrimSpace(ref) == "" {
 			return fmt.Errorf("%w: input_node_refs cannot contain empty values", ErrInvalidStrategy)
 		}
+	}
+	return nil
+}
+
+func ValidateStrategyForMode(strategy Strategy, mode string) error {
+	if err := ValidateStrategy(strategy); err != nil {
+		return err
+	}
+	if mode == "shot_video" && strings.TrimSpace(strategyPrompt(strategy, mode)) == "" {
+		return fmt.Errorf("%w: video prompt is required", ErrInvalidStrategy)
 	}
 	return nil
 }

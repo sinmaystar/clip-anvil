@@ -324,7 +324,7 @@ CREATE TABLE model_capability (
 );
 ```
 
-当前 provider 包括 `mock`、`volcengine` 和 `internal_ffmpeg`。Volcengine 当前启用文本 `doubao-seed-2-0-mini-260428`、图片 `doubao-seedream-5-0-260128`、视频 `doubao-seedance-1-0-pro-fast-251015`；音频模型记录为 hold/disabled。
+当前 provider 包括 `mock`、`volcengine` 和 `internal_ffmpeg`。Volcengine 当前启用文本 `doubao-seed-2-0-mini-260428`、`doubao-seed-2-0-pro-260215`、`doubao-seed-2-0-lite-260428`、`doubao-seed-2-1-turbo-260628`、`doubao-seed-2-1-pro-260628`，图片 `doubao-seedream-5-0-260128`，视频 `doubao-seedance-1-0-pro-fast-251015`；音频模型记录为 hold/disabled。
 
 ### 2.14 node_stale_reason — Stale 原因
 

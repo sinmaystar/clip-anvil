@@ -124,6 +124,52 @@ func (q *Queries) GetAgentEventForWorkspace(ctx context.Context, arg GetAgentEve
 	return i, err
 }
 
+const listAgentEventsByWorkspace = `-- name: ListAgentEventsByWorkspace :many
+SELECT id, workspace_id, thread_id, task_id, event_type, source_role, target_role, scope, payload, status, created_at, handled_at
+FROM agent_event
+WHERE workspace_id = $1
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type ListAgentEventsByWorkspaceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListAgentEventsByWorkspace(ctx context.Context, arg ListAgentEventsByWorkspaceParams) ([]AgentEvent, error) {
+	rows, err := q.db.Query(ctx, listAgentEventsByWorkspace, arg.WorkspaceID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentEvent{}
+	for rows.Next() {
+		var i AgentEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ThreadID,
+			&i.TaskID,
+			&i.EventType,
+			&i.SourceRole,
+			&i.TargetRole,
+			&i.Scope,
+			&i.Payload,
+			&i.Status,
+			&i.CreatedAt,
+			&i.HandledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentEventsByWorkspaceStatus = `-- name: ListAgentEventsByWorkspaceStatus :many
 SELECT id, workspace_id, thread_id, task_id, event_type, source_role, target_role, scope, payload, status, created_at, handled_at
 FROM agent_event

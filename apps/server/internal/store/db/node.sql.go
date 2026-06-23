@@ -637,6 +637,62 @@ func (q *Queries) ListMediaNodesByWorkspace(ctx context.Context, workspaceID pgt
 	return items, nil
 }
 
+const listSourceMaterialNodesByWorkspace = `-- name: ListSourceMaterialNodesByWorkspace :many
+SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+FROM media_node
+WHERE workspace_id = $1
+  AND asset_id IS NOT NULL
+  AND source = 'agent'
+  AND operation_type = 'upload'
+ORDER BY created_at
+`
+
+func (q *Queries) ListSourceMaterialNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]MediaNode, error) {
+	rows, err := q.db.Query(ctx, listSourceMaterialNodesByWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MediaNode{}
+	for rows.Next() {
+		var i MediaNode
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.NodeType,
+			&i.Title,
+			&i.Status,
+			&i.Prompt,
+			&i.Source,
+			&i.CanvasX,
+			&i.CanvasY,
+			&i.CanvasW,
+			&i.CanvasH,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.GroupID,
+			&i.AssetID,
+			&i.OperationType,
+			&i.PromptTemplate,
+			&i.PromptRich,
+			&i.PromptRefs,
+			&i.ModelProvider,
+			&i.ModelID,
+			&i.ModelParams,
+			&i.CurrentVersionID,
+			&i.Metadata,
+			&i.ShotID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUpstreamDependencyNodes = `-- name: ListUpstreamDependencyNodes :many
 SELECT media_node.id, media_node.workspace_id, media_node.node_type, media_node.title, media_node.status, media_node.prompt, media_node.source, media_node.canvas_x, media_node.canvas_y, media_node.canvas_w, media_node.canvas_h, media_node.created_at, media_node.updated_at, media_node.group_id, media_node.asset_id, media_node.operation_type, media_node.prompt_template, media_node.prompt_rich, media_node.prompt_refs, media_node.model_provider, media_node.model_id, media_node.model_params, media_node.current_version_id, media_node.metadata, media_node.shot_id
 FROM media_node

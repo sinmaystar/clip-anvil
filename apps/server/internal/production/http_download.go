@@ -39,12 +39,30 @@ func downloadProviderAsset(ctx context.Context, client *http.Client, url string,
 	if int64(len(data)) > maxBytes {
 		return nil, "", fmt.Errorf("%w: provider output exceeds max bytes", ErrProviderExecution)
 	}
-	mime := http.DetectContentType(data)
-	if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
-		mime = strings.Split(contentType, ";")[0]
-	}
+	mime := providerAssetMIME(data, resp.Header.Get("Content-Type"))
 	if len(allowedMIMEs) > 0 && !allowedMIMEs[mime] {
 		return nil, "", fmt.Errorf("%w: unsupported provider output mime %s", ErrProviderExecution, mime)
 	}
 	return data, mime, nil
+}
+
+func providerAssetMIME(data []byte, contentType string) string {
+	detected := normalizeProviderMIME(http.DetectContentType(data))
+	headerMIME := normalizeProviderMIME(strings.Split(strings.TrimSpace(contentType), ";")[0])
+	if headerMIME == "" || isGenericBinaryMIME(headerMIME) {
+		return detected
+	}
+	return headerMIME
+}
+
+func normalizeProviderMIME(mime string) string {
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if mime == "image/jpg" {
+		return "image/jpeg"
+	}
+	return mime
+}
+
+func isGenericBinaryMIME(mime string) bool {
+	return mime == "application/octet-stream" || mime == "binary/octet-stream"
 }

@@ -72,3 +72,12 @@ SET craftsman_thread_id = $2,
 WHERE id = $1
   AND workspace_id = $3
 RETURNING *;
+
+-- name: UpdateShotStatus :one
+UPDATE shot
+SET status = $3,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND archived_at IS NULL
+RETURNING *;

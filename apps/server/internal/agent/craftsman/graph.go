@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -50,7 +51,7 @@ func NewGraph(config GraphConfig) (*Graph, error) {
 	})); err != nil {
 		return nil, err
 	}
-	if err := g.AddLambdaNode("draft_preview_strategy", compose.InvokableLambda(func(ctx context.Context, craftsmanContext Context) (GraphOutput, error) {
+	if err := g.AddLambdaNode("draft_generation_strategy", compose.InvokableLambda(func(ctx context.Context, craftsmanContext Context) (GraphOutput, error) {
 		return runCraftsmanStrategy(ctx, config, craftsmanContext)
 	})); err != nil {
 		return nil, err
@@ -58,13 +59,13 @@ func NewGraph(config GraphConfig) (*Graph, error) {
 	if err := g.AddEdge(compose.START, "load_shot_context"); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("load_shot_context", "draft_preview_strategy"); err != nil {
+	if err := g.AddEdge("load_shot_context", "draft_generation_strategy"); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("draft_preview_strategy", compose.END); err != nil {
+	if err := g.AddEdge("draft_generation_strategy", compose.END); err != nil {
 		return nil, err
 	}
-	runnable, err := g.Compile(context.Background(), compose.WithGraphName("craftsman_preview"))
+	runnable, err := g.Compile(context.Background(), compose.WithGraphName("craftsman_generation"))
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +81,8 @@ func (g *Graph) Run(ctx context.Context, input GraphInput) (GraphOutput, error) 
 
 func runCraftsmanStrategy(ctx context.Context, config GraphConfig, craftsmanContext Context) (GraphOutput, error) {
 	input := craftsmanContext.Input
+	mode := generationMode(input)
+	craftsmanContext.Input.Mode = mode
 	attempts := maxAttempts(input.MaxAttempts)
 	var strategy Strategy
 	var metadata map[string]any
@@ -87,7 +90,7 @@ func runCraftsmanStrategy(ctx context.Context, config GraphConfig, craftsmanCont
 	for attempt := 1; attempt <= attempts; attempt++ {
 		strategy, metadata, err = config.Responder.DraftPreviewStrategy(ctx, craftsmanContext)
 		if err == nil {
-			err = ValidateStrategy(strategy)
+			err = ValidateStrategyForMode(strategy, mode)
 		}
 		if err == nil {
 			break
@@ -103,8 +106,9 @@ func runCraftsmanStrategy(ctx context.Context, config GraphConfig, craftsmanCont
 		Role:        "assistant",
 		MessageType: "text",
 		Content: mustJSON(map[string]any{
-			"text":           strategy.Strategy,
-			"preview_prompt": strategy.PreviewPrompt,
+			"text":              strategy.Strategy,
+			"mode":              mode,
+			"generation_prompt": strategyPrompt(strategy, mode),
 		}),
 		RawMessage: rawStrategy,
 		TaskID:     input.TaskID,
@@ -123,17 +127,25 @@ func runCraftsmanStrategy(ctx context.Context, config GraphConfig, craftsmanCont
 		return GraphOutput{}, err
 	}
 	_, _ = config.Runtime.SetThreadCheckpoint(ctx, input.ThreadID, checkpointKey)
+	outputType, operationType := generationOutputAndOperation(mode, strategy)
+	inputNodeRefs := strategy.InputNodeRefs
+	if refs := stringSliceWorkerParam(input.WorkerParams, "input_node_refs"); len(refs) > 0 {
+		inputNodeRefs = refs
+	}
 	workerInput := agentworker.GenerationInput{
-		Mode:              "preview_image",
+		Mode:              mode,
+		TargetPhase:       mode,
 		ShotID:            uuidString(input.ShotID),
 		ShotClientKey:     craftsmanContext.Shot.ClientKey,
 		ShotSortOrder:     int(craftsmanContext.Shot.SortOrder),
 		CraftsmanThreadID: uuidString(input.ThreadID),
 		CraftsmanTaskID:   uuidString(input.TaskID),
 		Strategy:          strategy.Strategy,
-		Prompt:            strategy.PreviewPrompt,
+		Prompt:            strategyPrompt(strategy, mode),
 		NegativePrompt:    strategy.NegativePrompt,
-		InputNodeRefs:     strategy.InputNodeRefs,
+		InputNodeRefs:     inputNodeRefs,
+		OutputType:        outputType,
+		OperationType:     operationType,
 		Model:             agentworker.ModelSpec{Provider: strategy.Model.Provider, ModelID: strategy.Model.ModelID},
 		Params:            strategy.Params,
 		MaxAttempts:       attempts,
@@ -162,6 +174,66 @@ func runCraftsmanStrategy(ctx context.Context, config GraphConfig, craftsmanCont
 		outMeta[key] = value
 	}
 	return GraphOutput{Strategy: strategy, WorkerTask: task, Metadata: outMeta}, nil
+}
+
+func generationMode(input GraphInput) string {
+	mode := strings.TrimSpace(input.Mode)
+	if mode == "" {
+		mode, _ = input.WorkerParams["mode"].(string)
+		mode = strings.TrimSpace(mode)
+	}
+	switch mode {
+	case "shot_video":
+		return "shot_video"
+	default:
+		return "preview_image"
+	}
+}
+
+func strategyPrompt(strategy Strategy, mode string) string {
+	if mode == "shot_video" {
+		if prompt := strings.TrimSpace(strategy.VideoPrompt); prompt != "" {
+			return prompt
+		}
+	}
+	return strings.TrimSpace(strategy.PreviewPrompt)
+}
+
+func generationOutputAndOperation(mode string, strategy Strategy) (string, string) {
+	if mode == "shot_video" {
+		outputType := strings.TrimSpace(strategy.OutputType)
+		if outputType == "" {
+			outputType = "video"
+		}
+		operationType := strings.TrimSpace(strategy.OperationType)
+		if operationType == "" {
+			operationType = "image_to_video"
+		}
+		return outputType, operationType
+	}
+	return "image", "text_to_image"
+}
+
+func stringSliceWorkerParam(params map[string]any, key string) []string {
+	value, ok := params[key]
+	if !ok {
+		return nil
+	}
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if ok && strings.TrimSpace(text) != "" {
+				out = append(out, strings.TrimSpace(text))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func CheckpointKey(workspaceID, shotID, taskID pgtype.UUID) string {

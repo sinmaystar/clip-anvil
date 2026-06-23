@@ -58,6 +58,65 @@ func TestCraftsmanGraphPersistsStrategyAndCreatesWorkerTask(t *testing.T) {
 	}
 }
 
+func TestCraftsmanGraphCreatesShotVideoWorkerTask(t *testing.T) {
+	runtime := &fakeCraftsmanGraphRuntime{}
+	graph, err := NewGraph(GraphConfig{
+		Loader: fakeGraphLoader{context: Context{
+			Input: GraphInput{
+				WorkspaceID: uuidWithByte(1),
+				ThreadID:    uuidWithByte(3),
+				TaskID:      uuidWithByte(4),
+				ShotID:      uuidWithByte(2),
+				MaxAttempts: 3,
+				WorkerParams: map[string]any{
+					"mode":            "shot_video",
+					"input_node_refs": []string{"shot-01 preview image"},
+				},
+			},
+			Shot: db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SortOrder: 1, Title: "开场"},
+			Text: "shot-01 开场",
+		}},
+		Responder: StaticResponder{Strategy: Strategy{
+			Strategy:      "产品开场动态镜头",
+			PreviewPrompt: "Animate the accepted preview into a smooth product shot",
+			Model:         ModelSpec{Provider: "mock", ModelID: "mock-video"},
+			Params:        map[string]any{"duration_sec": float64(4)},
+		}},
+		Runtime: runtime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = graph.Run(context.Background(), GraphInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(3),
+		TaskID:      uuidWithByte(4),
+		ShotID:      uuidWithByte(2),
+		MaxAttempts: 3,
+		WorkerParams: map[string]any{
+			"mode":            "shot_video",
+			"input_node_refs": []string{"shot-01 preview image"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workerInput agentworker.GenerationInput
+	if err := json.Unmarshal(runtime.createdTask.Input, &workerInput); err != nil {
+		t.Fatal(err)
+	}
+	if workerInput.Mode != "shot_video" || workerInput.OutputType != "video" || workerInput.OperationType != "image_to_video" {
+		t.Fatalf("worker input = %#v", workerInput)
+	}
+	if workerInput.Prompt != "Animate the accepted preview into a smooth product shot" {
+		t.Fatalf("prompt = %q", workerInput.Prompt)
+	}
+	if len(workerInput.InputNodeRefs) != 1 || workerInput.InputNodeRefs[0] != "shot-01 preview image" {
+		t.Fatalf("input refs = %#v", workerInput.InputNodeRefs)
+	}
+}
+
 func TestCraftsmanGraphRetriesInvalidStrategy(t *testing.T) {
 	responder := &sequenceResponder{strategies: []Strategy{
 		{Strategy: "方向"},

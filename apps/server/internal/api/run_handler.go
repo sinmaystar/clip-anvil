@@ -104,6 +104,28 @@ type artifactVersionResponse struct {
 	CompletedAt      string             `json:"completed_at,omitempty"`
 }
 
+type reviewRecordResponse struct {
+	ID                  string         `json:"id"`
+	ShotID              string         `json:"shot_id,omitempty"`
+	NodeID              string         `json:"node_id"`
+	ArtifactVersionID   string         `json:"artifact_version_id"`
+	GenerationJobID     string         `json:"generation_job_id,omitempty"`
+	TargetPhase         string         `json:"target_phase"`
+	Status              string         `json:"status"`
+	AttemptNo           int32          `json:"attempt_no"`
+	MaxAttempts         int32          `json:"max_attempts"`
+	OverallScore        *float32       `json:"overall_score,omitempty"`
+	Rubric              map[string]any `json:"rubric"`
+	Critique            string         `json:"critique"`
+	RetryRecommendation map[string]any `json:"retry_recommendation"`
+	ModelProvider       string         `json:"model_provider,omitempty"`
+	ModelID             string         `json:"model_id,omitempty"`
+	ErrorCode           string         `json:"error_code,omitempty"`
+	ErrorMessage        string         `json:"error_message,omitempty"`
+	CreatedAt           string         `json:"created_at"`
+	CompletedAt         string         `json:"completed_at,omitempty"`
+}
+
 type assetReadResponse struct {
 	ID          string         `json:"id"`
 	Type        string         `json:"type"`
@@ -145,6 +167,7 @@ type productionStateResponse struct {
 	ActiveStaleReasons []staleReasonResponse     `json:"active_stale_reasons"`
 	Capability         *modelCapabilityResponse  `json:"capability,omitempty"`
 	SandboxJobs        []sandboxJobResponse      `json:"sandbox_jobs"`
+	ReviewRecords      []reviewRecordResponse    `json:"review_records"`
 }
 
 func (r runNodeRequest) runOptions() production.RunOptions {
@@ -456,6 +479,7 @@ func (h *RunHandler) GetNodeProductionState(ctx context.Context, c *app.RequestC
 		Versions:           []artifactVersionResponse{},
 		ActiveStaleReasons: []staleReasonResponse{},
 		SandboxJobs:        []sandboxJobResponse{},
+		ReviewRecords:      []reviewRecordResponse{},
 	}
 
 	versions, err := h.queries.ListArtifactVersionsByNode(ctx, node.ID)
@@ -498,6 +522,15 @@ func (h *RunHandler) GetNodeProductionState(ctx context.Context, c *app.RequestC
 		resp.ActiveStaleReasons = append(resp.ActiveStaleReasons, toStaleReasonResponse(reason))
 	}
 
+	reviews, err := h.queries.ListReviewRecordsByNode(ctx, node.ID)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to list review records")
+		return
+	}
+	for _, review := range reviews {
+		resp.ReviewRecords = append(resp.ReviewRecords, toReviewRecordResponse(review))
+	}
+
 	if node.ModelProvider.Valid && node.ModelID.Valid {
 		capability, err := h.queries.GetEnabledModelCapability(ctx, db.GetEnabledModelCapabilityParams{
 			ProviderID: node.ModelProvider.String,
@@ -524,6 +557,7 @@ func sourceMaterialProductionState(node db.MediaNode) productionStateResponse {
 		Versions:           []artifactVersionResponse{},
 		ActiveStaleReasons: []staleReasonResponse{},
 		SandboxJobs:        []sandboxJobResponse{},
+		ReviewRecords:      []reviewRecordResponse{},
 	}
 }
 
@@ -601,6 +635,35 @@ func toArtifactVersionResponse(version db.ArtifactVersion, asset *db.MediaAsset,
 		}
 	}
 	return resp
+}
+
+func toReviewRecordResponse(record db.ReviewRecord) reviewRecordResponse {
+	var score *float32
+	if record.OverallScore.Valid {
+		value := record.OverallScore.Float32
+		score = &value
+	}
+	return reviewRecordResponse{
+		ID:                  uuidToString(record.ID),
+		ShotID:              uuidString(record.ShotID),
+		NodeID:              uuidToString(record.NodeID),
+		ArtifactVersionID:   uuidToString(record.ArtifactVersionID),
+		GenerationJobID:     uuidString(record.GenerationJobID),
+		TargetPhase:         record.TargetPhase,
+		Status:              record.Status,
+		AttemptNo:           record.AttemptNo,
+		MaxAttempts:         record.MaxAttempts,
+		OverallScore:        score,
+		Rubric:              jsonObject(record.Rubric),
+		Critique:            record.Critique,
+		RetryRecommendation: jsonObject(record.RetryRecommendation),
+		ModelProvider:       record.ModelProvider,
+		ModelID:             record.ModelID,
+		ErrorCode:           record.ErrorCode,
+		ErrorMessage:        record.ErrorMessage,
+		CreatedAt:           timeString(record.CreatedAt),
+		CompletedAt:         timeString(record.CompletedAt),
+	}
 }
 
 func toSandboxJobResponse(job db.SandboxJob) sandboxJobResponse {

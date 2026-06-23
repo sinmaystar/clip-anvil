@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -405,6 +406,25 @@ func TestNewAgentWSHandlerConstructs(t *testing.T) {
 
 	if handler == nil {
 		t.Fatal("handler should be constructed")
+	}
+}
+
+func TestAgentProductionOverviewRouteContract(t *testing.T) {
+	handlerSource, err := os.ReadFile("agent_handler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(handlerSource), "func (h *AgentHandler) GetProductionOverview") {
+		t.Fatal("AgentHandler.GetProductionOverview must be implemented")
+	}
+
+	serverSource, err := os.ReadFile("../../cmd/server/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoute := `GET("/api/agent/workspaces/:workspaceID/production-overview", authMiddleware, agentHandler.GetProductionOverview)`
+	if !strings.Contains(string(serverSource), wantRoute) {
+		t.Fatalf("server route %q is not registered", wantRoute)
 	}
 }
 

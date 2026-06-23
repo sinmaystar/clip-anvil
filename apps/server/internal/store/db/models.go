@@ -492,6 +492,32 @@ type ReferencePackItem struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ReviewRecord struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ShotID               pgtype.UUID        `json:"shot_id"`
+	NodeID               pgtype.UUID        `json:"node_id"`
+	ArtifactVersionID    pgtype.UUID        `json:"artifact_version_id"`
+	GenerationJobID      pgtype.UUID        `json:"generation_job_id"`
+	ReviewerThreadID     pgtype.UUID        `json:"reviewer_thread_id"`
+	ReviewerTaskID       pgtype.UUID        `json:"reviewer_task_id"`
+	ParentReviewRecordID pgtype.UUID        `json:"parent_review_record_id"`
+	TargetPhase          string             `json:"target_phase"`
+	Status               string             `json:"status"`
+	AttemptNo            int32              `json:"attempt_no"`
+	MaxAttempts          int32              `json:"max_attempts"`
+	OverallScore         pgtype.Float4      `json:"overall_score"`
+	Rubric               []byte             `json:"rubric"`
+	Critique             string             `json:"critique"`
+	RetryRecommendation  []byte             `json:"retry_recommendation"`
+	ModelProvider        string             `json:"model_provider"`
+	ModelID              string             `json:"model_id"`
+	ErrorCode            string             `json:"error_code"`
+	ErrorMessage         string             `json:"error_message"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+}
+
 type SandboxJob struct {
 	ID              pgtype.UUID        `json:"id"`
 	WorkspaceID     pgtype.UUID        `json:"workspace_id"`

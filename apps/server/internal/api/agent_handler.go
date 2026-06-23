@@ -17,6 +17,7 @@ import (
 
 	agenthitl "github.com/sinmaystar/clip-anvil/internal/agent/hitl"
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
+	agentoverview "github.com/sinmaystar/clip-anvil/internal/agent/overview"
 	agentproducer "github.com/sinmaystar/clip-anvil/internal/agent/producer"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
@@ -113,6 +114,21 @@ func (h *AgentHandler) GetThread(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(consts.StatusOK, getAgentThreadResponse{Thread: toAgentThreadResponse(thread)})
+}
+
+func (h *AgentHandler) GetProductionOverview(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+
+	overview, err := agentoverview.NewBuilder(h.queries).Build(ctx, workspace.ID)
+	if err != nil {
+		slog.Error("failed to build agent production overview", "workspace_id", uuidToString(workspace.ID), "error", err)
+		writeError(c, consts.StatusInternalServerError, "failed to load agent production overview")
+		return
+	}
+	c.JSON(consts.StatusOK, overview)
 }
 
 func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) {

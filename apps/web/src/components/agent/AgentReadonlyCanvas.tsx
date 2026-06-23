@@ -17,6 +17,8 @@ import {
   Editor,
   StateNode,
   Tldraw,
+  type TLArrowBinding,
+  type TLBindingCreate,
   type TLRecord,
   type TLShapePartial,
   type TLUiComponents,
@@ -86,6 +88,7 @@ export function AgentReadonlyCanvas({
 }) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const readonlyCanvasRootRef = useRef<HTMLDivElement | null>(null);
+  const lastFitSignatureRef = useRef("");
   const shapeUtils = useMemo(
     () => [...defaultShapeUtils, GroupContainerShapeUtil, AgentReadonlyMediaShapeUtil],
     [],
@@ -114,7 +117,7 @@ export function AgentReadonlyCanvas({
         y: canvas.camera.y,
         z: canvas.camera.zoom,
       });
-      syncReadonlyEditorWithCanvas(mountedEditor, canvas);
+      syncReadonlyEditorWithCanvas(mountedEditor, canvas, lastFitSignatureRef);
     },
     [canvas],
   );
@@ -123,7 +126,7 @@ export function AgentReadonlyCanvas({
     if (!editor) {
       return;
     }
-    syncReadonlyEditorWithCanvas(editor, canvas);
+    syncReadonlyEditorWithCanvas(editor, canvas, lastFitSignatureRef);
   }, [canvas, editor]);
 
   useEffect(() => {
@@ -213,16 +216,22 @@ export function AgentReadonlyCanvas({
   );
 }
 
-function syncReadonlyEditorWithCanvas(editor: Editor, canvas: CanvasPayload) {
+function syncReadonlyEditorWithCanvas(
+  editor: Editor,
+  canvas: CanvasPayload,
+  lastFitSignatureRef: { current: string },
+) {
   const groupShapes = canvas.groups.map((group) =>
     lockReadonlyShape(groupToShape(group, canvas.nodes)),
   );
   const nodeShapes = canvas.nodes.map((node) => lockReadonlyShape(nodeToShape(node)));
   const edgeShapes: TLShapePartial[] = [];
+  const edgeBindings: TLBindingCreate<TLArrowBinding>[] = [];
   for (const edge of canvas.edges) {
     const arrow = edgeToArrow(edge, canvas.nodes);
     if (arrow) {
       edgeShapes.push(lockReadonlyShape(arrow.arrow as TLShapePartial));
+      edgeBindings.push(...arrow.bindings);
     }
   }
   const canvasShapes: TLShapePartial[] = [
@@ -237,41 +246,165 @@ function syncReadonlyEditorWithCanvas(editor: Editor, canvas: CanvasPayload) {
   ]);
 
   withReadonlyStoreWrite(() => {
-    editor.store.mergeRemoteChanges(() => {
-      const existingPageShapes = editor.getCurrentPageShapes();
-      const staleShapeIds = existingPageShapes
-        .filter((shape) => {
-          if (
-            shape.type !== "media" &&
-            shape.type !== "group-container" &&
-            !edgeIdFromRecord(shape)
-          ) {
-            return false;
-          }
-          return !desiredShapeIds.has(shape.id);
-        })
-        .map((shape) => shape.id);
+    editor.run(() => {
+      editor.store.mergeRemoteChanges(() => {
+        const existingPageShapes = editor.getCurrentPageShapes();
+        const staleShapeIds = existingPageShapes
+          .filter((shape) => {
+            if (
+              shape.type !== "media" &&
+              shape.type !== "group-container" &&
+              !edgeIdFromRecord(shape)
+            ) {
+              return false;
+            }
+            return !desiredShapeIds.has(shape.id);
+          })
+          .map((shape) => shape.id);
 
-      if (staleShapeIds.length > 0) {
-        editor.deleteShapes(staleShapeIds);
-      }
+        if (staleShapeIds.length > 0) {
+          editor.deleteShapes(staleShapeIds);
+        }
 
-      const shapesToCreate = canvasShapes.filter(
-        (shape) => !editor.getShape(shape.id),
-      );
-      const shapesToUpdate = canvasShapes.filter((shape) =>
-        editor.getShape(shape.id),
-      );
+        const shapesToCreate = canvasShapes.filter(
+          (shape) => !editor.getShape(shape.id),
+        );
+        const shapesToUpdate = canvasShapes.filter((shape) => {
+          const existing = editor.getShape(shape.id);
+          return existing && readonlyShapeChanged(existing, shape);
+        });
 
-      if (shapesToCreate.length > 0) {
-        editor.createShapes(shapesToCreate);
-      }
-      if (shapesToUpdate.length > 0) {
-        editor.updateShapes(shapesToUpdate);
-      }
+        if (shapesToCreate.length > 0) {
+          editor.createShapes(shapesToCreate);
+        }
+        if (shapesToUpdate.length > 0) {
+          editor.updateShapes(shapesToUpdate);
+        }
+        for (const binding of edgeBindings) {
+          syncReadonlyArrowBinding(editor, binding);
+        }
+      });
+    }, {
+      history: "ignore",
+      ignoreShapeLock: true,
     });
   });
   editor.setCurrentTool("agent_readonly");
+  fitReadonlyEditorToCanvas(editor, canvas, lastFitSignatureRef);
+}
+
+function fitReadonlyEditorToCanvas(
+  editor: Editor,
+  canvas: CanvasPayload,
+  lastFitSignatureRef: { current: string },
+) {
+  if (canvas.nodes.length === 0) {
+    lastFitSignatureRef.current = "";
+    return;
+  }
+  const signature = readonlyFitSignature(canvas);
+  if (signature === lastFitSignatureRef.current) {
+    return;
+  }
+  lastFitSignatureRef.current = signature;
+  window.requestAnimationFrame(() => {
+    editor.zoomToFit({ animation: { duration: 0 } });
+    editor.setCurrentTool("agent_readonly");
+  });
+}
+
+function readonlyFitSignature(canvas: CanvasPayload) {
+  return canvas.nodes
+    .map((node) =>
+      [
+        node.id,
+        node.canvas_x,
+        node.canvas_y,
+        node.canvas_w,
+        node.canvas_h,
+      ].join(":"),
+    )
+    .sort()
+    .join("|");
+}
+
+function readonlyShapeChanged(existing: TLRecord, desired: TLShapePartial) {
+  return Object.entries(desired).some(([key, value]) => {
+    const existingValue = (existing as unknown as Record<string, unknown>)[key];
+    return (
+      JSON.stringify(readonlyComparableShapeValue(key, existingValue)) !==
+      JSON.stringify(readonlyComparableShapeValue(key, value))
+    );
+  });
+}
+
+function readonlyComparableShapeValue(key: string, value: unknown): unknown {
+  if (key === "props" && value && typeof value === "object") {
+    const props = { ...(value as Record<string, unknown>) };
+    for (const assetURLKey of [
+      "previewAssetUrl",
+      "previewThumbnailUrl",
+      "thumbnailUrl",
+    ]) {
+      props[assetURLKey] = stableReadonlyAssetURL(props[assetURLKey]);
+    }
+    return props;
+  }
+  return value;
+}
+
+function stableReadonlyAssetURL(value: unknown) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return value;
+  }
+  try {
+    const url = new URL(value, window.location.origin);
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function syncReadonlyArrowBinding(
+  editor: Editor,
+  binding: TLBindingCreate<TLArrowBinding>,
+) {
+  const bindingProps = binding.props as TLArrowBinding["props"] | undefined;
+  if (!bindingProps) {
+    return;
+  }
+  const existingMany = editor
+    .getBindingsFromShape(binding.fromId, "arrow")
+    .filter(
+      (item) =>
+        item.type === "arrow" &&
+        item.props.terminal === bindingProps.terminal,
+    );
+  if (existingMany.length > 1) {
+    editor.deleteBindings(existingMany.slice(1));
+  }
+  const existing = existingMany[0];
+  if (!existing) {
+    editor.createBinding(binding);
+    return;
+  }
+  const nextBinding = {
+    ...existing,
+    toId: binding.toId,
+    props: bindingProps,
+  };
+  if (readonlyBindingChanged(existing, nextBinding)) {
+    editor.updateBinding(nextBinding);
+  }
+}
+
+function readonlyBindingChanged(existing: TLArrowBinding, desired: TLArrowBinding) {
+  return (
+    existing.toId !== desired.toId ||
+    JSON.stringify(existing.props) !== JSON.stringify(desired.props)
+  );
 }
 
 function lockReadonlyShape(shape: TLShapePartial): TLShapePartial {

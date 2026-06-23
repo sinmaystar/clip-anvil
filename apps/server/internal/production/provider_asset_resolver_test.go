@@ -112,3 +112,28 @@ func TestTOSProviderAssetResolverUsesSourcePresignedURLForPrivateStorage(t *test
 		t.Fatalf("workspace id = %#v", source.workspaceID)
 	}
 }
+
+func TestTOSProviderAssetResolverStagesImageWhenResponseContentTypeIsGenericBinary(t *testing.T) {
+	store := &fakeProviderStagingStore{url: "https://clip-anvil-temp-bucket.tos-cn-beijing.volces.com/provider-inputs/ws/job/node.png?X-Tos-Signature=test"}
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"binary/octet-stream"}},
+			Body:       io.NopCloser(bytes.NewReader(onePixelPNG)),
+		}, nil
+	})}
+	resolver := NewTOSProviderAssetResolver(store, httpClient, TOSProviderAssetResolverConfig{
+		PublicBaseURL: "http://minio.local",
+		URLTTL:        time.Hour,
+	})
+
+	intent := videoIntent()
+	intent.InputRefs[0].StorageURL = "workspace-a/input.png"
+	_, err := resolver.ResolveInputRefs(context.Background(), ProductionJob{}, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.contentType != "image/png" || !bytes.Equal(store.content, onePixelPNG) {
+		t.Fatalf("staged type/content = %q/%d", store.contentType, len(store.content))
+	}
+}

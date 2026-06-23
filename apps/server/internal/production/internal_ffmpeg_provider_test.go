@@ -12,8 +12,9 @@ import (
 )
 
 type fakeSandboxFrameExtractor struct {
-	input sandbox.ExtractFrameInput
-	err   error
+	input        sandbox.ExtractFrameInput
+	composeInput sandbox.ComposeVideosInput
+	err          error
 }
 
 func (f *fakeSandboxFrameExtractor) ExtractFrame(ctx context.Context, input sandbox.ExtractFrameInput) (sandbox.SandboxJobResult, error) {
@@ -30,6 +31,18 @@ func (f *fakeSandboxFrameExtractor) ExtractFrame(ctx context.Context, input sand
 		},
 		MIME: "image/png",
 		Size: 123,
+	}, nil
+}
+
+func (f *fakeSandboxFrameExtractor) ComposeVideos(ctx context.Context, input sandbox.ComposeVideosInput) (sandbox.SandboxJobResult, error) {
+	f.composeInput = input
+	return sandbox.SandboxJobResult{
+		Job: db.SandboxJob{ID: pgtype.UUID{Bytes: [16]byte{0xcc}, Valid: true}},
+		Asset: sandbox.ArtifactObject{
+			StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/final.mp4",
+		},
+		MIME: "video/mp4",
+		Size: 456,
 	}, nil
 }
 
@@ -75,6 +88,35 @@ func TestInternalFFmpegProviderUsesSandboxExtractor(t *testing.T) {
 		t.Fatalf("mode = %q, want last", extractor.input.Mode)
 	}
 	if result.AssetStorageURL == "" || result.AssetMIME != "image/png" || result.AssetSizeBytes != 123 {
+		t.Fatalf("asset result = %#v", result)
+	}
+	if result.ProviderResponse["sandbox_job_id"] == "" {
+		t.Fatalf("provider response missing sandbox job id: %#v", result.ProviderResponse)
+	}
+}
+
+func TestInternalFFmpegProviderUsesSandboxComposer(t *testing.T) {
+	operator := &fakeSandboxFrameExtractor{}
+	provider := NewInternalFFmpegProvider(operator)
+	result, err := provider.Run(context.Background(), GenerationIntent{
+		WorkspaceID:    pgtype.UUID{Bytes: [16]byte{0xaa}, Valid: true},
+		TargetNodeID:   pgtype.UUID{Bytes: [16]byte{0xbb}, Valid: true},
+		OutputType:     "video",
+		OperationType:  "compose_final_video",
+		Model:          ModelSpec{Provider: "internal_ffmpeg", ModelID: "ffmpeg-compose"},
+		PromptTemplate: "compose final",
+		InputRefs: []InputRef{
+			{Kind: "dependency", NodeType: "video", AssetID: "asset-1", Mime: "video/mp4", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-1.mp4"},
+			{Kind: "dependency", NodeType: "video", AssetID: "asset-2", Mime: "video/mp4", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-2.mp4"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operator.composeInput.Sources) != 2 {
+		t.Fatalf("compose input = %#v", operator.composeInput)
+	}
+	if result.AssetStorageURL == "" || result.AssetMIME != "video/mp4" || result.AssetSizeBytes != 456 {
 		t.Fatalf("asset result = %#v", result)
 	}
 	if result.ProviderResponse["sandbox_job_id"] == "" {

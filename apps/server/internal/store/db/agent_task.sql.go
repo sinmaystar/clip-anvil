@@ -148,6 +148,57 @@ func (q *Queries) ListActiveAgentTasksByWorkspace(ctx context.Context, workspace
 	return items, nil
 }
 
+const listAgentTasksByWorkspace = `-- name: ListAgentTasksByWorkspace :many
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+FROM agent_task
+WHERE workspace_id = $1
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type ListAgentTasksByWorkspaceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListAgentTasksByWorkspace(ctx context.Context, arg ListAgentTasksByWorkspaceParams) ([]AgentTask, error) {
+	rows, err := q.db.Query(ctx, listAgentTasksByWorkspace, arg.WorkspaceID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTask{}
+	for rows.Next() {
+		var i AgentTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ThreadID,
+			&i.Role,
+			&i.ScopeType,
+			&i.ScopeID,
+			&i.TaskType,
+			&i.Status,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.Input,
+			&i.Output,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentTasksByWorkspaceStatus = `-- name: ListAgentTasksByWorkspaceStatus :many
 SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
 FROM agent_task
@@ -163,6 +214,54 @@ type ListAgentTasksByWorkspaceStatusParams struct {
 
 func (q *Queries) ListAgentTasksByWorkspaceStatus(ctx context.Context, arg ListAgentTasksByWorkspaceStatusParams) ([]AgentTask, error) {
 	rows, err := q.db.Query(ctx, listAgentTasksByWorkspaceStatus, arg.WorkspaceID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTask{}
+	for rows.Next() {
+		var i AgentTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ThreadID,
+			&i.Role,
+			&i.ScopeType,
+			&i.ScopeID,
+			&i.TaskType,
+			&i.Status,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.Input,
+			&i.Output,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQueuedComposerTasksAcrossWorkspaces = `-- name: ListQueuedComposerTasksAcrossWorkspaces :many
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+FROM agent_task
+WHERE role = 'composer'
+  AND task_type = 'composer_turn'
+  AND status = 'queued'
+ORDER BY created_at ASC
+LIMIT $1
+`
+
+func (q *Queries) ListQueuedComposerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]AgentTask, error) {
+	rows, err := q.db.Query(ctx, listQueuedComposerTasksAcrossWorkspaces, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -313,6 +412,54 @@ LIMIT $1
 
 func (q *Queries) ListQueuedProducerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]AgentTask, error) {
 	rows, err := q.db.Query(ctx, listQueuedProducerTasksAcrossWorkspaces, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTask{}
+	for rows.Next() {
+		var i AgentTask
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ThreadID,
+			&i.Role,
+			&i.ScopeType,
+			&i.ScopeID,
+			&i.TaskType,
+			&i.Status,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.Input,
+			&i.Output,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQueuedReviewerTasksAcrossWorkspaces = `-- name: ListQueuedReviewerTasksAcrossWorkspaces :many
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+FROM agent_task
+WHERE role = 'reviewer'
+  AND task_type = 'reviewer_turn'
+  AND status = 'queued'
+ORDER BY created_at ASC
+LIMIT $1
+`
+
+func (q *Queries) ListQueuedReviewerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]AgentTask, error) {
+	rows, err := q.db.Query(ctx, listQueuedReviewerTasksAcrossWorkspaces, limit)
 	if err != nil {
 		return nil, err
 	}

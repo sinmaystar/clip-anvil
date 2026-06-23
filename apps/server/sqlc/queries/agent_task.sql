@@ -24,6 +24,13 @@ WHERE workspace_id = $1
   AND status = $2
 ORDER BY created_at DESC;
 
+-- name: ListAgentTasksByWorkspace :many
+SELECT *
+FROM agent_task
+WHERE workspace_id = $1
+ORDER BY created_at DESC
+LIMIT $2;
+
 -- name: ListActiveAgentTasksByWorkspace :many
 SELECT *
 FROM agent_task
@@ -64,6 +71,24 @@ SELECT *
 FROM agent_task
 WHERE role = 'worker'
   AND task_type = 'worker_generation'
+  AND status = 'queued'
+ORDER BY created_at ASC
+LIMIT $1;
+
+-- name: ListQueuedReviewerTasksAcrossWorkspaces :many
+SELECT *
+FROM agent_task
+WHERE role = 'reviewer'
+  AND task_type = 'reviewer_turn'
+  AND status = 'queued'
+ORDER BY created_at ASC
+LIMIT $1;
+
+-- name: ListQueuedComposerTasksAcrossWorkspaces :many
+SELECT *
+FROM agent_task
+WHERE role = 'composer'
+  AND task_type = 'composer_turn'
   AND status = 'queued'
 ORDER BY created_at ASC
 LIMIT $1;

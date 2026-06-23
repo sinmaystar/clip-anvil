@@ -338,3 +338,40 @@ func (q *Queries) UpdateShot(ctx context.Context, arg UpdateShotParams) (Shot, e
 	)
 	return i, err
 }
+
+const updateShotStatus = `-- name: UpdateShotStatus :one
+UPDATE shot
+SET status = $3,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND archived_at IS NULL
+RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at
+`
+
+type UpdateShotStatusParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Status      string      `json:"status"`
+}
+
+func (q *Queries) UpdateShotStatus(ctx context.Context, arg UpdateShotStatusParams) (Shot, error) {
+	row := q.db.QueryRow(ctx, updateShotStatus, arg.ID, arg.WorkspaceID, arg.Status)
+	var i Shot
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ClientKey,
+		&i.SortOrder,
+		&i.Title,
+		&i.Brief,
+		&i.DurationSec,
+		&i.NarrativePurpose,
+		&i.Status,
+		&i.CraftsmanThreadID,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

@@ -102,6 +102,53 @@ func (b ToolStatusBlock) MarshalJSON() ([]byte, error) {
 	return json.Marshal(next)
 }
 
+type ReviewCardBlock struct {
+	BaseBlock
+	ReviewID     string   `json:"review_id"`
+	Status       string   `json:"status"`
+	TargetPhase  string   `json:"target_phase"`
+	ShotRef      string   `json:"shot_ref"`
+	NodeID       string   `json:"node_id"`
+	VersionID    string   `json:"version_id"`
+	OverallScore float64  `json:"overall_score"`
+	Rubric       any      `json:"rubric"`
+	Critique     string   `json:"critique"`
+	RetryCount   int      `json:"retry_count"`
+	MaxAttempts  int      `json:"max_attempts"`
+	FixHints     []string `json:"fix_hints,omitempty"`
+}
+
+func (ReviewCardBlock) UIBlockType() string { return "review_card" }
+
+func (b ReviewCardBlock) MarshalJSON() ([]byte, error) {
+	type alias ReviewCardBlock
+	next := alias(b)
+	next.Type = b.UIBlockType()
+	return json.Marshal(next)
+}
+
+type FinalVideoCardBlock struct {
+	BaseBlock
+	Status       string   `json:"status"`
+	NodeID       string   `json:"node_id"`
+	VersionID    string   `json:"version_id"`
+	AssetID      string   `json:"asset_id"`
+	Title        string   `json:"title"`
+	URL          string   `json:"url,omitempty"`
+	ThumbnailURL string   `json:"thumbnail_url,omitempty"`
+	SourceShots  []string `json:"source_shots"`
+	DecisionID   string   `json:"decision_id,omitempty"`
+}
+
+func (FinalVideoCardBlock) UIBlockType() string { return "final_video_card" }
+
+func (b FinalVideoCardBlock) MarshalJSON() ([]byte, error) {
+	type alias FinalVideoCardBlock
+	next := alias(b)
+	next.Type = b.UIBlockType()
+	return json.Marshal(next)
+}
+
 type Attachment struct {
 	AssetID      string `json:"asset_id"`
 	NodeID       string `json:"node_id"`

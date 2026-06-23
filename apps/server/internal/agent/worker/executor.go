@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/preview"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -26,6 +27,12 @@ type Runtime interface {
 type Store interface {
 	CreateAgentGenerationNode(ctx context.Context, params db.CreateAgentGenerationNodeParams) (db.MediaNode, error)
 	GetMediaNodeByID(ctx context.Context, id pgtype.UUID) (db.MediaNode, error)
+	ListMediaNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error)
+	GetArtifactVersionByID(ctx context.Context, id pgtype.UUID) (db.ArtifactVersion, error)
+	GetMediaAssetByID(ctx context.Context, id pgtype.UUID) (db.MediaAsset, error)
+	GetDependencyEdgeByEndpoints(ctx context.Context, params db.GetDependencyEdgeByEndpointsParams) (db.MediaEdge, error)
+	CreateMediaEdge(ctx context.Context, params db.CreateMediaEdgeParams) (db.MediaEdge, error)
+	UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error)
 }
 
 type NodeBroadcaster interface {
@@ -89,7 +96,11 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if created && e.broadcaster != nil {
 		e.broadcaster.BroadcastAgentNodeCreated(task.WorkspaceID, node)
 	}
-	intent := generationIntent(task, workerInput, node)
+	inputRefs, err := ResolveInputRefs(ctx, e.store, task.WorkspaceID, node.ID, workerInput.InputNodeRefs)
+	if err != nil {
+		return e.fail(ctx, task, "worker_generation_input_refs_failed", err)
+	}
+	intent := generationIntent(task, workerInput, node, inputRefs)
 	options := production.RunOptions{MaxAttempts: effectiveMaxAttempts(task, workerInput)}
 	var result production.RunResult
 	for attempt := 1; attempt <= options.MaxAttempts; attempt++ {
@@ -129,6 +140,17 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		TargetRole:  "craftsman",
 		Payload:     rawOutput,
 	})
+	if eventType := submittedEventType(workerInput.Mode); eventType != "" {
+		_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
+			WorkspaceID: task.WorkspaceID,
+			ThreadID:    task.ThreadID,
+			TaskID:      task.ID,
+			EventType:   eventType,
+			SourceRole:  "worker",
+			TargetRole:  "craftsman",
+			Payload:     rawOutput,
+		})
+	}
 	return nil
 }
 
@@ -147,10 +169,12 @@ func (e *Executor) resolveTargetNode(ctx context.Context, task db.AgentTask, inp
 	if !ok {
 		return db.MediaNode{}, false, fmt.Errorf("%w: shot_id is required", ErrInvalidInput)
 	}
+	spec := generationSpec(input)
 	modelParams, _ := json.Marshal(input.Params)
-	canvasX, canvasY := previewNodePosition(input)
+	canvasX, canvasY := nodePosition(input)
 	metadata := mustJSON(map[string]any{
-		"agent_artifact_kind": "preview_image",
+		"agent_artifact_kind": spec.ArtifactKind,
+		"source_phase":        spec.SourcePhase,
 		"shot_client_key":     input.ShotClientKey,
 		"shot_sort_order":     input.ShotSortOrder,
 		"craftsman_thread_id": input.CraftsmanThreadID,
@@ -159,13 +183,13 @@ func (e *Executor) resolveTargetNode(ctx context.Context, task db.AgentTask, inp
 	})
 	node, err := e.store.CreateAgentGenerationNode(ctx, db.CreateAgentGenerationNodeParams{
 		WorkspaceID:   task.WorkspaceID,
-		NodeType:      db.NodeTypeImage,
-		Title:         previewNodeTitle(input),
+		NodeType:      spec.NodeType,
+		Title:         nodeTitle(input),
 		Prompt:        strings.TrimSpace(input.Prompt),
-		OperationType: "text_to_image",
+		OperationType: spec.OperationType,
 		CanvasX:       canvasX,
 		CanvasY:       canvasY,
-		CanvasW:       320,
+		CanvasW:       spec.CanvasW,
 		CanvasH:       220,
 		ShotID:        shotID,
 		ModelProvider: nullableText(input.Model.Provider),
@@ -176,15 +200,16 @@ func (e *Executor) resolveTargetNode(ctx context.Context, task db.AgentTask, inp
 	return node, true, err
 }
 
-func generationIntent(task db.AgentTask, input GenerationInput, node db.MediaNode) production.GenerationIntent {
+func generationIntent(task db.AgentTask, input GenerationInput, node db.MediaNode, inputRefs []production.InputRef) production.GenerationIntent {
+	spec := generationSpec(input)
 	return production.GenerationIntent{
 		WorkspaceID:    task.WorkspaceID,
 		TargetNodeID:   node.ID,
-		OutputType:     "image",
-		OperationType:  "text_to_image",
+		OutputType:     spec.OutputType,
+		OperationType:  spec.OperationType,
 		PromptTemplate: strings.TrimSpace(input.Prompt),
 		RenderedPrompt: strings.TrimSpace(input.Prompt),
-		InputRefs:      nil,
+		InputRefs:      inputRefs,
 		Model: production.ModelSpec{
 			Provider: strings.TrimSpace(input.Model.Provider),
 			ModelID:  strings.TrimSpace(input.Model.ModelID),
@@ -202,7 +227,16 @@ func parseGenerationInput(raw []byte) (GenerationInput, error) {
 	if err := json.Unmarshal(defaultJSON(raw), &input); err != nil {
 		return GenerationInput{}, err
 	}
-	if input.Mode != "preview_image" || strings.TrimSpace(input.Prompt) == "" {
+	if input.Mode == "" {
+		input.Mode = "preview_image"
+	}
+	if input.Mode != "preview_image" && input.Mode != "shot_video" {
+		return GenerationInput{}, ErrInvalidInput
+	}
+	if strings.TrimSpace(input.Prompt) == "" {
+		return GenerationInput{}, ErrInvalidInput
+	}
+	if input.Mode == "shot_video" && len(input.InputNodeRefs) == 0 {
 		return GenerationInput{}, ErrInvalidInput
 	}
 	if input.MaxAttempts <= 0 {
@@ -233,6 +267,7 @@ func (e *Executor) fail(ctx context.Context, task db.AgentTask, code string, err
 	if err != nil {
 		message = err.Error()
 	}
+	e.markScopedShotFailed(ctx, task)
 	_, _ = e.runtime.MarkTaskFailed(ctx, task.ID, code, message)
 	_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: task.WorkspaceID,
@@ -245,14 +280,88 @@ func (e *Executor) fail(ctx context.Context, task db.AgentTask, code string, err
 	return fmt.Errorf("%s: %w", code, err)
 }
 
-func previewNodeTitle(input GenerationInput) string {
+func (e *Executor) markScopedShotFailed(ctx context.Context, task db.AgentTask) {
+	if e == nil || e.store == nil || task.ScopeType != "shot" || !task.ScopeID.Valid || !task.WorkspaceID.Valid {
+		return
+	}
+	status, ok := preview.ShotStatusForEvent(preview.EventFailed)
+	if !ok {
+		return
+	}
+	_, _ = e.store.UpdateShotStatus(ctx, db.UpdateShotStatusParams{
+		ID:          task.ScopeID,
+		WorkspaceID: task.WorkspaceID,
+		Status:      status,
+	})
+}
+
+type generationSpecValue struct {
+	NodeType      db.NodeType
+	OutputType    string
+	OperationType string
+	ArtifactKind  string
+	SourcePhase   string
+	CanvasW       float32
+}
+
+func generationSpec(input GenerationInput) generationSpecValue {
+	switch input.Mode {
+	case "shot_video":
+		operationType := strings.TrimSpace(input.OperationType)
+		if operationType == "" {
+			operationType = "image_to_video"
+		}
+		outputType := strings.TrimSpace(input.OutputType)
+		if outputType == "" {
+			outputType = "video"
+		}
+		return generationSpecValue{
+			NodeType:      db.NodeTypeVideo,
+			OutputType:    outputType,
+			OperationType: operationType,
+			ArtifactKind:  "shot_video",
+			SourcePhase:   "preview_image",
+			CanvasW:       360,
+		}
+	default:
+		return generationSpecValue{
+			NodeType:      db.NodeTypeImage,
+			OutputType:    "image",
+			OperationType: "text_to_image",
+			ArtifactKind:  "preview_image",
+			CanvasW:       320,
+		}
+	}
+}
+
+func nodeTitle(input GenerationInput) string {
+	if input.Mode == "shot_video" {
+		if strings.TrimSpace(input.ShotClientKey) != "" {
+			return input.ShotClientKey + " shot video"
+		}
+		return "Agent shot video"
+	}
 	if strings.TrimSpace(input.ShotClientKey) != "" {
 		return input.ShotClientKey + " preview image"
 	}
 	return "Agent preview image"
 }
 
+func nodePosition(input GenerationInput) (float32, float32) {
+	x, y := previewNodePosition(input)
+	if input.Mode == "shot_video" {
+		return x, y + 500
+	}
+	return x, y
+}
+
 func previewNodePosition(input GenerationInput) (float32, float32) {
+	const (
+		startX = 140
+		startY = 140
+		stepX  = 520
+		stepY  = 900
+	)
 	order := input.ShotSortOrder
 	if order <= 0 {
 		order = shotOrderFromClientKey(input.ShotClientKey)
@@ -263,7 +372,16 @@ func previewNodePosition(input GenerationInput) (float32, float32) {
 	index := order - 1
 	column := index % 3
 	row := index / 3
-	return float32(140 + column*380), float32(140 + row*300)
+	return float32(startX + column*stepX), float32(startY + row*stepY)
+}
+
+func submittedEventType(mode string) string {
+	switch mode {
+	case "shot_video":
+		return "shot_video_submitted"
+	default:
+		return ""
+	}
 }
 
 func shotOrderFromClientKey(value string) int {

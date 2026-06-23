@@ -6,6 +6,8 @@ export type AgentMessageBlock =
   | AgentMarkdownBlock
   | AgentThinkingBlock
   | AgentDecisionCardBlock
+  | AgentReviewCardBlock
+  | AgentFinalVideoCardBlock
   | AgentToolStatusBlock
   | AgentAttachmentBlock
   | AgentMediaBlock
@@ -40,6 +42,35 @@ export interface AgentDecisionCardBlock extends AgentBaseBlock {
   status: "pending" | "handled" | "failed" | "cancelled";
   selected_option_id?: string;
   free_text?: string;
+}
+
+export interface AgentReviewCardBlock extends AgentBaseBlock {
+  type: "review_card";
+  review_id: string;
+  status: "accepted" | "rejected" | "failed" | "running";
+  target_phase: "preview_image" | "shot_video" | "final_video";
+  shot_ref: string;
+  node_id: string;
+  version_id: string;
+  overall_score?: number;
+  rubric: Record<string, unknown>;
+  critique: string;
+  retry_count: number;
+  max_attempts: number;
+  fix_hints?: string[];
+}
+
+export interface AgentFinalVideoCardBlock extends AgentBaseBlock {
+  type: "final_video_card";
+  status: "queued" | "running" | "ready" | "failed" | "waiting_for_confirmation";
+  node_id: string;
+  version_id: string;
+  asset_id: string;
+  title: string;
+  url?: string;
+  thumbnail_url?: string;
+  source_shots: string[];
+  decision_id?: string;
 }
 
 export interface AgentToolStatusBlock extends AgentBaseBlock {
@@ -148,6 +179,50 @@ export function isDecisionCardBlock(
     Array.isArray(value.options) &&
     typeof value.allow_free_text === "boolean" &&
     typeof value.status === "string"
+  );
+}
+
+export function isReviewCardBlock(
+  block: unknown,
+): block is AgentReviewCardBlock {
+  if (!block || typeof block !== "object") {
+    return false;
+  }
+  const value = block as Partial<AgentReviewCardBlock>;
+  return (
+    value.type === "review_card" &&
+    typeof value.id === "string" &&
+    typeof value.review_id === "string" &&
+    typeof value.status === "string" &&
+    typeof value.target_phase === "string" &&
+    typeof value.shot_ref === "string" &&
+    typeof value.node_id === "string" &&
+    typeof value.version_id === "string" &&
+    typeof value.rubric === "object" &&
+    value.rubric !== null &&
+    typeof value.critique === "string" &&
+    typeof value.retry_count === "number" &&
+    typeof value.max_attempts === "number"
+  );
+}
+
+export function isFinalVideoCardBlock(
+  block: unknown,
+): block is AgentFinalVideoCardBlock {
+  if (!block || typeof block !== "object") {
+    return false;
+  }
+  const value = block as Partial<AgentFinalVideoCardBlock>;
+  return (
+    value.type === "final_video_card" &&
+    typeof value.id === "string" &&
+    typeof value.status === "string" &&
+    typeof value.node_id === "string" &&
+    typeof value.version_id === "string" &&
+    typeof value.asset_id === "string" &&
+    typeof value.title === "string" &&
+    Array.isArray(value.source_shots) &&
+    value.source_shots.every((shot) => typeof shot === "string")
   );
 }
 

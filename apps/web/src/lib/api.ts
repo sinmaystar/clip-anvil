@@ -297,6 +297,28 @@ export interface SandboxJob {
   created_at: string;
 }
 
+export interface ReviewRecord {
+  id: string;
+  shot_id?: string;
+  node_id: string;
+  artifact_version_id: string;
+  generation_job_id?: string;
+  target_phase: "preview_image" | "shot_video" | "final_video";
+  status: "running" | "accepted" | "rejected" | "failed";
+  attempt_no: number;
+  max_attempts: number;
+  overall_score?: number;
+  rubric: Record<string, unknown>;
+  critique: string;
+  retry_recommendation: Record<string, unknown>;
+  model_provider?: string;
+  model_id?: string;
+  error_code?: string;
+  error_message?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
 export interface NodeProductionState {
   node: MediaNode;
   current_version?: ArtifactVersion;
@@ -305,6 +327,7 @@ export interface NodeProductionState {
   active_stale_reasons: StaleReason[];
   capability?: ModelCapability;
   sandbox_jobs: SandboxJob[];
+  review_records: ReviewRecord[];
 }
 
 export interface RunNodeResponse {

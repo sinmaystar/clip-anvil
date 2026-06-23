@@ -14,6 +14,8 @@ import (
 type ContextStore interface {
 	GetShotByID(ctx context.Context, id pgtype.UUID) (db.Shot, error)
 	ListMediaNodesByShot(ctx context.Context, params db.ListMediaNodesByShotParams) ([]db.MediaNode, error)
+	ListSourceMaterialNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error)
+	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
 	ListGenerationJobsByNode(ctx context.Context, nodeID pgtype.UUID) ([]db.GenerationJob, error)
 	ListArtifactVersionsByNode(ctx context.Context, nodeID pgtype.UUID) ([]db.ArtifactVersion, error)
 }
@@ -54,15 +56,28 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 	}
 	nodeStates := make([]NodeState, 0, len(nodes))
 	for _, node := range nodes {
-		jobs, err := l.Store.ListGenerationJobsByNode(ctx, node.ID)
+		state, err := l.loadNodeState(ctx, node)
 		if err != nil {
 			return Context{}, err
 		}
-		versions, err := l.Store.ListArtifactVersionsByNode(ctx, node.ID)
+		nodeStates = append(nodeStates, state)
+	}
+	dependencies, err := l.Store.ListShotDependenciesByWorkspace(ctx, input.WorkspaceID)
+	if err != nil {
+		return Context{}, err
+	}
+	dependencies = filterShotDependencies(dependencies, input.ShotID)
+	sourceNodes, err := l.Store.ListSourceMaterialNodesByWorkspace(ctx, input.WorkspaceID)
+	if err != nil {
+		return Context{}, err
+	}
+	sourceMaterials := make([]NodeState, 0, len(sourceNodes))
+	for _, node := range sourceNodes {
+		state, err := l.loadNodeState(ctx, node)
 		if err != nil {
 			return Context{}, err
 		}
-		nodeStates = append(nodeStates, NodeState{Node: node, Jobs: jobs, Versions: versions})
+		sourceMaterials = append(sourceMaterials, state)
 	}
 	structured := map[string]any{
 		"shot": map[string]any{
@@ -71,19 +86,45 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 			"title":      shot.Title,
 			"status":     shot.Status,
 		},
-		"node_count": len(nodeStates),
+		"node_count":            len(nodeStates),
+		"dependency_count":      len(dependencies),
+		"source_material_count": len(sourceMaterials),
 	}
 	return Context{
-		Input:      input,
-		Shot:       shot,
-		Messages:   messages,
-		Nodes:      nodeStates,
-		Text:       buildContextText(shot, nodeStates),
-		Structured: structured,
+		Input:           input,
+		Shot:            shot,
+		Messages:        messages,
+		Nodes:           nodeStates,
+		Dependencies:    dependencies,
+		SourceMaterials: sourceMaterials,
+		Text:            buildContextText(shot, nodeStates, dependencies, sourceMaterials),
+		Structured:      structured,
 	}, nil
 }
 
-func buildContextText(shot db.Shot, nodes []NodeState) string {
+func (l ContextLoader) loadNodeState(ctx context.Context, node db.MediaNode) (NodeState, error) {
+	jobs, err := l.Store.ListGenerationJobsByNode(ctx, node.ID)
+	if err != nil {
+		return NodeState{}, err
+	}
+	versions, err := l.Store.ListArtifactVersionsByNode(ctx, node.ID)
+	if err != nil {
+		return NodeState{}, err
+	}
+	return NodeState{Node: node, Jobs: jobs, Versions: versions}, nil
+}
+
+func filterShotDependencies(dependencies []db.ShotDependency, shotID pgtype.UUID) []db.ShotDependency {
+	out := make([]db.ShotDependency, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		if dependency.FromShotID == shotID || dependency.ToShotID == shotID {
+			out = append(out, dependency)
+		}
+	}
+	return out
+}
+
+func buildContextText(shot db.Shot, nodes []NodeState, dependencies []db.ShotDependency, sourceMaterials []NodeState) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Shot\n")
 	fmt.Fprintf(&b, "- id: %s\n", uuidString(shot.ID))
@@ -92,22 +133,55 @@ func buildContextText(shot db.Shot, nodes []NodeState) string {
 	fmt.Fprintf(&b, "- status: %s\n", shot.Status)
 	if len(nodes) == 0 {
 		fmt.Fprintf(&b, "\nNodes\n- none\n")
-		return b.String()
+	} else {
+		fmt.Fprintf(&b, "\nNodes\n")
+		for _, node := range nodes {
+			writeNodeState(&b, node)
+		}
 	}
-	fmt.Fprintf(&b, "\nNodes\n")
-	for _, node := range nodes {
-		fmt.Fprintf(&b, "- %s (%s, %s)", node.Node.Title, node.Node.NodeType, node.Node.Status)
-		if len(node.Jobs) > 0 {
-			latest := node.Jobs[len(node.Jobs)-1]
-			fmt.Fprintf(&b, " latest_job=%s/%s", latest.OperationType, latest.Status)
+	if len(dependencies) == 0 {
+		fmt.Fprintf(&b, "\nDependencies\n- none\n")
+	} else {
+		fmt.Fprintf(&b, "\nDependencies\n")
+		for _, dependency := range dependencies {
+			direction := "upstream"
+			otherShotID := dependency.FromShotID
+			if dependency.FromShotID == shot.ID {
+				direction = "downstream"
+				otherShotID = dependency.ToShotID
+			}
+			fmt.Fprintf(&b, "- %s shot=%s type=%s phase=%s role=%s reason=%s\n",
+				direction,
+				uuidString(otherShotID),
+				dependency.DependencyType,
+				dependency.BlockingPhase,
+				dependency.InjectionRole,
+				dependency.Reason,
+			)
 		}
-		if len(node.Versions) > 0 {
-			latest := node.Versions[len(node.Versions)-1]
-			fmt.Fprintf(&b, " latest_version=%s", latest.Status)
+	}
+	if len(sourceMaterials) == 0 {
+		fmt.Fprintf(&b, "\nSource Materials\n- none\n")
+	} else {
+		fmt.Fprintf(&b, "\nSource Materials\n")
+		for _, node := range sourceMaterials {
+			writeNodeState(&b, node)
 		}
-		fmt.Fprintf(&b, "\n")
 	}
 	return b.String()
+}
+
+func writeNodeState(b *strings.Builder, node NodeState) {
+	fmt.Fprintf(b, "- %s (%s, %s)", node.Node.Title, node.Node.NodeType, node.Node.Status)
+	if len(node.Jobs) > 0 {
+		latest := node.Jobs[len(node.Jobs)-1]
+		fmt.Fprintf(b, " latest_job=%s/%s", latest.OperationType, latest.Status)
+	}
+	if len(node.Versions) > 0 {
+		latest := node.Versions[len(node.Versions)-1]
+		fmt.Fprintf(b, " latest_version=%s", latest.Status)
+	}
+	fmt.Fprintf(b, "\n")
 }
 
 func uuidString(id pgtype.UUID) string {

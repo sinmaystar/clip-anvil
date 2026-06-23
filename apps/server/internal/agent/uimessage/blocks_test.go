@@ -66,3 +66,51 @@ func TestExtractAttachmentsFromBlocks(t *testing.T) {
 		t.Fatalf("attachment = %#v", attachments[0])
 	}
 }
+
+func TestFinalVideoCardBlockMarshalsProtocolShape(t *testing.T) {
+	envelope := Envelope{
+		Schema: SchemaV1,
+		Blocks: []Block{
+			FinalVideoCardBlock{
+				BaseBlock:   BaseBlock{ID: "blk_final"},
+				Status:      "ready",
+				NodeID:      "node-1",
+				VersionID:   "version-1",
+				AssetID:     "asset-1",
+				Title:       "成片",
+				URL:         "http://localhost/final.mp4",
+				SourceShots: []string{"shot-01", "shot-02"},
+			},
+		},
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var decoded struct {
+		Blocks []struct {
+			Type        string   `json:"type"`
+			Status      string   `json:"status"`
+			NodeID      string   `json:"node_id"`
+			VersionID   string   `json:"version_id"`
+			AssetID     string   `json:"asset_id"`
+			SourceShots []string `json:"source_shots"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(decoded.Blocks) != 1 {
+		t.Fatalf("blocks len = %d, want 1", len(decoded.Blocks))
+	}
+	block := decoded.Blocks[0]
+	if block.Type != "final_video_card" || block.Status != "ready" {
+		t.Fatalf("block = %#v", block)
+	}
+	if block.NodeID != "node-1" || block.VersionID != "version-1" || block.AssetID != "asset-1" {
+		t.Fatalf("ids = %#v", block)
+	}
+	if len(block.SourceShots) != 2 || block.SourceShots[1] != "shot-02" {
+		t.Fatalf("source_shots = %#v", block.SourceShots)
+	}
+}

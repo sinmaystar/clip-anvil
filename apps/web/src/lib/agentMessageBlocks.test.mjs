@@ -5,6 +5,8 @@ import {
   agentMessageBlocks,
   agentMessageMarkdownText,
   isDecisionCardBlock,
+  isFinalVideoCardBlock,
+  isReviewCardBlock,
   isUnsupportedAgentMessage,
 } from "../../dist-test/lib/agentMessageBlocks.js";
 
@@ -105,6 +107,44 @@ describe("agent message blocks", () => {
         options: [{ id: "a", label: "方案 A" }],
         allow_free_text: true,
         status: "pending",
+      }),
+      true,
+    );
+  });
+
+  it("guards review card blocks", () => {
+    assert.equal(
+      isReviewCardBlock({
+        id: "blk_review",
+        type: "review_card",
+        review_id: "review-1",
+        status: "rejected",
+        target_phase: "preview_image",
+        shot_ref: "shot-01",
+        node_id: "node-1",
+        version_id: "version-1",
+        overall_score: 0.52,
+        rubric: { visual_quality: { score: 0.4, pass: false } },
+        critique: "商品不够清晰",
+        retry_count: 1,
+        max_attempts: 3,
+      }),
+      true,
+    );
+  });
+
+  it("guards final video card blocks", () => {
+    assert.equal(
+      isFinalVideoCardBlock({
+        id: "blk_final",
+        type: "final_video_card",
+        status: "ready",
+        node_id: "node-1",
+        version_id: "version-1",
+        asset_id: "asset-1",
+        title: "成片",
+        url: "http://localhost/final.mp4",
+        source_shots: ["shot-01", "shot-02"],
       }),
       true,
     );

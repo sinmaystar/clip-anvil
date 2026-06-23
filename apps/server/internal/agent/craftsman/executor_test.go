@@ -18,7 +18,7 @@ func TestCraftsmanExecutorRunsGraphAndMarksTaskSucceeded(t *testing.T) {
 		WorkerTask: db.AgentTask{ID: uuidWithByte(20), TaskType: "worker_generation"},
 		Metadata:   map[string]any{"checkpoint_key": "craftsman:key"},
 	}}
-	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: &graph})
 
 	err := executor.RunTask(context.Background(), RunTaskInput{
 		WorkspaceID: uuidWithByte(1),
@@ -41,12 +41,42 @@ func TestCraftsmanExecutorRunsGraphAndMarksTaskSucceeded(t *testing.T) {
 	}
 }
 
+func TestCraftsmanExecutorPassesTaskInputToGraph(t *testing.T) {
+	runtime := &fakeCraftsmanExecutorRuntime{}
+	graph := fakeCraftsmanRunner{output: GraphOutput{
+		Strategy:   Strategy{Strategy: "方向", PreviewPrompt: "prompt"},
+		WorkerTask: db.AgentTask{ID: uuidWithByte(20), TaskType: "worker_generation"},
+		Metadata:   map[string]any{"checkpoint_key": "craftsman:key"},
+	}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: &graph})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(3),
+		TaskID:      uuidWithByte(4),
+		ShotID:      uuidWithByte(2),
+		Input:       []byte(`{"mode":"shot_video","input_node_refs":["shot-01 preview image"],"requested_max_attempts":2}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if graph.input.Mode != "shot_video" || graph.input.MaxAttempts != 2 {
+		t.Fatalf("graph input = %#v", graph.input)
+	}
+	refs, _ := graph.input.WorkerParams["input_node_refs"].([]string)
+	if len(refs) != 1 || refs[0] != "shot-01 preview image" {
+		t.Fatalf("worker params = %#v", graph.input.WorkerParams)
+	}
+}
+
 type fakeCraftsmanRunner struct {
 	output GraphOutput
 	err    error
+	input  GraphInput
 }
 
-func (f fakeCraftsmanRunner) Run(context.Context, GraphInput) (GraphOutput, error) {
+func (f *fakeCraftsmanRunner) Run(_ context.Context, input GraphInput) (GraphOutput, error) {
+	f.input = input
 	return f.output, f.err
 }
 

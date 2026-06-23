@@ -2,6 +2,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -20,6 +21,7 @@ import {
   type AgentTask,
   fetchAgentModelSelection,
   fetchAgentMessages,
+  fetchAgentProductionOverview,
   fetchAgentThread,
   postAgentDecision,
   postAgentMessage,
@@ -41,7 +43,10 @@ import {
   type AgentMessageActions,
 } from "../components/agent/AgentMessageRenderer";
 import { AgentNodeDetailDrawer } from "../components/agent/AgentNodeDetailDrawer";
+import { AgentProductionStatusBar } from "../components/agent/AgentProductionStatusBar";
 import { AgentReadonlyCanvas } from "../components/agent/AgentReadonlyCanvas";
+import { AgentStoryboardPanel } from "../components/agent/AgentStoryboardPanel";
+import { AgentTaskTimeline } from "../components/agent/AgentTaskTimeline";
 import {
   type AgentFloatingPosition,
   type AgentPanelCorner,
@@ -79,7 +84,13 @@ import {
   hasRunningProducerTask,
   mergeAgentTasks,
 } from "../lib/agentTasks";
-import { nodeStatusForGenerationStatus } from "../lib/canvasRunState";
+import { shouldRefreshAgentProductionOverview } from "../lib/agentProductionOverview";
+import { computeDagreLayout } from "../lib/layout";
+import {
+  isTerminalGenerationStatus,
+  nodeStatusForGenerationStatus,
+  shouldPollCanvasForProductionUpdates,
+} from "../lib/canvasRunState";
 import {
   type AgentConnectionStatus,
   connectAgentSocket,
@@ -166,6 +177,8 @@ export function AgentWorkspacePage() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] =
     useState<AgentConnectionStatus>("offline");
+  const [canvasConnectionStatus, setCanvasConnectionStatus] =
+    useState<AgentConnectionStatus>("offline");
   const lastSeqRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -186,8 +199,17 @@ export function AgentWorkspacePage() {
     queryKey: ["workspace", id, "canvas"],
     queryFn: () => fetchCanvas(id ?? ""),
     enabled: Boolean(id),
+    refetchInterval: (query) =>
+      canvasConnectionStatus !== "connected" &&
+      shouldPollCanvasForProductionUpdates(query.state.data)
+        ? 2_000
+        : false,
   });
   const canvas = canvasQuery.data;
+  const readonlyCanvas = useMemo(
+    () => (canvas ? readonlyAutoLayoutCanvas(canvas) : undefined),
+    [canvas],
+  );
   const selectedNode =
     canvas?.nodes.find((node) => node.id === selectedNodeId) ?? null;
   const selectedNodeProductionStateQuery = useQuery({
@@ -210,6 +232,13 @@ export function AgentWorkspacePage() {
     queryKey: ["agent", id, "model-selection"],
     queryFn: () => fetchAgentModelSelection(id ?? ""),
     enabled: agentEnabled,
+  });
+  const agentProductionOverviewQuery = useQuery({
+    queryKey: ["agent", id, "production-overview"],
+    queryFn: () => fetchAgentProductionOverview(id ?? ""),
+    enabled: agentEnabled,
+    refetchInterval: (query) =>
+      query.state.data?.counts.running_tasks ? 2_000 : false,
   });
   const modelSelectionMutation = useMutation({
     mutationFn: (input: { value: string; reasoningEffort?: string }) => {
@@ -383,6 +412,11 @@ export function AgentWorkspacePage() {
       workspaceId: id,
       token,
       onEvent: (event) => {
+        if (shouldRefreshAgentProductionOverview(event.type)) {
+          void queryClient.invalidateQueries({
+            queryKey: ["agent", id, "production-overview"],
+          });
+        }
         if (
           (event.type === "agent.message.created" ||
             event.type === "agent.message.updated") &&
@@ -456,14 +490,24 @@ export function AgentWorkspacePage() {
       return;
     }
 
-    const refreshCanvas = () => {
-      void queryClient.invalidateQueries({
+    const refetchCanvasSnapshot = () => {
+      void queryClient.refetchQueries({
         queryKey: ["workspace", id, "canvas"],
       });
+    };
+    const refreshNodeProductionState = (nodeId?: string) => {
+      const targetNodeId = nodeId ?? selectedNodeId;
+      if (!targetNodeId) {
+        return;
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ["node", targetNodeId, "production-state"],
+      });
+    };
+    const refreshCanvas = () => {
+      refetchCanvasSnapshot();
       if (selectedNodeId) {
-        void queryClient.invalidateQueries({
-          queryKey: ["node", selectedNodeId, "production-state"],
-        });
+        refreshNodeProductionState();
       }
     };
 
@@ -471,6 +515,11 @@ export function AgentWorkspacePage() {
       workspaceId: id,
       token,
       onEvent: (event) => {
+        if (shouldRefreshAgentProductionOverview(event.type)) {
+          void queryClient.invalidateQueries({
+            queryKey: ["agent", id, "production-overview"],
+          });
+        }
         switch (event.type) {
           case "NodeCreated":
           case "NodeUpdated": {
@@ -480,8 +529,8 @@ export function AgentWorkspacePage() {
                 ["workspace", id, "canvas"],
                 (current) => upsertCanvasNode(current, node),
               );
+              refreshNodeProductionState(node.id);
             }
-            refreshCanvas();
             break;
           }
           case "NodeDeleted":
@@ -508,13 +557,24 @@ export function AgentWorkspacePage() {
                   ),
               );
             }
-            refreshCanvas();
+            if (
+              event.type === "production.job.updated" &&
+              isTerminalGenerationStatus(event.payload.status)
+            ) {
+              refetchCanvasSnapshot();
+              refreshNodeProductionState(event.payload.node_id);
+            }
             break;
           }
         }
       },
       onReconnect: refreshCanvas,
-      onStatusChange: () => undefined,
+      onStatusChange: (status) => {
+        setCanvasConnectionStatus(status);
+        if (status === "connected") {
+          refreshCanvas();
+        }
+      },
     });
   }, [id, queryClient, selectedNodeId, token, workspaceQuery.data?.mode]);
 
@@ -821,14 +881,14 @@ export function AgentWorkspacePage() {
               <p className="workspace-kicker">Read Only Canvas</p>
               <h2>只读画布</h2>
             </div>
-            <span>{canvas?.nodes.length ?? 0} 个节点</span>
+            <span>{readonlyCanvas?.nodes.length ?? 0} 个节点</span>
           </div>
           <div className="agent-canvas-surface">
             {canvasQuery.isLoading ? (
               <p className="agent-empty-text">正在加载画布</p>
-            ) : canvas && canvas.nodes.length > 0 ? (
+            ) : readonlyCanvas && readonlyCanvas.nodes.length > 0 ? (
               <AgentReadonlyCanvas
-                canvas={canvas}
+                canvas={readonlyCanvas}
                 onSelectNode={setSelectedNodeId}
                 selectedNodeId={selectedNodeId}
               />
@@ -925,6 +985,20 @@ export function AgentWorkspacePage() {
               >
                 ×
               </button>
+            </div>
+
+            <div className="agent-production-overview-stack">
+              <AgentProductionStatusBar
+                isLoading={agentProductionOverviewQuery.isLoading}
+                overview={agentProductionOverviewQuery.data ?? null}
+              />
+              <AgentStoryboardPanel
+                onSelectNode={setSelectedNodeId}
+                overview={agentProductionOverviewQuery.data ?? null}
+              />
+              <AgentTaskTimeline
+                overview={agentProductionOverviewQuery.data ?? null}
+              />
             </div>
 
             <div
@@ -1210,6 +1284,40 @@ function updateCanvasNodeStatus(
     nodes: current.nodes.map((node) =>
       node.id === nodeId ? { ...node, status } : node,
     ),
+  };
+}
+
+function readonlyAutoLayoutCanvas(canvas: CanvasPayload): CanvasPayload {
+  if (canvas.nodes.length <= 1) {
+    return canvas;
+  }
+  const minX = Math.min(...canvas.nodes.map((node) => node.canvas_x));
+  const minY = Math.min(...canvas.nodes.map((node) => node.canvas_y));
+  const result = computeDagreLayout({
+    nodes: canvas.nodes,
+    edges: canvas.edges,
+    groups: canvas.groups,
+    direction: "TB",
+    origin: { x: minX, y: minY },
+  });
+  if (result.positions.length === 0) {
+    return canvas;
+  }
+  const positionById = new Map(
+    result.positions.map((position) => [position.id, position]),
+  );
+  return {
+    ...canvas,
+    nodes: canvas.nodes.map((node) => {
+      const position = positionById.get(node.id);
+      return position
+        ? {
+            ...node,
+            canvas_x: position.canvas_x,
+            canvas_y: position.canvas_y,
+          }
+        : node;
+    }),
   };
 }
 

@@ -53,11 +53,57 @@ func TestContextLoaderBuildsShotScopedContext(t *testing.T) {
 	}
 }
 
+func TestContextLoaderIncludesDependenciesAndSourceMaterials(t *testing.T) {
+	store := &fakeContextStore{
+		shot: db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", Title: "卖点证明", Status: "planned"},
+		nodes: []db.MediaNode{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ShotID: uuidWithByte(2), Title: "shot-02 preview", NodeType: "image", Status: "queued"},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ShotID: uuidWithByte(3), Title: "other shot preview", NodeType: "image", Status: "queued"},
+		},
+		sourceNodes: []db.MediaNode{
+			{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), Title: "product.png", NodeType: "image", Status: "succeeded", Source: "agent", OperationType: "upload", AssetID: uuidWithByte(33)},
+		},
+		dependencies: []db.ShotDependency{
+			{WorkspaceID: uuidWithByte(1), FromShotID: uuidWithByte(1), ToShotID: uuidWithByte(2), DependencyType: "continuity", BlockingPhase: "preview_generation", InjectionRole: "style_ref", Reason: "保持商品摆位连续"},
+			{WorkspaceID: uuidWithByte(1), FromShotID: uuidWithByte(2), ToShotID: uuidWithByte(4), DependencyType: "handoff", BlockingPhase: "preview_generation", InjectionRole: "subject_ref", Reason: "下一镜头延续"},
+			{WorkspaceID: uuidWithByte(1), FromShotID: uuidWithByte(5), ToShotID: uuidWithByte(6), DependencyType: "unrelated", BlockingPhase: "preview_generation", InjectionRole: "ignore", Reason: "不相关"},
+		},
+	}
+	loader := ContextLoader{Store: store}
+
+	out, err := loader.Load(context.Background(), GraphInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(4),
+		TaskID:      uuidWithByte(5),
+		ShotID:      uuidWithByte(2),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Dependencies) != 2 {
+		t.Fatalf("dependencies = %#v", out.Dependencies)
+	}
+	if len(out.SourceMaterials) != 1 || out.SourceMaterials[0].Node.Title != "product.png" {
+		t.Fatalf("source materials = %#v", out.SourceMaterials)
+	}
+	if !strings.Contains(out.Text, "Dependencies") || !strings.Contains(out.Text, "保持商品摆位连续") {
+		t.Fatalf("context text missing dependencies: %q", out.Text)
+	}
+	if !strings.Contains(out.Text, "Source Materials") || !strings.Contains(out.Text, "product.png") {
+		t.Fatalf("context text missing source materials: %q", out.Text)
+	}
+	if strings.Contains(out.Text, "other shot preview") || strings.Contains(out.Text, "不相关") {
+		t.Fatalf("context leaked unrelated data: %q", out.Text)
+	}
+}
+
 type fakeContextStore struct {
-	shot     db.Shot
-	nodes    []db.MediaNode
-	jobs     map[pgtype.UUID][]db.GenerationJob
-	versions map[pgtype.UUID][]db.ArtifactVersion
+	shot         db.Shot
+	nodes        []db.MediaNode
+	sourceNodes  []db.MediaNode
+	dependencies []db.ShotDependency
+	jobs         map[pgtype.UUID][]db.GenerationJob
+	versions     map[pgtype.UUID][]db.ArtifactVersion
 }
 
 func (f *fakeContextStore) GetShotByID(context.Context, pgtype.UUID) (db.Shot, error) {
@@ -80,6 +126,26 @@ func (f *fakeContextStore) ListGenerationJobsByNode(_ context.Context, nodeID pg
 
 func (f *fakeContextStore) ListArtifactVersionsByNode(_ context.Context, nodeID pgtype.UUID) ([]db.ArtifactVersion, error) {
 	return f.versions[nodeID], nil
+}
+
+func (f *fakeContextStore) ListSourceMaterialNodesByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error) {
+	out := []db.MediaNode{}
+	for _, node := range f.sourceNodes {
+		if node.WorkspaceID == workspaceID {
+			out = append(out, node)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeContextStore) ListShotDependenciesByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error) {
+	out := []db.ShotDependency{}
+	for _, dependency := range f.dependencies {
+		if dependency.WorkspaceID == workspaceID {
+			out = append(out, dependency)
+		}
+	}
+	return out, nil
 }
 
 type fakeMessageRuntime struct {

@@ -76,6 +76,37 @@ func (s *Service) GetOrCreateProducerThread(ctx context.Context, workspaceID pgt
 	return db.AgentThread{}, err
 }
 
+func (s *Service) GetOrCreateComposerThread(ctx context.Context, workspaceID pgtype.UUID) (db.AgentThread, error) {
+	if !workspaceID.Valid {
+		return db.AgentThread{}, ErrInvalidRequest
+	}
+
+	thread, err := s.queries.GetActiveComposerThreadByWorkspace(ctx, workspaceID)
+	if err == nil {
+		return thread, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.AgentThread{}, err
+	}
+
+	thread, err = s.CreateThread(ctx, CreateThreadParams{
+		WorkspaceID:      workspaceID,
+		Role:             "composer",
+		ScopeType:        "final_output",
+		RuntimeProvider:  "eino",
+		RuntimeAgentName: "ComposerGraph",
+	})
+	if err == nil {
+		return thread, nil
+	}
+
+	existing, getErr := s.queries.GetActiveComposerThreadByWorkspace(ctx, workspaceID)
+	if getErr == nil {
+		return existing, nil
+	}
+	return db.AgentThread{}, err
+}
+
 func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
 	if !workspaceID.Valid || !shotID.Valid {
 		return db.AgentThread{}, ErrInvalidRequest
@@ -102,6 +133,44 @@ func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, s
 		ScopeID:          shotID,
 		RuntimeProvider:  "eino",
 		RuntimeAgentName: "CraftsmanGraph",
+	})
+	if err == nil {
+		return thread, nil
+	}
+
+	existing, getErr := s.queries.GetActiveAgentThreadByScope(ctx, params)
+	if getErr == nil {
+		return existing, nil
+	}
+	return db.AgentThread{}, err
+}
+
+func (s *Service) GetOrCreateReviewerThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
+	if !workspaceID.Valid || !shotID.Valid {
+		return db.AgentThread{}, ErrInvalidRequest
+	}
+
+	params := db.GetActiveAgentThreadByScopeParams{
+		WorkspaceID: workspaceID,
+		Role:        "reviewer",
+		ScopeType:   "shot",
+		ScopeID:     shotID,
+	}
+	thread, err := s.queries.GetActiveAgentThreadByScope(ctx, params)
+	if err == nil {
+		return thread, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.AgentThread{}, err
+	}
+
+	thread, err = s.CreateThread(ctx, CreateThreadParams{
+		WorkspaceID:      workspaceID,
+		Role:             "reviewer",
+		ScopeType:        "shot",
+		ScopeID:          shotID,
+		RuntimeProvider:  "eino",
+		RuntimeAgentName: "ReviewerGraph",
 	})
 	if err == nil {
 		return thread, nil
@@ -326,6 +395,26 @@ func (s *Service) ListQueuedWorkerTasksAcrossWorkspaces(ctx context.Context, lim
 		limit = 200
 	}
 	return s.queries.ListQueuedWorkerTasksAcrossWorkspaces(ctx, limit)
+}
+
+func (s *Service) ListQueuedReviewerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	return s.queries.ListQueuedReviewerTasksAcrossWorkspaces(ctx, limit)
+}
+
+func (s *Service) ListQueuedComposerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	return s.queries.ListQueuedComposerTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error) {
@@ -560,7 +649,7 @@ func validTaskScope(value string) bool {
 
 func validTaskType(value string) bool {
 	switch value {
-	case "producer_turn", "tool_call", "decision_resume", "craftsman_turn", "worker_generation":
+	case "producer_turn", "tool_call", "decision_resume", "craftsman_turn", "worker_generation", "reviewer_turn", "dependency_scheduler", "composer_turn":
 		return true
 	default:
 		return false
