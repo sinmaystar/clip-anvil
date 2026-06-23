@@ -17,7 +17,7 @@
 **目的：** 固定迁移前的行为基线，补齐后续 E2E 的可重复入口。
 
 **交付物：**
-- 一个 React Flow canvas smoke seed/API 脚本，创建固定 Studio/Agent workspace、节点、边、分组和生产预览所需的基础数据。
+- 一个 React Flow canvas smoke seed/API 脚本，创建固定 Studio workspace、节点、边、分组，以及可打开的 Agent workspace baseline。
 - 一份浏览器 E2E checklist，后续每个阶段复用同一套 workspace。
 - 当前 tldraw 运行时保持不变。
 
@@ -29,8 +29,8 @@
 
 **E2E 验收：**
 - Studio 能看到 seed 节点、边、分组。
-- Agent 能看到同一批节点。
-- 记录迁移前节点单击浮层内容差异，作为后续消除差异的对照。
+- Agent URL 能打开当前 Agent workspace baseline。当前公开 API 禁止在 Agent workspace 创建节点，因此 Phase 0 记录 Agent 画布为空；Phase 3 负责细化权限后验证 Agent layout mutation。
+- 记录迁移前 Studio/Agent 节点单击浮层内容差异，作为后续消除差异的对照。
 
 ### Phase 1: React Flow Foundation Without Route Swap
 
