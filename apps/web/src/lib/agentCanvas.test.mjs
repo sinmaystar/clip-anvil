@@ -62,7 +62,7 @@ describe("agent React Flow canvas", () => {
     assert.match(policySource, /canRunNodes:\s*false/);
     assert.match(surfaceSource, /nodesDraggable=\{policy\.canDragNodes\}/);
     assert.match(surfaceSource, /nodesConnectable=\{policy\.canCreateEdges\}/);
-    assert.match(surfaceSource, /deleteKeyCode=\{\s*policy\.canDeleteNodes/);
+    assert.match(surfaceSource, /deleteKeyCode=\{null\}/);
   });
 
   it("persists Agent node drag layout and viewport through explicit layout APIs", async () => {

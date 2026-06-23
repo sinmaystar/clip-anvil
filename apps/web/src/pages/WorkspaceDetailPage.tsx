@@ -17,7 +17,6 @@ import {
   createMediaEdge,
   createMediaNode,
   deleteMediaEdge,
-  deleteMediaNode,
   fetchModelCapabilities,
   fetchNodeProductionState,
   fetchCanvas,
@@ -27,7 +26,6 @@ import {
   retryJob,
   runNode,
   selectNodeVersion,
-  updateCamera,
   updateMediaNode,
   type CanvasPayload,
   type CreateMediaNodeRequest,
@@ -39,25 +37,12 @@ import {
 } from "../lib/api";
 import { AutoLayoutControls } from "../components/AutoLayoutControls";
 import {
-  groupToShape,
-  isGroupContainerShape,
-  isMediaShape,
-  nodeToShape,
-  nodeToShapeProps,
-  shapeIdForGroup,
-  shapeIdForNode,
-} from "../lib/canvas";
-import {
   isActiveNodeRunStatus,
   nodeStatusForGenerationStatus,
   overlayActiveNodeStatuses,
   productionStateWithSubmittedJob,
 } from "../lib/canvasRunState";
 import { ConnectionStatus } from "../components/ConnectionStatus";
-import {
-  ConnectionOverlay,
-  type DragConnection,
-} from "../components/ConnectionOverlay";
 import {
   FileDropZone,
   useCanvasFileUpload,
@@ -70,26 +55,12 @@ import {
   type CanvasEvent,
 } from "../lib/ws";
 import { computeDagreLayout, type LayoutDirection } from "../lib/layout";
-import { GroupContainerShapeUtil } from "../shapes/GroupContainerShapeUtil";
-import { MediaShapeUtil } from "../shapes/MediaShapeUtil";
-import {
-  Tldraw,
-  type Editor,
-  type TLRecord,
-  type TLUiComponents,
-} from "tldraw";
-import "tldraw/tldraw.css";
+import { StudioFlowCanvas } from "../components/canvas-flow/StudioFlowCanvas";
 import {
   connectionFailureFeedback,
   type ConnectionFeedback,
 } from "../lib/connectionFeedback";
-import { nodeIdsWithout } from "../lib/canvasSelectors";
 import { isValidConnectionTarget } from "../lib/connectionGeometry";
-import {
-  getContainingGroupId,
-  getGroupMemberMovePositions,
-  type GroupBounds as GroupHitBounds,
-} from "../lib/groupLayout";
 import {
   promptRefRenamePatch,
   promptRefsAfterSelect,
@@ -107,8 +78,7 @@ import { workspaceModeRoute } from "../lib/workspaceRoutes";
 interface CanvasContextMenu {
   screenX: number;
   screenY: number;
-  pageX: number;
-  pageY: number;
+  flowPoint: { x: number; y: number };
 }
 
 interface SelectNodeEvent {
@@ -203,42 +173,11 @@ export function WorkspaceDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const queryClient = useQueryClient();
-  const editorRef = useRef<Editor | null>(null);
   const canvasFrameRef = useRef<HTMLElement | null>(null);
-  const [editor, setEditor] = useState<Editor | null>(null);
   const nodeSnapshotsRef = useRef(new Map<string, MediaNode>());
   const titleSaveTimersRef = useRef(new Map<string, number>());
   const promptSaveTimersRef = useRef(new Map<string, number>());
-  const restoringNodeIdsRef = useRef(new Set<string>());
   const pendingConnectionRef = useRef<PendingConnection | null>(null);
-  const shapeUtils = useMemo(() => [GroupContainerShapeUtil, MediaShapeUtil], []);
-  const tldrawComponents = useMemo<TLUiComponents>(
-    () => ({
-      ContextMenu: null,
-      ActionsMenu: null,
-      HelpMenu: null,
-      ZoomMenu: null,
-      MainMenu: null,
-      Minimap: null,
-      StylePanel: null,
-      PageMenu: null,
-      NavigationPanel: null,
-      Toolbar: null,
-      RichTextToolbar: null,
-      ImageToolbar: null,
-      VideoToolbar: null,
-      KeyboardShortcutsDialog: null,
-      QuickActions: null,
-      HelperButtons: null,
-      DebugPanel: null,
-      DebugMenu: null,
-      MenuPanel: null,
-      TopPanel: null,
-      SharePanel: null,
-      PeopleMenu: null,
-    }),
-    [],
-  );
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [contextMenu, setContextMenu] = useState<CanvasContextMenu | null>(null);
   const [textCreateMenuOpen, setTextCreateMenuOpen] = useState(false);
@@ -250,8 +189,6 @@ export function WorkspaceDetailPage() {
   const [connectionSourceId, setConnectionSourceId] = useState<string | null>(
     null,
   );
-  const [dragConnection, setDragConnection] =
-    useState<DragConnection | null>(null);
   const [connectionFeedback, setConnectionFeedback] =
     useState<ConnectionFeedback | null>(null);
   const [connectionStatus, setConnectionStatus] =
@@ -262,15 +199,10 @@ export function WorkspaceDetailPage() {
   const [activeNodeRunStatuses, setActiveNodeRunStatuses] = useState<
     Record<string, MediaNode["status"] | undefined>
   >({});
-  const appearance = useAppearanceStore((state) => state.appearance);
   const toggleAppearance = useAppearanceStore((state) => state.toggleAppearance);
   const token = useAuthStore((state) => state.token);
   const account = useAuthStore((state) => state.account);
   const logout = useAuthStore((state) => state.logout);
-
-  useEffect(() => {
-    editor?.user.updateUserPreferences({ colorScheme: appearance });
-  }, [appearance, editor]);
 
   const workspaceQuery = useQuery({
     queryKey: ["workspace", id],
@@ -320,11 +252,38 @@ export function WorkspaceDetailPage() {
     }
   }, [nodes]);
 
+  const screenToCanvasPoint = useCallback(
+    (point: { x: number; y: number }) => {
+      const frameRect = canvasFrameRef.current?.getBoundingClientRect();
+      const camera = canvasQuery.data?.camera;
+      if (!frameRect || !camera) {
+        return null;
+      }
+      return {
+        x: (point.x - frameRect.left - camera.x) / camera.zoom,
+        y: (point.y - frameRect.top - camera.y) / camera.zoom,
+      };
+    },
+    [canvasQuery.data?.camera],
+  );
+
+  const canvasViewportCenter = useCallback(() => {
+    const frameRect = canvasFrameRef.current?.getBoundingClientRect();
+    if (!frameRect) {
+      return { x: 120, y: 120 };
+    }
+    return (
+      screenToCanvasPoint({
+        x: frameRect.left + frameRect.width / 2,
+        y: frameRect.top + frameRect.height / 2,
+      }) ?? { x: 120, y: 120 }
+    );
+  }, [screenToCanvasPoint]);
+
   const selectNode = useCallback((nodeId: string) => {
     setSelectedGroupId(null);
     setSelectedEdgeId(null);
     setSelectedNodeId(nodeId);
-    editorRef.current?.setSelectedShapes([shapeIdForNode(nodeId)]);
     announceActiveNode(nodeId);
   }, []);
 
@@ -333,7 +292,6 @@ export function WorkspaceDetailPage() {
     setSelectedEdgeId(null);
     setSelectedGroupId(groupId);
     announceActiveNode(null);
-    editorRef.current?.setSelectedShapes([shapeIdForGroup(groupId)]);
   }, []);
 
   const selectEdge = useCallback((edgeId: string) => {
@@ -341,7 +299,6 @@ export function WorkspaceDetailPage() {
     setSelectedGroupId(null);
     setSelectedEdgeId(edgeId);
     announceActiveNode(null);
-    editorRef.current?.setSelectedShapes([]);
   }, []);
 
   const beginDependencyConnection = useCallback(
@@ -356,19 +313,6 @@ export function WorkspaceDetailPage() {
       setConnectionSourceId(fromNodeId);
       setContextMenu(null);
 
-      if (pointer && editorRef.current) {
-        setConnectionFeedback(null);
-        setDragConnection({
-          fromNodeId,
-          pointerPagePoint: editorRef.current.screenToPage({
-            x: pointer.clientX,
-            y: pointer.clientY,
-          }),
-        });
-        return;
-      }
-
-      setDragConnection(null);
       setConnectionFeedback({
         title: "选择目标节点",
         description: "点击另一个 Node 完成连线。",
@@ -383,7 +327,6 @@ export function WorkspaceDetailPage() {
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     announceActiveNode(null);
-    editorRef.current?.setSelectedShapes([]);
   }, []);
 
   const createGroupMutation = useMutation({
@@ -403,16 +346,6 @@ export function WorkspaceDetailPage() {
         ["workspace", id, "canvas"],
         (current) => appendCanvasGroup(current, group),
       );
-      const current = queryClient.getQueryData<CanvasPayload>([
-        "workspace",
-        id,
-        "canvas",
-      ]);
-      const editor = editorRef.current;
-      editor?.store.mergeRemoteChanges(() => {
-        editor.createShapes([groupToShape(group, current?.nodes ?? [])]);
-        editor.setSelectedShapes([shapeIdForGroup(group.id)]);
-      });
       setSelectedGroupId(group.id);
       setSelectedNodeId(null);
       announceActiveNode(null);
@@ -425,7 +358,7 @@ export function WorkspaceDetailPage() {
       nodeType?: MediaType;
       patch?: Partial<CreateMediaNodeRequest>;
     }) => {
-      if (!id || !editorRef.current) {
+      if (!id) {
         throw new Error("画布尚未准备好");
       }
 
@@ -433,7 +366,7 @@ export function WorkspaceDetailPage() {
       const option =
         nodeCreateOptions.find((item) => item.type === nodeType) ??
         nodeCreateOptions[0];
-      const center = editorRef.current.getViewportPageBounds().center;
+      const center = canvasViewportCenter();
       const position = input?.point ?? center;
       return createMediaNode({
         workspace_id: id,
@@ -455,11 +388,6 @@ export function WorkspaceDetailPage() {
         ["workspace", id, "canvas"],
         (current) => appendCanvasNode(current, node),
       );
-      const editor = editorRef.current;
-      editor?.store.mergeRemoteChanges(() => {
-        editor.createShapes([nodeToShape(node)]);
-        editor.setSelectedShapes([shapeIdForNode(node.id)]);
-      });
       selectNode(node.id);
       setContextMenu(null);
     },
@@ -503,19 +431,6 @@ export function WorkspaceDetailPage() {
         ["workspace", id, "canvas"],
         (payload) => replaceCanvasNode(payload, mergedNode),
       );
-      editorRef.current?.store.mergeRemoteChanges(() => {
-        editorRef.current?.updateShapes([
-          {
-            id: shapeIdForNode(mergedNode.id),
-            type: "media",
-            props: {
-              prompt: mergedNode.prompt,
-              status: mergedNode.status,
-              title: mergedNode.title,
-            },
-          },
-        ]);
-      });
       void queryClient.invalidateQueries({
         queryKey: ["node", mergedNode.id, "production-state"],
       });
@@ -532,19 +447,6 @@ export function WorkspaceDetailPage() {
                 ["workspace", id, "canvas"],
                 (payload) => replaceCanvasNode(payload, updatedNode),
               );
-              editorRef.current?.store.mergeRemoteChanges(() => {
-                editorRef.current?.updateShapes([
-                  {
-                    id: shapeIdForNode(updatedNode.id),
-                    type: "media",
-                    props: {
-                      prompt: updatedNode.prompt,
-                      status: updatedNode.status,
-                      title: updatedNode.title,
-                    },
-                  },
-                ]);
-              });
             })
             .catch(() => {
               void queryClient.invalidateQueries({
@@ -597,18 +499,6 @@ export function WorkspaceDetailPage() {
             : payload;
         },
       );
-      const node = runningNode;
-      if (node) {
-        editorRef.current?.store.mergeRemoteChanges(() => {
-          editorRef.current?.updateShapes([
-            {
-              id: shapeIdForNode(nodeId),
-              type: "media",
-              props: nodeToShapeProps(node),
-            },
-          ]);
-        });
-      }
     },
     [id, nodes, queryClient, selectedNode, setActiveNodeRunStatus],
   );
@@ -802,11 +692,6 @@ export function WorkspaceDetailPage() {
         ["workspace", id, "canvas"],
         (current) => appendCanvasNode(current, node),
       );
-      const canvasEditor = editorRef.current;
-      canvasEditor?.store.mergeRemoteChanges(() => {
-        canvasEditor.createShapes([nodeToShape(node)]);
-        canvasEditor.setSelectedShapes([shapeIdForNode(node.id)]);
-      });
       selectNode(node.id);
     },
     [id, queryClient, selectNode],
@@ -835,9 +720,6 @@ export function WorkspaceDetailPage() {
               ["workspace", id, "canvas"],
               (current) => appendCanvasNode(current, node),
             );
-            editorRef.current?.store.mergeRemoteChanges(() => {
-              editorRef.current?.updateShapes([nodeToShape(node)]);
-            });
           }
           void queryClient.invalidateQueries({
             queryKey: ["workspace", id, "canvas"],
@@ -870,15 +752,6 @@ export function WorkspaceDetailPage() {
                   nodeStatus,
                 ),
             );
-            editorRef.current?.store.mergeRemoteChanges(() => {
-              editorRef.current?.updateShapes([
-                {
-                  id: shapeIdForNode(event.payload.node_id),
-                  type: "media",
-                  props: { status: nodeStatus },
-                },
-              ]);
-            });
           }
           if (
             event.type === "production.job.updated" &&
@@ -900,7 +773,7 @@ export function WorkspaceDetailPage() {
   );
 
   const runAutoLayout = useCallback(() => {
-    if (!id || !canvasQuery.data || !editorRef.current) {
+    if (!id || !canvasQuery.data) {
       return;
     }
     const frameRect = canvasFrameRef.current?.getBoundingClientRect();
@@ -908,10 +781,10 @@ export function WorkspaceDetailPage() {
       ? layoutSafeInset.collapsed
       : layoutSafeInset.expanded;
     const origin = frameRect
-      ? editorRef.current.screenToPage({
+      ? (screenToCanvasPoint({
           x: frameRect.left + safeInset.x,
           y: frameRect.top + safeInset.y,
-        })
+        }) ?? safeInset)
       : safeInset;
 
     setIsLayouting(true);
@@ -921,30 +794,6 @@ export function WorkspaceDetailPage() {
       groups: canvasQuery.data.groups,
       direction: layoutDirection,
       origin,
-    });
-
-    const editor = editorRef.current;
-    editor.store.mergeRemoteChanges(() => {
-      editor.updateShapes(
-        result.positions.map((position) => ({
-          id: shapeIdForNode(position.id),
-          type: "media",
-          x: position.canvas_x,
-          y: position.canvas_y,
-        })),
-      );
-      editor.updateShapes(
-        result.groupBounds.map((bounds) => ({
-          id: shapeIdForGroup(bounds.groupId),
-          type: "group-container",
-          x: bounds.x,
-          y: bounds.y,
-          props: {
-            w: bounds.w,
-            h: bounds.h,
-          },
-        })),
-      );
     });
 
     const positionByID = new Map(
@@ -980,67 +829,45 @@ export function WorkspaceDetailPage() {
         });
       })
       .finally(() => setIsLayouting(false));
-  }, [canvasQuery.data, id, isSidebarCollapsed, layoutDirection, queryClient]);
+  }, [
+    canvasQuery.data,
+    id,
+    isSidebarCollapsed,
+    layoutDirection,
+    queryClient,
+    screenToCanvasPoint,
+  ]);
 
   useEffect(() => {
-    if (!editor || !effectiveCanvas) {
+    if (!selectedNode || !effectiveCanvas) {
+      setNodeEditorPosition(null);
       return;
     }
-    syncEditorWithCanvas(editor, effectiveCanvas);
-  }, [effectiveCanvas, editor]);
-
-  useEffect(() => {
-    if (!editor || !selectedNodeId) {
+    const frameRect = canvasFrameRef.current?.getBoundingClientRect();
+    if (!frameRect) {
       setNodeEditorPosition(null);
       return;
     }
 
-    let frame = 0;
-    let previous = "";
-    const tick = () => {
-      const frameRect = canvasFrameRef.current?.getBoundingClientRect();
-      const shape = editor.getShape(shapeIdForNode(selectedNodeId));
-      if (!frameRect || !isMediaShape(shape)) {
-        if (previous !== "hidden") {
-          previous = "hidden";
-          setNodeEditorPosition(null);
-        }
-        frame = window.requestAnimationFrame(tick);
-        return;
-      }
-
-      const bottomLeft = editor.pageToScreen({
-        x: shape.x,
-        y: shape.y + shape.props.h,
-      });
-      const safeLeft = isSidebarCollapsed
-        ? nodeEditorSafeLeft.collapsed
-        : nodeEditorSafeLeft.expanded;
-      const width = Math.min(
-        720,
-        Math.max(520, frameRect.width - safeLeft - 24),
-      );
-      const left = clamp(
-        bottomLeft.x - frameRect.left,
-        safeLeft,
-        Math.max(12, frameRect.width - width - 12),
-      );
-      const top = bottomLeft.y - frameRect.top + 12;
-      const next = JSON.stringify({
-        left: Math.round(left),
-        top: Math.round(top),
-        width: Math.round(width),
-      });
-      if (next !== previous) {
-        previous = next;
-        setNodeEditorPosition(JSON.parse(next) as NodeEditorPosition);
-      }
-      frame = window.requestAnimationFrame(tick);
+    const safeLeft = isSidebarCollapsed
+      ? nodeEditorSafeLeft.collapsed
+      : nodeEditorSafeLeft.expanded;
+    const width = Math.min(720, Math.max(520, frameRect.width - safeLeft - 24));
+    const bottomLeft = {
+      x: selectedNode.canvas_x * effectiveCanvas.camera.zoom + effectiveCanvas.camera.x,
+      y:
+        (selectedNode.canvas_y + selectedNode.canvas_h) *
+          effectiveCanvas.camera.zoom +
+        effectiveCanvas.camera.y,
     };
-
-    tick();
-    return () => window.cancelAnimationFrame(frame);
-  }, [editor, isSidebarCollapsed, selectedNodeId]);
+    setNodeEditorPosition({
+      left: Math.round(
+        clamp(bottomLeft.x, safeLeft, Math.max(12, frameRect.width - width - 12)),
+      ),
+      top: Math.round(bottomLeft.y + 12),
+      width: Math.round(width),
+    });
+  }, [effectiveCanvas, isSidebarCollapsed, selectedNode]);
 
   const selectOrConnectNode = useCallback(
     (nodeId: string) => {
@@ -1049,7 +876,6 @@ export function WorkspaceDetailPage() {
       if (fromNodeId && fromNodeId !== nodeId) {
         pendingConnectionRef.current = null;
         setConnectionSourceId(null);
-        setDragConnection(null);
         setConnectionFeedback(null);
         createDependencyEdge(fromNodeId, nodeId);
       }
@@ -1078,25 +904,6 @@ export function WorkspaceDetailPage() {
         ["workspace", id, "canvas"],
         (payload) => replaceCanvasNode(payload, nextNode),
       );
-      const editor = editorRef.current;
-      const shapeProps: Partial<Pick<MediaNode, "title" | "prompt">> = {};
-      if (typeof patch.title === "string") {
-        shapeProps.title = patch.title;
-      }
-      if (typeof patch.prompt === "string") {
-        shapeProps.prompt = patch.prompt;
-      }
-      if (Object.keys(shapeProps).length > 0) {
-        editor?.store.mergeRemoteChanges(() => {
-          editor.updateShapes([
-            {
-              id: shapeIdForNode(nodeId),
-              type: "media",
-              props: shapeProps,
-            },
-          ]);
-        });
-      }
       return nextNode;
     },
     [id, queryClient],
@@ -1137,20 +944,6 @@ export function WorkspaceDetailPage() {
             ["workspace", id, "canvas"],
             (payload) => replaceCanvasNode(payload, mergedNode),
           );
-          const editor = editorRef.current;
-          editor?.store.mergeRemoteChanges(() => {
-            editor.updateShapes([
-              {
-                id: shapeIdForNode(node.id),
-                type: "media",
-                props: {
-                  prompt: mergedNode.prompt,
-                  status: mergedNode.status,
-                  title: mergedNode.title,
-                },
-              },
-            ]);
-          });
         })
         .catch(() => {
           void queryClient.invalidateQueries({
@@ -1179,428 +972,13 @@ export function WorkspaceDetailPage() {
     [canvasQuery.data?.edges, commitNodePatch, createDependencyEdge, id],
   );
 
-  const handleMount = useCallback(
-    (editor: Editor) => {
-      if (!id || !effectiveCanvas) {
-        return;
-      }
-
-      editorRef.current = editor;
-      setEditor(editor);
-      editor.registerExternalContentHandler("files", async ({ files, point }) => {
-        await uploadAssetFiles(
-          files,
-          point ?? editor.getViewportPageBounds().center,
-        );
-      });
-      const groupShapes = effectiveCanvas.groups.map((group) =>
-        groupToShape(group, effectiveCanvas.nodes),
-      );
-      const shapes = [
-        ...groupShapes,
-        ...effectiveCanvas.nodes.map(nodeToShape),
-      ];
-      if (shapes.length > 0) {
-        editor.store.mergeRemoteChanges(() => {
-          editor.createShapes(shapes);
-        });
-      }
-      editor.setCurrentTool("select");
-      editor.setCamera({
-        x: effectiveCanvas.camera.x,
-        y: effectiveCanvas.camera.y,
-        z: effectiveCanvas.camera.zoom,
-      });
-
-      const pendingPositions = new Map<
-        string,
-        { id: string; canvas_x: number; canvas_y: number }
-      >();
-      const pendingGroupAssignments = new Map<string, string>();
-      const groupMovedNodeIds = new Set<string>();
-      let positionTimer: number | undefined;
-
-      const flushPositions = () => {
-        window.clearTimeout(positionTimer);
-        positionTimer = undefined;
-        const positions = Array.from(pendingPositions.values());
-        const groupAssignments = Array.from(pendingGroupAssignments.entries());
-        pendingPositions.clear();
-        pendingGroupAssignments.clear();
-        if (positions.length > 0) {
-          void batchUpdateNodePositions(positions).catch(() => {
-            void queryClient.invalidateQueries({
-              queryKey: ["workspace", id, "canvas"],
-            });
-          });
-        }
-        for (const [nodeId, groupId] of groupAssignments) {
-          const current = queryClient.getQueryData<CanvasPayload>([
-            "workspace",
-            id,
-            "canvas",
-          ]);
-          const currentNode = current?.nodes.find((node) => node.id === nodeId);
-          if (!currentNode || currentNode.group_id === groupId) {
-            continue;
-          }
-          const optimisticNode = { ...currentNode, group_id: groupId };
-          nodeSnapshotsRef.current.set(nodeId, optimisticNode);
-          queryClient.setQueryData<CanvasPayload>(
-            ["workspace", id, "canvas"],
-            (currentPayload) =>
-              replaceCanvasNodeAndGroupMembership(
-                currentPayload,
-                optimisticNode,
-              ),
-          );
-          flashGroupMembers(groupId, [nodeId]);
-          void updateMediaNode(nodeId, { group_id: groupId })
-            .then((node) => {
-              const current = queryClient.getQueryData<CanvasPayload>([
-                "workspace",
-                id,
-                "canvas",
-              ]);
-              const currentNode = current?.nodes.find(
-                (item) => item.id === node.id,
-              );
-              const mergedNode = currentNode
-                ? {
-                    ...node,
-                    canvas_x: currentNode.canvas_x,
-                    canvas_y: currentNode.canvas_y,
-                    prompt: currentNode.prompt,
-                    title: currentNode.title,
-                  }
-                : node;
-              nodeSnapshotsRef.current.set(node.id, mergedNode);
-              queryClient.setQueryData<CanvasPayload>(
-                ["workspace", id, "canvas"],
-                (currentPayload) =>
-                  replaceCanvasNodeAndGroupMembership(
-                    currentPayload,
-                    mergedNode,
-                  ),
-              );
-            })
-            .catch(() => {
-              void queryClient.invalidateQueries({
-                queryKey: ["workspace", id, "canvas"],
-              });
-            });
-        }
-      };
-
-      const removeStoreListener = editor.store.listen(
-        (entry) => {
-          for (const record of Object.values(entry.changes.added)) {
-            const shape = recordAsMediaShape(record);
-            if (!shape || restoringNodeIdsRef.current.has(shape.props.nodeId)) {
-              continue;
-            }
-
-            const current = queryClient.getQueryData<CanvasPayload>([
-              "workspace",
-              id,
-              "canvas",
-            ]);
-            if (
-              current?.nodes.some((node) => node.id === shape.props.nodeId)
-            ) {
-              continue;
-            }
-
-            restoringNodeIdsRef.current.add(shape.props.nodeId);
-            const snapshot = nodeSnapshotsRef.current.get(shape.props.nodeId);
-            void createMediaNode({
-              id: shape.props.nodeId,
-              workspace_id: id,
-              node_type: snapshot?.node_type ?? shape.props.nodeType,
-              title: snapshot?.title ?? shape.props.title,
-              prompt: snapshot?.prompt ?? shape.props.prompt,
-              status: snapshot?.status ?? shape.props.status,
-              canvas_x: shape.x,
-              canvas_y: shape.y,
-            })
-              .then((node) => {
-                nodeSnapshotsRef.current.set(node.id, node);
-                queryClient.setQueryData<CanvasPayload>(
-                  ["workspace", id, "canvas"],
-                  (currentPayload) => appendCanvasNode(currentPayload, node),
-                );
-                setSelectedNodeId(node.id);
-                announceActiveNode(node.id);
-                editor.store.mergeRemoteChanges(() => {
-                  editor.updateShapes([
-                    {
-                      id: shape.id,
-                      type: "media",
-                      props: {
-                        title: node.title,
-                        prompt: node.prompt,
-                        status: node.status,
-                      },
-                    },
-                  ]);
-                });
-              })
-              .catch(() => {
-                editor.store.mergeRemoteChanges(() => {
-                  editor.deleteShapes([shape.id]);
-                });
-                void queryClient.invalidateQueries({
-                  queryKey: ["workspace", id, "canvas"],
-                });
-              })
-              .finally(() => {
-                restoringNodeIdsRef.current.delete(shape.props.nodeId);
-              });
-          }
-
-          for (const [fromRecord, toRecord] of Object.values(
-            entry.changes.updated,
-          )) {
-            const fromGroupShape = recordAsGroupContainerShape(fromRecord);
-            const toGroupShape = recordAsGroupContainerShape(toRecord);
-            if (fromGroupShape && toGroupShape) {
-              const deltaX = toGroupShape.x - fromGroupShape.x;
-              const deltaY = toGroupShape.y - fromGroupShape.y;
-              if (deltaX !== 0 || deltaY !== 0) {
-                const current = queryClient.getQueryData<CanvasPayload>([
-                  "workspace",
-                  id,
-                  "canvas",
-                ]);
-                const group = current?.groups.find(
-                  (item) => item.id === toGroupShape.props.groupId,
-                );
-                const sourceNodes =
-                  current?.nodes.map(
-                    (node) => nodeSnapshotsRef.current.get(node.id) ?? node,
-                  ) ?? [];
-                const positions =
-                  group && current
-                    ? getGroupMemberMovePositions({
-                        group,
-                        nodes: sourceNodes,
-                        deltaX,
-                        deltaY,
-                      })
-                    : [];
-                if (positions.length > 0) {
-                  editor.store.mergeRemoteChanges(() => {
-                    editor.updateShapes(
-                      positions.map((position) => ({
-                        id: shapeIdForNode(position.id),
-                        type: "media",
-                        x: position.canvas_x,
-                        y: position.canvas_y,
-                      })),
-                    );
-                  });
-                  for (const position of positions) {
-                    groupMovedNodeIds.add(position.id);
-                  }
-                  window.setTimeout(() => {
-                    for (const position of positions) {
-                      groupMovedNodeIds.delete(position.id);
-                    }
-                  }, 0);
-                  for (const position of positions) {
-                    pendingPositions.set(position.id, position);
-                    const currentSnapshot = nodeSnapshotsRef.current.get(
-                      position.id,
-                    );
-                    if (currentSnapshot) {
-                      nodeSnapshotsRef.current.set(position.id, {
-                        ...currentSnapshot,
-                        canvas_x: position.canvas_x,
-                        canvas_y: position.canvas_y,
-                      });
-                    }
-                  }
-                }
-              }
-            }
-
-            const fromShape = recordAsMediaShape(fromRecord);
-            const toShape = recordAsMediaShape(toRecord);
-
-            if (!fromShape || !toShape) {
-              continue;
-            }
-            if (fromShape.x === toShape.x && fromShape.y === toShape.y) {
-              continue;
-            }
-            if (groupMovedNodeIds.has(toShape.props.nodeId)) {
-              continue;
-            }
-
-            pendingPositions.set(toShape.props.nodeId, {
-              id: toShape.props.nodeId,
-              canvas_x: toShape.x,
-              canvas_y: toShape.y,
-            });
-            queryClient.setQueryData<CanvasPayload>(
-              ["workspace", id, "canvas"],
-              (current) =>
-                updateCanvasNodePosition(
-                  current,
-                  toShape.props.nodeId,
-                  toShape.x,
-                  toShape.y,
-                ),
-            );
-            const currentSnapshot = nodeSnapshotsRef.current.get(
-              toShape.props.nodeId,
-            );
-            if (currentSnapshot) {
-              const nextSnapshot = {
-                ...currentSnapshot,
-                canvas_x: toShape.x,
-                canvas_y: toShape.y,
-              };
-              nodeSnapshotsRef.current.set(toShape.props.nodeId, nextSnapshot);
-            }
-            const current = queryClient.getQueryData<CanvasPayload>([
-              "workspace",
-              id,
-              "canvas",
-            ]);
-            const targetGroupId = getContainingGroupId({
-              bounds: getCurrentGroupBounds(editor, current?.groups ?? []),
-              point: {
-                x: toShape.x + toShape.props.w / 2,
-                y: toShape.y + toShape.props.h / 2,
-              },
-            });
-            const currentNode = current?.nodes.find(
-              (node) => node.id === toShape.props.nodeId,
-            );
-            if (targetGroupId && currentNode?.group_id !== targetGroupId) {
-              pendingGroupAssignments.set(toShape.props.nodeId, targetGroupId);
-            } else {
-              pendingGroupAssignments.delete(toShape.props.nodeId);
-            }
-          }
-
-          for (const record of Object.values(entry.changes.removed)) {
-            const edgeId = edgeIdFromRecord(record);
-            if (edgeId) {
-              queryClient.setQueryData<CanvasPayload>(
-                ["workspace", id, "canvas"],
-                (current) => removeCanvasEdge(current, edgeId),
-              );
-              void deleteMediaEdge(edgeId).catch(() => {
-                void queryClient.invalidateQueries({
-                  queryKey: ["workspace", id, "canvas"],
-                });
-              });
-              continue;
-            }
-
-            const shape = recordAsMediaShape(record);
-            if (shape) {
-              window.clearTimeout(
-                titleSaveTimersRef.current.get(shape.props.nodeId),
-              );
-              titleSaveTimersRef.current.delete(shape.props.nodeId);
-              window.clearTimeout(
-                promptSaveTimersRef.current.get(shape.props.nodeId),
-              );
-              promptSaveTimersRef.current.delete(shape.props.nodeId);
-              const current = queryClient.getQueryData<CanvasPayload>([
-                "workspace",
-                id,
-                "canvas",
-              ]);
-              const currentNode = current?.nodes.find(
-                (node) => node.id === shape.props.nodeId,
-              );
-              if (currentNode) {
-                nodeSnapshotsRef.current.set(currentNode.id, currentNode);
-              }
-              queryClient.setQueryData<CanvasPayload>(
-                ["workspace", id, "canvas"],
-                (current) => removeCanvasNode(current, shape.props.nodeId),
-              );
-              setSelectedNodeId((current) => {
-                if (current !== shape.props.nodeId) {
-                  return current;
-                }
-                announceActiveNode(null);
-                return null;
-              });
-              void deleteMediaNode(shape.props.nodeId).catch(() => {
-                void queryClient.invalidateQueries({
-                  queryKey: ["workspace", id, "canvas"],
-                });
-              });
-            }
-          }
-
-          if (pendingPositions.size > 0) {
-            window.clearTimeout(positionTimer);
-            positionTimer = window.setTimeout(flushPositions, 500);
-          }
-        },
-        { source: "user", scope: "document" },
-      );
-
-      let lastCamera = { ...effectiveCanvas.camera };
-      const cameraTimer = window.setInterval(() => {
-        const camera = editor.getCamera();
-        if (
-          camera.x === lastCamera.x &&
-          camera.y === lastCamera.y &&
-          camera.z === lastCamera.zoom
-        ) {
-          return;
-        }
-        lastCamera = { x: camera.x, y: camera.y, zoom: camera.z };
-        void updateCamera(id, lastCamera);
-      }, 800);
-
-      return () => {
-        flushPositions();
-        removeStoreListener();
-        window.clearInterval(cameraTimer);
-        editorRef.current = null;
-        setEditor(null);
-      };
-    },
-    [effectiveCanvas, id, queryClient, uploadAssetFiles],
-  );
-
   const openCanvasMenu = useCallback((event: MouseEvent<HTMLElement>) => {
-    if (!editorRef.current) {
-      return;
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest(".node-production-popover")
+    ) {
+      event.stopPropagation();
     }
-	      if (
-	        event.target instanceof HTMLElement &&
-	        event.target.closest(".node-production-popover")
-	      ) {
-	        return;
-	      }
-
-    const point = editorRef.current.screenToPage({
-      x: event.clientX,
-      y: event.clientY,
-    });
-    event.preventDefault();
-
-    if (editorRef.current.getShapeAtPoint(point, { hitInside: true })) {
-      setContextMenu(null);
-      return;
-    }
-
-    setContextMenu({
-      screenX: event.clientX,
-      screenY: event.clientY,
-      pageX: point.x,
-      pageY: point.y,
-    });
   }, []);
 
   const stopCanvasEvent = useCallback((event: SyntheticEvent) => {
@@ -1749,7 +1127,6 @@ export function WorkspaceDetailPage() {
       }
       pendingConnectionRef.current = null;
       setConnectionSourceId(null);
-      setDragConnection(null);
       setConnectionFeedback(null);
       createDependencyEdge(pending.fromNodeId, toNodeId);
       event.preventDefault();
@@ -1777,27 +1154,6 @@ export function WorkspaceDetailPage() {
       beginDependencyConnection(detail.fromNodeId);
     };
 
-    const onConnectionMove = (event: PointerEvent) => {
-      const pending = pendingConnectionRef.current;
-      const editor = editorRef.current;
-      if (
-        !pending ||
-        pending.pointerId === null ||
-        pending.pointerId !== event.pointerId ||
-        !editor
-      ) {
-        return;
-      }
-      setDragConnection({
-        fromNodeId: pending.fromNodeId,
-        pointerPagePoint: editor.screenToPage({
-          x: event.clientX,
-          y: event.clientY,
-        }),
-      });
-      event.preventDefault();
-    };
-
     const onConnectionEnd = (event: PointerEvent) => {
       const pending = pendingConnectionRef.current;
       if (
@@ -1809,7 +1165,6 @@ export function WorkspaceDetailPage() {
       }
       pendingConnectionRef.current = null;
       setConnectionSourceId(null);
-      setDragConnection(null);
       const target = document
         .elementFromPoint(event.clientX, event.clientY)
         ?.closest(".media-node-shell");
@@ -1836,7 +1191,6 @@ export function WorkspaceDetailPage() {
       "clip-anvil:connection-start",
       onConnectionStart,
     );
-    window.addEventListener("pointermove", onConnectionMove, true);
     window.addEventListener("pointerup", onConnectionEnd, true);
     return () => {
       window.removeEventListener("pointerdown", onOutputPortPointerDown, true);
@@ -1846,7 +1200,6 @@ export function WorkspaceDetailPage() {
         "clip-anvil:connection-start",
         onConnectionStart,
       );
-      window.removeEventListener("pointermove", onConnectionMove, true);
       window.removeEventListener("pointerup", onConnectionEnd, true);
     };
   }, [beginDependencyConnection, createDependencyEdge]);
@@ -1969,7 +1322,6 @@ export function WorkspaceDetailPage() {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      editorRef.current?.setCurrentTool("select");
     };
 
     window.addEventListener("keydown", blockToolShortcuts, true);
@@ -2133,7 +1485,7 @@ export function WorkspaceDetailPage() {
 
       <section
         className="studio-canvas-frame"
-        data-connection-dragging={dragConnection ? "true" : "false"}
+        data-connection-dragging="false"
         onContextMenuCapture={openCanvasMenu}
         onPointerDownCapture={closeCanvasMenuOnPointerDown}
         ref={canvasFrameRef}
@@ -2215,13 +1567,32 @@ export function WorkspaceDetailPage() {
           </div>
         ) : canvasQuery.data ? (
           <div className="studio-canvas-host">
-            <Tldraw
-              autoFocus
-              components={tldrawComponents}
-              key={id}
-              onMount={handleMount}
-              options={{ enableToolbarKeyboardShortcuts: false }}
-              shapeUtils={shapeUtils}
+            <StudioFlowCanvas
+              canvas={effectiveCanvas ?? canvasQuery.data}
+              onCreateNodeAtPoint={({ flowPoint, screenX, screenY }) => {
+                setContextMenu({
+                  flowPoint,
+                  screenX,
+                  screenY,
+                });
+              }}
+              onSelectEdge={(edgeId) => {
+                if (edgeId) {
+                  selectEdge(edgeId);
+                } else {
+                  setSelectedEdgeId(null);
+                }
+              }}
+              onSelectNode={(nodeId) => {
+                if (nodeId) {
+                  selectOrConnectNode(nodeId);
+                } else {
+                  hideActiveNodeEditor();
+                }
+              }}
+              selectedEdgeId={selectedEdgeId}
+              selectedNodeId={selectedNodeId}
+              workspaceId={id ?? ""}
             />
           </div>
         ) : (
@@ -2229,15 +1600,6 @@ export function WorkspaceDetailPage() {
             正在加载画布
           </div>
         )}
-
-        <ConnectionOverlay
-          dragConnection={dragConnection}
-          editor={editor}
-          edges={canvasQuery.data?.edges ?? []}
-          nodes={nodes}
-          onSelectEdge={selectEdge}
-          selectedEdgeId={selectedEdgeId}
-        />
 
         {selectedNode && nodeEditorPosition ? (
           <div
@@ -2302,11 +1664,11 @@ export function WorkspaceDetailPage() {
 
         {id ? (
           <FileDropZone
-            editor={editor}
             isUploading={isUploadingAsset}
             onUploadFiles={(files, point) => {
               void uploadAssetFiles(files, point);
             }}
+            screenToCanvasPoint={screenToCanvasPoint}
             uploadError={assetUploadError}
           />
         ) : null}
@@ -2331,7 +1693,7 @@ export function WorkspaceDetailPage() {
                 key={option.type}
                 onClick={() =>
                   createNodeMutation.mutate({
-                    point: { x: contextMenu.pageX, y: contextMenu.pageY },
+                    point: contextMenu.flowPoint,
                     nodeType: option.type,
                   })
                 }
@@ -2375,76 +1737,6 @@ export function WorkspaceDetailPage() {
   );
 }
 
-function recordAsMediaShape(record: TLRecord) {
-  if (record.typeName !== "shape" || !isMediaShape(record)) {
-    return null;
-  }
-
-  return record;
-}
-
-function recordAsGroupContainerShape(record: TLRecord) {
-  if (record.typeName !== "shape" || !isGroupContainerShape(record)) {
-    return null;
-  }
-
-  return record;
-}
-
-function syncEditorWithCanvas(editor: Editor, canvas: CanvasPayload) {
-  const groupShapes = canvas.groups.map((group) =>
-    groupToShape(group, canvas.nodes),
-  );
-  const nodeShapes = canvas.nodes.map(nodeToShape);
-  const canvasShapes = [...groupShapes, ...nodeShapes];
-  const desiredShapeIds = new Set([
-    ...canvas.groups.map((group) => shapeIdForGroup(group.id)),
-    ...canvas.nodes.map((node) => shapeIdForNode(node.id)),
-  ]);
-
-  editor.store.mergeRemoteChanges(() => {
-    const existingPageShapes = editor.getCurrentPageShapes();
-    const staleShapeIds = existingPageShapes
-      .filter((shape) => {
-        if (
-          shape.type !== "media" &&
-          shape.type !== "group-container" &&
-          !edgeIdFromRecord(shape)
-        ) {
-          return false;
-        }
-        return !desiredShapeIds.has(shape.id);
-      })
-      .map((shape) => shape.id);
-
-    if (staleShapeIds.length > 0) {
-      editor.deleteShapes(staleShapeIds);
-    }
-
-    const shapesToCreate = canvasShapes.filter(
-      (shape) => !editor.getShape(shape.id),
-    );
-    const shapesToUpdate = canvasShapes.filter((shape) =>
-      editor.getShape(shape.id),
-    );
-
-    if (shapesToCreate.length > 0) {
-      editor.createShapes(shapesToCreate);
-    }
-    if (shapesToUpdate.length > 0) {
-      editor.updateShapes(shapesToUpdate);
-    }
-  });
-}
-
-function edgeIdFromRecord(record: TLRecord) {
-  if (record.typeName !== "shape" || !("meta" in record)) {
-    return null;
-  }
-  const edgeId = (record as { meta?: { edgeId?: unknown } }).meta?.edgeId;
-  return typeof edgeId === "string" ? edgeId : null;
-}
-
 function appendCanvasNode(current: CanvasPayload | undefined, node: MediaNode) {
   if (!current) {
     return current;
@@ -2465,16 +1757,6 @@ function canvasNodeFromEventPayload(node: unknown): MediaNode | null {
     return node as MediaNode;
   }
   return null;
-}
-
-function removeCanvasNode(current: CanvasPayload | undefined, nodeId: string) {
-  if (!current) {
-    return current;
-  }
-  return {
-    ...current,
-    nodes: current.nodes.filter((node) => node.id !== nodeId),
-  };
 }
 
 function appendCanvasEdge(current: CanvasPayload | undefined, edge: MediaEdge) {
@@ -2588,79 +1870,6 @@ function updateCanvasNodeStatus(
       node.id === nodeId ? { ...node, status } : node,
     ),
   };
-}
-
-function replaceCanvasNodeAndGroupMembership(
-  current: CanvasPayload | undefined,
-  node: MediaNode,
-) {
-  const next = replaceCanvasNode(current, node);
-  if (!next) {
-    return next;
-  }
-  return {
-    ...next,
-    groups: next.groups.map((group) => {
-      const nodeIds = nodeIdsWithout(group.node_ids, node.id);
-      return {
-        ...group,
-        node_ids: node.group_id === group.id ? [...nodeIds, node.id] : nodeIds,
-      };
-    }),
-  };
-}
-
-function updateCanvasNodePosition(
-  current: CanvasPayload | undefined,
-  nodeId: string,
-  canvasX: number,
-  canvasY: number,
-) {
-  if (!current) {
-    return current;
-  }
-  return {
-    ...current,
-    nodes: current.nodes.map((node) =>
-      node.id === nodeId
-        ? { ...node, canvas_x: canvasX, canvas_y: canvasY }
-        : node,
-    ),
-  };
-}
-
-function getCurrentGroupBounds(
-  editor: Editor,
-  groups: MediaGroup[],
-): GroupHitBounds[] {
-  return groups
-    .map((group) => {
-      const shape = editor.getShape(shapeIdForGroup(group.id));
-      if (!shape || !isGroupContainerShape(shape)) {
-        return null;
-      }
-      return {
-        groupId: group.id,
-        x: shape.x,
-        y: shape.y,
-        w: shape.props.w,
-        h: shape.props.h,
-      };
-    })
-    .filter((bounds): bounds is GroupHitBounds => Boolean(bounds));
-}
-
-function flashGroupMembers(groupId: string, nodeIds: string[]) {
-  window.dispatchEvent(
-    new CustomEvent("clip-anvil:group-flash", {
-      detail: { groupId },
-    }),
-  );
-  window.dispatchEvent(
-    new CustomEvent("clip-anvil:node-flash", {
-      detail: { nodeIds },
-    }),
-  );
 }
 
 function announceActiveNode(nodeId: string | null) {

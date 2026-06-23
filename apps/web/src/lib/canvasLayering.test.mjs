@@ -211,19 +211,23 @@ describe("canvas layering", () => {
     );
   });
 
-  it("routes dropped files through ClipAnvil upload instead of tldraw assets", () => {
+  it("routes dropped files through ClipAnvil upload with React Flow coordinates", () => {
     assert.ok(
-      workspaceDetail.includes('registerExternalContentHandler("files"'),
-      "tldraw file drops should be overridden so they create persisted media nodes",
+      fileDropZone.includes("screenToCanvasPoint"),
+      "window file drops should be converted through a canvas-neutral point mapper",
     );
     assert.ok(
       fileDropZone.includes("onUploadFiles"),
       "the drop overlay should share the persisted upload path",
     );
+    assert.ok(
+      workspaceDetail.includes("screenToCanvasPoint={screenToCanvasPoint}"),
+      "Studio should pass its React Flow coordinate converter to the drop overlay",
+    );
     assert.equal(
       fileDropZone.includes("void uploadFiles(files, point)"),
       false,
-      "window drop handling should not race tldraw's default local asset insertion",
+      "window drop handling should not create local-only assets",
     );
   });
 

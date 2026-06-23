@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Editor } from "tldraw";
 import {
   createMediaNode,
   uploadMediaAsset,
@@ -8,9 +7,12 @@ import {
 } from "../lib/api";
 
 interface FileDropZoneProps {
-  editor: Editor | null;
   isUploading: boolean;
   onUploadFiles: (files: File[], point: { x: number; y: number }) => void;
+  screenToCanvasPoint: (point: { x: number; y: number }) => {
+    x: number;
+    y: number;
+  } | null;
   uploadError: string | null;
 }
 
@@ -121,9 +123,9 @@ export function useCanvasFileUpload({
 }
 
 export function FileDropZone({
-  editor,
   isUploading,
   onUploadFiles,
+  screenToCanvasPoint,
   uploadError,
 }: FileDropZoneProps) {
   const [isActive, setIsActive] = useState(false);
@@ -178,15 +180,17 @@ export function FileDropZone({
       event.stopPropagation();
       event.stopImmediatePropagation();
       resetDragState();
-      if (!editor || !event.dataTransfer) {
+      if (!event.dataTransfer) {
         return;
       }
       const files = Array.from(event.dataTransfer.files);
-      const point = editor.screenToPage({
+      const point = screenToCanvasPoint({
         x: event.clientX,
         y: event.clientY,
       });
-      onUploadFiles(files, point);
+      if (point) {
+        onUploadFiles(files, point);
+      }
     };
 
     window.addEventListener("dragenter", onDragEnter, { capture: true });
@@ -203,7 +207,7 @@ export function FileDropZone({
       window.removeEventListener("dragend", resetDragState);
       window.removeEventListener("blur", resetDragState);
     };
-  }, [editor, onUploadFiles]);
+  }, [onUploadFiles, screenToCanvasPoint]);
 
   return (
     <div

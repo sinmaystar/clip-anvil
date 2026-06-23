@@ -6,6 +6,7 @@ import {
   ReactFlowProvider,
   applyEdgeChanges,
   applyNodeChanges,
+  useReactFlow,
   type EdgeChange,
   type EdgeTypes,
   type NodeChange,
@@ -44,9 +45,22 @@ export interface CanvasFlowSurfaceProps {
     positions: Array<{ id: string; canvas_x: number; canvas_y: number }>,
   ) => void;
   onViewportChange?: (camera: CanvasCamera) => void;
+  onCreateNodeAtPoint?: (input: {
+    flowPoint: { x: number; y: number };
+    screenX: number;
+    screenY: number;
+  }) => void;
 }
 
-export function CanvasFlowSurface({
+export function CanvasFlowSurface(props: CanvasFlowSurfaceProps) {
+  return (
+    <ReactFlowProvider>
+      <CanvasFlowSurfaceContent {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function CanvasFlowSurfaceContent({
   canvas,
   mode,
   selectedNodeId,
@@ -55,8 +69,10 @@ export function CanvasFlowSurface({
   onSelectEdge,
   onNodePositionsChange,
   onViewportChange,
+  onCreateNodeAtPoint,
 }: CanvasFlowSurfaceProps) {
   const policy = policyForCanvasMode(mode);
+  const { screenToFlowPosition } = useReactFlow<CanvasFlowNode, CanvasFlowEdge>();
   const derivedNodes = useMemo(
     () =>
       canvasToFlowNodes(canvas).map((node) => ({
@@ -112,76 +128,86 @@ export function CanvasFlowSurface({
   }, []);
 
   return (
-    <ReactFlowProvider>
-      <CanvasFlowPolicyProvider value={policy}>
-        <div className="canvas-flow-surface" data-mode={mode}>
-          <ReactFlow
-            defaultViewport={cameraToViewport(canvas.camera)}
-            deleteKeyCode={
-              policy.canDeleteNodes || policy.canDeleteEdges ? "Backspace" : null
+    <CanvasFlowPolicyProvider value={policy}>
+      <div className="canvas-flow-surface" data-mode={mode}>
+        <ReactFlow
+          defaultViewport={cameraToViewport(canvas.camera)}
+          deleteKeyCode={null}
+          edgeTypes={edgeTypes}
+          edges={edges}
+          edgesFocusable={policy.canSelect}
+          edgesReconnectable={policy.canCreateEdges}
+          elementsSelectable={policy.canSelect}
+          nodeTypes={nodeTypes}
+          nodes={nodes}
+          nodesConnectable={policy.canCreateEdges}
+          nodesDraggable={policy.canDragNodes}
+          nodesFocusable={policy.canSelect}
+          onEdgesChange={handleEdgesChange}
+          onEdgeClick={(_, edge) => {
+            onSelectEdge(edge.id);
+            onSelectNode(null);
+          }}
+          onMoveEnd={(_, viewport) => {
+            if (policy.canPersistViewport) {
+              onViewportChange?.(viewportToCamera(viewport));
             }
-            edgeTypes={edgeTypes}
-            edges={edges}
-            edgesFocusable={policy.canSelect}
-            edgesReconnectable={policy.canCreateEdges}
-            elementsSelectable={policy.canSelect}
-            nodeTypes={nodeTypes}
-            nodes={nodes}
-            nodesConnectable={policy.canCreateEdges}
-            nodesDraggable={policy.canDragNodes}
-            nodesFocusable={policy.canSelect}
-            onEdgesChange={handleEdgesChange}
-            onEdgeClick={(_, edge) => {
-              onSelectEdge(edge.id);
-              onSelectNode(null);
-            }}
-            onMoveEnd={(_, viewport) => {
-              if (policy.canPersistViewport) {
-                onViewportChange?.(viewportToCamera(viewport));
-              }
-            }}
-            onNodeDragStop={(_, node) => {
-              if (node.type === "media") {
-                onNodePositionsChange?.([
-                  {
-                    id: node.id,
-                    canvas_x: node.position.x,
-                    canvas_y: node.position.y,
-                  },
-                ]);
-              }
-            }}
-            onNodesChange={handleNodesChange}
-            onNodeClick={(_, node) => {
-              onSelectNode(node.id);
-              onSelectEdge(null);
-            }}
-            onPaneClick={() => {
-              onSelectNode(null);
-              onSelectEdge(null);
-            }}
-            panOnDrag={policy.canPanZoom}
-            zoomOnDoubleClick={policy.canPanZoom}
-            zoomOnPinch={policy.canPanZoom}
-            zoomOnScroll={policy.canPanZoom}
-          >
-            <Background />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-          {selectedNode ? (
-            <NodeInspectorPopover
-              mode={mode}
-              policy={policy}
-              node={selectedNode}
-              edges={canvas.edges}
-              groups={canvas.groups}
-              onRunNode={noopRunNode}
-              onUpdateNode={noopUpdateNode}
-            />
-          ) : null}
-        </div>
-      </CanvasFlowPolicyProvider>
-    </ReactFlowProvider>
+          }}
+          onNodeDragStop={(_, node) => {
+            if (node.type === "media") {
+              onNodePositionsChange?.([
+                {
+                  id: node.id,
+                  canvas_x: node.position.x,
+                  canvas_y: node.position.y,
+                },
+              ]);
+            }
+          }}
+          onNodesChange={handleNodesChange}
+          onNodeClick={(_, node) => {
+            onSelectNode(node.id);
+            onSelectEdge(null);
+          }}
+          onPaneClick={() => {
+            onSelectNode(null);
+            onSelectEdge(null);
+          }}
+          onPaneContextMenu={(event) => {
+            if (!policy.canCreateNodes || !onCreateNodeAtPoint) {
+              return;
+            }
+            event.preventDefault();
+            onCreateNodeAtPoint({
+              flowPoint: screenToFlowPosition({
+                x: event.clientX,
+                y: event.clientY,
+              }),
+              screenX: event.clientX,
+              screenY: event.clientY,
+            });
+          }}
+          panOnDrag={policy.canPanZoom}
+          zoomOnDoubleClick={policy.canPanZoom}
+          zoomOnPinch={policy.canPanZoom}
+          zoomOnScroll={policy.canPanZoom}
+        >
+          <Background />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+        {selectedNode ? (
+          <NodeInspectorPopover
+            mode={mode}
+            policy={policy}
+            node={selectedNode}
+            edges={canvas.edges}
+            groups={canvas.groups}
+            onRunNode={noopRunNode}
+            onUpdateNode={noopUpdateNode}
+          />
+        ) : null}
+      </div>
+    </CanvasFlowPolicyProvider>
   );
 }
 

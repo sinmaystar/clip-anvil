@@ -896,13 +896,13 @@ git commit -m "feat: migrate agent canvas to shared react flow surface"
 - Modify: `apps/web/src/pages/WorkspaceDetailPage.tsx`
 - Modify: `apps/web/src/components/FileDropZone.tsx`
 - Modify: `apps/web/src/lib/canvasLayering.test.mjs`
-- Modify: `apps/web/src/lib/canvasFlow.test.mjs`
+- Create: `apps/web/src/lib/studioCanvas.test.mjs`
 
-- [ ] **Step 1: Add Studio host**
+- [x] **Step 1: Add Studio host**
 
 Create `StudioFlowCanvas.tsx` wrapping `CanvasFlowSurface` with `mode="studio"` and callbacks for selection, create node, update viewport, drag persistence.
 
-- [ ] **Step 2: Replace tldraw host in WorkspaceDetailPage**
+- [x] **Step 2: Replace tldraw host in WorkspaceDetailPage**
 
 Remove direct imports:
 
@@ -913,19 +913,19 @@ import "tldraw/tldraw.css";
 
 Render `StudioFlowCanvas` where `<Tldraw />` currently lives.
 
-- [ ] **Step 3: Convert right-click create**
+- [x] **Step 3: Convert right-click create**
 
 Use React Flow `screenToFlowPosition` in `CanvasFlowSurface` and pass the flow point to existing `createNodeMutation`.
 
-- [ ] **Step 4: Convert viewport persistence**
+- [x] **Step 4: Convert viewport persistence**
 
 Use React Flow viewport change callbacks and existing `updateCamera` API.
 
-- [ ] **Step 5: Convert node drag persistence**
+- [x] **Step 5: Convert node drag persistence**
 
 On drag stop, call existing `batchUpdateNodePositions` with changed media nodes.
 
-- [ ] **Step 6: Run verification**
+- [x] **Step 6: Run verification**
 
 ```bash
 pnpm --filter @clip-anvil/web test:connections
@@ -935,7 +935,7 @@ pnpm --filter @clip-anvil/web... build
 
 Expected: PASS.
 
-- [ ] **Step 7: Browser E2E**
+- [x] **Step 7: Browser E2E**
 
 Open `studio_url` from smoke output. Verify:
 - canvas loads seed nodes;
@@ -944,7 +944,15 @@ Open `studio_url` from smoke output. Verify:
 - clicking node opens shared inspector;
 - Resource Tree selection still syncs.
 
-- [ ] **Step 8: Commit Phase 4**
+Run note 2026-06-23:
+- Studio URL `http://127.0.0.1:5177/workspaces/86ee77da-3b8b-4464-8139-6729e583fa3a/studio` rendered React Flow with 3 media nodes, 1 group, 1 edge, and no tldraw host.
+- Right-click at `(900, 340)` opened the Studio create menu and created text node `688b252d-3aa4-4d8c-9d60-275aa0e7919e` near `(800, 280)`.
+- Dragged that node to about `(874, 340)` and refreshed; the node stayed at `(874, 340)`.
+- Resource Tree click on `Smoke Script` selected React Flow node `720fa8ff-7ab6-42b2-b5e8-e80333164715` and updated the shared inspector.
+- Zoom changed viewport from `translate(0px, 0px) scale(1)` to `translate(-1100px, -700px) scale(2)`; refresh restored the same transform.
+- Browser console had 0 errors; observed one WebSocket close warning during refresh.
+
+- [x] **Step 8: Commit Phase 4**
 
 ```bash
 git add apps/web/src/components/canvas-flow apps/web/src/pages/WorkspaceDetailPage.tsx apps/web/src/components/FileDropZone.tsx apps/web/src/lib/canvasLayering.test.mjs apps/web/src/lib/canvasFlow.test.mjs
