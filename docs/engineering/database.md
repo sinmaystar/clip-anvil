@@ -4,26 +4,26 @@
 
 ### 1.1 核心原则
 
-业务数据库是唯一事实源。tldraw 是纯渲染引擎——接收数据、渲染图形、捕获交互，不持有独立状态。
+业务数据库是唯一事实源。React Flow 是纯画布交互层：接收业务数据、渲染节点/连线/分组、捕获选择和拖拽，不持有独立事实源。
 
 ```
 业务 DB（PostgreSQL）
   │
-  ├── media_node (含画布坐标 x,y,w,h)  ──→  tldraw MediaShape
-  ├── media_edge                        ──→  SVG connection overlay
-  ├── media_group                       ──→  tldraw GroupShape
-  └── canvas_document (camera)          ──→  tldraw Camera
+  ├── media_node (含画布坐标 x,y,w,h)  ──→  React Flow media node
+  ├── media_edge                        ──→  React Flow dependency edge
+  ├── media_group                       ──→  React Flow group node
+  └── canvas_document (camera)          ──→  React Flow viewport
 ```
 
-不存在 tldraw snapshot、不存在 canvas_record 表。画布上的每一个元素都能从业务表直接构建，不可能出现"画布和业务数据不一致"的问题。
+不存在前端画布 snapshot、不存在 canvas_record 表。画布上的每一个元素都能从业务表直接构建，不可能出现"画布和业务数据不一致"的问题。
 
-### 1.2 为什么不存 tldraw snapshot
+### 1.2 为什么不存前端画布 snapshot
 
 | 方案 | 问题 |
 |---|---|
-| 全量 snapshot（一个 JSONB 存所有 shape） | 每次拖拽都要全量写入几十 KB，且 snapshot 中的业务字段（status、title）会与业务表脱节 |
-| canvas_record（逐条存 tldraw 记录） | 本质上是业务表的副本，两套数据必然不一致——Agent 后台创建节点、网络断开、Bug 都会导致两边分叉 |
-| **业务表直接存坐标**（当前方案） | 只有一个事实源，tldraw 从业务表构建，不存在同步问题 |
+| 全量 snapshot（一个 JSONB 存所有前端节点） | 每次拖拽都要全量写入几十 KB，且 snapshot 中的业务字段（status、title）会与业务表脱节 |
+| canvas_record（逐条存前端画布记录） | 本质上是业务表的副本，两套数据必然不一致——Agent 后台创建节点、网络断开、Bug 都会导致两边分叉 |
+| **业务表直接存坐标**（当前方案） | 只有一个事实源，React Flow view-model 从业务表构建，不存在同步问题 |
 
 ## 2. 数据库表结构
 
@@ -142,7 +142,7 @@ CREATE TABLE media_group (
 );
 ```
 
-扁平分组，不支持嵌套。对应画布上的 tldraw GroupShape 和左侧资源树的文件夹。分组是纯组织工具，不影响依赖关系。
+扁平分组，不支持嵌套。对应画布上的 React Flow group node 和左侧资源树的文件夹。分组是纯组织工具，不影响依赖关系。
 
 ### 2.8 media_node — 业务节点（含画布坐标）
 
@@ -166,7 +166,7 @@ CREATE TABLE media_node (
     current_version_id UUID,
     metadata           JSONB NOT NULL DEFAULT '{}',
     source             TEXT NOT NULL DEFAULT 'user',
-    -- 画布坐标（tldraw 渲染位置）
+    -- 画布坐标（React Flow 渲染位置）
     canvas_x           REAL NOT NULL DEFAULT 0,
     canvas_y           REAL NOT NULL DEFAULT 0,
     canvas_w           REAL NOT NULL DEFAULT 200,
@@ -176,7 +176,7 @@ CREATE TABLE media_node (
 );
 ```
 
-**关键设计**：画布坐标（`canvas_x/y/w/h`）直接存在业务节点表上，不存在独立的画布状态表。tldraw 的 MediaShape 从这张表构建，不需要 snapshot。
+**关键设计**：画布坐标（`canvas_x/y/w/h`）直接存在业务节点表上，不存在独立的画布状态表。React Flow media node 从这张表构建，不需要前端画布 snapshot。
 
 - `group_id`：所属分组，一个节点最多属于一个分组
 - `asset_id`：用户源素材节点直接关联的资产，或 legacy 上传资产引用
@@ -437,58 +437,64 @@ CREATE INDEX idx_sandbox_job_workspace_status ON sandbox_job(workspace_id, statu
 CREATE INDEX idx_sandbox_job_generation_job ON sandbox_job(generation_job_id);
 ```
 
-## 3. tldraw 投影层类型
+## 3. React Flow 投影层类型
 
-### 3.1 MediaShapeProps — tldraw shape 的 props
+### 3.1 CanvasFlowNodeData — React Flow node data
 
 ```typescript
-import type { TLBaseShape } from 'tldraw'
+import type { Edge, Node } from '@xyflow/react'
 
 type MediaType = 'text' | 'image' | 'video' | 'audio' | 'reference_pack'
 type NodeStatus = 'draft' | 'ready' | 'queued' | 'running'
   | 'succeeded' | 'failed' | 'stale' | 'user_editing'
 
-interface MediaShapeProps {
-  nodeId: string
-  nodeType: MediaType
-  title: string
-  prompt: string
-  status: NodeStatus
-  w: number
-  h: number
-  thumbnailUrl?: string
-  productionPreview?: ProductionPreview
-  referencePackPreview?: ReferencePackPreview
+interface CanvasFlowNodeData {
+  kind: 'media'
+  node: MediaNode
 }
 
-type MediaShape = TLBaseShape<'media', MediaShapeProps>
+interface CanvasFlowGroupData {
+  kind: 'group'
+  group: MediaGroup
+  nodeIds: string[]
+}
+
+interface CanvasFlowEdgeData {
+  edge: MediaEdge
+}
+
+type CanvasFlowNode =
+  | Node<CanvasFlowNodeData, 'media'>
+  | Node<CanvasFlowGroupData, 'group'>
+
+type CanvasFlowEdge = Edge<CanvasFlowEdgeData, 'dependency'>
 ```
 
-shape props 只保存画布渲染需要的业务投影。模型参数、版本列表、调用记录等重数据通过 selected node 的 API 按需加载，不塞进 tldraw store。
+React Flow node data 只保存画布渲染需要的业务投影。模型参数、版本列表、调用记录等重数据通过 selected node 的 API 按需加载，不塞进前端画布状态。
 
-### 3.2 从业务数据构建 shape
+### 3.2 从业务数据构建 React Flow nodes/edges
 
-页面加载时，从后端 API 获取 workspace 的所有 media_node，逐个映射为 tldraw shape：
+页面加载时，从后端 API 获取 workspace 的完整 `CanvasPayload`，映射为 React Flow nodes/edges：
 
 ```typescript
-function nodeToShape(node: MediaNodeDTO): MediaShape {
+function nodeToFlowNode(node: MediaNode): CanvasFlowNode {
   return {
-    id: createShapeId(node.id),
+    id: node.id,
     type: 'media',
-    x: node.canvasX,
-    y: node.canvasY,
-    props: {
-      w: node.canvasW,
-      h: node.canvasH,
-      nodeId: node.id,
-      nodeType: node.nodeType,
-      title: node.title,
-      prompt: node.prompt,
-      status: node.status,
-      productionPreview: node.productionPreview,
-      referencePackPreview: node.referencePackPreview,
-      thumbnailUrl: node.thumbnailUrl,
-    },
+    position: { x: node.canvas_x, y: node.canvas_y },
+    width: mediaNodeDisplaySize(node).w,
+    height: mediaNodeDisplaySize(node).h,
+    data: { kind: 'media', node },
+  }
+}
+
+function edgeToFlowEdge(edge: MediaEdge): CanvasFlowEdge {
+  return {
+    id: edge.id,
+    type: 'dependency',
+    source: edge.from_node_id,
+    target: edge.to_node_id,
+    data: { edge },
   }
 }
 ```
@@ -499,8 +505,8 @@ function nodeToShape(node: MediaNodeDTO): MediaShape {
 
 ```
                     ┌────────────────────────────────────┐
-                    │         tldraw（浏览器内存）         │
-                    │  内存 store → 即时渲染，零延迟       │
+                    │         React Flow（浏览器内存）         │
+                    │  nodes/edges/viewport → 即时渲染     │
                     └──────┬────────────────┬─────────────┘
                            │                │
               ② 异步持久化   │                │  ③ 事件推送
@@ -530,12 +536,12 @@ GET /api/workspaces/:id/canvas
 ```
 
 前端收到后：
-1. `editor.createShapes(nodes.map(nodeToShape))` — 批量创建节点 shape
-2. SVG connection overlay 根据 `edges + nodes` 渲染 dependency 连线
-3. 为每个 group 创建 GroupShape
-4. `editor.setCamera({ x, y, z: zoom })` — 恢复视口
+1. `canvasToFlowNodes(canvas)` 派生 media/group nodes
+2. `canvasToFlowEdges(canvas)` 派生 dependency edges
+3. `cameraToViewport(camera)` 恢复视口
+4. `CanvasFlowSurface` 根据 Studio/Agent policy 启用或禁用编辑能力
 
-加载完成后 tldraw 在内存中独立工作，后续交互不依赖后端返回才能渲染。
+加载完成后 React Flow 可即时响应拖拽、选择和平移缩放；业务事实仍以后端 API 和 DB 为准。
 
 ### 4.3 通路 ②：用户操作 → 异步持久化
 
@@ -545,7 +551,7 @@ GET /api/workspaces/:id/canvas
 
 ```
 用户拖拽节点
-  → tldraw 内存 store 立即更新（0ms）
+  → React Flow 内存 nodes 立即更新（0ms）
   → 画布立即响应
   → 防抖 2s 后批量写回
   → PATCH /api/nodes/batch-position [{ id, canvasX, canvasY }, ...]
@@ -555,7 +561,7 @@ GET /api/workspaces/:id/canvas
 
 ```
 用户缩放/平移画布
-  → tldraw camera 立即更新（0ms）
+  → React Flow viewport 立即更新（0ms）
   → 防抖 2s 后写回
   → PATCH /api/workspaces/:id/camera { x, y, zoom }
   → 失败？忽略
@@ -567,7 +573,7 @@ GET /api/workspaces/:id/canvas
 用户点击"创建视频节点"
   → 调用 POST /api/nodes { nodeType: 'video', canvasX: 100, canvasY: 200 }
   → 等后端返回（~200ms）
-  → 成功 → editor.createShape(nodeToShape(response))  ← 画布出现节点
+  → 成功 → canvas payload 增加 node，React Flow 渲染节点
   → 失败 → toast 提示"创建失败，请重试"                ← 画布无变化
 ```
 
@@ -580,7 +586,7 @@ GET /api/workspaces/:id/canvas
   → 失败（其他）→ toast 提示"连线失败，请重试"
 ```
 
-**为什么业务操作不做乐观更新**：200ms 的等待在创建节点、建连线、编辑保存这些操作中用户几乎察觉不到。乐观更新需要处理回滚逻辑（删除已渲染的 shape、撤销状态变更），增加复杂度但收益极低。只有高频交互（拖拽）才需要本地即时响应，而那恰恰是丢失了也无所谓的位置数据。
+**为什么业务操作不做乐观更新**：200ms 的等待在创建节点、建连线、编辑保存这些操作中用户几乎察觉不到。乐观更新需要处理回滚逻辑（删除已渲染节点、撤销状态变更），增加复杂度但收益极低。只有高频交互（拖拽）才需要本地即时响应，而那恰恰是丢失了也无所谓的位置数据。
 
 ### 4.4 通路 ③：后端事件 → WebSocket 推送
 
@@ -599,16 +605,15 @@ WebSocket /ws/canvas?workspaceId=xxx
 { type: "GateRequested", payload: { gateType, message, options } } // M6 目标态
 ```
 
-前端按事件类型调用对应的 Editor API：
+前端按事件类型重新合并或局部更新 canvas payload：
 
 | 事件 | 前端响应 |
 |---|---|
-| NodeCreated | `editor.createShape(nodeToShape(node))` |
-| NodeUpdated | `editor.updateShape({ id, props: changes })` |
-| NodeDeleted | `editor.deleteShape(shapeId)` |
-| EdgeCreated | 更新 canvas edges，SVG overlay 渲染连线 |
-| EdgeDeleted | 更新 canvas edges，SVG overlay 移除连线 |
-| NodeUpdated | 更新 status、尺寸、预览、参考包摘要等 props |
+| NodeCreated | 添加 media node，重新派生 React Flow node |
+| NodeUpdated | 合并节点状态、尺寸、预览、参考包摘要等字段 |
+| NodeDeleted | 移除 media node |
+| EdgeCreated | 添加 dependency edge |
+| EdgeDeleted | 移除 dependency edge |
 | GateRequested | 对话面板展示确认卡片（M6 目标态） |
 
 ### 4.5 冲突处理
@@ -737,6 +742,6 @@ CREATE TABLE agent_session (
 ## 相关文档
 
 - [整体设计](../design/overview.md) — 架构、原则、路线图
-- [画布设计](../design/canvas.md) — tldraw 投影层和数据通路
+- [画布设计](../design/canvas.md) — React Flow 投影层和数据通路
 - [Studio 模式](../design/studio-mode.md) — 用户主导的创作交互
 - [Agent 模式](../design/agent-mode.md) — Agent 驱动的生产交互

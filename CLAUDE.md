@@ -4,7 +4,7 @@
 
 ## 技术栈
 
-- 前端：Vite 8 + React 19 + TypeScript 6 + tldraw 5 + TailwindCSS 4
+- 前端：Vite 8 + React 19 + TypeScript 6 + `@xyflow/react` 12 + TailwindCSS 4
 - 后端：Go 1.26 + Hertz + pgx v5 + sqlc + viper + slog
 - 中间件：PostgreSQL 16 / Redis 7 / MinIO
 - 容器：Docker Compose
@@ -14,7 +14,6 @@
 - `apps/web/` — 前端
 - `apps/server/` — 后端（Go module: github.com/sinmaystar/clip-anvil）
 - `packages/shared-types/` — TS 类型定义
-- `packages/canvas-schema/` — 画布 Shape/Tool 契约
 - `packages/eslint-config/` — 共享 ESLint 配置
 - `deploy/` — compose + nginx 配置
 - `docs/` — 架构方案 + 各阶段 spec

@@ -7,7 +7,7 @@
 - **Studio 模式**：用户主导的自由创作空间，在无限画布上创建媒体节点、建立依赖连线、提交生成
 - **Agent 模式**：Agent 主导的自动化生产，画布只读，用户通过对话驱动修改。Agent 调用生产级工具（create_storyboard、generate_shot），系统自动翻译为画布状态
 
-两种模式共享同一套业务数据层（PostgreSQL）和画布投影层（tldraw）。详见 [整体业务交互设计](../design/overview.md)。
+两种模式共享同一套业务数据层（PostgreSQL）和画布投影层（React Flow）。详见 [整体业务交互设计](../design/overview.md)。
 
 ## 技术选型
 
@@ -17,7 +17,7 @@
 |---|---|
 | 构建 | Vite 8 |
 | 框架 | React 19 + TypeScript 6 |
-| 画布 | tldraw v5 + 自定义 Shape/Tool |
+| 画布 | `@xyflow/react` 12 + 共享 CanvasFlowSurface |
 | 样式 | TailwindCSS 4 + 自定义设计系统 |
 | 状态 | Zustand（画布外 UI 状态） |
 | 数据 | TanStack Query + Fetch |
@@ -58,18 +58,20 @@
 
 截至 2026-06-21，当前代码已落地 M3-M5 的核心 Studio 生产能力，并已接入真实 Volcengine provider：
 
-- 前端：登录/注册页、项目列表/创建弹窗、Studio/Agent mode 路由分流、Studio 画布页、可折叠左侧资源树、明暗外观切换、tldraw 自定义 `MediaShape` 和 `GroupContainerShape`、文本/图片/视频/音频/参考包节点、用户源素材节点、依赖连线、分组、Dagre 自动布局、浮层 Inspector、Prompt `@`、Reference Pack 成员管理、手动运行、版本预览/选择、调用记录详情、全屏素材查看、`/ws/canvas` 连接状态与重连。
+- 前端：登录/注册页、项目列表/创建弹窗、Studio/Agent mode 路由分流、Studio/Agent 共享 React Flow 画布、可折叠左侧资源树、明暗外观切换、统一媒体节点卡片、文本/图片/视频/音频/参考包节点、用户源素材节点、依赖连线、分组、Dagre 自动布局、浮层 Inspector、Prompt `@`、Reference Pack 成员管理、手动运行、版本预览/选择、调用记录详情、全屏素材查看、`/ws/canvas` 连接状态与重连。
 - 后端：JWT 鉴权、Workspace API、Canvas API、MediaNode API、MediaEdge API、MediaGroup API、Upload/Storage API、Canvas WebSocket Hub、Production API、Prompt Reference API、Reference Pack API、goose 迁移、sqlc 查询生成、MinIO 上传与预签名访问 URL、OpenSandbox workspace manager、sandbox exec、artifact submit、sandbox-backed remote asset ingest、mock provider、Volcengine provider adapter、TOS staging。
 - 数据库：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`、`workspace_sandbox`、`generation_job`、`artifact_version`、`model_provider`、`model_capability`、`node_stale_reason`、`reference_pack_item`、`sandbox_job`。
 - 尚未落地：完整 Agent 对话生产模式、`/ws/chat`、Producer/Craftsman/Worker/Composer、自动评审与成片 Composer 闭环。
 
-### `packages/canvas-schema`（核心契约层）
+### `apps/web/src/components/canvas-flow`（画布契约层）
 
-Studio 和 Agent 模式共享的画布定义：
+Studio 和 Agent 模式共享的 React Flow 画布定义：
 
-- 当前 M5：媒体节点类型枚举（含 `reference_pack`）、节点状态枚举、`MediaShape` props（含尺寸、Prompt、production preview、reference pack preview）、`GroupContainerShape` props。
-- tldraw ArrowShape 使用内置 arrow + binding 表达 `media_edge`，边数据仍以业务表为事实源。
-- 版本列表、调用记录和模型参数不放入 shape props，通过 selected node 的 Production API 按需加载。
+- `flowTypes.ts` 定义 media/group node data、dependency edge data 和 mode。
+- `flowModePolicy.ts` 定义 Studio/Agent 能力差异；Agent 可浏览、选择、拖动布局和查看信息，但不能创建、删除、连线、编辑或运行。
+- `canvasViewModel.ts` 从 `CanvasPayload` 派生 React Flow nodes/edges，边和节点 id 直接使用业务 id。
+- `CanvasFlowSurface.tsx` 是 Studio/Agent 共用宿主；`MediaFlowNode`、`GroupFlowNode`、`DependencyFlowEdge` 和 `NodeInspectorPopover` 提供统一视觉与交互。
+- 版本列表、调用记录和模型参数不放入 React Flow node data，通过 selected node 的 Production API 按需加载。
 
 ### 后端模块
 
@@ -95,7 +97,7 @@ apps/server/internal/
 用户操作画布（创建节点 / 连线 / 编辑 Prompt / 提交生成）
   → REST API（POST /api/nodes, POST /api/edges, POST /api/nodes/:id/run 等）
   → api / production 模块执行业务命令 → 写 PostgreSQL
-  → 广播 /ws/canvas 事件 → 前端更新 tldraw store
+  → 广播 /ws/canvas 事件 → 前端刷新/合并 React Flow nodes 和 edges
   → 生成任务异步执行
   → mock provider / Volcengine provider / sandbox-backed internal provider
   → 远程图片和视频通过 sandbox 下载并存 MinIO，元数据存 PostgreSQL
@@ -131,7 +133,7 @@ Prompt `@` 渲染时，文本输入会内联进 `rendered_prompt`；图片/视�
 
 ## 设计原则
 
-- 业务 DB 为唯一事实源，tldraw 只做投影（不存 tldraw snapshot）
+- 业务 DB 为唯一事实源，React Flow 只做投影（不存前端画布 snapshot）
 - Agent 调用生产级工具，不直接操作画布；生产翻译层自动将生产操作映射为业务命令
 - Studio 和 Agent 共用同一套业务命令层（command 模块），数据一致性有保障
 - eino 只负责推理 + 工具选择 + 状态机，业务能力不耦合到框架

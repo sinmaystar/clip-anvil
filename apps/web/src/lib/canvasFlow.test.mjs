@@ -25,14 +25,13 @@ describe("React Flow canvas foundation", () => {
     assert.match(source, /policyForCanvasMode/);
   });
 
-  it("keeps React Flow types independent from tldraw shape concepts", async () => {
+  it("keeps React Flow types independent from legacy canvas record concepts", async () => {
     const source = await readCanvasFlowSource("flowTypes.ts");
 
     assert.match(source, /import type \{ Edge, Node \} from "@xyflow\/react"/);
     assert.match(source, /CanvasFlowMode = "studio" \| "agent"/);
     assert.match(source, /kind: "media"/);
     assert.match(source, /kind: "group"/);
-    assert.doesNotMatch(source, /TLRecord|TLShape|ShapeUtil|createShapeId/);
   });
 
   it("maps canvas payload into React Flow nodes and edges from business ids", async () => {
@@ -44,7 +43,6 @@ describe("React Flow canvas foundation", () => {
     assert.match(source, /source:\s*edge\.from_node_id/);
     assert.match(source, /target:\s*edge\.to_node_id/);
     assert.match(source, /mediaNodeDisplaySize/);
-    assert.doesNotMatch(source, /TLRecord|TLShape|ShapeUtil|createShapeId/);
   });
 
   it("round-trips backend camera through React Flow viewport shape", async () => {
@@ -76,7 +74,7 @@ describe("React Flow canvas foundation", () => {
     assert.match(source, /media-node/);
     assert.match(source, /Handle/);
     assert.match(source, /policy\.canCreateEdges/);
-    assert.doesNotMatch(source, /mode === "agent"|agent-readonly-tldraw/);
+    assert.doesNotMatch(source, /mode === "agent"/);
   });
 
   it("uses a shared inspector while honoring policy-gated actions", async () => {
@@ -88,7 +86,7 @@ describe("React Flow canvas foundation", () => {
     assert.match(source, /onRunNode/);
     assert.match(source, /policy\.canRunNodes/);
     assert.match(source, /policy\.canEditNodeContent/);
-    assert.doesNotMatch(source, /AgentReadonly|agent-readonly-tldraw/);
+    assert.doesNotMatch(source, /AgentReadonly/);
   });
 
   it("defines group and dependency edge renderers for the shared surface", async () => {

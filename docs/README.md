@@ -20,7 +20,7 @@
 
 ## 当前实现口径
 
-- Studio M1.x-M5 已落地：认证、Workspace、Studio/Agent mode 分流、tldraw 画布、文本/图片/视频/音频/参考包节点、依赖连线、分组、资源树、上传资产、Dagre 自动布局、`/ws/canvas` 事件通道。
+- Studio M1.x-M5 已落地：认证、Workspace、Studio/Agent mode 分流、React Flow 画布、文本/图片/视频/音频/参考包节点、依赖连线、分组、资源树、上传资产、Dagre 自动布局、`/ws/canvas` 事件通道。
 - M4/M5 生产链路已落地：`generation_job`、`artifact_version`、current winner、stale reason、Reference Pack、Prompt `@` 引用、模型能力、手动运行、版本查看/选择、调用记录和运行状态同步。
 - 真实 provider 已接入到 Studio 手动运行：mock provider 保留本地测试；Volcengine/Doubao 文本、图片、视频模型可通过后端异步执行；TOS 用于供应商输入暂存；生成图片/视频会通过 sandbox 下载并存入 MinIO。
 - 用户源素材节点已落地：手动文本素材和上传图片/视频/音频可作为普通依赖或参考包成员使用，但不展示模型运行入口。

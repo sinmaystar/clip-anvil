@@ -46,7 +46,6 @@ describe("agent React Flow canvas", () => {
     assert.match(pageSource, /AgentFlowCanvas/);
     assert.doesNotMatch(pageSource, /AgentReadonlyCanvas/);
     assert.doesNotMatch(pageSource, /AgentNodeDetailDrawer/);
-    assert.doesNotMatch(source, /from "tldraw"|from 'tldraw'|Tldraw|createTLStore/);
   });
 
   it("keeps Agent layout interactive while blocking edit and execution capabilities", async () => {

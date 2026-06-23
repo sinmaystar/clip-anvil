@@ -10,7 +10,7 @@ Studio 是用户主导的 AI 视频生成画布。用户可以像使用 Figma �
 
 当前代码已交付 Studio M1.x-M5 的核心 DAG 编辑和手动生产能力：
 
-- 全屏 tldraw 无限画布。
+- 全屏 React Flow 无限画布。
 - 左侧资源导航以浮层形式覆盖在画布上，展开态展示 workspace、连接状态、项目列表、主题切换、资源树、用户信息。
 - 左侧导航收起后只保留左上角 project peek，展示“影 + 项目名 + 展开箭头”。
 - 顶部居中浮动工具栏可创建视频、文本、图片、音频、参考包和连接，也支持创建手动文本源素材。
@@ -36,7 +36,7 @@ Studio 不是传统三栏管理界面，而是画布为底、工具浮在画布�
 │                                                      │
 │                  [视频 文本 图片 音频 连接]           │
 │                                                      │
-│                tldraw infinite canvas                │
+│                React Flow infinite canvas                │
 │             [media nodes]──dependency──>[node]       │
 │                                                      │
 │                [方向选择] [自动整理]                  │
@@ -95,7 +95,7 @@ Studio 不是传统三栏管理界面，而是画布为底、工具浮在画布�
 用户创建节点
   -> POST /api/nodes
   -> 后端返回 MediaNode
-  -> editor.createShape(nodeToShape(response))
+  -> canvas payload 更新为 React Flow node
   -> 选中节点并打开节点编辑浮层
 ```
 
@@ -182,7 +182,7 @@ Studio 不是传统三栏管理界面，而是画布为底、工具浮在画布�
 
 - 左侧导航展开：整理结果从浮层右侧开始，屏幕安全起点约 `x=360, y=112`。
 - 左侧导航收起：整理结果从 project peek 右侧开始，屏幕安全起点约 `x=120, y=112`。
-- 安全起点通过 tldraw `screenToPage()` 转换为 page 坐标。
+- 安全起点通过 React Flow `screenToFlowPosition()` 转换为画布坐标。
 
 这意味着自动整理不是简单重排 DAG，还必须尊重当前 UI 浮层占位。
 

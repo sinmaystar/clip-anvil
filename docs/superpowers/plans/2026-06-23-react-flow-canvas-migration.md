@@ -1078,7 +1078,7 @@ git commit -m "feat: complete react flow studio editing parity"
 - Modify: `docs/design/agent-mode.md`
 - Modify: `docs/design/frontend.md`
 
-- [ ] **Step 1: Remove dependencies**
+- [x] **Step 1: Remove dependencies**
 
 Run:
 
@@ -1088,7 +1088,7 @@ pnpm --filter @clip-anvil/web remove tldraw @clip-anvil/canvas-schema
 
 If `packages/canvas-schema` is unused, remove it from workspace files in the same commit.
 
-- [ ] **Step 2: Delete tldraw shape utils**
+- [x] **Step 2: Delete tldraw shape utils**
 
 Run:
 
@@ -1096,19 +1096,19 @@ Run:
 rm apps/web/src/shapes/MediaShapeUtil.tsx apps/web/src/shapes/AgentReadonlyMediaShapeUtil.tsx apps/web/src/shapes/GroupContainerShapeUtil.tsx
 ```
 
-- [ ] **Step 3: Clean Vite chunks**
+- [x] **Step 3: Clean Vite chunks**
 
 Remove `vendor-tldraw` from `apps/web/vite.config.ts`. If React Flow chunk warnings appear, add `vendor-xyflow`.
 
-- [ ] **Step 4: Clean CSS**
+- [x] **Step 4: Clean CSS**
 
 Remove `.tl-*` and `.agent-readonly-tldraw` selectors. Rename remaining Agent canvas selectors to React Flow neutral names such as `.agent-flow-canvas`.
 
-- [ ] **Step 5: Update current docs**
+- [x] **Step 5: Update current docs**
 
 Replace current tldraw architecture language with React Flow. Do not update `docs/archive/`.
 
-- [ ] **Step 6: Runtime/current docs grep**
+- [x] **Step 6: Runtime/current docs grep**
 
 Run:
 
@@ -1119,7 +1119,14 @@ rg -n "tldraw" AGENTS.md CLAUDE.md docs/README.md docs/engineering docs/design
 
 Expected: no output. If output appears only in this migration spec or archive, do not count it against current cleanup.
 
-- [ ] **Step 7: Full verification**
+Run note:
+- Added `apps/web/src/lib/canvasRuntimeRemoval.test.mjs` first, verified RED against dependencies, old shape utils, old `canvas.ts` projection helpers, stale tests, Vite chunking, and current docs.
+- Removed `tldraw` and `@clip-anvil/canvas-schema` from `apps/web/package.json`; deleted the unused `packages/canvas-schema` workspace package.
+- Deleted legacy shape util files and the unused old connection overlay component.
+- Reduced `apps/web/src/lib/canvas.ts` to neutral media node sizing only.
+- Rewrote current docs to the React Flow canvas contract; archive and historical spec/plan files are intentionally untouched.
+
+- [x] **Step 7: Full verification**
 
 Run:
 
@@ -1134,7 +1141,17 @@ git diff --check
 
 Expected: all PASS.
 
-- [ ] **Step 8: Final browser E2E**
+Run note:
+- `rg -n "from \"tldraw\"|from 'tldraw'|@tldraw|TLRecord|TLShape|ShapeUtil" apps/web packages` produced no output.
+- `rg -n "tldraw" AGENTS.md CLAUDE.md docs/README.md docs/engineering docs/design` produced no output.
+- `pnpm --filter @clip-anvil/web test:connections` passed with 164 tests.
+- `pnpm --filter @clip-anvil/web lint` passed.
+- `pnpm --filter @clip-anvil/web... build` passed and emitted `vendor-xyflow`.
+- `GOCACHE=/private/tmp/clipanvil-go-build make server-test` passed.
+- `GOCACHE=/private/tmp/clipanvil-go-build make server-build` passed.
+- `git diff --check` passed.
+
+- [x] **Step 8: Final browser E2E**
 
 Run Phase 3, 4, and 5 browser smoke end-to-end in one dev session. Confirm:
 - Studio full editing works.
@@ -1142,12 +1159,25 @@ Run Phase 3, 4, and 5 browser smoke end-to-end in one dev session. Confirm:
 - Studio/Agent share visual node cards and inspector content.
 - Console has no new application errors.
 
-- [ ] **Step 9: Commit Phase 6**
+Run note:
+- Started profile `clip-anvil-codex-react-flow-canvas-spec-8375`; Vite `http://localhost:5177`, API port `8892`.
+- Smoke workspace: Studio `7e6c2d29-0d95-4eea-9e5e-03b4ecf214ab`, Agent `25aa36ee-0289-4eff-bc45-60ff0a53605f`.
+- Studio loaded React Flow canvas with seed nodes, dependency edge and group; selecting node opened shared `.canvas-flow-inspector` plus Studio production overlay.
+- Studio toolbar created a manual text source node `bda8421c-0bfa-4f71-bceb-c39e62c73f9f`; dragging persisted from `(540,300)` to `(600,335)` and survived refresh.
+- Studio auto layout persisted positions for 3 nodes while preserving 1 edge and 1 group.
+- Agent loaded the same React Flow surface with no node connect handles or creation toolbar; selecting node opened `.canvas-flow-inspector` in `data-mode="agent"` with Run/Edit disabled.
+- Agent node drag persisted from `(120,120)` to `(170,155)` while node/edge/group counts stayed `1/0/0`; Delete key did not remove the node, and refresh kept it visible.
+- Browser console had no warnings or errors.
+
+- [x] **Step 9: Commit Phase 6**
 
 ```bash
 git add apps/web package.json pnpm-lock.yaml packages docs AGENTS.md CLAUDE.md
 git commit -m "refactor: remove tldraw canvas runtime"
 ```
+
+Run note:
+- Committed with message `refactor: remove tldraw canvas runtime`.
 
 **Phase 6 Done When:**
 - Runtime tldraw dependencies and code are gone.

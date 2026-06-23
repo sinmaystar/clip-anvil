@@ -2,7 +2,7 @@
 
 > 这是给 AI Coding Agent 的前端视觉与交互契约。当前源码入口：
 > `apps/web/src/main.css`、`apps/web/src/pages/`、`apps/web/src/components/`、
-> `apps/web/src/shapes/`。
+> `apps/web/src/components/canvas-flow/`。
 
 最后更新：2026-06-18 · 版本：v0.5 · 当前实现同步
 
@@ -104,7 +104,7 @@ Studio 是全屏工作台：
 │                                              │
 │                 floating toolbar             │
 │                                              │
-│             infinite tldraw canvas           │
+│             infinite React Flow canvas           │
 │                                              │
 │             auto layout controls             │
 └──────────────────────────────────────────────┘
@@ -217,7 +217,7 @@ Studio 是全屏工作台：
 交互要求：
 
 - 菜单出现后，点击画布其他区域必须自动关闭。
-- 菜单是 fixed popover，不跟随 tldraw 缩放。
+- 菜单是 fixed popover，不跟随 React Flow 缩放。
 - 菜单项使用类型 badge + 标题 + 描述。
 
 ## 10. Auto Layout
@@ -228,7 +228,7 @@ Studio 是全屏工作台：
 
 - sidebar 展开时，整理结果整体平移到浮层右侧安全区，当前屏幕起点约 `x=360, y=112`。
 - sidebar 收起时，整理结果整体平移到左上 project peek 右侧安全区，当前屏幕起点约 `x=120, y=112`。
-- 安全起点会通过 tldraw `screenToPage()` 转成 page 坐标，保证缩放/平移后仍正确。
+- 安全起点会通过 React Flow `screenToFlowPosition()` 转成画布坐标，保证缩放/平移后仍正确。
 - 布局函数 `computeDagreLayout` 支持可选 `origin`，测试见 `apps/web/src/lib/layout.test.mjs`。
 
 不要只用 CSS padding 模拟避让；节点坐标本身需要落在可见安全区。
@@ -270,8 +270,10 @@ Studio 是全屏工作台：
 | Workspace 页面 | `apps/web/src/pages/WorkspaceListPage.tsx` |
 | Studio 页面 | `apps/web/src/pages/WorkspaceDetailPage.tsx` |
 | 资源树 | `apps/web/src/components/ResourceTree.tsx` |
-| 连线 overlay | `apps/web/src/components/ConnectionOverlay.tsx` |
-| 媒体节点 shape | `apps/web/src/shapes/MediaShapeUtil.tsx` |
+| 共享画布 | `apps/web/src/components/canvas-flow/CanvasFlowSurface.tsx` |
+| 媒体节点 | `apps/web/src/components/canvas-flow/MediaFlowNode.tsx` |
+| 依赖连线 | `apps/web/src/components/canvas-flow/DependencyFlowEdge.tsx` |
+| 分组节点 | `apps/web/src/components/canvas-flow/GroupFlowNode.tsx` |
 | 自动整理 | `apps/web/src/lib/layout.ts` |
 
 ## 14. 验收要求

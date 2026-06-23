@@ -10,10 +10,9 @@ clip-anvil/
 │   │   │   ├── App.tsx               RouterProvider 路由入口
 │   │   │   ├── main.tsx              入口
 │   │   │   ├── main.css              Tailwind 入口 + 视觉 token + 页面样式
-│   │   │   ├── components/           Layout、路由守卫、资源树、属性面板、上传、自动布局控件
+│   │   │   ├── components/           Layout、路由守卫、资源树、属性面板、上传、自动布局控件、React Flow 画布
 │   │   │   ├── pages/                Login/Register/Workspace/Studio 页面
-│   │   │   ├── lib/                  API client、canvas 映射、布局、WebSocket
-│   │   │   ├── shapes/               tldraw 自定义 MediaShape、GroupContainerShape
+│   │   │   ├── lib/                  API client、canvas helper、布局、WebSocket
 │   │   │   └── stores/               auth、appearance 状态
 │   │   ├── package.json              @clip-anvil/web
 │   │   ├── vite.config.ts
@@ -33,7 +32,6 @@ clip-anvil/
 │       └── go.sum
 ├── packages/
 │   ├── shared-types/                 前后端共享 TS 类型
-│   ├── canvas-schema/                画布 Shape/Tool 契约（Studio + Agent 共用）
 │   └── eslint-config/                共享 ESLint 配置
 ├── deploy/
 │   ├── docker-compose.yml            中间件容器编排
@@ -181,7 +179,7 @@ AI Agent 编辑文件后自动触发。Codex 环境同样遵循根目录 `AGENTS
 - 严格模式（`"strict": true`）
 - ESLint + Prettier 强制格式
 - 组件使用函数式组件 + hooks
-- 状态管理：画布状态由 tldraw 管理，UI 状态用 zustand
+- 状态管理：画布交互状态由 React Flow 管理，业务事实以 API/DB 为准，画布外 UI 状态用 zustand
 
 ### 通用
 
