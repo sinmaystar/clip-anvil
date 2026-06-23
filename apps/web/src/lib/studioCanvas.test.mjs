@@ -40,6 +40,27 @@ describe("studio React Flow canvas", () => {
     assert.match(pageSource, /StudioFlowCanvas/);
   });
 
+  it("keeps Studio canvas creation on context menu and resource tree instead of the old top toolbar", async () => {
+    const pageSource = await readFile(workspacePageUrl, "utf8");
+
+    assert.doesNotMatch(pageSource, /studio-floating-toolbar/);
+    assert.doesNotMatch(pageSource, /创建节点工具栏/);
+    assert.doesNotMatch(pageSource, /createNodeAtViewportCenter/);
+    assert.doesNotMatch(pageSource, /startToolbarConnection/);
+    assert.match(pageSource, /onContextMenuCapture=\{openCanvasMenu\}/);
+    assert.match(pageSource, /studio-context-menu/);
+  });
+
+  it("uses only the Studio production popover when selecting a node", async () => {
+    const studioSource = await readFile(studioFlowCanvasUrl, "utf8");
+    const surfaceSource = await readFile(canvasSurfaceUrl, "utf8");
+    const pageSource = await readFile(workspacePageUrl, "utf8");
+
+    assert.match(studioSource, /renderInspector=\{false\}/);
+    assert.match(surfaceSource, /renderInspector/);
+    assert.match(pageSource, /node-production-popover/);
+  });
+
   it("creates Studio nodes from React Flow screen coordinates", async () => {
     const source = await readFile(canvasSurfaceUrl, "utf8");
     const pageSource = await readFile(workspacePageUrl, "utf8");

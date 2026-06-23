@@ -198,7 +198,7 @@ describe("canvas layering", () => {
     );
   });
 
-  it("creates uploaded media and manual text as source material nodes", () => {
+  it("creates uploaded media as source material nodes", () => {
     assert.ok(
       fileDropZone.includes('operation_type: "upload"'),
       "uploaded files should create upload source nodes",
@@ -206,14 +206,6 @@ describe("canvas layering", () => {
     assert.ok(
       fileDropZone.includes('status: "succeeded"'),
       "uploaded source nodes should be immediately usable",
-    );
-    assert.ok(
-      workspaceDetail.includes("文本素材"),
-      "toolbar should expose manual text source creation",
-    );
-    assert.ok(
-      workspaceDetail.includes('operation_type: "manual"'),
-      "manual text source nodes should use manual operation",
     );
   });
 
@@ -271,6 +263,21 @@ describe("canvas layering", () => {
     assert.ok(
       nodeInspector.includes("policy.canEditNodeContent"),
       "edit action should follow the canvas mode policy",
+    );
+  });
+
+  it("keeps Studio production popover scrollable within the viewport", () => {
+    assert.ok(
+      workspaceDetail.includes("maxHeight: nodeEditorPosition.maxHeight"),
+      "Studio should pass a computed viewport-safe height to the production popover",
+    );
+    assert.ok(
+      css.includes("max-height: var(--node-editor-max-height"),
+      "production popover should use the viewport-safe height variable",
+    );
+    assert.ok(
+      css.includes("overscroll-behavior: contain"),
+      "production popover scrolling should not chain into React Flow zoom",
     );
   });
 });

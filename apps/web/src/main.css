@@ -2670,11 +2670,14 @@ a:focus-visible {
   z-index: 90;
   min-width: min(520px, calc(100vw - 32px));
   max-width: min(720px, calc(100vw - 32px));
+  max-height: var(--node-editor-max-height, min(720px, calc(100vh - 32px)));
+  overscroll-behavior: contain;
   pointer-events: all;
 }
 
 .node-production-popover > .property-panel {
-  max-height: min(720px, calc(100vh - 120px));
+  max-height: var(--node-editor-max-height, min(720px, calc(100vh - 32px)));
+  overscroll-behavior: contain;
 }
 
 .property-panel-header p {
@@ -3481,63 +3484,6 @@ a:focus-visible {
 .studio-canvas-host {
   position: absolute;
   inset: 0;
-}
-
-.studio-floating-toolbar {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 48px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-panel-elevated) 62%, transparent);
-  box-shadow: var(--shadow-card);
-  padding: 6px;
-  transform: translateX(-50%);
-  backdrop-filter: blur(30px) saturate(1.25);
-}
-
-.studio-shell[data-sidebar="expanded"] .studio-floating-toolbar {
-  left: calc(50% + 166px);
-}
-
-.studio-floating-toolbar button {
-  min-width: 48px;
-  height: 36px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--fg-secondary);
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: 760;
-}
-
-.studio-floating-toolbar button:hover,
-.studio-floating-toolbar button:focus-visible {
-  background: color-mix(in srgb, var(--fg-primary) 12%, transparent);
-  color: var(--fg-primary);
-}
-
-.studio-toolbar-item {
-  position: relative;
-  display: grid;
-}
-
-.studio-toolbar-menu {
-  position: absolute;
-  top: calc(100% + 10px);
-  left: 50%;
-  min-width: 148px;
-  transform: translateX(-50%);
-}
-
-.studio-toolbar-menu button {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .connection-overlay {

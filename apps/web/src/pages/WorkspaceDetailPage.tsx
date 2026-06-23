@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
   type SyntheticEvent,
@@ -118,6 +119,7 @@ interface NodeEditorPosition {
   left: number;
   top: number;
   width: number;
+  maxHeight: number;
 }
 
 const nodeCreateOptions: Array<{
@@ -185,7 +187,6 @@ export function WorkspaceDetailPage() {
   const pendingConnectionRef = useRef<PendingConnection | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [contextMenu, setContextMenu] = useState<CanvasContextMenu | null>(null);
-  const [textCreateMenuOpen, setTextCreateMenuOpen] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -273,19 +274,6 @@ export function WorkspaceDetailPage() {
     },
     [canvasQuery.data?.camera],
   );
-
-  const canvasViewportCenter = useCallback(() => {
-    const frameRect = canvasFrameRef.current?.getBoundingClientRect();
-    if (!frameRect) {
-      return { x: 120, y: 120 };
-    }
-    return (
-      screenToCanvasPoint({
-        x: frameRect.left + frameRect.width / 2,
-        y: frameRect.top + frameRect.height / 2,
-      }) ?? { x: 120, y: 120 }
-    );
-  }, [screenToCanvasPoint]);
 
   const selectNode = useCallback((nodeId: string) => {
     setSelectedGroupId(null);
@@ -430,8 +418,7 @@ export function WorkspaceDetailPage() {
       const option =
         nodeCreateOptions.find((item) => item.type === nodeType) ??
         nodeCreateOptions[0];
-      const center = canvasViewportCenter();
-      const position = input?.point ?? center;
+      const position = input?.point ?? { x: 120, y: 120 };
       return createMediaNode({
         workspace_id: id,
         node_type: nodeType,
@@ -456,22 +443,6 @@ export function WorkspaceDetailPage() {
       setContextMenu(null);
     },
   });
-
-  const createNodeAtViewportCenter = useCallback(
-    (nodeType: MediaType, patch?: Partial<CreateMediaNodeRequest>) => {
-      createNodeMutation.mutate({ nodeType, patch });
-    },
-    [createNodeMutation],
-  );
-
-  const createManualTextSourceAtViewportCenter = useCallback(() => {
-    createNodeAtViewportCenter("text", {
-      title: "视频脚本",
-      prompt: "",
-      status: "succeeded",
-      operation_type: "manual",
-    });
-  }, [createNodeAtViewportCenter]);
 
   const updateNodeMutation = useMutation({
     mutationFn: async (input: {
@@ -668,18 +639,6 @@ export function WorkspaceDetailPage() {
       });
     },
   });
-
-  const startToolbarConnection = useCallback(() => {
-    if (selectedNodeId) {
-      beginDependencyConnection(selectedNodeId);
-      return;
-    }
-    setConnectionFeedback({
-      title: "选择起点节点",
-      description: "先选中一个节点，再点击连接并选择目标节点。",
-      tone: "info",
-    });
-  }, [beginDependencyConnection, selectedNodeId]);
 
   const createDependencyEdge = useCallback(
     (fromNodeId: string, toNodeId: string) => {
@@ -1020,11 +979,16 @@ export function WorkspaceDetailPage() {
       ? nodeEditorSafeLeft.collapsed
       : nodeEditorSafeLeft.expanded;
     const width = Math.min(720, Math.max(520, frameRect.width - safeLeft - 24));
+    const maxHeight = Math.round(
+      Math.min(720, Math.max(320, frameRect.height - 32)),
+    );
+    const maxTop = Math.max(16, frameRect.height - maxHeight - 16);
     if (!selectedNode || !effectiveCanvas) {
       setNodeEditorPosition({
         left: safeLeft,
-        top: 112,
+        top: Math.round(clamp(112, 16, maxTop)),
         width: Math.round(width),
+        maxHeight,
       });
       return;
     }
@@ -1039,8 +1003,9 @@ export function WorkspaceDetailPage() {
       left: Math.round(
         clamp(bottomLeft.x, safeLeft, Math.max(12, frameRect.width - width - 12)),
       ),
-      top: Math.round(bottomLeft.y + 12),
+      top: Math.round(clamp(bottomLeft.y + 12, 16, maxTop)),
       width: Math.round(width),
+      maxHeight,
     });
   }, [effectiveCanvas, isSidebarCollapsed, selectedEdgeId, selectedGroup, selectedNode]);
 
@@ -1671,77 +1636,6 @@ export function WorkspaceDetailPage() {
         onPointerDownCapture={closeCanvasMenuOnPointerDown}
         ref={canvasFrameRef}
       >
-        <div className="studio-floating-toolbar" aria-label="创建节点工具栏">
-          <button
-            onClick={() => createNodeAtViewportCenter("video")}
-            type="button"
-          >
-            视频
-          </button>
-          <div
-            className="studio-toolbar-item"
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            <button
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                setTextCreateMenuOpen((open) => !open);
-              }}
-              type="button"
-            >
-              文本
-            </button>
-            {textCreateMenuOpen ? (
-              <div className="studio-context-menu studio-toolbar-menu">
-                <button
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    createNodeAtViewportCenter("text");
-                    setTextCreateMenuOpen(false);
-                  }}
-                  type="button"
-                >
-                  生成文本
-                </button>
-                <button
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    createManualTextSourceAtViewportCenter();
-                    setTextCreateMenuOpen(false);
-                  }}
-                  type="button"
-                >
-                  文本素材
-                </button>
-              </div>
-            ) : null}
-          </div>
-          <button
-            onClick={() => createNodeAtViewportCenter("image")}
-            type="button"
-          >
-            图片
-          </button>
-          <button
-            onClick={() => createNodeAtViewportCenter("audio")}
-            type="button"
-          >
-            音频
-          </button>
-          <button
-            onClick={() => createNodeAtViewportCenter("reference_pack")}
-            type="button"
-          >
-            参考包
-          </button>
-          <button onClick={startToolbarConnection} type="button">
-            连接
-          </button>
-        </div>
-
         {workspaceQuery.isError || canvasQuery.isError ? (
           <div className="flex h-full items-center justify-center text-[13px] text-[var(--fg-tertiary)]">
             画布加载失败
@@ -1806,7 +1700,9 @@ export function WorkspaceDetailPage() {
               left: nodeEditorPosition.left,
               top: nodeEditorPosition.top,
               width: nodeEditorPosition.width,
-            }}
+              maxHeight: nodeEditorPosition.maxHeight,
+              "--node-editor-max-height": `${nodeEditorPosition.maxHeight}px`,
+            } as CSSProperties}
           >
             <PropertyPanel
               edges={canvasQuery.data?.edges ?? []}

@@ -59,6 +59,7 @@ export interface CanvasFlowSurfaceProps {
     screenY: number;
   }) => void;
   onConnectNodes?: (input: { fromNodeId: string; toNodeId: string }) => void;
+  renderInspector?: boolean;
 }
 
 export function CanvasFlowSurface(props: CanvasFlowSurfaceProps) {
@@ -83,6 +84,7 @@ function CanvasFlowSurfaceContent({
   onViewportChange,
   onCreateNodeAtPoint,
   onConnectNodes,
+  renderInspector = true,
 }: CanvasFlowSurfaceProps) {
   const policy = policyForCanvasMode(mode);
   const { screenToFlowPosition } = useReactFlow<CanvasFlowNode, CanvasFlowEdge>();
@@ -257,7 +259,7 @@ function CanvasFlowSurfaceContent({
           <Background />
           <Controls showInteractive={false} />
         </ReactFlow>
-        {selectedNode ? (
+        {renderInspector && selectedNode ? (
           <NodeInspectorPopover
             mode={mode}
             policy={policy}

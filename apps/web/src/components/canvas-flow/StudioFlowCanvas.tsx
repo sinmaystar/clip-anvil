@@ -86,6 +86,7 @@ export function StudioFlowCanvas({
     <CanvasFlowSurface
       canvas={canvas}
       mode="studio"
+      renderInspector={false}
       selectedEdgeId={selectedEdgeId}
       selectedGroupId={selectedGroupId}
       selectedNodeId={selectedNodeId}
