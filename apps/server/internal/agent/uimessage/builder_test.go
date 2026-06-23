@@ -97,12 +97,26 @@ func TestBuildToolStatusAndDecisionCardContent(t *testing.T) {
 		ToolName:   "read_workspace_context",
 		Label:      "工具执行完成",
 		Status:     "succeeded",
+		Arguments:  map[string]any{"include_canvas": true},
+		Result:     map[string]any{"ok": true},
 	})
 	if err != nil {
 		t.Fatalf("BuildToolStatusMessageContent() error = %v", err)
 	}
 	if !containsBlockType(t, toolRaw, "tool_status") {
 		t.Fatalf("tool content missing tool_status: %s", toolRaw)
+	}
+	var toolContent struct {
+		Blocks []struct {
+			Arguments map[string]any `json:"arguments"`
+			Result    map[string]any `json:"result"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal(toolRaw, &toolContent); err != nil {
+		t.Fatalf("unmarshal tool content: %v", err)
+	}
+	if toolContent.Blocks[0].Arguments["include_canvas"] != true || toolContent.Blocks[0].Result["ok"] != true {
+		t.Fatalf("tool payload = %#v", toolContent.Blocks[0])
 	}
 
 	cardRaw, err := BuildDecisionCardMessageContent(DecisionCardInput{

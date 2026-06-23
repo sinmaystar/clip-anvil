@@ -17,6 +17,15 @@ export type AgentSocketEvent =
       };
     }
   | {
+      type: "agent.message.updated";
+      payload: {
+        workspace_id: string;
+        thread_id: string;
+        message: AgentMessage;
+        event: AgentEvent;
+      };
+    }
+  | {
       type: "agent.message.delta";
       payload: {
         workspace_id: string;

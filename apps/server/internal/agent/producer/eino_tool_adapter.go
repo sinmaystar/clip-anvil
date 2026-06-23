@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	einotool "github.com/cloudwego/eino/components/tool"
@@ -179,6 +180,9 @@ func (t *einoProducerTool) InvokableRun(ctx context.Context, argumentsInJSON str
 		result.ToolName = t.definition.Name
 	}
 	t.runState.record(result)
+	if strings.TrimSpace(result.Summary) != "" {
+		return strings.TrimSpace(result.Summary), nil
+	}
 	raw, err := json.Marshal(result.Result)
 	if err != nil {
 		return "", fmt.Errorf("encode tool result: %w", err)

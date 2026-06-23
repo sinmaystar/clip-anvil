@@ -26,17 +26,21 @@ export function hasRunningProducerTask(tasks: AgentTaskState[]) {
 }
 
 export function hasActiveAgentTask(tasks: AgentTaskState[]) {
-  return tasks.some(
-    (task) =>
-      task.status === "queued" ||
-      task.status === "running" ||
-      task.status === "waiting_for_user",
-  );
+	return tasks.some(
+		(task) =>
+			task.status === "queued" ||
+			task.status === "running" ||
+			task.status === "waiting_for_user",
+	);
+}
+
+export function hasProcessingAgentTask(tasks: AgentTaskState[]) {
+	return tasks.some(
+		(task) => task.status === "queued" || task.status === "running",
+	);
 }
 
 export function agentComposerDisabledReason(tasks: AgentTaskState[]) {
-  if (tasks.some((task) => task.status === "waiting_for_user")) {
-    return "请先完成当前决策";
-  }
-  return "";
+	void tasks;
+	return "";
 }

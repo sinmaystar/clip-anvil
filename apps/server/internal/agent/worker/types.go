@@ -19,6 +19,7 @@ type GenerationInput struct {
 	Mode              string         `json:"mode"`
 	ShotID            string         `json:"shot_id"`
 	ShotClientKey     string         `json:"shot_client_key,omitempty"`
+	ShotSortOrder     int            `json:"shot_sort_order,omitempty"`
 	CraftsmanThreadID string         `json:"craftsman_thread_id"`
 	CraftsmanTaskID   string         `json:"craftsman_task_id"`
 	Strategy          string         `json:"strategy"`

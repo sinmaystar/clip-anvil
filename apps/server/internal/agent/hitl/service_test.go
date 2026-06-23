@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -46,6 +47,35 @@ func TestRequestUserDecisionCreatesCardEventCheckpointAndWaitingTask(t *testing.
 	assertDecisionCardBlock(t, runtime.cardMessageContent, "确认方向", "pending")
 	if out.EventID == "" {
 		t.Fatalf("output = %#v", out)
+	}
+}
+
+func TestRequestUserDecisionBroadcastsInteractiveCard(t *testing.T) {
+	runtime := &fakeDecisionRuntime{}
+	broadcaster := &fakeDecisionBroadcaster{}
+	service := NewService(runtime, broadcaster)
+
+	_, err := service.RequestUserDecision(context.Background(), RequestDecisionInput{
+		WorkspaceID:   uuidWithByte(1),
+		ThreadID:      uuidWithByte(2),
+		TaskID:        uuidWithByte(3),
+		CheckpointKey: "cp-1",
+		Arguments: map[string]any{
+			"title":   "确认方向",
+			"message": "选择转化还是品牌",
+			"options": []any{map[string]any{"id": "a", "label": "继续"}},
+		},
+		CheckpointValue: []byte("checkpoint"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if broadcaster.messageCount != 1 || broadcaster.eventCount != 1 || broadcaster.taskCount != 1 {
+		t.Fatalf("broadcasts message=%d event=%d task=%d", broadcaster.messageCount, broadcaster.eventCount, broadcaster.taskCount)
+	}
+	if broadcaster.message.MessageType != "ui_card" || broadcaster.event.EventType != "decision_requested" || broadcaster.task.Status != "waiting_for_user" {
+		t.Fatalf("broadcast payloads message=%#v event=%#v task=%#v", broadcaster.message, broadcaster.event, broadcaster.task)
 	}
 }
 
@@ -96,6 +126,58 @@ func TestRespondDecisionCreatesResumeTaskAndResolvedEvent(t *testing.T) {
 	}
 }
 
+func TestRespondDecisionAllowsNaturalTextWhenEnabled(t *testing.T) {
+	runtime := &fakeDecisionRuntime{
+		event: decisionEvent([]byte(`{"title":"确认方向","options":[{"id":"a","label":"A"}]}`)),
+	}
+	service := NewService(runtime)
+
+	out, err := service.RespondDecision(context.Background(), RespondDecisionInput{
+		WorkspaceID:       uuidWithByte(1),
+		EventID:           uuidWithByte(8),
+		FreeText:          "可以，继续生成",
+		ClientResponseID:  "client-1",
+		AllowNaturalText:  true,
+		ResumeTaskThread:  uuidWithByte(2),
+		ResumeTaskOwnerID: uuidWithByte(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ResolvedEvent.Payload == nil || !strings.Contains(string(out.ResolvedEvent.Payload), "可以，继续生成") {
+		t.Fatalf("resolved payload = %s", out.ResolvedEvent.Payload)
+	}
+}
+
+func TestDecisionCardOptionsAcceptStringArray(t *testing.T) {
+	content, err := decisionCardContent(uuidWithByte(8), map[string]any{
+		"title":   "是否生成",
+		"message": "请选择",
+		"options": []any{"立即生成所有分镜预览", "暂不生成，先调整分镜内容"},
+	}, "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		Blocks []struct {
+			Options []struct {
+				ID    string `json:"id"`
+				Label string `json:"label"`
+			} `json:"options"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal(content, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Blocks) != 1 || len(got.Blocks[0].Options) != 2 {
+		t.Fatalf("options = %#v", got.Blocks)
+	}
+	if got.Blocks[0].Options[0].ID == "" || got.Blocks[0].Options[0].Label != "立即生成所有分镜预览" {
+		t.Fatalf("first option = %#v", got.Blocks[0].Options[0])
+	}
+}
+
 type fakeDecisionRuntime struct {
 	event              db.AgentEvent
 	waitingTask        pgtype.UUID
@@ -104,6 +186,31 @@ type fakeDecisionRuntime struct {
 	cardMessageContent []byte
 	handledEvent       pgtype.UUID
 	createdTaskType    string
+}
+
+type fakeDecisionBroadcaster struct {
+	messageCount int
+	eventCount   int
+	taskCount    int
+	message      db.AgentMessage
+	event        db.AgentEvent
+	task         db.AgentTask
+}
+
+func (f *fakeDecisionBroadcaster) BroadcastAgentMessage(_ pgtype.UUID, message db.AgentMessage, event db.AgentEvent) {
+	f.messageCount++
+	f.message = message
+	f.event = event
+}
+
+func (f *fakeDecisionBroadcaster) BroadcastAgentEvent(_ pgtype.UUID, event db.AgentEvent) {
+	f.eventCount++
+	f.event = event
+}
+
+func (f *fakeDecisionBroadcaster) BroadcastAgentTask(_ pgtype.UUID, task db.AgentTask) {
+	f.taskCount++
+	f.task = task
 }
 
 func (f *fakeDecisionRuntime) CreateEvent(_ context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {

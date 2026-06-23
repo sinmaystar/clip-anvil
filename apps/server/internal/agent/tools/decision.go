@@ -22,9 +22,17 @@ func (t RequestUserDecisionTool) Definition() Definition {
 		Name:        "request_user_decision",
 		Description: "Ask the user to make a decision before continuing. This creates a persisted decision card, checkpoint, and waiting_for_user task state.",
 		Parameters: objectSchema(map[string]any{
-			"title":           map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
-			"message":         map[string]any{"type": "string", "minLength": 1, "maxLength": 2000},
-			"options":         map[string]any{"type": "array", "maxItems": 6},
+			"title":   map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
+			"message": map[string]any{"type": "string", "minLength": 1, "maxLength": 2000},
+			"options": map[string]any{
+				"type":     "array",
+				"maxItems": 6,
+				"items": objectSchema(map[string]any{
+					"id":          map[string]any{"type": "string", "minLength": 1, "maxLength": 80},
+					"label":       map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
+					"description": map[string]any{"type": "string", "maxLength": 300},
+				}),
+			},
 			"allow_free_text": map[string]any{"type": "boolean"},
 		}),
 		Result: map[string]any{"type": "object"},

@@ -20,6 +20,27 @@ export function AgentToolStatusBlock({
       <small>{statusLabel}</small>
       {block.summary ? <p>{block.summary}</p> : null}
       {block.error_message ? <p>{block.error_message}</p> : null}
+      {block.arguments ? (
+        <ToolPayloadDetails label="参数" value={block.arguments} />
+      ) : null}
+      {block.result ? (
+        <ToolPayloadDetails label="结果" value={block.result} />
+      ) : null}
     </section>
+  );
+}
+
+function ToolPayloadDetails({
+  label,
+  value,
+}: {
+  label: string;
+  value: Record<string, unknown>;
+}) {
+  return (
+    <details className="agent-tool-payload">
+      <summary>{label}</summary>
+      <pre>{JSON.stringify(value, null, 2)}</pre>
+    </details>
   );
 }

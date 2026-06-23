@@ -83,12 +83,14 @@ func (b DecisionCardBlock) MarshalJSON() ([]byte, error) {
 
 type ToolStatusBlock struct {
 	BaseBlock
-	ToolCallID   string `json:"tool_call_id"`
-	ToolName     string `json:"tool_name"`
-	Label        string `json:"label"`
-	Status       string `json:"status"`
-	Summary      string `json:"summary,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
+	ToolCallID   string         `json:"tool_call_id"`
+	ToolName     string         `json:"tool_name"`
+	Label        string         `json:"label"`
+	Status       string         `json:"status"`
+	Summary      string         `json:"summary,omitempty"`
+	ErrorMessage string         `json:"error_message,omitempty"`
+	Arguments    map[string]any `json:"arguments,omitempty"`
+	Result       map[string]any `json:"result,omitempty"`
 }
 
 func (ToolStatusBlock) UIBlockType() string { return "tool_status" }

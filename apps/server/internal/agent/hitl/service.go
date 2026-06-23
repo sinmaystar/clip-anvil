@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -26,8 +27,15 @@ type Runtime interface {
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 }
 
+type Broadcaster interface {
+	BroadcastAgentMessage(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent)
+	BroadcastAgentEvent(workspaceID pgtype.UUID, event db.AgentEvent)
+	BroadcastAgentTask(workspaceID pgtype.UUID, task db.AgentTask)
+}
+
 type Service struct {
-	runtime Runtime
+	runtime     Runtime
+	broadcaster Broadcaster
 }
 
 type RequestDecisionInput struct {
@@ -51,6 +59,7 @@ type RespondDecisionInput struct {
 	SelectedOptionID  string
 	FreeText          string
 	ClientResponseID  string
+	AllowNaturalText  bool
 	ResumeTaskThread  pgtype.UUID
 	ResumeTaskOwnerID pgtype.UUID
 }
@@ -62,8 +71,12 @@ type RespondDecisionOutput struct {
 	Task          db.AgentTask
 }
 
-func NewService(runtime Runtime) *Service {
-	return &Service{runtime: runtime}
+func NewService(runtime Runtime, broadcasters ...Broadcaster) *Service {
+	var broadcaster Broadcaster
+	if len(broadcasters) > 0 {
+		broadcaster = broadcasters[0]
+	}
+	return &Service{runtime: runtime, broadcaster: broadcaster}
 }
 
 func (s *Service) RequestUserDecision(ctx context.Context, input RequestDecisionInput) (RequestDecisionOutput, error) {
@@ -80,6 +93,7 @@ func (s *Service) RequestUserDecision(ctx context.Context, input RequestDecision
 	if err != nil {
 		return RequestDecisionOutput{}, err
 	}
+	s.broadcastEvent(input.WorkspaceID, event)
 	card := map[string]any{}
 	_ = json.Unmarshal(payload, &card)
 	cardContent, err := decisionCardContent(event.ID, card, "pending")
@@ -98,6 +112,7 @@ func (s *Service) RequestUserDecision(ctx context.Context, input RequestDecision
 	if err != nil {
 		return RequestDecisionOutput{}, err
 	}
+	s.broadcastMessage(input.WorkspaceID, message, event)
 	if _, err := s.runtime.UpsertCheckpoint(ctx, agentruntime.UpsertCheckpointParams{
 		Key:         input.CheckpointKey,
 		WorkspaceID: input.WorkspaceID,
@@ -115,7 +130,26 @@ func (s *Service) RequestUserDecision(ctx context.Context, input RequestDecision
 	if err != nil {
 		return RequestDecisionOutput{}, err
 	}
+	s.broadcastTask(input.WorkspaceID, task)
 	return RequestDecisionOutput{EventID: uuidString(event.ID), Message: message, Task: task}, nil
+}
+
+func (s *Service) broadcastMessage(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent) {
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastAgentMessage(workspaceID, message, event)
+	}
+}
+
+func (s *Service) broadcastEvent(workspaceID pgtype.UUID, event db.AgentEvent) {
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastAgentEvent(workspaceID, event)
+	}
+}
+
+func (s *Service) broadcastTask(workspaceID pgtype.UUID, task db.AgentTask) {
+	if s.broadcaster != nil {
+		s.broadcaster.BroadcastAgentTask(workspaceID, task)
+	}
 }
 
 func (s *Service) RespondDecision(ctx context.Context, input RespondDecisionInput) (RespondDecisionOutput, error) {
@@ -126,7 +160,7 @@ func (s *Service) RespondDecision(ctx context.Context, input RespondDecisionInpu
 	if event.EventType != "decision_requested" || event.Status != "pending" {
 		return RespondDecisionOutput{}, ErrInvalidDecisionResponse
 	}
-	if !decisionAllowsResponse(event.Payload, input.SelectedOptionID, input.FreeText) {
+	if !decisionAllowsResponse(event.Payload, input.SelectedOptionID, input.FreeText, input.AllowNaturalText) {
 		return RespondDecisionOutput{}, ErrInvalidDecisionResponse
 	}
 	message, err := s.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
@@ -200,7 +234,7 @@ func decisionPayload(args map[string]any, checkpointKey string) []byte {
 	return mustJSON(payload)
 }
 
-func decisionAllowsResponse(raw []byte, optionID string, freeText string) bool {
+func decisionAllowsResponse(raw []byte, optionID string, freeText string, allowNaturalText bool) bool {
 	var payload struct {
 		Options []struct {
 			ID string `json:"id"`
@@ -208,6 +242,9 @@ func decisionAllowsResponse(raw []byte, optionID string, freeText string) bool {
 		AllowFreeText bool `json:"allow_free_text"`
 	}
 	_ = json.Unmarshal(raw, &payload)
+	if allowNaturalText && strings.TrimSpace(freeText) != "" {
+		return true
+	}
 	if strings.TrimSpace(optionID) != "" {
 		for _, option := range payload.Options {
 			if option.ID == optionID {
@@ -226,6 +263,9 @@ func decisionResponseText(raw []byte, optionID string, freeText string) string {
 		} `json:"options"`
 	}
 	_ = json.Unmarshal(raw, &payload)
+	if strings.TrimSpace(optionID) == "" {
+		return strings.TrimSpace(freeText)
+	}
 	label := optionID
 	for _, option := range payload.Options {
 		if option.ID == optionID && option.Label != "" {
@@ -271,15 +311,42 @@ func decisionCardOptions(value any) []uimessage.DecisionOption {
 		Label       string `json:"label"`
 		Description string `json:"description"`
 	}
-	if err := json.Unmarshal(raw, &options); err != nil {
+	if err := json.Unmarshal(raw, &options); err == nil {
+		out := make([]uimessage.DecisionOption, 0, len(options))
+		for index, option := range options {
+			label := strings.TrimSpace(option.Label)
+			if label == "" {
+				label = strings.TrimSpace(option.ID)
+			}
+			if label == "" {
+				continue
+			}
+			id := strings.TrimSpace(option.ID)
+			if id == "" {
+				id = fmt.Sprintf("option_%d", index+1)
+			}
+			out = append(out, uimessage.DecisionOption{
+				ID:          id,
+				Label:       label,
+				Description: strings.TrimSpace(option.Description),
+			})
+		}
+		return out
+	}
+
+	var labels []string
+	if err := json.Unmarshal(raw, &labels); err != nil {
 		return nil
 	}
-	out := make([]uimessage.DecisionOption, 0, len(options))
-	for _, option := range options {
+	out := make([]uimessage.DecisionOption, 0, len(labels))
+	for index, label := range labels {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
 		out = append(out, uimessage.DecisionOption{
-			ID:          strings.TrimSpace(option.ID),
-			Label:       strings.TrimSpace(option.Label),
-			Description: strings.TrimSpace(option.Description),
+			ID:    fmt.Sprintf("option_%d", index+1),
+			Label: label,
 		})
 	}
 	return out

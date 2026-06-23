@@ -247,6 +247,69 @@ func TestAgentMessageContentIncludesAttachments(t *testing.T) {
 	}
 }
 
+func TestHydrateDecisionCardStatusUpdatesNestedBlock(t *testing.T) {
+	content := map[string]any{
+		"schema": uimessage.SchemaV1,
+		"blocks": []any{
+			map[string]any{
+				"id":          "blk_decision",
+				"type":        "decision_card",
+				"decision_id": "decision-1",
+				"title":       "确认",
+				"message":     "继续吗",
+				"status":      "pending",
+			},
+		},
+	}
+
+	hydrateDecisionCardStatus(content, "handled")
+
+	blocks := content["blocks"].([]any)
+	block := blocks[0].(map[string]any)
+	if block["status"] != "handled" {
+		t.Fatalf("block status = %#v", block["status"])
+	}
+}
+
+func TestHydrateDecisionCardFromEventPayloadBackfillsOptions(t *testing.T) {
+	content := map[string]any{
+		"schema": uimessage.SchemaV1,
+		"blocks": []any{
+			map[string]any{
+				"id":              "blk_decision",
+				"type":            "decision_card",
+				"decision_id":     "decision-1",
+				"title":           "确认",
+				"message":         "继续吗",
+				"status":          "pending",
+				"options":         []any{},
+				"allow_free_text": false,
+			},
+		},
+	}
+	event := db.AgentEvent{
+		Status: "pending",
+		Payload: []byte(`{
+			"title":"是否启动生成",
+			"message":"请选择后续动作",
+			"options":["立即生成","稍后再说"],
+			"allow_free_text":true
+		}`),
+	}
+
+	hydrateDecisionCardFromEvent(content, event)
+
+	block := content["blocks"].([]any)[0].(map[string]any)
+	options := block["options"].([]any)
+	first := options[0].(map[string]any)
+	if len(options) != 2 || first["id"] != "option_1" || first["label"] != "立即生成" {
+		t.Fatalf("options = %#v", options)
+	}
+	if block["allow_free_text"] != true || block["title"] != "是否启动生成" || block["message"] != "请选择后续动作" {
+		t.Fatalf("block = %#v", block)
+	}
+}
+
 func TestAgentMessageAttachmentAllowsHydratedRenderURLs(t *testing.T) {
 	attachment := agentMessageAttachment{
 		AssetID:      "asset-1",

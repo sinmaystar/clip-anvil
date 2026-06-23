@@ -95,7 +95,7 @@ func main() {
 		ProducerModelID:    cfg.Production.Volcengine.TextModel,
 	})
 	agentBroadcaster := api.NewAgentBroadcaster(agentHub)
-	hitlService := agenthitl.NewService(agentRuntime)
+	hitlService := agenthitl.NewService(agentRuntime, agentBroadcaster)
 	producerPSSBuilder := agentpss.NewBuilder(queries)
 	storyboardService := agentstoryboard.NewService(pgPool, queries)
 	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
@@ -167,14 +167,15 @@ func main() {
 		productionService,
 		productionRuntime,
 		cfg.Production.WorkerConcurrency,
-		api.NewProductionBroadcaster(canvasHub),
+		api.NewProductionBroadcaster(canvasHub, queries, storageService),
 	)
 	productionService.SetRunner(productionRunner)
 	productionRunner.Start(ctx)
 	workerExecutor := agentworker.NewExecutor(agentworker.ExecutorConfig{
-		Runtime:    agentRuntime,
-		Store:      queries,
-		Production: productionService,
+		Runtime:     agentRuntime,
+		Store:       queries,
+		Production:  productionService,
+		Broadcaster: agentCanvasNodeBroadcaster{hub: canvasHub},
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
 	craftsmanGraph, err := agentcraftsman.NewGraph(agentcraftsman.GraphConfig{

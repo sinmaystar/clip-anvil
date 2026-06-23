@@ -30,6 +30,7 @@ type Runner interface {
 
 type Broadcaster interface {
 	BroadcastAgentMessage(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent)
+	BroadcastAgentMessageUpdated(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent)
 	BroadcastAgentTask(workspaceID pgtype.UUID, task db.AgentTask)
 	BroadcastAgentEvent(workspaceID pgtype.UUID, event db.AgentEvent)
 	BroadcastAgentMessageDelta(workspaceID pgtype.UUID, delta ProducerStreamDelta)

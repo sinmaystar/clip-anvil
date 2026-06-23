@@ -20,4 +20,14 @@ describe("agent messages", () => {
       ["a", "b", "c"],
     );
   });
+
+  it("replaces an existing message when an updated payload has the same id", () => {
+    const messages = mergeAgentMessages(
+      [{ id: "tool-1", seq: 4, status: "running" }],
+      [{ id: "tool-1", seq: 4, status: "succeeded" }],
+    );
+
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].status, "succeeded");
+  });
 });

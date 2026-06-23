@@ -47,22 +47,22 @@ func TestRegistryToolExecutorPersistsToolCallAndResult(t *testing.T) {
 	if runtime.createdTaskType != "tool_call" {
 		t.Fatalf("task type = %q, want tool_call", runtime.createdTaskType)
 	}
-	if runtime.messageTypes[0] != "tool_call" || runtime.messageTypes[1] != "tool_result" {
+	if len(runtime.messageTypes) != 1 || runtime.messageTypes[0] != "tool_call" {
 		t.Fatalf("message types = %#v", runtime.messageTypes)
 	}
-	if runtime.messages[0].Content == nil || runtime.messages[1].Content == nil {
+	if runtime.messages[0].Content == nil || runtime.updatedMessage.Content == nil {
 		t.Fatalf("messages = %#v", runtime.messages)
 	}
-	assertToolStatusBlock(t, runtime.messages[0].Content, "create_agent_text_node", "running")
-	assertToolStatusBlock(t, runtime.messages[1].Content, "create_agent_text_node", "succeeded")
+	assertToolStatusBlock(t, runtime.messages[0].Content, "create_agent_text_node", "running", true, false)
+	assertToolStatusBlock(t, runtime.updatedMessage.Content, "create_agent_text_node", "succeeded", true, true)
 	if runtime.eventTypes[0] != "tool_call_started" || runtime.eventTypes[1] != "tool_call_completed" {
 		t.Fatalf("event types = %#v", runtime.eventTypes)
 	}
 	if runtime.succeededTask != uuidWithByte(4) {
 		t.Fatal("tool task was not marked succeeded")
 	}
-	if broadcaster.messageCount != 2 || broadcaster.taskCount < 2 || broadcaster.eventCount != 2 {
-		t.Fatalf("broadcasts message=%d task=%d event=%d", broadcaster.messageCount, broadcaster.taskCount, broadcaster.eventCount)
+	if broadcaster.messageCount != 1 || broadcaster.messageUpdateCount != 1 || broadcaster.taskCount < 2 || broadcaster.eventCount != 2 {
+		t.Fatalf("broadcasts message=%d updates=%d task=%d event=%d", broadcaster.messageCount, broadcaster.messageUpdateCount, broadcaster.taskCount, broadcaster.eventCount)
 	}
 }
 
@@ -118,6 +118,7 @@ func (t *recordingTool) Execute(_ context.Context, input agenttools.ExecuteInput
 type fakeToolRuntime struct {
 	messageTypes    []string
 	messages        []db.AgentMessage
+	updatedMessage  db.AgentMessage
 	eventTypes      []string
 	createdTaskType string
 	runningTask     pgtype.UUID
@@ -140,6 +141,21 @@ func (f *fakeToolRuntime) AppendMessage(_ context.Context, params agentruntime.A
 	}
 	f.messages = append(f.messages, msg)
 	return msg, nil
+}
+
+func (f *fakeToolRuntime) UpdateMessage(_ context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error) {
+	f.updatedMessage = db.AgentMessage{
+		ID:          params.ID,
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		Role:        "assistant",
+		MessageType: "tool_call",
+		Content:     params.Content,
+		RawMessage:  params.RawMessage,
+		TaskID:      uuidWithByte(4),
+		EventID:     params.EventID,
+	}
+	return f.updatedMessage, nil
 }
 
 func (f *fakeToolRuntime) CreateEvent(_ context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
@@ -184,14 +200,16 @@ func (f *fakeToolRuntime) MarkTaskFailed(_ context.Context, taskID pgtype.UUID, 
 	return db.AgentTask{ID: taskID, Status: "failed", ErrorCode: pgtype.Text{String: code, Valid: true}, ErrorMessage: pgtype.Text{String: message, Valid: true}}, nil
 }
 
-func assertToolStatusBlock(t *testing.T, raw []byte, toolName string, status string) {
+func assertToolStatusBlock(t *testing.T, raw []byte, toolName string, status string, wantArguments bool, wantResult bool) {
 	t.Helper()
 	var content struct {
 		Schema string `json:"schema"`
 		Blocks []struct {
-			Type     string `json:"type"`
-			ToolName string `json:"tool_name"`
-			Status   string `json:"status"`
+			Type      string         `json:"type"`
+			ToolName  string         `json:"tool_name"`
+			Status    string         `json:"status"`
+			Arguments map[string]any `json:"arguments"`
+			Result    map[string]any `json:"result"`
 		} `json:"blocks"`
 	}
 	if err := json.Unmarshal(raw, &content); err != nil {
@@ -205,5 +223,11 @@ func assertToolStatusBlock(t *testing.T, raw []byte, toolName string, status str
 	}
 	if content.Blocks[0].ToolName != toolName || content.Blocks[0].Status != status {
 		t.Fatalf("tool block = %#v", content.Blocks[0])
+	}
+	if (content.Blocks[0].Arguments != nil) != wantArguments {
+		t.Fatalf("arguments = %#v, want present %v", content.Blocks[0].Arguments, wantArguments)
+	}
+	if (content.Blocks[0].Result != nil) != wantResult {
+		t.Fatalf("result = %#v, want present %v", content.Blocks[0].Result, wantResult)
 	}
 }

@@ -8,9 +8,11 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate, useParams } from "react-router";
 import {
+  type CanvasPayload,
   fetchCanvas,
   fetchNodeProductionState,
   fetchWorkspace,
+  type MediaNode,
 } from "../lib/api";
 import {
   type AgentAttachment,
@@ -73,14 +75,16 @@ import {
 } from "../lib/agentThinking";
 import {
   agentComposerDisabledReason,
-  hasActiveAgentTask,
+  hasProcessingAgentTask,
   hasRunningProducerTask,
   mergeAgentTasks,
 } from "../lib/agentTasks";
+import { nodeStatusForGenerationStatus } from "../lib/canvasRunState";
 import {
   type AgentConnectionStatus,
   connectAgentSocket,
 } from "../lib/agentWs";
+import { connectCanvasSocket } from "../lib/ws";
 import { createClientMessageId } from "../lib/clientMessageId";
 import { workspaceModeRoute } from "../lib/workspaceRoutes";
 import { useAuthStore } from "../stores/auth";
@@ -239,6 +243,14 @@ export function AgentWorkspacePage() {
         mergeAgentMessages(current, [response.message]),
       );
       setTasks((current) => mergeAgentTasks(current, [response.task]));
+      const decisionEvent = response.decision_event;
+      if (decisionEvent) {
+        setResolvedDecisionIds((current) => {
+          const next = new Set(current);
+          next.add(decisionEvent.id);
+          return next;
+        });
+      }
       setDraft("");
       setAttachments([]);
       setSendError("");
@@ -297,10 +309,12 @@ export function AgentWorkspacePage() {
         card.status === "pending" && !resolvedDecisionIds.has(card.decision_id),
     )
     .map((card) => card.decision_id);
-  const agentBusy = hasActiveAgentTask(tasks) || pendingDecisionIds.length > 0;
-  const composerDisabledReason =
-    agentComposerDisabledReason(tasks) ||
-    (pendingDecisionIds.length > 0 ? "请先完成当前决策" : "");
+  const hasPendingDecision = pendingDecisionIds.length > 0;
+  const agentBusy = hasProcessingAgentTask(tasks);
+  const composerDisabledReason = agentComposerDisabledReason(tasks);
+  const composerHint =
+    composerDisabledReason ||
+    (hasPendingDecision ? "可以点击选项，或直接输入自然语言回复当前决策" : "");
   const producerRunning = hasRunningProducerTask(tasks);
   const showThinkingIndicator = shouldShowAgentThinkingIndicator(
     producerRunning,
@@ -370,15 +384,18 @@ export function AgentWorkspacePage() {
       token,
       onEvent: (event) => {
         if (
-          event.type === "agent.message.created" &&
+          (event.type === "agent.message.created" ||
+            event.type === "agent.message.updated") &&
           event.payload.workspace_id === id
         ) {
           setMessages((current) =>
             mergeAgentMessages(current, [event.payload.message]),
           );
-          setStreams((current) =>
-            clearAgentStream(current, event.payload.message.task_id),
-          );
+          if (event.type === "agent.message.created") {
+            setStreams((current) =>
+              clearAgentStream(current, event.payload.message.task_id),
+            );
+          }
         }
         if (
           event.type === "agent.message.delta" &&
@@ -433,6 +450,73 @@ export function AgentWorkspacePage() {
       onStatusChange: setConnectionStatus,
     });
   }, [id, token, workspaceQuery.data?.mode]);
+
+  useEffect(() => {
+    if (!id || !token || workspaceQuery.data?.mode !== "agent") {
+      return;
+    }
+
+    const refreshCanvas = () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["workspace", id, "canvas"],
+      });
+      if (selectedNodeId) {
+        void queryClient.invalidateQueries({
+          queryKey: ["node", selectedNodeId, "production-state"],
+        });
+      }
+    };
+
+    return connectCanvasSocket({
+      workspaceId: id,
+      token,
+      onEvent: (event) => {
+        switch (event.type) {
+          case "NodeCreated":
+          case "NodeUpdated": {
+            const node = canvasNodeFromEventPayload(event.payload.node);
+            if (node) {
+              queryClient.setQueryData<CanvasPayload>(
+                ["workspace", id, "canvas"],
+                (current) => upsertCanvasNode(current, node),
+              );
+            }
+            refreshCanvas();
+            break;
+          }
+          case "NodeDeleted":
+          case "EdgeCreated":
+          case "EdgeDeleted":
+          case "GroupCreated":
+          case "GroupUpdated":
+          case "GroupDeleted":
+            refreshCanvas();
+            break;
+          case "production.job.updated":
+          case "production.model.delta": {
+            const nodeStatus = nodeStatusForGenerationStatus(
+              event.payload.status,
+            );
+            if (nodeStatus) {
+              queryClient.setQueryData<CanvasPayload>(
+                ["workspace", id, "canvas"],
+                (current) =>
+                  updateCanvasNodeStatus(
+                    current,
+                    event.payload.node_id,
+                    nodeStatus,
+                  ),
+              );
+            }
+            refreshCanvas();
+            break;
+          }
+        }
+      },
+      onReconnect: refreshCanvas,
+      onStatusChange: () => undefined,
+    });
+  }, [id, queryClient, selectedNodeId, token, workspaceQuery.data?.mode]);
 
   if (workspaceQuery.isLoading) {
     return (
@@ -923,8 +1007,8 @@ export function AgentWorkspacePage() {
             {attachmentError ? (
               <p className="agent-chat-error">{attachmentError}</p>
             ) : null}
-            {composerDisabledReason ? (
-              <p className="agent-chat-hint">{composerDisabledReason}</p>
+            {composerHint ? (
+              <p className="agent-chat-hint">{composerHint}</p>
             ) : null}
 
             <form
@@ -981,7 +1065,11 @@ export function AgentWorkspacePage() {
                     }
                   }}
                   placeholder={
-                    agentBusy ? "等待当前任务完成" : "输入需求或反馈"
+                    agentBusy
+                      ? "等待当前任务完成"
+                      : hasPendingDecision
+                        ? "回复当前决策，或点击上方选项"
+                        : "输入需求或反馈"
                   }
                   rows={3}
                   value={draft}
@@ -991,7 +1079,11 @@ export function AgentWorkspacePage() {
                     <button
                       aria-label="添加附件"
                       className="agent-composer-icon-button"
-                      disabled={agentBusy || uploadAttachmentMutation.isPending}
+                      disabled={
+                        agentBusy ||
+                        hasPendingDecision ||
+                        uploadAttachmentMutation.isPending
+                      }
                       onClick={chooseAttachment}
                       type="button"
                     >
@@ -1001,7 +1093,11 @@ export function AgentWorkspacePage() {
                       <select
                         aria-label="对话模型"
                         className="agent-model-select"
-                        disabled={agentBusy || modelSelectionMutation.isPending}
+                        disabled={
+                          agentBusy ||
+                          hasPendingDecision ||
+                          modelSelectionMutation.isPending
+                        }
                         onChange={(event) => {
                           const nextValue = event.target.value;
                           const nextOption =
@@ -1034,7 +1130,11 @@ export function AgentWorkspacePage() {
                       <select
                         aria-label="思考深度"
                         className="agent-thinking-select"
-                        disabled={agentBusy || modelSelectionMutation.isPending}
+                        disabled={
+                          agentBusy ||
+                          hasPendingDecision ||
+                          modelSelectionMutation.isPending
+                        }
                         onChange={(event) =>
                           modelSelectionMutation.mutate({
                             value: selectedModelValue,
@@ -1067,6 +1167,50 @@ export function AgentWorkspacePage() {
       </section>
     </main>
   );
+}
+
+function canvasNodeFromEventPayload(node: unknown): MediaNode | null {
+  if (
+    typeof node === "object" &&
+    node !== null &&
+    "id" in node &&
+    typeof (node as { id?: unknown }).id === "string"
+  ) {
+    return node as MediaNode;
+  }
+  return null;
+}
+
+function upsertCanvasNode(
+  current: CanvasPayload | undefined,
+  node: MediaNode,
+) {
+  if (!current) {
+    return current;
+  }
+  if (current.nodes.some((item) => item.id === node.id)) {
+    return {
+      ...current,
+      nodes: current.nodes.map((item) => (item.id === node.id ? node : item)),
+    };
+  }
+  return { ...current, nodes: [...current.nodes, node] };
+}
+
+function updateCanvasNodeStatus(
+  current: CanvasPayload | undefined,
+  nodeId: string,
+  status: MediaNode["status"],
+) {
+  if (!current) {
+    return current;
+  }
+  return {
+    ...current,
+    nodes: current.nodes.map((node) =>
+      node.id === nodeId ? { ...node, status } : node,
+    ),
+  };
 }
 
 function ThinkingIndicator() {

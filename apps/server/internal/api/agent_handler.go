@@ -80,9 +80,11 @@ type listAgentMessagesResponse struct {
 }
 
 type postAgentMessageResponse struct {
-	Message agentMessageResponse `json:"message"`
-	Event   agentEventResponse   `json:"event"`
-	Task    agentTaskResponse    `json:"task"`
+	Message       agentMessageResponse `json:"message"`
+	Event         agentEventResponse   `json:"event"`
+	Task          agentTaskResponse    `json:"task"`
+	DecisionEvent *agentEventResponse  `json:"decision_event,omitempty"`
+	ResolvedEvent *agentEventResponse  `json:"resolved_event,omitempty"`
 }
 
 type postAgentAttachmentResponse struct {
@@ -135,8 +137,8 @@ func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) 
 	for _, msg := range messages {
 		response := h.toAgentMessageResponse(ctx, msg)
 		if msg.MessageType == "ui_card" && msg.EventID.Valid {
-			if event, err := h.runtime.GetAgentEventForWorkspace(ctx, msg.EventID, workspace.ID); err == nil && event.Status == "handled" {
-				response.Content["status"] = "handled"
+			if event, err := h.runtime.GetAgentEventForWorkspace(ctx, msg.EventID, workspace.ID); err == nil {
+				hydrateDecisionCardFromEvent(response.Content, event)
 			}
 		}
 		out = append(out, response)
@@ -227,7 +229,7 @@ func (h *AgentHandler) PostMessage(ctx context.Context, c *app.RequestContext) {
 	if !ok {
 		return
 	}
-	if h.rejectIfAgentBusy(ctx, workspace.ID, c) {
+	if h.rejectIfAgentProcessing(ctx, workspace.ID, c) {
 		return
 	}
 
@@ -244,6 +246,9 @@ func (h *AgentHandler) PostMessage(ctx context.Context, c *app.RequestContext) {
 	thread, err := h.runtime.GetOrCreateProducerThread(ctx, workspace.ID)
 	if err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to load agent thread")
+		return
+	}
+	if handled := h.respondPendingDecisionWithMessage(ctx, c, workspace.ID, thread.ID, req); handled {
 		return
 	}
 	if !h.agentMessageAttachmentsForWorkspace(ctx, workspace.ID, req.Attachments, c) {
@@ -380,6 +385,85 @@ func (h *AgentHandler) PostDecision(ctx context.Context, c *app.RequestContext) 
 		ResolvedEvent: toAgentEventResponse(output.ResolvedEvent),
 		Task:          toAgentTaskResponse(output.Task),
 	})
+}
+
+func (h *AgentHandler) respondPendingDecisionWithMessage(ctx context.Context, c *app.RequestContext, workspaceID pgtype.UUID, threadID pgtype.UUID, req postAgentMessageRequest) bool {
+	event, ok, err := h.pendingDecisionForThread(ctx, workspaceID, threadID)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to load pending decision")
+		return true
+	}
+	if !ok {
+		return false
+	}
+	if h.hitlService == nil {
+		writeError(c, consts.StatusInternalServerError, "agent decision service is not configured")
+		return true
+	}
+	if len(req.Attachments) > 0 {
+		writeError(c, consts.StatusBadRequest, "decision response does not support attachments yet")
+		return true
+	}
+
+	output, err := h.hitlService.RespondDecision(ctx, agenthitl.RespondDecisionInput{
+		WorkspaceID:      workspaceID,
+		EventID:          event.ID,
+		FreeText:         req.trimmedText(),
+		ClientResponseID: strings.TrimSpace(req.ClientMessageID),
+		AllowNaturalText: true,
+	})
+	if err != nil {
+		status := consts.StatusInternalServerError
+		if errors.Is(err, agenthitl.ErrInvalidDecisionResponse) {
+			status = consts.StatusBadRequest
+		}
+		writeError(c, status, "failed to submit decision")
+		return true
+	}
+
+	h.broadcastAgentMessage(ctx, workspaceID, output.Message, output.DecisionEvent)
+	h.broadcaster.BroadcastAgentEvent(workspaceID, output.DecisionEvent)
+	h.broadcaster.BroadcastAgentEvent(workspaceID, output.ResolvedEvent)
+	h.broadcaster.BroadcastAgentTask(workspaceID, output.Task)
+
+	if h.producerRunner != nil {
+		go func() {
+			_ = h.producerRunner.RunTask(context.Background(), agentproducer.RunTaskInput{
+				WorkspaceID:      workspaceID,
+				ThreadID:         output.Task.ThreadID,
+				TaskID:           output.Task.ID,
+				TriggerMessageID: output.Message.ID,
+			})
+		}()
+	}
+
+	decisionEvent := toAgentEventResponse(output.DecisionEvent)
+	resolvedEvent := toAgentEventResponse(output.ResolvedEvent)
+	c.JSON(consts.StatusCreated, postAgentMessageResponse{
+		Message:       h.toAgentMessageResponse(ctx, output.Message),
+		Event:         resolvedEvent,
+		Task:          toAgentTaskResponse(output.Task),
+		DecisionEvent: &decisionEvent,
+		ResolvedEvent: &resolvedEvent,
+	})
+	return true
+}
+
+func (h *AgentHandler) pendingDecisionForThread(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID) (db.AgentEvent, bool, error) {
+	events, err := h.queries.ListAgentEventsByWorkspaceStatus(ctx, db.ListAgentEventsByWorkspaceStatusParams{
+		WorkspaceID: workspaceID,
+		Status:      "pending",
+	})
+	if err != nil {
+		return db.AgentEvent{}, false, err
+	}
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if event.EventType == "decision_requested" && event.ThreadID == threadID {
+			return event, true, nil
+		}
+	}
+	return db.AgentEvent{}, false, nil
 }
 
 func (h *AgentHandler) PostAttachment(ctx context.Context, c *app.RequestContext) {
@@ -577,6 +661,19 @@ func (h *AgentHandler) rejectIfAgentBusy(ctx context.Context, workspaceID pgtype
 	return false
 }
 
+func (h *AgentHandler) rejectIfAgentProcessing(ctx context.Context, workspaceID pgtype.UUID, c *app.RequestContext) bool {
+	tasks, err := h.runtime.ListActiveAgentTasksByWorkspace(ctx, workspaceID)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to load agent task state")
+		return true
+	}
+	if reason := agentProcessingReason(tasks); reason != "" {
+		writeError(c, consts.StatusConflict, reason)
+		return true
+	}
+	return false
+}
+
 func agentBusyReason(tasks []db.AgentTask) string {
 	for _, task := range tasks {
 		switch task.Status {
@@ -587,6 +684,110 @@ func agentBusyReason(tasks []db.AgentTask) string {
 		}
 	}
 	return ""
+}
+
+func agentProcessingReason(tasks []db.AgentTask) string {
+	for _, task := range tasks {
+		switch task.Status {
+		case "queued", "running":
+			return "ClipAnvil 正在处理上一条消息，请稍后再试"
+		}
+	}
+	return ""
+}
+
+func hydrateDecisionCardStatus(content map[string]any, status string) {
+	hydrateDecisionCardFromEvent(content, db.AgentEvent{Status: status})
+}
+
+func hydrateDecisionCardFromEvent(content map[string]any, event db.AgentEvent) {
+	var payload struct {
+		Title         string `json:"title"`
+		Message       string `json:"message"`
+		Options       any    `json:"options"`
+		AllowFreeText *bool  `json:"allow_free_text"`
+	}
+	if len(event.Payload) > 0 {
+		_ = json.Unmarshal(event.Payload, &payload)
+	}
+	status := event.Status
+	if status == "" {
+		status = "pending"
+	}
+	blocks, ok := content["blocks"].([]any)
+	if !ok {
+		return
+	}
+	for _, rawBlock := range blocks {
+		block, ok := rawBlock.(map[string]any)
+		if !ok || block["type"] != "decision_card" {
+			continue
+		}
+		block["status"] = status
+		if title := strings.TrimSpace(payload.Title); title != "" {
+			block["title"] = title
+		}
+		if message := strings.TrimSpace(payload.Message); message != "" {
+			block["message"] = message
+		}
+		if payload.AllowFreeText != nil {
+			block["allow_free_text"] = *payload.AllowFreeText
+		}
+		if options := hydratedDecisionOptions(payload.Options); len(options) > 0 {
+			block["options"] = options
+		}
+	}
+}
+
+func hydratedDecisionOptions(value any) []any {
+	raw, err := json.Marshal(value)
+	if err != nil || string(raw) == "null" {
+		return nil
+	}
+	var objectOptions []struct {
+		ID          string `json:"id"`
+		Label       string `json:"label"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(raw, &objectOptions); err == nil {
+		out := make([]any, 0, len(objectOptions))
+		for index, option := range objectOptions {
+			label := strings.TrimSpace(option.Label)
+			if label == "" {
+				label = strings.TrimSpace(option.ID)
+			}
+			if label == "" {
+				continue
+			}
+			id := strings.TrimSpace(option.ID)
+			if id == "" {
+				id = fmt.Sprintf("option_%d", index+1)
+			}
+			item := map[string]any{"id": id, "label": label}
+			if description := strings.TrimSpace(option.Description); description != "" {
+				item["description"] = description
+			}
+			out = append(out, item)
+		}
+		return out
+	}
+
+	var labels []string
+	if err := json.Unmarshal(raw, &labels); err != nil {
+		return nil
+	}
+	out := make([]any, 0, len(labels))
+	for index, label := range labels {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id":    fmt.Sprintf("option_%d", index+1),
+			"label": label,
+		})
+	}
+	return out
 }
 
 type agentMessageAttachment struct {

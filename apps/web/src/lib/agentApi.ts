@@ -113,6 +113,8 @@ export interface PostAgentMessageResponse {
   message: AgentMessage;
   event: AgentEvent;
   task: AgentTask;
+  decision_event?: AgentEvent;
+  resolved_event?: AgentEvent;
 }
 
 export interface PostAgentAttachmentResponse {

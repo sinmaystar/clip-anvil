@@ -43,7 +43,8 @@ type ExecuteInput struct {
 }
 
 type ExecuteOutput struct {
-	Result map[string]any
+	Result  map[string]any
+	Summary string
 }
 
 type Executor interface {

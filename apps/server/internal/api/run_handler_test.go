@@ -152,6 +152,27 @@ func TestStatusForProductionEvent(t *testing.T) {
 	}
 }
 
+func TestShouldBroadcastProductionNodeSnapshot(t *testing.T) {
+	for _, eventType := range []string{
+		production.ProductionEventJobSucceeded,
+		production.ProductionEventJobFailed,
+		production.ProductionEventJobCancelled,
+	} {
+		if !shouldBroadcastProductionNodeSnapshot(eventType) {
+			t.Fatalf("expected node snapshot for %s", eventType)
+		}
+	}
+	for _, eventType := range []string{
+		production.ProductionEventJobStarted,
+		production.ProductionEventProviderProgress,
+		production.ProductionEventModelStreamDelta,
+	} {
+		if shouldBroadcastProductionNodeSnapshot(eventType) {
+			t.Fatalf("did not expect node snapshot for %s", eventType)
+		}
+	}
+}
+
 func TestStaleReasonResponseExposesDetails(t *testing.T) {
 	reason := db.NodeStaleReason{
 		ID:                pgtype.UUID{Bytes: [16]byte{0x01}, Valid: true},

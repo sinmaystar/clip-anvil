@@ -27,6 +27,18 @@ func (b *AgentBroadcaster) BroadcastAgentMessage(workspaceID pgtype.UUID, messag
 	})
 }
 
+func (b *AgentBroadcaster) BroadcastAgentMessageUpdated(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent) {
+	b.hub.Broadcast(workspaceID, AgentSocketEvent{
+		Type: "agent.message.updated",
+		Payload: map[string]any{
+			"workspace_id": uuidToString(workspaceID),
+			"thread_id":    uuidToString(message.ThreadID),
+			"message":      toAgentMessageResponse(message),
+			"event":        toAgentEventResponse(event),
+		},
+	})
+}
+
 func (b *AgentBroadcaster) BroadcastAgentTask(workspaceID pgtype.UUID, task db.AgentTask) {
 	b.hub.Broadcast(workspaceID, AgentSocketEvent{
 		Type: "agent.task.updated",

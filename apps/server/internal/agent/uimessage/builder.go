@@ -25,6 +25,8 @@ type ToolStatusInput struct {
 	Status       string
 	Summary      string
 	ErrorMessage string
+	Arguments    map[string]any
+	Result       map[string]any
 }
 
 type DecisionCardInput struct {
@@ -87,6 +89,8 @@ func BuildToolStatusMessageContent(input ToolStatusInput) ([]byte, error) {
 			Status:       strings.TrimSpace(input.Status),
 			Summary:      strings.TrimSpace(input.Summary),
 			ErrorMessage: strings.TrimSpace(input.ErrorMessage),
+			Arguments:    input.Arguments,
+			Result:       input.Result,
 		},
 	}, nil)
 }

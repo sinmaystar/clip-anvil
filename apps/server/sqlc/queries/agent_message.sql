@@ -31,3 +31,12 @@ WHERE thread_id = $1
   AND seq > $2
 ORDER BY seq
 LIMIT $3;
+
+-- name: UpdateAgentMessage :one
+UPDATE agent_message
+SET
+    content = $2,
+    raw_message = $3,
+    event_id = $4
+WHERE id = $1
+RETURNING *;

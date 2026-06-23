@@ -127,6 +127,7 @@ func runCraftsmanStrategy(ctx context.Context, config GraphConfig, craftsmanCont
 		Mode:              "preview_image",
 		ShotID:            uuidString(input.ShotID),
 		ShotClientKey:     craftsmanContext.Shot.ClientKey,
+		ShotSortOrder:     int(craftsmanContext.Shot.SortOrder),
 		CraftsmanThreadID: uuidString(input.ThreadID),
 		CraftsmanTaskID:   uuidString(input.TaskID),
 		Strategy:          strategy.Strategy,

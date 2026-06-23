@@ -133,3 +133,44 @@ func (q *Queries) NextAgentMessageSeq(ctx context.Context, id pgtype.UUID) (int6
 	err := row.Scan(&seq)
 	return seq, err
 }
+
+const updateAgentMessage = `-- name: UpdateAgentMessage :one
+UPDATE agent_message
+SET
+    content = $2,
+    raw_message = $3,
+    event_id = $4
+WHERE id = $1
+RETURNING id, workspace_id, thread_id, seq, role, message_type, content, raw_message, task_id, event_id, created_at
+`
+
+type UpdateAgentMessageParams struct {
+	ID         pgtype.UUID `json:"id"`
+	Content    []byte      `json:"content"`
+	RawMessage []byte      `json:"raw_message"`
+	EventID    pgtype.UUID `json:"event_id"`
+}
+
+func (q *Queries) UpdateAgentMessage(ctx context.Context, arg UpdateAgentMessageParams) (AgentMessage, error) {
+	row := q.db.QueryRow(ctx, updateAgentMessage,
+		arg.ID,
+		arg.Content,
+		arg.RawMessage,
+		arg.EventID,
+	)
+	var i AgentMessage
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ThreadID,
+		&i.Seq,
+		&i.Role,
+		&i.MessageType,
+		&i.Content,
+		&i.RawMessage,
+		&i.TaskID,
+		&i.EventID,
+		&i.CreatedAt,
+	)
+	return i, err
+}

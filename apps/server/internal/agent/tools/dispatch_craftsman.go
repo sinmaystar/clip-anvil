@@ -162,12 +162,24 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			"status":              task.Status,
 		})
 	}
-	return ExecuteOutput{Result: map[string]any{
+	summary := dispatchCraftsmanSummary(len(dispatched), len(skipped), args.Mode)
+	return ExecuteOutput{Summary: summary, Result: map[string]any{
 		"status":     "queued",
 		"mode":       args.Mode,
+		"summary":    summary,
 		"dispatched": dispatched,
 		"skipped":    skipped,
 	}}, nil
+}
+
+func dispatchCraftsmanSummary(dispatched int, skipped int, mode string) string {
+	if mode != "preview_image" {
+		return fmt.Sprintf("已调度 %d 个分镜任务，%d 个分镜被跳过。", dispatched, skipped)
+	}
+	if skipped > 0 {
+		return fmt.Sprintf("已将 %d 个分镜的预览图生成任务加入队列，%d 个分镜因已有预览或状态不匹配被跳过。预览图会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示图片已经生成完成。", dispatched, skipped)
+	}
+	return fmt.Sprintf("已将 %d 个分镜的预览图生成任务加入队列。预览图会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示图片已经生成完成。", dispatched)
 }
 
 type parsedDispatchCraftsmanArgs struct {

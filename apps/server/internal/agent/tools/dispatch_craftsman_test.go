@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -60,6 +61,10 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 	}
 	if len(runtime.createdTasks) != 3 || len(enqueuer.tasks) != 3 {
 		t.Fatalf("created tasks = %d, enqueued = %d", len(runtime.createdTasks), len(enqueuer.tasks))
+	}
+	summary, _ := out.Result["summary"].(string)
+	if !strings.Contains(summary, "加入队列") || !strings.Contains(summary, "不表示图片已经生成完成") {
+		t.Fatalf("summary = %q", summary)
 	}
 	for _, task := range runtime.createdTasks {
 		if task.Role != "craftsman" || task.TaskType != "craftsman_turn" || task.ScopeType != "shot" {

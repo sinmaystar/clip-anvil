@@ -65,7 +65,7 @@ func TestArtifactServiceCreatesAssetAndAgentNode(t *testing.T) {
 	if !client.hasExec("curl -sS -f -L -X PUT -T") {
 		t.Fatalf("expected sandbox curl upload, execs = %#v", client.execCommands)
 	}
-	if !broadcaster.has("AssetCreated") || !broadcaster.has("NodeCreated") {
+	if broadcaster.has("AssetCreated") || !broadcaster.has("NodeCreated") {
 		t.Fatalf("events = %#v", broadcaster.events)
 	}
 }

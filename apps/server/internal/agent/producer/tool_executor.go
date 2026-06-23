@@ -3,6 +3,7 @@ package producer
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -15,6 +16,7 @@ import (
 
 type ToolRuntime interface {
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
+	UpdateMessage(ctx context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 	MarkTaskRunning(ctx context.Context, taskID pgtype.UUID) (db.AgentTask, error)
@@ -93,7 +95,7 @@ func (e *RegistryToolExecutor) ExecuteProducerTool(ctx context.Context, producer
 		ThreadID:    producerContext.Input.ThreadID,
 		Role:        "assistant",
 		MessageType: "tool_call",
-		Content:     toolStatusContent(toolCallID, call.Name, definition.Visibility.UserLabel, "running", "", ""),
+		Content:     toolStatusContent(toolCallID, call.Name, definition.Visibility.UserLabel, "running", "", "", call.Arguments, nil),
 		RawMessage:  toolEnvelope(toolCallID, call, "started", nil),
 		TaskID:      toolTask.ID,
 		EventID:     started.ID,
@@ -123,7 +125,7 @@ func (e *RegistryToolExecutor) ExecuteProducerTool(ctx context.Context, producer
 		Arguments:   call.Arguments,
 	})
 	if err != nil {
-		return ToolExecutionResult{}, e.failTool(ctx, producerContext, toolTask, toolCallID, call, err)
+		return ToolExecutionResult{}, e.failTool(ctx, producerContext, toolTask, callMessage, toolCallID, call, definition.Visibility.UserLabel, err)
 	}
 
 	completed, err := e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
@@ -140,20 +142,16 @@ func (e *RegistryToolExecutor) ExecuteProducerTool(ctx context.Context, producer
 	}
 	e.broadcastEvent(producerContext.Input.WorkspaceID, completed)
 
-	resultMessage, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
-		WorkspaceID: producerContext.Input.WorkspaceID,
-		ThreadID:    producerContext.Input.ThreadID,
-		Role:        "tool",
-		MessageType: "tool_result",
-		Content:     toolStatusContent(toolCallID, call.Name, "工具执行完成", "succeeded", "", ""),
-		RawMessage:  toolEnvelope(toolCallID, call, "succeeded", output.Result),
-		TaskID:      toolTask.ID,
-		EventID:     completed.ID,
+	resultMessage, err := e.runtime.UpdateMessage(ctx, agentruntime.UpdateMessageParams{
+		ID:         callMessage.ID,
+		Content:    toolStatusContent(toolCallID, call.Name, definition.Visibility.UserLabel, "succeeded", "", "", call.Arguments, output.Result),
+		RawMessage: toolEnvelope(toolCallID, call, "succeeded", output.Result),
+		EventID:    completed.ID,
 	})
 	if err != nil {
 		return ToolExecutionResult{}, err
 	}
-	e.broadcastMessage(producerContext.Input.WorkspaceID, resultMessage, completed)
+	e.broadcastMessageUpdated(producerContext.Input.WorkspaceID, resultMessage, completed)
 
 	succeeded, err := e.runtime.MarkTaskSucceeded(ctx, toolTask.ID, toolEnvelope(toolCallID, call, "succeeded", output.Result))
 	if err != nil {
@@ -163,13 +161,14 @@ func (e *RegistryToolExecutor) ExecuteProducerTool(ctx context.Context, producer
 
 	return ToolExecutionResult{
 		Result:      output.Result,
+		Summary:     strings.TrimSpace(output.Summary),
 		Interrupted: definition.Safety.RequiresHITL,
 		ToolCallID:  toolCallID,
 		ToolName:    call.Name,
 	}, nil
 }
 
-func (e *RegistryToolExecutor) failTool(ctx context.Context, producerContext ProducerContext, toolTask db.AgentTask, toolCallID string, call ToolCall, cause error) error {
+func (e *RegistryToolExecutor) failTool(ctx context.Context, producerContext ProducerContext, toolTask db.AgentTask, callMessage db.AgentMessage, toolCallID string, call ToolCall, label string, cause error) error {
 	failedEvent, eventErr := e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: producerContext.Input.WorkspaceID,
 		ThreadID:    producerContext.Input.ThreadID,
@@ -186,16 +185,16 @@ func (e *RegistryToolExecutor) failTool(ctx context.Context, producerContext Pro
 	})
 	if eventErr == nil {
 		e.broadcastEvent(producerContext.Input.WorkspaceID, failedEvent)
-		_, _ = e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
-			WorkspaceID: producerContext.Input.WorkspaceID,
-			ThreadID:    producerContext.Input.ThreadID,
-			Role:        "tool",
-			MessageType: "tool_result",
-			Content:     toolStatusContent(toolCallID, call.Name, "工具执行失败", "failed", "", cause.Error()),
-			RawMessage:  toolEnvelope(toolCallID, call, "failed", map[string]any{"error": cause.Error()}),
-			TaskID:      toolTask.ID,
-			EventID:     failedEvent.ID,
-		})
+		if updated, updateErr := e.runtime.UpdateMessage(ctx, agentruntime.UpdateMessageParams{
+			ID:         callMessage.ID,
+			Content:    toolStatusContent(toolCallID, call.Name, label, "failed", "", cause.Error(), call.Arguments, nil),
+			RawMessage: toolEnvelope(toolCallID, call, "failed", map[string]any{"error": cause.Error()}),
+			EventID:    failedEvent.ID,
+		}); updateErr == nil {
+			e.broadcastMessageUpdated(producerContext.Input.WorkspaceID, updated, failedEvent)
+		} else {
+			eventErr = errors.Join(eventErr, updateErr)
+		}
 	}
 	failed, err := e.runtime.MarkTaskFailed(ctx, toolTask.ID, errorCode(cause, "agent_tool_failed"), cause.Error())
 	if err == nil {
@@ -207,6 +206,12 @@ func (e *RegistryToolExecutor) failTool(ctx context.Context, producerContext Pro
 func (e *RegistryToolExecutor) broadcastMessage(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent) {
 	if e.broadcaster != nil {
 		e.broadcaster.BroadcastAgentMessage(workspaceID, message, event)
+	}
+}
+
+func (e *RegistryToolExecutor) broadcastMessageUpdated(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent) {
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastAgentMessageUpdated(workspaceID, message, event)
 	}
 }
 
@@ -236,7 +241,7 @@ func toolEnvelope(toolCallID string, call ToolCall, status string, result map[st
 	return mustJSON(payload)
 }
 
-func toolStatusContent(toolCallID string, toolName string, label string, status string, summary string, errorMessage string) []byte {
+func toolStatusContent(toolCallID string, toolName string, label string, status string, summary string, errorMessage string, arguments map[string]any, result map[string]any) []byte {
 	raw, err := uimessage.BuildToolStatusMessageContent(uimessage.ToolStatusInput{
 		ToolCallID:   toolCallID,
 		ToolName:     toolName,
@@ -244,6 +249,8 @@ func toolStatusContent(toolCallID string, toolName string, label string, status 
 		Status:       status,
 		Summary:      summary,
 		ErrorMessage: errorMessage,
+		Arguments:    arguments,
+		Result:       result,
 	})
 	if err != nil {
 		return []byte("{}")

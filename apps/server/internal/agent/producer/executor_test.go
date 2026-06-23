@@ -216,14 +216,19 @@ func (f fakeGraph) Run(ctx context.Context, input ProducerTurnInput) (ProducerTu
 }
 
 type fakeBroadcaster struct {
-	messageCount int
-	taskCount    int
-	eventCount   int
-	deltas       []string
+	messageCount       int
+	messageUpdateCount int
+	taskCount          int
+	eventCount         int
+	deltas             []string
 }
 
 func (f *fakeBroadcaster) BroadcastAgentMessage(pgtype.UUID, db.AgentMessage, db.AgentEvent) {
 	f.messageCount++
+}
+
+func (f *fakeBroadcaster) BroadcastAgentMessageUpdated(pgtype.UUID, db.AgentMessage, db.AgentEvent) {
+	f.messageUpdateCount++
 }
 
 func (f *fakeBroadcaster) BroadcastAgentTask(pgtype.UUID, db.AgentTask) {

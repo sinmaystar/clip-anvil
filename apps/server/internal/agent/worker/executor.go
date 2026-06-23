@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -27,30 +28,37 @@ type Store interface {
 	GetMediaNodeByID(ctx context.Context, id pgtype.UUID) (db.MediaNode, error)
 }
 
+type NodeBroadcaster interface {
+	BroadcastAgentNodeCreated(workspaceID pgtype.UUID, node db.MediaNode)
+}
+
 type ProductionSubmitter interface {
 	SubmitGenerationIntent(ctx context.Context, intent production.GenerationIntent, options production.RunOptions) (production.RunResult, error)
 }
 
 type ExecutorConfig struct {
-	Runtime    Runtime
-	Store      Store
-	Production ProductionSubmitter
-	Logger     *slog.Logger
+	Runtime     Runtime
+	Store       Store
+	Production  ProductionSubmitter
+	Broadcaster NodeBroadcaster
+	Logger      *slog.Logger
 }
 
 type Executor struct {
-	runtime    Runtime
-	store      Store
-	production ProductionSubmitter
-	logger     *slog.Logger
+	runtime     Runtime
+	store       Store
+	production  ProductionSubmitter
+	broadcaster NodeBroadcaster
+	logger      *slog.Logger
 }
 
 func NewExecutor(config ExecutorConfig) *Executor {
 	return &Executor{
-		runtime:    config.Runtime,
-		store:      config.Store,
-		production: config.Production,
-		logger:     config.Logger,
+		runtime:     config.Runtime,
+		store:       config.Store,
+		production:  config.Production,
+		broadcaster: config.Broadcaster,
+		logger:      config.Logger,
 	}
 }
 
@@ -74,9 +82,12 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		SourceRole:  "worker",
 		Scope:       mustJSON(map[string]any{"shot_id": workerInput.ShotID}),
 	})
-	node, err := e.resolveTargetNode(ctx, task, workerInput)
+	node, created, err := e.resolveTargetNode(ctx, task, workerInput)
 	if err != nil {
 		return e.fail(ctx, task, "worker_generation_node_failed", err)
+	}
+	if created && e.broadcaster != nil {
+		e.broadcaster.BroadcastAgentNodeCreated(task.WorkspaceID, node)
 	}
 	intent := generationIntent(task, workerInput, node)
 	options := production.RunOptions{MaxAttempts: effectiveMaxAttempts(task, workerInput)}
@@ -121,9 +132,10 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	return nil
 }
 
-func (e *Executor) resolveTargetNode(ctx context.Context, task db.AgentTask, input GenerationInput) (db.MediaNode, error) {
+func (e *Executor) resolveTargetNode(ctx context.Context, task db.AgentTask, input GenerationInput) (db.MediaNode, bool, error) {
 	if id, ok := pgUUIDFromString(input.TargetNodeID); ok {
-		return e.store.GetMediaNodeByID(ctx, id)
+		node, err := e.store.GetMediaNodeByID(ctx, id)
+		return node, false, err
 	}
 	shotID, ok := pgUUIDFromString(input.ShotID)
 	if !ok {
@@ -133,24 +145,26 @@ func (e *Executor) resolveTargetNode(ctx context.Context, task db.AgentTask, inp
 		}
 	}
 	if !ok {
-		return db.MediaNode{}, fmt.Errorf("%w: shot_id is required", ErrInvalidInput)
+		return db.MediaNode{}, false, fmt.Errorf("%w: shot_id is required", ErrInvalidInput)
 	}
 	modelParams, _ := json.Marshal(input.Params)
+	canvasX, canvasY := previewNodePosition(input)
 	metadata := mustJSON(map[string]any{
 		"agent_artifact_kind": "preview_image",
 		"shot_client_key":     input.ShotClientKey,
+		"shot_sort_order":     input.ShotSortOrder,
 		"craftsman_thread_id": input.CraftsmanThreadID,
 		"craftsman_task_id":   input.CraftsmanTaskID,
 		"worker_task_id":      uuidString(task.ID),
 	})
-	return e.store.CreateAgentGenerationNode(ctx, db.CreateAgentGenerationNodeParams{
+	node, err := e.store.CreateAgentGenerationNode(ctx, db.CreateAgentGenerationNodeParams{
 		WorkspaceID:   task.WorkspaceID,
 		NodeType:      db.NodeTypeImage,
 		Title:         previewNodeTitle(input),
 		Prompt:        strings.TrimSpace(input.Prompt),
 		OperationType: "text_to_image",
-		CanvasX:       140,
-		CanvasY:       140,
+		CanvasX:       canvasX,
+		CanvasY:       canvasY,
 		CanvasW:       320,
 		CanvasH:       220,
 		ShotID:        shotID,
@@ -159,6 +173,7 @@ func (e *Executor) resolveTargetNode(ctx context.Context, task db.AgentTask, inp
 		ModelParams:   defaultJSON(modelParams),
 		Metadata:      metadata,
 	})
+	return node, true, err
 }
 
 func generationIntent(task db.AgentTask, input GenerationInput, node db.MediaNode) production.GenerationIntent {
@@ -235,6 +250,36 @@ func previewNodeTitle(input GenerationInput) string {
 		return input.ShotClientKey + " preview image"
 	}
 	return "Agent preview image"
+}
+
+func previewNodePosition(input GenerationInput) (float32, float32) {
+	order := input.ShotSortOrder
+	if order <= 0 {
+		order = shotOrderFromClientKey(input.ShotClientKey)
+	}
+	if order <= 0 {
+		order = 1
+	}
+	index := order - 1
+	column := index % 3
+	row := index / 3
+	return float32(140 + column*380), float32(140 + row*300)
+}
+
+func shotOrderFromClientKey(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	lastDash := strings.LastIndex(value, "-")
+	if lastDash < 0 || lastDash == len(value)-1 {
+		return 0
+	}
+	order, err := strconv.Atoi(value[lastDash+1:])
+	if err != nil {
+		return 0
+	}
+	return order
 }
 
 func defaultParams(params map[string]any) map[string]any {

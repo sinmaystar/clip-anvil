@@ -69,6 +69,86 @@ func TestWorkerCreatesPreviewNodeAndSubmitsGenerationIntent(t *testing.T) {
 	}
 }
 
+func TestWorkerBroadcastsCreatedPreviewNode(t *testing.T) {
+	store := &fakeWorkerStore{}
+	broadcaster := &fakeWorkerNodeBroadcaster{}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:     &fakeWorkerRuntime{},
+		Store:       store,
+		Production:  &fakeProductionSubmitter{result: production.RunResult{Node: db.MediaNode{ID: uuidWithByte(20)}, Job: db.GenerationJob{ID: uuidWithByte(30)}, Version: db.ArtifactVersion{ID: uuidWithByte(40)}}},
+		Broadcaster: broadcaster,
+	})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:          "preview_image",
+		ShotID:        uuidString(uuidWithByte(2)),
+		ShotClientKey: "shot-01",
+		Prompt:        "prompt",
+		MaxAttempts:   3,
+	})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if broadcaster.node.ID != uuidWithByte(20) {
+		t.Fatalf("broadcasted node = %#v", broadcaster.node)
+	}
+}
+
+func TestWorkerLaysOutPreviewNodesByShotOrder(t *testing.T) {
+	for _, input := range []struct {
+		key       string
+		sortOrder int
+		wantX     float32
+		wantY     float32
+	}{
+		{key: "shot-01", sortOrder: 1, wantX: 140, wantY: 140},
+		{key: "shot-02", sortOrder: 2, wantX: 520, wantY: 140},
+		{key: "shot-03", sortOrder: 3, wantX: 900, wantY: 140},
+		{key: "shot-04", sortOrder: 4, wantX: 140, wantY: 440},
+		{key: "shot-05", sortOrder: 5, wantX: 520, wantY: 440},
+	} {
+		t.Run(input.key, func(t *testing.T) {
+			store := &fakeWorkerStore{}
+			executor := NewExecutor(ExecutorConfig{
+				Runtime:    &fakeWorkerRuntime{},
+				Store:      store,
+				Production: &fakeProductionSubmitter{result: production.RunResult{Node: db.MediaNode{ID: uuidWithByte(20)}, Job: db.GenerationJob{ID: uuidWithByte(30)}, Version: db.ArtifactVersion{ID: uuidWithByte(40)}}},
+			})
+			task := workerTaskWithInput(t, GenerationInput{
+				Mode:          "preview_image",
+				ShotID:        uuidString(uuidWithByte(2)),
+				ShotClientKey: input.key,
+				ShotSortOrder: input.sortOrder,
+				Prompt:        "prompt",
+				MaxAttempts:   3,
+			})
+
+			if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+				t.Fatal(err)
+			}
+			if store.createdNode.CanvasX != input.wantX || store.createdNode.CanvasY != input.wantY {
+				t.Fatalf("position = (%v,%v), want (%v,%v)", store.createdNode.CanvasX, store.createdNode.CanvasY, input.wantX, input.wantY)
+			}
+		})
+	}
+}
+
+func TestPreviewNodeLayoutKeepsReadableGap(t *testing.T) {
+	firstX, firstY := previewNodePosition(GenerationInput{ShotSortOrder: 1})
+	secondX, secondY := previewNodePosition(GenerationInput{ShotSortOrder: 2})
+	fourthX, fourthY := previewNodePosition(GenerationInput{ShotSortOrder: 4})
+
+	if horizontalGap := secondX - firstX - 320; horizontalGap < 56 {
+		t.Fatalf("horizontal gap = %v, want at least 56", horizontalGap)
+	}
+	if verticalGap := fourthY - firstY - 220; verticalGap < 64 {
+		t.Fatalf("vertical gap = %v, want at least 64", verticalGap)
+	}
+	if secondY != firstY || fourthX != firstX {
+		t.Fatalf("grid alignment broken: first=(%v,%v) second=(%v,%v) fourth=(%v,%v)", firstX, firstY, secondX, secondY, fourthX, fourthY)
+	}
+}
+
 func TestWorkerUsesExistingTargetNodeWhenProvided(t *testing.T) {
 	store := &fakeWorkerStore{existingNode: db.MediaNode{ID: uuidWithByte(22), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeImage, OperationType: "text_to_image", ShotID: uuidWithByte(2)}}
 	runtime := &fakeWorkerRuntime{}
@@ -180,6 +260,14 @@ type fakeWorkerStore struct {
 	createdNode     db.CreateAgentGenerationNodeParams
 	createNodeCalls int
 	existingNode    db.MediaNode
+}
+
+type fakeWorkerNodeBroadcaster struct {
+	node db.MediaNode
+}
+
+func (f *fakeWorkerNodeBroadcaster) BroadcastAgentNodeCreated(_ pgtype.UUID, node db.MediaNode) {
+	f.node = node
 }
 
 func (f *fakeWorkerStore) CreateAgentGenerationNode(_ context.Context, params db.CreateAgentGenerationNodeParams) (db.MediaNode, error) {

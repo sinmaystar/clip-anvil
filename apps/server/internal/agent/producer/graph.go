@@ -187,12 +187,19 @@ func runProducerLoop(ctx context.Context, responder Responder, registry *agentto
 			ProducerSameTurnMessage{
 				Role:        "tool",
 				MessageType: "tool_result",
-				Content:     string(mustJSON(result.Result)),
+				Content:     toolResultContent(result),
 				ToolCallID:  result.ToolCallID,
 				ToolName:    result.ToolName,
 			},
 		)
 	}
+}
+
+func toolResultContent(result ToolExecutionResult) string {
+	if strings.TrimSpace(result.Summary) != "" {
+		return strings.TrimSpace(result.Summary)
+	}
+	return string(mustJSON(result.Result))
 }
 
 func nativeToolCalls(message *schema.Message) []schema.ToolCall {

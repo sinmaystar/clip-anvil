@@ -169,4 +169,26 @@ describe("agent readonly canvas", () => {
     assert.doesNotMatch(source, /onUpdateNode/);
     assert.doesNotMatch(source, /textarea/);
   });
+
+  it("merges websocket node snapshots into the agent canvas cache", async () => {
+    const source = await readFile(
+      new URL("../pages/AgentWorkspacePage.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /case "NodeUpdated"/);
+    assert.match(source, /queryClient\.setQueryData<CanvasPayload>/);
+    assert.match(source, /upsertCanvasNode\(current, node\)/);
+  });
+
+  it("updates agent canvas node status from production websocket events", async () => {
+    const source = await readFile(
+      new URL("../pages/AgentWorkspacePage.tsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(source, /nodeStatusForGenerationStatus/);
+    assert.match(source, /updateCanvasNodeStatus/);
+    assert.match(source, /event\.payload\.node_id/);
+  });
 });

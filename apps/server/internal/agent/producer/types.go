@@ -31,6 +31,7 @@ type ProducerTurnOutput struct {
 
 type ToolExecutionResult struct {
 	Result      map[string]any
+	Summary     string
 	Interrupted bool
 	ToolCallID  string
 	ToolName    string

@@ -50,6 +50,8 @@ export interface AgentToolStatusBlock extends AgentBaseBlock {
   status: "running" | "succeeded" | "failed";
   summary?: string;
   error_message?: string;
+  arguments?: Record<string, unknown>;
+  result?: Record<string, unknown>;
 }
 
 export interface AgentAttachmentBlock extends AgentBaseBlock {

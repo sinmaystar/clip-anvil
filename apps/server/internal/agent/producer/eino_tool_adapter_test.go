@@ -117,6 +117,7 @@ type recordingNativeToolExecutor struct {
 	calledName string
 	calledID   string
 	calledArgs map[string]any
+	summary    string
 }
 
 func (e *recordingNativeToolExecutor) ExecuteProducerTool(_ context.Context, _ ProducerContext, call ToolCall) (ToolExecutionResult, error) {
@@ -125,6 +126,7 @@ func (e *recordingNativeToolExecutor) ExecuteProducerTool(_ context.Context, _ P
 	e.calledArgs = call.Arguments
 	return ToolExecutionResult{
 		Result:     map[string]any{"ok": true},
+		Summary:    e.summary,
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 	}, nil
@@ -157,5 +159,26 @@ func TestEinoToolAdapterInvokableRunDirectly(t *testing.T) {
 	}
 	if executor.calledName != "update_storyboard" || executor.calledID == "" {
 		t.Fatalf("called name/id = %q/%q", executor.calledName, executor.calledID)
+	}
+}
+
+func TestEinoToolAdapterReturnsSummaryToModelWhenPresent(t *testing.T) {
+	registry, err := agenttools.NewRegistry(adapterDefinitionTool{name: "dispatch_craftsman"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &recordingNativeToolExecutor{summary: "预览图生成任务已加入队列，后续通过画布同步更新。"}
+	tools, _, err := newEinoProducerTools(context.Background(), ProducerContext{}, registry, executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := tools[0].(*einoProducerTool)
+
+	got, err := tool.InvokableRun(context.Background(), `{"mode":"preview_image"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "预览图生成任务已加入队列，后续通过画布同步更新。" {
+		t.Fatalf("tool output = %q", got)
 	}
 }

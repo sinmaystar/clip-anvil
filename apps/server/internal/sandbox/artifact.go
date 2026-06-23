@@ -112,7 +112,6 @@ func (s *ArtifactService) Submit(ctx context.Context, sandboxID string, workspac
 	if err != nil {
 		return ArtifactResult{}, err
 	}
-	s.broadcast(workspaceID, "AssetCreated", map[string]any{"asset": asset})
 
 	node, err := s.upsertNode(ctx, workspaceID, input, asset)
 	if err != nil {

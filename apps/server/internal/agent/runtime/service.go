@@ -169,6 +169,13 @@ type AppendMessageParams struct {
 	EventID     pgtype.UUID
 }
 
+type UpdateMessageParams struct {
+	ID         pgtype.UUID
+	Content    []byte
+	RawMessage []byte
+	EventID    pgtype.UUID
+}
+
 func (s *Service) AppendMessage(ctx context.Context, params AppendMessageParams) (db.AgentMessage, error) {
 	if !params.WorkspaceID.Valid || !params.ThreadID.Valid || !validMessageRole(params.Role) {
 		return db.AgentMessage{}, ErrInvalidRequest
@@ -213,6 +220,18 @@ func (s *Service) AppendMessage(ctx context.Context, params AppendMessageParams)
 	}
 	committed = true
 	return msg, nil
+}
+
+func (s *Service) UpdateMessage(ctx context.Context, params UpdateMessageParams) (db.AgentMessage, error) {
+	if !params.ID.Valid {
+		return db.AgentMessage{}, ErrInvalidRequest
+	}
+	return s.queries.UpdateAgentMessage(ctx, db.UpdateAgentMessageParams{
+		ID:         params.ID,
+		Content:    defaultJSON(params.Content),
+		RawMessage: defaultJSON(params.RawMessage),
+		EventID:    params.EventID,
+	})
 }
 
 func (s *Service) ListMessages(ctx context.Context, threadID pgtype.UUID, afterSeq int64, limit int32) ([]db.AgentMessage, error) {
