@@ -126,14 +126,14 @@ describe("canvas layering", () => {
     );
   });
 
-  it("hides studio-only node affordances in the agent readonly canvas", () => {
+  it("does not keep the removed Agent tldraw readonly canvas selectors", () => {
     assert.ok(
-      css.includes(".agent-readonly-tldraw .media-node-connect-button"),
-      "Agent readonly canvas should not show Studio dependency handles",
+      !css.includes(".agent-readonly-tldraw"),
+      "Agent canvas should no longer depend on tldraw readonly host selectors",
     );
     assert.ok(
-      css.includes(".agent-readonly-tldraw .media-node-expand-button"),
-      "Agent readonly canvas should not show Studio expand controls",
+      css.includes(".canvas-flow-surface .react-flow"),
+      "Agent canvas should rely on the shared React Flow surface",
     );
   });
 

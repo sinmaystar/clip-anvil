@@ -14,12 +14,15 @@ const email = process.env.EMAIL;
 const password = process.env.PASSWORD;
 
 async function req(path, init = {}) {
+  const headers = {
+    ...(init.headers ?? {}),
+  };
+  if (!(init.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await fetch(base + path, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
+    headers,
   });
   const text = await res.text();
   if (!res.ok) {
@@ -61,6 +64,17 @@ const studio = await createWorkspace("React Flow Studio Smoke", "studio");
 const agent = await createWorkspace("React Flow Agent Smoke", "agent");
 const scriptNode = await createNode(studio, "Smoke Script", "text", 40, 80);
 const imageNode = await createNode(studio, "Smoke Image", "image", 360, 80);
+const agentForm = new FormData();
+agentForm.append(
+  "file",
+  new Blob(["Agent Layout Brief prompt"], { type: "text/plain" }),
+  "Agent Layout Brief.txt",
+);
+await req(`/agent/workspaces/${agent.id}/attachments`, {
+  method: "POST",
+  headers,
+  body: agentForm,
+});
 
 const edge = await req("/edges", {
   method: "POST",
@@ -95,7 +109,7 @@ if (studioCanvas.edges.length !== 1) {
 if (studioCanvas.groups.length !== 1) {
   throw new Error(`studio canvas group count ${studioCanvas.groups.length}`);
 }
-if (agentCanvas.nodes.length !== 0) {
+if (agentCanvas.nodes.length !== 1) {
   throw new Error(`agent canvas node count ${agentCanvas.nodes.length}`);
 }
 
@@ -108,6 +122,7 @@ console.log(JSON.stringify({
   agent_url: `${webBase}/workspaces/${agent.id}/agent`,
   studio_node_ids: [scriptNode.id, imageNode.id],
   agent_canvas_nodes: agentCanvas.nodes.length,
+  agent_node_ids: agentCanvas.nodes.map((node) => node.id),
   edge_id: edge.id,
   group_id: group.group?.id ?? group.id,
 }, null, 2));

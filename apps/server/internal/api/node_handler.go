@@ -494,7 +494,7 @@ func (h *NodeHandler) BatchUpdatePosition(ctx context.Context, c *app.RequestCon
 		if !ok {
 			return
 		}
-		if _, ok := requireStudioWorkspace(ctx, h.queries, node.WorkspaceID, accountID, c); !ok {
+		if _, ok := requireCanvasLayoutWorkspace(ctx, h.queries, node.WorkspaceID, accountID, c); !ok {
 			return
 		}
 		positions = append(positions, struct {

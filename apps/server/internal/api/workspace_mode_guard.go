@@ -16,6 +16,10 @@ func isStudioWorkspaceMode(mode db.WorkspaceMode) bool {
 	return mode == db.WorkspaceModeStudio
 }
 
+func isCanvasLayoutWorkspaceMode(mode db.WorkspaceMode) bool {
+	return mode == db.WorkspaceModeStudio || mode == db.WorkspaceModeAgent
+}
+
 func workspaceForAccount(
 	ctx context.Context,
 	queries *db.Queries,
@@ -63,6 +67,24 @@ func requireStudioWorkspace(
 	}
 	if !isStudioWorkspaceMode(workspace.Mode) {
 		writeError(c, consts.StatusForbidden, "workspace is read-only in agent mode")
+		return db.Workspace{}, false
+	}
+	return workspace, true
+}
+
+func requireCanvasLayoutWorkspace(
+	ctx context.Context,
+	queries *db.Queries,
+	workspaceID pgtype.UUID,
+	accountID pgtype.UUID,
+	c *app.RequestContext,
+) (db.Workspace, bool) {
+	workspace, ok := workspaceForAccount(ctx, queries, workspaceID, accountID, c)
+	if !ok {
+		return db.Workspace{}, false
+	}
+	if !isCanvasLayoutWorkspaceMode(workspace.Mode) {
+		writeError(c, consts.StatusForbidden, "workspace layout is not writable")
 		return db.Workspace{}, false
 	}
 	return workspace, true

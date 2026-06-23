@@ -182,7 +182,7 @@ func (h *CanvasHandler) UpdateCamera(ctx context.Context, c *app.RequestContext)
 		return
 	}
 
-	if _, ok := requireStudioWorkspace(ctx, h.queries, workspaceID, accountID, c); !ok {
+	if _, ok := requireCanvasLayoutWorkspace(ctx, h.queries, workspaceID, accountID, c); !ok {
 		return
 	}
 

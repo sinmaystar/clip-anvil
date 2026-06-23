@@ -800,11 +800,11 @@ git commit -m "feat: add shared react flow canvas surface"
 - Modify: `apps/server/cmd/server/main.go`
 - Modify: `apps/web/src/lib/agentReadonlyCanvas.test.mjs` or rename to `agentCanvas.test.mjs`
 
-- [ ] **Step 1: Add Agent host**
+- [x] **Step 1: Add Agent host**
 
 Create `AgentFlowCanvas.tsx` wrapping `CanvasFlowSurface` with `mode="agent"` and policy-driven mutation callbacks.
 
-- [ ] **Step 2: Replace Agent page import**
+- [x] **Step 2: Replace Agent page import**
 
 Find usages:
 
@@ -814,7 +814,7 @@ rg -n "AgentReadonlyCanvas|agent-readonly" apps/web/src
 
 Replace with `AgentFlowCanvas`.
 
-- [ ] **Step 3: Split backend guard if needed**
+- [x] **Step 3: Split backend guard if needed**
 
 If Agent currently cannot update camera or node positions, split guard into:
 
@@ -827,7 +827,7 @@ Expected policy:
 - Agent may call camera/viewport and position update endpoints.
 - Agent may not call node content update, create/delete node, create/delete edge, run node.
 
-- [ ] **Step 4: Update Agent tests**
+- [x] **Step 4: Update Agent tests**
 
 Rename assertions from "readonly tldraw" to "shared React Flow Agent canvas". Required assertions:
 - source imports `CanvasFlowSurface`;
@@ -835,7 +835,7 @@ Rename assertions from "readonly tldraw" to "shared React Flow Agent canvas". Re
 - policy allows drag;
 - run/edit/connect/delete controls disabled or absent.
 
-- [ ] **Step 5: Run backend verification**
+- [x] **Step 5: Run backend verification**
 
 ```bash
 make server-test
@@ -844,7 +844,7 @@ make server-build
 
 Expected: PASS.
 
-- [ ] **Step 6: Run frontend verification**
+- [x] **Step 6: Run frontend verification**
 
 ```bash
 pnpm --filter @clip-anvil/web test:connections
@@ -853,7 +853,7 @@ pnpm --filter @clip-anvil/web... build
 
 Expected: PASS.
 
-- [ ] **Step 7: Browser E2E**
+- [x] **Step 7: Browser E2E**
 
 Run:
 
@@ -870,7 +870,12 @@ Open `agent_url` from the smoke output. Verify:
 - Node click opens shared inspector.
 - Run/edit/connect/delete are unavailable.
 
-- [ ] **Step 8: Commit Phase 3**
+Phase 3 run notes:
+- Browser verified Agent uses React Flow, has no tldraw host, opens shared inspector, has no connect handles/buttons, and disables run/edit controls.
+- Browser/API verified Agent content edit, run, and delete return `403`, while layout position update returns `204`.
+- Browser verified refresh restores the changed backend node position. MCP `dragTo` did not trigger React Flow pointer dragging, so drag callback coverage is from source tests plus the layout API persistence check.
+
+- [x] **Step 8: Commit Phase 3**
 
 ```bash
 git add apps/web/src/components/canvas-flow apps/web/src/components/agent apps/web/src/lib/*agent*Canvas*.test.mjs apps/server/internal/api/workspace_mode_guard.go apps/server/cmd/server/main.go

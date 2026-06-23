@@ -2,7 +2,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -11,7 +10,6 @@ import { Navigate, useNavigate, useParams } from "react-router";
 import {
   type CanvasPayload,
   fetchCanvas,
-  fetchNodeProductionState,
   fetchWorkspace,
   type MediaNode,
 } from "../lib/api";
@@ -42,9 +40,8 @@ import {
   AgentMessageRenderer,
   type AgentMessageActions,
 } from "../components/agent/AgentMessageRenderer";
-import { AgentNodeDetailDrawer } from "../components/agent/AgentNodeDetailDrawer";
 import { AgentProductionStatusBar } from "../components/agent/AgentProductionStatusBar";
-import { AgentReadonlyCanvas } from "../components/agent/AgentReadonlyCanvas";
+import { AgentFlowCanvas } from "../components/canvas-flow/AgentFlowCanvas";
 import { AgentStoryboardPanel } from "../components/agent/AgentStoryboardPanel";
 import { AgentTaskTimeline } from "../components/agent/AgentTaskTimeline";
 import {
@@ -85,7 +82,6 @@ import {
   mergeAgentTasks,
 } from "../lib/agentTasks";
 import { shouldRefreshAgentProductionOverview } from "../lib/agentProductionOverview";
-import { computeDagreLayout } from "../lib/layout";
 import {
   isTerminalGenerationStatus,
   nodeStatusForGenerationStatus,
@@ -206,17 +202,6 @@ export function AgentWorkspacePage() {
         : false,
   });
   const canvas = canvasQuery.data;
-  const readonlyCanvas = useMemo(
-    () => (canvas ? readonlyAutoLayoutCanvas(canvas) : undefined),
-    [canvas],
-  );
-  const selectedNode =
-    canvas?.nodes.find((node) => node.id === selectedNodeId) ?? null;
-  const selectedNodeProductionStateQuery = useQuery({
-    queryKey: ["node", selectedNodeId, "production-state"],
-    queryFn: () => fetchNodeProductionState(selectedNodeId ?? ""),
-    enabled: Boolean(selectedNodeId),
-  });
   const agentEnabled = Boolean(id && workspaceQuery.data?.mode === "agent");
   const agentThreadQuery = useQuery({
     queryKey: ["agent", id, "thread"],
@@ -495,20 +480,8 @@ export function AgentWorkspacePage() {
         queryKey: ["workspace", id, "canvas"],
       });
     };
-    const refreshNodeProductionState = (nodeId?: string) => {
-      const targetNodeId = nodeId ?? selectedNodeId;
-      if (!targetNodeId) {
-        return;
-      }
-      void queryClient.invalidateQueries({
-        queryKey: ["node", targetNodeId, "production-state"],
-      });
-    };
     const refreshCanvas = () => {
       refetchCanvasSnapshot();
-      if (selectedNodeId) {
-        refreshNodeProductionState();
-      }
     };
 
     return connectCanvasSocket({
@@ -529,7 +502,6 @@ export function AgentWorkspacePage() {
                 ["workspace", id, "canvas"],
                 (current) => upsertCanvasNode(current, node),
               );
-              refreshNodeProductionState(node.id);
             }
             break;
           }
@@ -562,7 +534,6 @@ export function AgentWorkspacePage() {
               isTerminalGenerationStatus(event.payload.status)
             ) {
               refetchCanvasSnapshot();
-              refreshNodeProductionState(event.payload.node_id);
             }
             break;
           }
@@ -576,7 +547,7 @@ export function AgentWorkspacePage() {
         }
       },
     });
-  }, [id, queryClient, selectedNodeId, token, workspaceQuery.data?.mode]);
+  }, [id, queryClient, token, workspaceQuery.data?.mode]);
 
   if (workspaceQuery.isLoading) {
     return (
@@ -868,44 +839,36 @@ export function AgentWorkspacePage() {
 
       <section
         className="agent-canvas-stage"
-        aria-label="只读画布"
+        aria-label="Agent 画布"
         onPointerDown={(event) => {
           if (event.target === event.currentTarget) {
             collapseFromCanvas();
           }
         }}
       >
-        <section className="agent-readonly-canvas">
+        <section className="agent-flow-canvas-panel">
           <div className="agent-canvas-header">
             <div>
-              <p className="workspace-kicker">Read Only Canvas</p>
-              <h2>只读画布</h2>
+              <p className="workspace-kicker">Agent Canvas</p>
+              <h2>Agent 画布</h2>
             </div>
-            <span>{readonlyCanvas?.nodes.length ?? 0} 个节点</span>
+            <span>{canvas?.nodes.length ?? 0} 个节点</span>
           </div>
           <div className="agent-canvas-surface">
             {canvasQuery.isLoading ? (
               <p className="agent-empty-text">正在加载画布</p>
-            ) : readonlyCanvas && readonlyCanvas.nodes.length > 0 ? (
-              <AgentReadonlyCanvas
-                canvas={readonlyCanvas}
+            ) : canvas && canvas.nodes.length > 0 && id ? (
+              <AgentFlowCanvas
+                canvas={canvas}
                 onSelectNode={setSelectedNodeId}
                 selectedNodeId={selectedNodeId}
+                workspaceId={id}
               />
             ) : (
               <p className="agent-empty-text">Agent 尚未创建画布节点。</p>
             )}
           </div>
         </section>
-
-        <AgentNodeDetailDrawer
-          edges={canvas?.edges ?? []}
-          isLoading={selectedNodeProductionStateQuery.isLoading}
-          node={selectedNode}
-          nodes={canvas?.nodes ?? []}
-          onClose={() => setSelectedNodeId(null)}
-          productionState={selectedNodeProductionStateQuery.data ?? null}
-        />
 
         {collapsed ? (
           <button
@@ -1284,40 +1247,6 @@ function updateCanvasNodeStatus(
     nodes: current.nodes.map((node) =>
       node.id === nodeId ? { ...node, status } : node,
     ),
-  };
-}
-
-function readonlyAutoLayoutCanvas(canvas: CanvasPayload): CanvasPayload {
-  if (canvas.nodes.length <= 1) {
-    return canvas;
-  }
-  const minX = Math.min(...canvas.nodes.map((node) => node.canvas_x));
-  const minY = Math.min(...canvas.nodes.map((node) => node.canvas_y));
-  const result = computeDagreLayout({
-    nodes: canvas.nodes,
-    edges: canvas.edges,
-    groups: canvas.groups,
-    direction: "TB",
-    origin: { x: minX, y: minY },
-  });
-  if (result.positions.length === 0) {
-    return canvas;
-  }
-  const positionById = new Map(
-    result.positions.map((position) => [position.id, position]),
-  );
-  return {
-    ...canvas,
-    nodes: canvas.nodes.map((node) => {
-      const position = positionById.get(node.id);
-      return position
-        ? {
-            ...node,
-            canvas_x: position.canvas_x,
-            canvas_y: position.canvas_y,
-          }
-        : node;
-    }),
   };
 }
 

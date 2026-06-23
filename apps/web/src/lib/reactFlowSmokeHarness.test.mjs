@@ -36,11 +36,13 @@ describe("React Flow canvas smoke harness", () => {
     assert.match(source, /studioCanvas\.groups\.length/);
   });
 
-  it("keeps Agent baseline on public read-only APIs until layout permissions change", async () => {
+  it("seeds Agent baseline through Agent-owned attachment APIs", async () => {
     const source = await readFile(smokeScriptUrl, "utf8");
 
     assert.doesNotMatch(source, /createNode\(agent/);
-    assert.match(source, /agentCanvas\.nodes\.length !== 0/);
+    assert.match(source, /\/agent\/workspaces\/\$\{agent\.id\}\/attachments/);
+    assert.match(source, /Agent Layout Brief/);
+    assert.match(source, /agentCanvas\.nodes\.length !== 1/);
     assert.match(source, /agent_canvas_nodes/);
   });
 });
