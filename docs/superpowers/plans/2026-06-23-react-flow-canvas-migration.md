@@ -260,7 +260,7 @@
 - Modify: `apps/web/package.json`
 - Test: existing `apps/web/src/lib/*.test.mjs`
 
-- [ ] **Step 1: Create API smoke seed script**
+- [x] **Step 1: Create API smoke seed script**
 
 Create `scripts/smoke-react-flow-canvas.sh`:
 
@@ -351,7 +351,14 @@ await req("/groups", {
   }),
 });
 
-await createNode(agent, "Agent Layout Node", "text", 80, 120);
+const studioCanvas = await req(`/workspaces/${studio.id}/canvas`, { headers });
+const agentCanvas = await req(`/workspaces/${agent.id}/canvas`, { headers });
+if (studioCanvas.nodes.length !== 2 || studioCanvas.edges.length !== 1 || studioCanvas.groups.length !== 1) {
+  throw new Error("studio smoke canvas did not seed expected nodes, edge, and group");
+}
+if (agentCanvas.nodes.length !== 0) {
+  throw new Error("agent smoke baseline should stay empty before layout permissions change");
+}
 
 console.log(JSON.stringify({
   email,
@@ -359,12 +366,14 @@ console.log(JSON.stringify({
   studio_url: `${webBase}/workspaces/${studio.id}/studio`,
   agent_url: `${webBase}/workspaces/${agent.id}/agent`,
   studio_id: studio.id,
-  agent_id: agent.id
+  agent_id: agent.id,
+  studio_node_ids: [a.id, b.id],
+  agent_canvas_nodes: agentCanvas.nodes.length
 }, null, 2));
 NODE
 ```
 
-- [ ] **Step 2: Make script executable**
+- [x] **Step 2: Make script executable**
 
 Run:
 
@@ -374,7 +383,7 @@ chmod +x scripts/smoke-react-flow-canvas.sh
 
 Expected: no output.
 
-- [ ] **Step 3: Run existing frontend tests**
+- [x] **Step 3: Run existing frontend tests**
 
 Run:
 
@@ -384,7 +393,7 @@ pnpm --filter @clip-anvil/web test:connections
 
 Expected: PASS.
 
-- [ ] **Step 4: Run build**
+- [x] **Step 4: Run build**
 
 Run:
 
@@ -394,7 +403,7 @@ pnpm --filter @clip-anvil/web... build
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit baseline harness**
+- [x] **Step 5: Commit baseline harness**
 
 ```bash
 git add scripts/smoke-react-flow-canvas.sh apps/web/package.json
@@ -418,7 +427,7 @@ git commit -m "test: add react flow canvas smoke harness"
 - Create: `apps/web/src/components/canvas-flow/canvasViewModel.ts`
 - Create: `apps/web/src/lib/canvasFlow.test.mjs`
 
-- [ ] **Step 1: Add dependency**
+- [x] **Step 1: Add dependency**
 
 Run:
 
@@ -428,7 +437,7 @@ pnpm --filter @clip-anvil/web add @xyflow/react
 
 Expected: `apps/web/package.json` includes `@xyflow/react`, lockfile updates.
 
-- [ ] **Step 2: Add React Flow CSS after Tailwind**
+- [x] **Step 2: Add React Flow CSS after Tailwind**
 
 Modify `apps/web/src/main.css` near the top so React Flow CSS is loaded after Tailwind:
 
@@ -439,7 +448,7 @@ Modify `apps/web/src/main.css` near the top so React Flow CSS is loaded after Ta
 
 Expected: Tailwind remains first, React Flow CSS second.
 
-- [ ] **Step 3: Define flow types**
+- [x] **Step 3: Define flow types**
 
 Create `apps/web/src/components/canvas-flow/flowTypes.ts`:
 
@@ -471,7 +480,7 @@ export type CanvasFlowNode =
 export type CanvasFlowEdge = Edge<CanvasFlowEdgeData, "dependency">;
 ```
 
-- [ ] **Step 4: Define mode policy**
+- [x] **Step 4: Define mode policy**
 
 Create `apps/web/src/components/canvas-flow/flowModePolicy.ts`:
 
@@ -528,7 +537,7 @@ export function policyForCanvasMode(mode: CanvasFlowMode) {
 }
 ```
 
-- [ ] **Step 5: Define viewport helpers**
+- [x] **Step 5: Define viewport helpers**
 
 Create `apps/web/src/components/canvas-flow/canvasViewport.ts`:
 
@@ -553,7 +562,7 @@ export function viewportToCamera(viewport: Viewport): CanvasCamera {
 }
 ```
 
-- [ ] **Step 6: Define view-model helper**
+- [x] **Step 6: Define view-model helper**
 
 Create `apps/web/src/components/canvas-flow/canvasViewModel.ts`:
 
@@ -630,7 +639,7 @@ function boundsForGroup(group: MediaGroup, nodes: MediaNode[]) {
 }
 ```
 
-- [ ] **Step 7: Add tests**
+- [x] **Step 7: Add tests**
 
 Create `apps/web/src/lib/canvasFlow.test.mjs`:
 
@@ -664,11 +673,11 @@ describe("React Flow canvas migration source contracts", () => {
 });
 ```
 
-- [ ] **Step 8: Add test to package script**
+- [x] **Step 8: Add test to package script**
 
 Append `src/lib/canvasFlow.test.mjs` to `apps/web/package.json` `test:connections`.
 
-- [ ] **Step 9: Run tests**
+- [x] **Step 9: Run tests**
 
 ```bash
 pnpm --filter @clip-anvil/web test:connections
@@ -678,7 +687,7 @@ pnpm --filter @clip-anvil/web... build
 
 Expected: all PASS.
 
-- [ ] **Step 10: Commit Phase 1**
+- [x] **Step 10: Commit Phase 1**
 
 ```bash
 git add apps/web/package.json pnpm-lock.yaml apps/web/src/main.css apps/web/src/components/canvas-flow apps/web/src/lib/canvasFlow.test.mjs

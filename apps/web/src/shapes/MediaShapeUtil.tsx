@@ -9,7 +9,6 @@ import {
 import {
   useEffect,
   useState,
-  type DragEvent,
   type PointerEvent,
   type SyntheticEvent,
 } from "react";
@@ -47,10 +46,6 @@ const nodeTypeMeta: Record<
 };
 
 let activeMediaNodeId: string | null = null;
-
-function preventNativeMediaDrag(event: DragEvent<HTMLImageElement | HTMLVideoElement>) {
-  event.preventDefault();
-}
 
 export class MediaShapeUtil extends ShapeUtil<MediaShape> {
   static override type = MEDIA_SHAPE_TYPE;
