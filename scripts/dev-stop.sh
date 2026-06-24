@@ -183,6 +183,11 @@ rm -f "$PID_DIR/server.host"
 rmdir "$PID_DIR" 2>/dev/null || true
 rmdir "$ROOT_DIR/.dev-pids" 2>/dev/null || true
 
+if [[ "${CLIPANVIL_WITH_COZELOOP:-}" == "1" ]]; then
+  echo "--- Coze Loop ---"
+  "$ROOT_DIR/scripts/cozeloop-stop.sh"
+fi
+
 echo ""
 echo -e "${GREEN}前后端已停止。${NC}中间件容器保持运行。"
 echo "如需停止中间件: docker compose -f deploy/docker-compose.yml down"

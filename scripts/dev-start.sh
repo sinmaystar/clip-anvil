@@ -181,6 +181,12 @@ fi
 
 wait_for "http://localhost:9000/minio/health/live" 15 "MinIO"
 
+if [[ "${CLIPANVIL_WITH_COZELOOP:-}" == "1" ]]; then
+  warn "正在启动隔离 Coze Loop stack..."
+  ./scripts/cozeloop-start.sh
+  log "隔离 Coze Loop stack 已启动"
+fi
+
 # 2. 后端
 echo ""
 echo "--- 后端 ---"

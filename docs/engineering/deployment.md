@@ -18,6 +18,46 @@ postgres:16       redis:7         minio:latest      opensandbox-server
 :5432             :6379           :9000/:9001       :8080
 ```
 
+## Coze Loop Sidecar（可选）
+
+Coze Loop 作为可选 sidecar stack 管理，默认不会随 ClipAnvil 本地开发环境启动。它只通过 Docker Compose 拉镜像并启动容器，不要求在宿主机 clone Coze Loop 仓库、安装 Coze Loop 开发依赖或本地构建镜像。
+
+隔离原则：
+
+- 不复用 ClipAnvil 的 PostgreSQL、Redis、MinIO、Nginx、OpenSandbox。
+- 不复用 ClipAnvil 的 Docker network 或 Docker volume。
+- Coze Loop 使用独立 Compose project：`clipanvil-coze-loop`。
+- Coze Loop 使用独立 Docker network：`clipanvil-coze-loop-network`。
+- Coze Loop 使用独立 Docker volumes：`coze_loop_*`。
+- Coze Loop 内部 MySQL、Redis、ClickHouse、MinIO、RocketMQ 不映射宿主机端口。
+- 只暴露 UI 和 OpenAPI：
+  - UI: `http://localhost:18082`
+  - OpenAPI: `http://localhost:19098`
+
+单独启动和停止：
+
+```bash
+./scripts/cozeloop-start.sh
+./scripts/cozeloop-stop.sh
+```
+
+随 ClipAnvil 显式启动和停止：
+
+```bash
+CLIPANVIL_WITH_COZELOOP=1 ./scripts/dev-start.sh
+CLIPANVIL_WITH_COZELOOP=1 ./scripts/dev-stop.sh
+```
+
+默认 `./scripts/dev-start.sh` 和 `./scripts/dev-stop.sh` 不会启动或停止 Coze Loop，避免影响多 worktree 共用中间件。
+
+清除 Coze Loop 数据：
+
+```bash
+docker compose --env-file deploy/cozeloop/.env -f deploy/docker-compose.cozeloop.yml down -v
+```
+
+这只会删除 Coze Loop 的隔离容器、network 和 `coze_loop_*` volumes，不会触碰 ClipAnvil 的 `pg_data`、`minio_data` 或 `opensandbox_data`。
+
 ## 端口清单
 
 | 服务 | 端口 | 说明 |
@@ -30,6 +70,8 @@ postgres:16       redis:7         minio:latest      opensandbox-server
 | MinIO API | 9000 | 对象存储 API |
 | MinIO Console | 9001 | MinIO Web 管理界面 |
 | OpenSandbox Server | 8080 | workspace sandbox 生命周期和命令执行 |
+| Coze Loop UI | 18082 | 可选 sidecar UI |
+| Coze Loop OpenAPI | 19098 | 可选 sidecar OpenAPI |
 
 ## 环境变量
 
