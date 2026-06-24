@@ -394,7 +394,7 @@ JSON block 必须：
 
 ### 9.3 全屏层
 
-全屏层应高于 tldraw canvas、Inspector popover 和 toolbar。
+全屏层应高于 React Flow canvas、Inspector popover 和 toolbar。
 
 打开全屏时不关闭 Inspector。
 

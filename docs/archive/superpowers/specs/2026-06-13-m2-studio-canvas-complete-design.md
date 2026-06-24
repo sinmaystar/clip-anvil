@@ -12,7 +12,7 @@ M2 在 M1 基础上交付 8 个可独立验收的阶段：
 |---|---|---|
 | 1. 多类型节点 | image/video/audio 节点 + 右键菜单扩展 | 右键菜单创建 4 种类型节点，各自渲染正确 |
 | 2. 连线 + DAG | dependency 连线 + 环检测 + 端口拖拽 | 拖拽连线、环检测拒绝、刷新后连线保持 |
-| 3. 分组 | 自定义 GroupContainerShape + 折叠/展开 + 拖入拖出 | 选中多节点分组、折叠展开、跨组连线 |
+| 3. 分组 | 自定义 group container node + 折叠/展开 + 拖入拖出 | 选中多节点分组、折叠展开、跨组连线 |
 | 4. 左侧资源树 | 树结构 + 搜索/筛选 + 双向同步 | 资源树点击定位到画布节点、分组同步 |
 | 5. 右侧属性面板 | 节点详细编辑 + 连线详情 + @引用 | 选中节点编辑 Prompt、@引用上游资源 |
 | 6. WebSocket 基础 | `/ws/canvas` 事件推送 | 第二个浏览器标签页实时看到另一个标签页的操作 |
@@ -47,9 +47,9 @@ M2 在 M1 基础上交付 8 个可独立验收的阶段：
 
 无新增 API 端点，只修改创建节点的校验和默认值逻辑。
 
-### 2.2 前端 MediaShapeUtil 扩展
+### 2.2 前端 MediaFlowNode 扩展
 
-M1 的 MediaShapeUtil 只渲染 text 类型。M2 扩展为根据 `nodeType` 渲染不同卡片：
+M1 的 MediaFlowNode 只渲染 text 类型。M2 扩展为根据 `nodeType` 渲染不同卡片：
 
 **四种卡片渲染**：
 
@@ -75,7 +75,7 @@ video (240×180):                   audio (200×80):
 └─────────────────────┘
 ```
 
-M2 阶段没有生成能力，所以图片/视频/音频节点只有占位图（灰色区域 + 类型图标）。缩略图能力为后续迭代预留字段（`thumbnailUrl` 在 shape props 中已有，M2 时为空）。
+M2 阶段没有生成能力，所以图片/视频/音频节点只有占位图（灰色区域 + 类型图标）。缩略图能力为后续迭代预留字段（`thumbnailUrl` 在 node data 中已有，M2 时为空）。
 
 **状态边框样式**（与 M1 一致，所有节点类型共用）：
 
@@ -192,7 +192,7 @@ M2 的 POST `/api/edges` 不接受 `edge_type` 参数，固定创建 `dependency
 }
 ```
 
-### 3.4 前端 ArrowShape
+### 3.4 前端 custom dependency edge
 
 **连线视觉规格**：
 
@@ -202,23 +202,23 @@ M2 的 POST `/api/edges` 不接受 `edge_type` 参数，固定创建 `dependency
 |---|---|---|
 | 2px 实线 | `#3b82f6` 蓝 | 实心三角 |
 
-**实现方式**：使用 tldraw 内置的 ArrowShape + ArrowBindingUtil。edge 的后端 ID 存在 arrow shape 的 meta 字段中。
+**实现方式**：使用 React Flow 内置的 custom dependency edge + React Flow edge model。edge 的后端 ID 存在 custom dependency edge 的 meta 字段中。
 
-**edgeToArrow 映射函数**（`apps/web/src/lib/canvas.ts`）：
+**edgeToFlowEdge 映射函数**（`apps/web/src/lib/canvas.ts`）：
 
 ```typescript
-function edgeToArrow(edge: MediaEdgeDTO): {
-  arrow: TLShapePartial
-  bindings: TLBindingPartial[]
+function edgeToFlowEdge(edge: MediaEdgeDTO): {
+  edge: Node
+  edges: Edge[]
 }
 ```
 
-从 edge 数据构建 ArrowShape + 两端 binding。
+从 edge 数据构建 custom dependency edge + 两端 edge。
 
 ### 3.5 前端端口交互
 
 **端口显示**：
-- 每个 MediaShape 左侧中点为输入端口（圆点，半径 4px）
+- 每个 MediaFlowNode 左侧中点为输入端口（圆点，半径 4px）
 - 右侧中点为输出端口
 - 默认隐藏，鼠标悬停节点时显示为灰色实心圆点
 - 拖拽端口时，所有合法目标端口高亮为蓝色
@@ -228,20 +228,20 @@ function edgeToArrow(edge: MediaEdgeDTO): {
 2. 从输出端口开始拖拽 → 出现临时连线跟随鼠标
 3. 拖拽到目标节点的输入端口 → 释放
 4. `POST /api/edges { workspace_id, from_node_id, to_node_id }`
-5. 成功 → 创建 ArrowShape + Binding
+5. 成功 → 创建 custom dependency edge + Binding
 6. 失败（成环）→ toast "不能形成循环依赖"
 7. 失败（重复）→ toast "连线已存在"
 
 **删除连线**：
-- 选中连线 → 按 Delete/Backspace → `DELETE /api/edges/:id` → 删除 ArrowShape
+- 选中连线 → 按 Delete/Backspace → `DELETE /api/edges/:id` → 删除 custom dependency edge
 
-**端口实现方式**：使用 tldraw 内置的 arrow tool + binding 机制。
+**端口实现方式**：使用 React Flow 内置的 drag-to-connect interaction + edge 机制。
 
-- MediaShapeUtil 通过 `getHandles()` 返回左中（输入）和右中（输出）两个 handle
-- 用户使用 tldraw 的 arrow tool 从输出 handle 拖拽到目标节点的输入 handle，tldraw 处理吸附和碰撞检测
-- arrow 创建完成后（`onBindingChange`），前端发送 `POST /api/edges` 创建后端记录
-- 后端返回失败（成环/重复）时，前端删除刚创建的 arrow shape 并 toast 提示
-- 端口圆点在 MediaShapeUtil 的 `component()` 中渲染为绝对定位元素，仅做视觉提示
+- MediaFlowNode 通过 `getHandles()` 返回左中（输入）和右中（输出）两个 handle
+- 用户使用 React Flow 的 drag-to-connect interaction 从输出 handle 拖拽到目标节点的输入 handle，React Flow 处理吸附和碰撞检测
+- custom edge 创建完成后（`onBindingChange`），前端发送 `POST /api/edges` 创建后端记录
+- 后端返回失败（成环/重复）时，前端删除刚创建的 custom dependency edge 并 toast 提示
+- 端口圆点在 MediaFlowNode 的 `component()` 中渲染为绝对定位元素，仅做视觉提示
 
 ### 3.6 验收标准
 
@@ -335,17 +335,17 @@ CREATE INDEX idx_media_node_group ON media_node(group_id);
 
 ### 4.4 前端分组交互
 
-**为什么不用 tldraw 内置 GroupShape**：tldraw v5 的 GroupShape 在删除 group 时会级联删除子 shape，且不支持折叠/展开。M2 需要"删除分组保留节点"的语义，因此使用自定义的 `GroupContainerShapeUtil`。
+**为什么不用 React Flow 内置 group node**：React Flow 的 group node 在删除 group 时会级联删除子 node，且不支持折叠/展开。M2 需要"删除分组保留节点"的语义，因此使用自定义的 `GroupFlowNode`。
 
-**GroupContainerShapeUtil 实现**：
-- 注册为 `group-container` 类型的自定义 shape
+**GroupFlowNode 实现**：
+- 注册为 `group-container` 类型的自定义 node
 - props 包含：`groupId`（后端 group ID）、`name`（分组名）、`collapsed`（折叠状态）、`nodeCount`（成员数）
 - 渲染为虚线边框矩形 + 标题栏（名称 + 成员计数 + 折叠按钮）
-- 不使用 tldraw 的父子层级关系，分组与节点的关系完全由后端 `group_id` 驱动
+- 不使用 React Flow 的父子层级关系，分组与节点的关系完全由后端 `group_id` 驱动
 
 **创建分组**：
 - 选中多个节点（框选或 Shift+点击）→ 右键菜单 → "创建分组" / 快捷键 ⌘G
-- 弹出 input 输入分组名称 → `POST /api/groups { workspace_id, name, node_ids }` → 成功 → 创建 GroupContainerShape，位置和尺寸根据选中节点的包围盒自动计算（留 padding 20px）
+- 弹出 input 输入分组名称 → `POST /api/groups { workspace_id, name, node_ids }` → 成功 → 创建 group container node，位置和尺寸根据选中节点的包围盒自动计算（留 padding 20px）
 
 **渲染**：
 
@@ -367,20 +367,20 @@ CREATE INDEX idx_media_node_group ON media_node(group_id);
 └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
 ```
 
-折叠时，GroupContainerShape 缩小为标题栏高度，内部节点通过 `editor.updateShape()` 设置 `opacity: 0` + 禁用交互。展开时恢复。
+折叠时，group container node 缩小为标题栏高度，内部节点通过 `editor.updateNode()` 设置 `opacity: 0` + 禁用交互。展开时恢复。
 
 **拖入/拖出**：
-- 拖拽节点进入 GroupContainerShape 边界 → `PATCH /api/nodes/:id { group_id }` → 节点加入分组
-- 拖拽节点移出 GroupContainerShape 边界 → `PATCH /api/nodes/:id { group_id: null }` → 节点脱离分组
-- 判断进入/移出通过 `onTranslateEnd` 事件检测节点坐标是否在 GroupContainerShape 的边界框内
+- 拖拽节点进入 group container node 边界 → `PATCH /api/nodes/:id { group_id }` → 节点加入分组
+- 拖拽节点移出 group container node 边界 → `PATCH /api/nodes/:id { group_id: null }` → 节点脱离分组
+- 判断进入/移出通过 `onTranslateEnd` 事件检测节点坐标是否在 group container node 的边界框内
 
 **移动跟随**：
-- 监听 GroupContainerShape 的 `onTranslate` 事件，计算位移差值
-- 遍历 `group_id = 本分组` 的所有 MediaShape，批量 `editor.updateShape()` 跟随偏移
+- 监听 group container node 的 `onTranslate` 事件，计算位移差值
+- 遍历 `group_id = 本分组` 的所有 MediaFlowNode，批量 `editor.updateNode()` 跟随偏移
 - 移动结束后通过 `PATCH /api/nodes/batch-position` 持久化新坐标
 
 **其他行为**：
-- 删除分组 → 只删除 GroupContainerShape + `DELETE /api/groups/:id`，内部 MediaShape 保留（后端 `ON DELETE SET NULL` 自动清空 `group_id`）
+- 删除分组 → 只删除 group container node + `DELETE /api/groups/:id`，内部 MediaFlowNode 保留（后端 `ON DELETE SET NULL` 自动清空 `group_id`）
 - 分组名称双击可编辑 → `PATCH /api/groups/:id { name }`
 - 连线可跨越分组边界（分组不影响依赖关系）
 
@@ -435,7 +435,7 @@ CREATE INDEX idx_media_node_group ON media_node(group_id);
 |---|---|
 | 搜索框输入 | 按 title 模糊过滤节点和分组 |
 | 类型筛选 chips | 单选切换：全部 / text / image / video / audio |
-| 点击节点行 | 画布 `editor.zoomToShape(shapeId)` 定位并选中该节点 |
+| 点击节点行 | 画布 `editor.zoomToNode(shapeId)` 定位并选中该节点 |
 | 点击分组名 | 画布定位到分组区域（展示所有分组内节点） |
 | 分组 ▼/▶ | 折叠/展开分组内的节点列表 |
 | 底部"收起" | 隐藏资源树面板，画布全屏 |
@@ -464,7 +464,7 @@ CREATE INDEX idx_media_node_group ON media_node(group_id);
 │  影砧  ·  咖啡广告项目          [← 返回项目列表]  │
 ├──────────┬──────────────────────────────────────┤
 │          │                                      │
-│ 资源树    │          tldraw 画布                  │
+│ 资源树    │          React Flow 画布                  │
 │ ~200px   │          (flex: 1)                   │
 │          │                                      │
 │ [收起]   │                                      │
@@ -538,7 +538,7 @@ CREATE INDEX idx_media_node_group ON media_node(group_id);
 
 **连线详情**：
 
-选中 ArrowShape 时，右侧面板切换为连线详情视图：
+选中 custom dependency edge 时，右侧面板切换为连线详情视图：
 
 ```
 ┌───────────────┐
@@ -561,7 +561,7 @@ CREATE INDEX idx_media_node_group ON media_node(group_id);
 │  影砧  ·  咖啡广告项目                    [← 返回项目列表]     │
 ├──────────┬───────────────────────────────────┬───────────────┤
 │          │                                   │              │
-│ 资源树    │          tldraw 画布               │  属性面板     │
+│ 资源树    │          React Flow 画布               │  属性面板     │
 │ ~200px   │          (flex: 1)                │  ~280px      │
 │          │                                   │  (选中时显示) │
 │          │                                   │              │
@@ -650,46 +650,46 @@ type Event struct {
 
 **事件处理**：
 
-收到事件后，根据 type 调用对应的 tldraw editor API：
+收到事件后，根据 type 调用对应的 React Flow editor API：
 
 | 事件 | 前端响应 |
 |---|---|
-| `NodeCreated` | `editor.createShape(nodeToShape(payload.node))` |
-| `NodeUpdated` | `editor.updateShape({ id: shapeId, props: payload.changes })` |
-| `NodeDeleted` | `editor.deleteShape(shapeId)` |
-| `EdgeCreated` | 创建 ArrowShape + Binding |
-| `EdgeDeleted` | 删除 ArrowShape |
-| `GroupCreated` | 创建 GroupContainerShape |
-| `GroupUpdated` | 更新 GroupContainerShape |
-| `GroupDeleted` | 删除 GroupContainerShape（保留内部 MediaShape） |
+| `NodeCreated` | `editor.createNode(nodeToFlowNode(payload.node))` |
+| `NodeUpdated` | `editor.updateNode({ id: shapeId, props: payload.changes })` |
+| `NodeDeleted` | `editor.deleteNode(shapeId)` |
+| `EdgeCreated` | 创建 custom dependency edge + Binding |
+| `EdgeDeleted` | 删除 custom dependency edge |
+| `GroupCreated` | 创建 group container node |
+| `GroupUpdated` | 更新 group container node |
+| `GroupDeleted` | 删除 group container node（保留内部 MediaFlowNode） |
 
 **乐观 UI + WS 覆写（无需去重）**：
 
 前端采用"REST 即时反馈 + WS 权威覆写"模式，不维护操作 ID 或去重集合：
 
-- REST 调用成功后立即更新本地 tldraw（乐观 UI，用户零延迟感知）
+- REST 调用成功后立即更新本地 React Flow（乐观 UI，用户零延迟感知）
 - WS event 到达后始终用服务端数据覆写本地状态（幂等操作）
-- 自己的操作：覆写相同数据 = tldraw 不重渲染，用户无感知
+- 自己的操作：覆写相同数据 = React Flow 不重渲染，用户无感知
 - 他人的操作：正常应用变更
 
 WS handler 必须对每种事件做幂等处理：
 
 ```typescript
 // NodeCreated — 先查再决定 create 还是 update
-const shapeId = createShapeId(event.nodeId)
-if (editor.getShape(shapeId)) {
-  editor.updateShape({ id: shapeId, ...nodeToShapePartial(event) })
+const shapeId = createNodeId(event.nodeId)
+if (editor.getNode(shapeId)) {
+  editor.updateNode({ id: shapeId, ...nodeToFlowNodePatch(event) })
 } else {
-  editor.createShape(nodeToShape(event))
+  editor.createNode(nodeToFlowNode(event))
 }
 
 // NodeUpdated — 直接覆写
-editor.updateShape({ id: createShapeId(event.nodeId), ...event.changes })
+editor.updateNode({ id: createNodeId(event.nodeId), ...event.changes })
 
-// NodeDeleted — shape 不存在则跳过
-const shapeId = createShapeId(event.nodeId)
-if (editor.getShape(shapeId)) {
-  editor.deleteShape(shapeId)
+// NodeDeleted — node 不存在则跳过
+const shapeId = createNodeId(event.nodeId)
+if (editor.getNode(shapeId)) {
+  editor.deleteNode(shapeId)
 }
 ```
 
@@ -731,7 +731,7 @@ Edge / GroupContainer 事件同理，均做存在性检查后幂等操作。
 1. 前端从 canvas 数据中提取所有 nodes 和 dependency edges
 2. 构建 dagre Graph，设置每个节点的实际尺寸（canvas_w × canvas_h）
 3. dagre 计算布局，输出每个节点的新 (x, y) 坐标
-4. 前端通过 `editor.updateShapes()` 批量更新所有 MediaShape 的位置
+4. 前端通过 `editor.updateNodes()` 批量更新所有 MediaFlowNode 的位置
 5. 通过 `PATCH /api/nodes/batch-position` 批量持久化新坐标到后端
 
 后端只负责存坐标，不关心坐标如何计算。这与 M1 的拖拽 → debounce persist 模式一致。
@@ -768,9 +768,9 @@ dagre.layout(g);
 **交互流程**：
 1. 用户点击"自动整理"按钮
 2. 计算新布局坐标
-3. 使用 `editor.animateShapes()` 将节点从当前位置平滑移动到新位置（300ms ease-out 动画）
+3. 使用 `editor.animateNodes()` 将节点从当前位置平滑移动到新位置（300ms ease-out 动画）
 4. 动画完成后 `PATCH /api/nodes/batch-position` 批量持久化
-5. GroupContainerShape 根据组内节点的新包围盒自动调整位置和尺寸
+5. group container node 根据组内节点的新包围盒自动调整位置和尺寸
 
 **布局方向切换**：提供两个方向选项（下拉菜单）：
 - `LR`（从左到右）— 默认，适合流程图思维
@@ -783,7 +783,7 @@ dagre.layout(g);
 | 7.1 | dagre 依赖安装 | `pnpm --filter @clip-anvil/web list @dagrejs/dagre` | 已安装 |
 | 7.2 | 自动布局后坐标更新 | 浏览器：创建 4 个节点 + 3 条 dependency → 点击"自动整理" | 节点按 DAG 层级排列，无重叠 |
 | 7.3 | 布局持久化 | 自动布局后刷新页面 | 节点位置保持布局后的状态 |
-| 7.4 | 分组聚集 | 分组内节点布局后仍聚集在一起 | GroupContainerShape 包裹组内节点 |
+| 7.4 | 分组聚集 | 分组内节点布局后仍聚集在一起 | group container node 包裹组内节点 |
 | 7.5 | 方向切换 | 切换 LR → TB → 点击自动整理 | 节点从上到下排列 |
 | 7.6 | 前端编译通过 | `pnpm --filter @clip-anvil/web build` | 退出码 0 |
 
@@ -851,8 +851,8 @@ CREATE INDEX idx_media_asset_workspace ON media_asset(workspace_id);
 5. 上传成功后：
    - `POST /api/nodes` 创建对应类型的节点（`asset_id` 关联刚上传的 asset）
    - 节点位置为鼠标释放时的画布坐标
-   - image 类型：MediaShape 显示上传图片的缩略图
-   - video/audio 类型：MediaShape 显示占位图 + 文件名
+   - image 类型：MediaFlowNode 显示上传图片的缩略图
+   - video/audio 类型：MediaFlowNode 显示占位图 + 文件名
 
 **多文件上传**：支持一次拖入多个文件，每个文件独立上传 + 创建节点，节点水平排列（每个偏移 canvas_w + 20px）。
 
@@ -867,7 +867,7 @@ M1 的 `media_node` 表需要有 `asset_id` 字段（在 M1 迁移中按 databas
 
 - `POST /api/nodes` 请求体新增可选字段 `asset_id`
 - 节点创建后前端从 asset 的 `storage_url` 渲染缩略图
-- MediaShapeUtil 的 props 已有 `thumbnailUrl` 字段，从 node 的关联 asset 获取
+- MediaFlowNode 的 props 已有 `thumbnailUrl` 字段，从 node 的关联 asset 获取
 
 ### 9.4 验收标准
 
@@ -1118,18 +1118,18 @@ apps/web/src/
 │   ├── PropertyPanel.tsx          ← 新增：右侧属性面板
 │   ├── NodePropertyPanel.tsx      ← 新增：节点属性子面板
 │   ├── EdgePropertyPanel.tsx      ← 新增：连线属性子面板
-│   ├── PromptEditor.tsx           ← 新增：带 @引用的 Prompt 编辑器
+│   ├── PromptReact Flow.tsx           ← 新增：带 @引用的 Prompt 编辑器
 │   ├── InputReferences.tsx        ← 新增：上游依赖缩略图 chips
 │   ├── ConnectionStatus.tsx       ← 新增：WebSocket 连接状态指示器
 │   └── FileDropZone.tsx           ← 新增：拖拽上传遮罩层
 ├── lib/
 │   ├── api.ts                     ← 扩展：edge/group/upload API 函数
-│   ├── canvas.ts                  ← 扩展：edgeToArrow + groupContainerToShape
+│   ├── canvas.ts                  ← 扩展：edgeToFlowEdge + groupContainerToFlowNode
 │   ├── layout.ts                  ← 新增：dagre 自动布局计算
 │   └── ws.ts                      ← 新增：WebSocket 连接管理 + 事件处理
-├── shapes/
-│   ├── MediaShapeUtil.tsx         ← 扩展：四种类型渲染 + 端口 handle + 缩略图
-│   └── GroupContainerShapeUtil.tsx ← 新增：自定义分组容器 shape
+├── nodes/
+│   ├── MediaFlowNode.tsx         ← 扩展：四种类型渲染 + 端口 handle + 缩略图
+│   └── GroupFlowNode.tsx ← 新增：自定义分组容器 node
 └── pages/
     └── CanvasPage.tsx             ← 扩展：三栏布局 + WebSocket + 拖拽上传
 ```

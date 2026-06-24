@@ -1,12 +1,12 @@
-# M6.5 Storyboard / PSS / Production State Tools Implementation Plan
+# M6.5 Storyboard / PSS / Production State Edges Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add durable Agent storyboard facts, production-state/PSS tooling, and ProducerGraph PSS injection.
 
-**Architecture:** Add `shot` and `shot_dependency` as Agent production facts, with optional `media_node.shot_id` projection links. Implement a narrow storyboard service for transactional writes, a deterministic Producer PSS builder for state projection, and two Agent tools wired into the existing Tool Registry and Producer tool loop.
+**Architecture:** Add `shot` and `shot_dependency` as Agent production facts, with optional `media_node.shot_id` projection links. Implement a ncustom edge storyboard service for transactional writes, a deterministic Producer PSS builder for state projection, and two Agent tools wired into the existing Edge Registry and Producer tool loop.
 
-**Tech Stack:** Go 1.26, pgx/sqlc/goose, Eino ProducerGraph, existing Agent runtime/tool registry/UI message protocol, React 19 + Vite 8 + tldraw read-only Agent canvas.
+**Tech Stack:** Go 1.26, pgx/sqlc/goose, Eino ProducerGraph, existing Agent runtime/tool registry/UI message protocol, React 19 + Vite 8 + React Flow read-only Agent canvas.
 
 ---
 
@@ -184,7 +184,7 @@ Expected: FAIL because package is missing.
 
 - [ ] **Step 3: Implement builder**
 
-Implement `Builder.BuildProducerPSS(ctx, workspaceID)` using a narrow store interface and deterministic sorting.
+Implement `Builder.BuildProducerPSS(ctx, workspaceID)` using a ncustom edge store interface and deterministic sorting.
 
 - [ ] **Step 4: Run GREEN**
 
@@ -196,7 +196,7 @@ GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/pss -count=1
 
 Expected: PASS.
 
-## Task 4: Agent Tools
+## Task 4: Agent Edges
 
 **Files:**
 
@@ -290,8 +290,8 @@ Wire:
 
 - `storyboard.NewService(pgPool, queries)`
 - `pss.NewBuilder(queries)`
-- `tools.NewGetProductionStateTool(pssBuilder)`
-- `tools.NewUpdateStoryboardTool(storyboardService)`
+- `tools.NewGetProductionStateEdge(pssBuilder)`
+- `tools.NewUpdateStoryboardEdge(storyboardService)`
 
 - [ ] **Step 2: Compile**
 

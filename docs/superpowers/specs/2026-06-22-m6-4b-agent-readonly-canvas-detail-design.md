@@ -29,9 +29,9 @@ The chat message renderer has a related limitation. Attachment blocks persist st
 
 Agent mode should reuse Studio's canvas rendering path for nodes and previews:
 
-- tldraw viewport and shape rendering.
-- `nodeToShape` / shape conversion helpers.
-- media shape utilities for image, video, text, and generated media.
+- React Flow viewport and node rendering.
+- `nodeToFlowNode` / view-model projection helpers.
+- media node utilities for image, video, text, and generated media.
 - production preview metadata where available.
 
 Agent mode may wrap these pieces in a dedicated read-only component, but it must not fork a separate visual system that only approximates Studio.
@@ -86,7 +86,7 @@ In scope:
 - Render image attachments as thumbnails in user message bubbles.
 - Keep persisted message content stable by storing IDs, not expiring signed URLs.
 - Replace the Agent page's temporary node list with a Studio-derived read-only canvas viewport.
-- Reuse Studio shape rendering for image, video, text, source material, and generated media nodes.
+- Reuse Studio node rendering for image, video, text, source material, and generated media nodes.
 - Add read-only node selection and node detail viewing in Agent mode.
 - Ensure Agent mode can view complete node production details.
 - Preserve Agent write restrictions on Studio mutation APIs.
@@ -162,7 +162,7 @@ Agent page
 
 `CanvasViewport(mode="readonly")` responsibilities:
 
-- render the same node shapes as Studio;
+- render the same node nodes as Studio;
 - render existing groups and edges when available;
 - allow pan and zoom;
 - allow node selection;
@@ -311,7 +311,7 @@ Frontend:
 
 - `AgentAttachmentBlock` renders image thumbnail when `url` or `thumbnail_url` exists;
 - attachment block falls back to filename chip when no URL exists;
-- Agent read-only canvas builds shapes from canvas nodes using shared conversion helpers;
+- Agent read-only canvas builds nodes from canvas nodes using shared conversion helpers;
 - read-only inspector renders prompt/params/versions/status fields as non-editable;
 - unsupported or empty detail fields render stable empty states.
 
@@ -367,7 +367,7 @@ This phase is complete only when all of the following are true:
 - Persisted message content still stores stable IDs rather than expiring signed URLs.
 - Refreshing the Agent page rehydrates message attachment previews.
 - Agent canvas no longer renders nodes as a text-only list.
-- Agent canvas uses Studio-derived node shapes for media/source/generated nodes.
+- Agent canvas uses Studio-derived node nodes for media/source/generated nodes.
 - Uploaded image nodes render with image preview on the Agent canvas.
 - Selecting a node in Agent mode exposes full read-only production detail.
 - Prompt, params, versions, assets, job status, relationships, and errors are visible when present.
@@ -389,9 +389,9 @@ Mitigation: persist IDs only. Hydrate URLs on response.
 
 Mitigation: extract shared read/display sections where possible. If Studio components are too mutation-heavy, split them into presentational read sections plus edit wrappers instead of copying code.
 
-### Risk: tldraw read-only mode still allows local visual changes
+### Risk: React Flow read-only mode still allows local visual changes
 
-Mitigation: distinguish local viewport interactions from persisted mutations. Pan, zoom, and selection are allowed. Shape creation, deletion, movement persistence, and keyboard editing are not.
+Mitigation: distinguish local viewport interactions from persisted mutations. Pan, zoom, and selection are allowed. Node creation, deletion, movement persistence, and keyboard editing are not.
 
 ## Open Follow-Ups
 

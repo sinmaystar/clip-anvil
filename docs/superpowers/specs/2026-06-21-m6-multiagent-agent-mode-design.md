@@ -14,7 +14,7 @@ M6 里程碑目标是完整 Agent 自动生产模式，但实施顺序仍应先�
 Agent 对话与状态持久化
   -> Agent WebSocket 事件同步
   -> HITL 决策卡片
-  -> Tool registry 和工具调用审计
+  -> Edge registry 和工具调用审计
   -> Storyboard / PSS
   -> Producer / Craftsman / Worker / Composer Graph 编排
   -> 复用 M4/M5 生产底座执行预览图、视频和成片生成
@@ -34,7 +34,7 @@ Agent 对话与状态持久化
 
 ## 3. Eino 方案选择
 
-Eino 官方文档同时提供低层编排能力和 ADK 高层 Agent 能力：Graph 是更灵活的有向图编排；ADK 提供 Agent 抽象，支持多 Agent 编排、HITL interrupt 和预置 Agent pattern。官方 `ChatModelAgent` 使用 ChatModel 作为决策器、Tools 作为行动空间，并通过 ReAct loop 执行 tool call。Middleware 可在 agent run、model call、tool call 周围扩展上下文、工具、日志、压缩、修复中断后的 tool call 等行为。
+Eino 官方文档同时提供低层编排能力和 ADK 高层 Agent 能力：Graph 是更灵活的有向图编排；ADK 提供 Agent 抽象，支持多 Agent 编排、HITL interrupt 和预置 Agent pattern。官方 `ChatModelAgent` 使用 ChatModel 作为决策器、Edges 作为行动空间，并通过 ReAct loop 执行 tool call。Middleware 可在 agent run、model call、tool call 周围扩展上下文、工具、日志、压缩、修复中断后的 tool call 等行为。
 
 ### 3.1 方案 A：Eino Graph 主编排
 
@@ -126,7 +126,7 @@ M6.8: ComposerGraph，生成成片并通过 HITL 确认
 - Agent WebSocket hub 和事件协议。
 - 前端 Agent 对话工作台，右侧悬浮在只读画布之上。
 - HITL 决策卡片基础协议。
-- Tool registry 的定义、工具调用落库和事件同步。
+- Edge registry 的定义、工具调用落库和事件同步。
 - Eino Graph 编排、checkpoint、interrupt/resume 和 Graph 节点状态映射。
 - PSS builder 的首版输入/输出口径。
 - 完整 Producer / Craftsman / Worker / Reviewer / Composer MultiAgent 架构。
@@ -485,7 +485,7 @@ Agent Workspace 首屏应是只读画布为底、右侧悬浮 Producer 对话框
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
 │  Read-only production canvas                             │
-│  - tldraw/canvas projection                              │
+│  - React Flow/canvas projection                              │
 │  - nodes / shots / current versions / stale/job badges   │
 │                                                          │
 │                              ┌────────────────────────┐  │
@@ -550,12 +550,12 @@ interface DecisionCard {
 - resolved 后显示已选择项。
 - 用户也可以通过自然语言回复，Producer 解析后 resolve。
 
-## 9. Tool Registry
+## 9. Edge Registry
 
-Tool registry 是 Eino 和 ClipAnvil 业务服务之间的边界。
+Edge registry 是 Eino 和 ClipAnvil 业务服务之间的边界。
 
 ```go
-type ToolContext struct {
+type EdgeContext struct {
     WorkspaceID pgtype.UUID
     AccountID   pgtype.UUID
     ThreadID    pgtype.UUID
@@ -563,11 +563,11 @@ type ToolContext struct {
     Role        string
 }
 
-type ToolDefinition struct {
+type EdgeDefinition struct {
     Name        string
     Description string
     InputSchema  json.RawMessage
-    Handler      func(ctx context.Context, toolCtx ToolContext, input json.RawMessage) (ToolResult, error)
+    Handler      func(ctx context.Context, toolCtx EdgeContext, input json.RawMessage) (EdgeResult, error)
 }
 ```
 
@@ -882,12 +882,12 @@ PSS 每次 Agent turn 重新构建，不作为长期事实源保存。
 - Graph 可从 checkpoint 恢复。
 - 事件和消息可恢复。
 
-### M6.3 Tool Registry, Storyboard And PSS
+### M6.3 Edge Registry, Storyboard And PSS
 
 交付：
 
-- Tool registry。
-- Tool call/result 落库。
+- Edge registry。
+- Edge call/result 落库。
 - `get_production_state`。
 - `update_storyboard`。
 - `shot` / `shot_dependency`。
@@ -987,7 +987,7 @@ M6 完成时：
 - 消息、任务、事件、HITL 卡片可持久化并通过 WebSocket 同步。
 - ProducerGraph 可完整处理用户消息、PSS、工具调用、HITL 和任务调度。
 - Agent thread/message 持久化是通用能力，Producer、Craftsman、Reviewer、Composer 都可复用。
-- Tool registry 暴露 `get_production_state`、`request_user_decision`、`update_storyboard`、`generate_asset`、`generate_shot_preview`、`generate_shot_video`、`select_version`、`retry_generation`、`compose_final`。
+- Edge registry 暴露 `get_production_state`、`request_user_decision`、`update_storyboard`、`generate_asset`、`generate_shot_preview`、`generate_shot_video`、`select_version`、`retry_generation`、`compose_final`。
 - Storyboard、shot_dependency、PSS、Memory 可持久化并可恢复。
 - CraftsmanGraph 可为 shot 生成预览图和视频。
 - ReviewGraph 可按 rubric 评审并触发自动改写重试。

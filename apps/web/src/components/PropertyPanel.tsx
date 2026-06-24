@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type {
   ArtifactVersion,
   MediaEdge,
@@ -73,6 +79,7 @@ interface PropertyPanelProps {
   modelCapabilities: ModelCapability[];
   nodeProductionState: NodeProductionState | null;
   referencePackItems: ReferencePackItem[];
+  readOnly?: boolean;
   onAddGroupMember?: (groupId: string, nodeId: string) => void;
   onDeleteEdge?: (edgeId: string) => void;
   onDeleteGroup?: (groupId: string) => void;
@@ -132,6 +139,7 @@ export function PropertyPanel({
   modelCapabilities,
   nodeProductionState,
   referencePackItems,
+  readOnly = false,
   onAddGroupMember,
   onDeleteEdge,
   onDeleteGroup,
@@ -177,6 +185,7 @@ export function PropertyPanel({
         <SourceMaterialPanel
           isUpdatingNode={isUpdatingNode}
           node={selectedNode}
+          readOnly={readOnly}
           onUpdateNode={onUpdateNode}
         />
       );
@@ -197,6 +206,7 @@ export function PropertyPanel({
         nodeProductionState={nodeProductionState}
         nodes={nodes}
         referencePackItems={referencePackItems}
+        readOnly={readOnly}
         onReplaceReferencePackItems={onReplaceReferencePackItems}
         onPromptRefSelect={onPromptRefSelect}
         onDeleteInputEdge={onDeleteInputEdge ?? onDeleteEdge}
@@ -348,10 +358,12 @@ function getGroupCandidateNodes(nodes: MediaNode[], group: MediaGroup) {
 function SourceMaterialPanel({
   isUpdatingNode,
   node,
+  readOnly,
   onUpdateNode,
 }: {
   isUpdatingNode: boolean;
   node: MediaNode;
+  readOnly: boolean;
   onUpdateNode: (nodeId: string, patch: NodePatch) => void;
 }) {
   const [titleValue, setTitleValue] = useState(node.title);
@@ -379,6 +391,10 @@ function SourceMaterialPanel({
   }, [node.id, node.title, node.prompt]);
 
   const commitTitle = useCallback(() => {
+    if (readOnly) {
+      setIsTitleEditing(false);
+      return;
+    }
     const title = titleValueRef.current.trim();
     if (title && title !== nodeTitleRef.current) {
       onUpdateNodeRef.current(node.id, { title });
@@ -386,7 +402,7 @@ function SourceMaterialPanel({
     }
     setTitleValue(title || nodeTitleRef.current);
     setIsTitleEditing(false);
-  }, [node.id]);
+  }, [node.id, readOnly]);
 
   const cancelTitleEdit = useCallback(() => {
     titleValueRef.current = nodeTitleRef.current;
@@ -395,6 +411,9 @@ function SourceMaterialPanel({
   }, []);
 
   const commitContent = useCallback(() => {
+    if (readOnly) {
+      return;
+    }
     const content = contentValueRef.current;
     if (content === nodePromptRef.current) {
       return;
@@ -408,7 +427,7 @@ function SourceMaterialPanel({
       },
     });
     nodePromptRef.current = content;
-  }, [node.id]);
+  }, [node.id, readOnly]);
 
   useEffect(() => {
     return () => {
@@ -422,30 +441,34 @@ function SourceMaterialPanel({
   const previewVersion = buildSourceMaterialPreviewVersion(node);
 
   return (
-    <aside className="property-panel node-production-panel">
+    <aside className="property-panel node-production-panel node-composer-panel node-composer-source-panel">
       <div className="property-panel-title-row">
-        <EditablePanelHeader
-          eyebrow={materialKindLabel(node)}
-          isEditing={isTitleEditing}
-          isUpdating={isUpdatingNode}
-          onCancel={cancelTitleEdit}
-          onCommit={commitTitle}
-          onEdit={() => setIsTitleEditing(true)}
-          onTitleChange={(next) => {
-            titleValueRef.current = next;
-            setTitleValue(next);
-          }}
-          title={titleValue}
-        />
+        {readOnly ? (
+          <PanelHeader eyebrow={materialKindLabel(node)} title={titleValue} />
+        ) : (
+          <EditablePanelHeader
+            eyebrow={materialKindLabel(node)}
+            isEditing={isTitleEditing}
+            isUpdating={isUpdatingNode}
+            onCancel={cancelTitleEdit}
+            onCommit={commitTitle}
+            onEdit={() => setIsTitleEditing(true)}
+            onTitleChange={(next) => {
+              titleValueRef.current = next;
+              setTitleValue(next);
+            }}
+            title={titleValue}
+          />
+        )}
         <span className="property-status-pill" data-status={node.status}>
           可用
         </span>
       </div>
       {isManualTextMaterial ? (
-        <label className="property-field property-content-field">
-          <span>内容</span>
+        <label className="property-field property-content-field node-composer-prompt source-material-content-field">
+          <span>素材内容</span>
           <textarea
-            disabled={isUpdatingNode}
+            disabled={isUpdatingNode || readOnly}
             onBlur={commitContent}
             onChange={(event) => {
               const next = event.currentTarget.value;
@@ -458,12 +481,11 @@ function SourceMaterialPanel({
           />
         </label>
       ) : (
-        <div className="property-section property-source-preview">
-          <p className="studio-section-label">素材预览</p>
+        <div className="property-section property-source-preview source-material-preview-card">
           <VersionPreviewBody version={previewVersion} />
         </div>
       )}
-      <p className="property-empty">
+      <p className="source-material-readonly-note">
         这是用户素材节点，可作为依赖输入或加入参考包，不需要运行模型。
       </p>
     </aside>
@@ -513,6 +535,7 @@ function NodePropertyPanel({
   nodeProductionState,
   nodes,
   referencePackItems,
+  readOnly,
   onReplaceReferencePackItems,
   onPromptRefSelect,
   onDeleteInputEdge,
@@ -535,6 +558,7 @@ function NodePropertyPanel({
   nodeProductionState: NodeProductionState | null;
   nodes: MediaNode[];
   referencePackItems: ReferencePackItem[];
+  readOnly: boolean;
   onReplaceReferencePackItems: (
     packNodeId: string,
     memberNodeIds: string[],
@@ -578,10 +602,26 @@ function NodePropertyPanel({
     null;
   const retryReason = retryDisabledReason(latestJob);
   const durations = durationOptions(selectedCapability);
+  const hasDurationParam = "duration_sec" in modelParams;
+  const hasTemperatureParam = "temperature" in modelParams;
   const [previewVersionId, setPreviewVersionId] = useState<string | null>(null);
   const [detailVersionId, setDetailVersionId] = useState<string | null>(null);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [detailsPopoverPosition, setDetailsPopoverPosition] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
+  const [openToolbarDropdown, setOpenToolbarDropdown] = useState<
+    "operation" | "model" | "duration" | null
+  >(null);
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null);
+  const detailsDragRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startLeft: number;
+    startTop: number;
+  } | null>(null);
   const previewVersion =
     (previewVersionId
       ? versions.find((version) => version.id === previewVersionId)
@@ -594,7 +634,8 @@ function NodePropertyPanel({
     setPreviewVersionId(null);
     setDetailVersionId(null);
     setIsMoreOpen(false);
-    setIsSettingsOpen(false);
+    setDetailsPopoverPosition(null);
+    setOpenToolbarDropdown(null);
   }, [node.id]);
 
   useEffect(() => {
@@ -610,6 +651,85 @@ function NodePropertyPanel({
     (detailVersionId
       ? versions.find((version) => version.id === detailVersionId)
       : null) ?? null;
+
+  const openDetailsPopover = useCallback(() => {
+    const triggerRect = moreButtonRef.current?.getBoundingClientRect();
+    const width = Math.min(520, window.innerWidth - 32);
+    const height = Math.min(520, window.innerHeight - 32);
+    const fallbackLeft = window.innerWidth - width - 16;
+    const fallbackTop = window.innerHeight - height - 16;
+    const left = triggerRect
+      ? triggerRect.right - width
+      : fallbackLeft;
+    const top = triggerRect
+      ? triggerRect.top - height - 8
+      : fallbackTop;
+    setDetailsPopoverPosition({
+      left: Math.round(clamp(left, 16, Math.max(16, window.innerWidth - width - 16))),
+      top: Math.round(clamp(top, 16, Math.max(16, window.innerHeight - height - 16))),
+    });
+    setIsMoreOpen(true);
+    setOpenToolbarDropdown(null);
+  }, []);
+
+  const beginDetailsDrag = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0 || !detailsPopoverPosition) {
+        return;
+      }
+      event.currentTarget.setPointerCapture(event.pointerId);
+      detailsDragRef.current = {
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startLeft: detailsPopoverPosition.left,
+        startTop: detailsPopoverPosition.top,
+      };
+    },
+    [detailsPopoverPosition],
+  );
+
+  const moveDetailsDrag = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = detailsDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) {
+        return;
+      }
+      const width = Math.min(520, window.innerWidth - 32);
+      const height = Math.min(520, window.innerHeight - 32);
+      setDetailsPopoverPosition({
+        left: Math.round(
+          clamp(
+            drag.startLeft + event.clientX - drag.startClientX,
+            16,
+            Math.max(16, window.innerWidth - width - 16),
+          ),
+        ),
+        top: Math.round(
+          clamp(
+            drag.startTop + event.clientY - drag.startClientY,
+            16,
+            Math.max(16, window.innerHeight - height - 16),
+          ),
+        ),
+      });
+    },
+    [],
+  );
+
+  const endDetailsDrag = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = detailsDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) {
+        return;
+      }
+      detailsDragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    [],
+  );
 
   if (isReferencePack) {
     return (
@@ -636,18 +756,17 @@ function NodePropertyPanel({
             referencePackItems,
           )}
           isLoading={isReferencePackItemsLoading}
-          isUpdating={isUpdatingReferencePackItems}
+          isUpdating={isUpdatingReferencePackItems || readOnly}
           members={memberNodesForPack(referencePackItems, nodes)}
-          onToggleMember={(memberNodeId, checked) =>
+          onToggleMember={(memberNodeId, checked) => {
+            if (readOnly) {
+              return;
+            }
             onReplaceReferencePackItems(
               node.id,
-              memberIdsAfterToggle(
-                referencePackItems,
-                memberNodeId,
-                checked,
-              ),
-            )
-          }
+              memberIdsAfterToggle(referencePackItems, memberNodeId, checked),
+            );
+          }}
         />
       </aside>
     );
@@ -660,13 +779,13 @@ function NodePropertyPanel({
             edges={edges}
             node={node}
             nodes={nodes}
-            onDeleteInputEdge={onDeleteInputEdge}
+            onDeleteInputEdge={readOnly ? undefined : onDeleteInputEdge}
           />
       </div>
       <PropertyPromptEditor
         className="node-composer-prompt"
         edges={edges}
-        isUpdatingNode={isUpdatingNode}
+        isUpdatingNode={isUpdatingNode || readOnly}
         node={node}
         nodes={nodes}
         onPromptRefSelect={onPromptRefSelect}
@@ -674,135 +793,146 @@ function NodePropertyPanel({
       />
       <div className="node-composer-toolbar">
         <div className="node-composer-toolbar-controls">
-          <button
-            className="node-composer-settings-button"
-            onClick={() => {
-              setIsSettingsOpen((open) => !open);
+          <NodeComposerDropdown
+            ariaLabel="选择生成任务"
+            className="node-composer-operation-select"
+            disabled={isUpdatingNode || readOnly}
+            isOpen={openToolbarDropdown === "operation"}
+            onSelect={(value) => {
+              setOpenToolbarDropdown(null);
+              if (readOnly) {
+                return;
+              }
+              onUpdateNode(
+                node.id,
+                productionConfigPatchForOperation(
+                  node,
+                  modelCapabilities,
+                  value,
+                ),
+              );
+            }}
+            onToggle={() => {
+              setOpenToolbarDropdown((current) =>
+                current === "operation" ? null : "operation",
+              );
               setIsMoreOpen(false);
             }}
-            type="button"
-          >
-            设置
-          </button>
-          <span className="node-composer-active-model">
-            {selectedCapability?.display_name ?? "选择模型"}
-          </span>
-          {isSettingsOpen ? (
-            <div
-              aria-label="节点运行设置"
-              className="node-composer-settings-popover"
-              role="dialog"
-            >
-              <label className="node-composer-select">
-                <span>任务</span>
-                <select
-                  disabled={isUpdatingNode}
-                  onChange={(event) =>
-                    onUpdateNode(
-                      node.id,
-                      productionConfigPatchForOperation(
-                        node,
-                        modelCapabilities,
-                        event.currentTarget.value,
-                      ),
-                    )
+            onDismiss={() => setOpenToolbarDropdown(null)}
+            options={operationOptions}
+            value={operation}
+          />
+          <NodeComposerDropdown
+            ariaLabel="选择模型"
+            className="node-composer-model-select"
+            disabled={
+              isModelCapabilitiesLoading ||
+              isUpdatingNode ||
+              readOnly ||
+              compatibleCapabilities.length === 0
+            }
+            isOpen={openToolbarDropdown === "model"}
+            onSelect={(value) => {
+              setOpenToolbarDropdown(null);
+              if (readOnly) {
+                return;
+              }
+              onUpdateNode(
+                node.id,
+                productionConfigPatchForSelectedModel(
+                  node,
+                  modelCapabilities,
+                  value,
+                ),
+              );
+            }}
+            onToggle={() => {
+              setOpenToolbarDropdown((current) =>
+                current === "model" ? null : "model",
+              );
+              setIsMoreOpen(false);
+            }}
+            onDismiss={() => setOpenToolbarDropdown(null)}
+            options={
+              compatibleCapabilities.length > 0
+                ? compatibleCapabilities.map((capability) => ({
+                    value: capabilityKey(capability),
+                    label: capability.display_name,
+                  }))
+                : [{ value: "", label: "没有兼容模型" }]
+            }
+            value={selectedModelKey}
+          />
+          {hasDurationParam ? (
+            <NodeComposerDropdown
+              ariaLabel="选择时长"
+              className="node-composer-duration-select"
+              disabled={isUpdatingNode || readOnly}
+              isOpen={openToolbarDropdown === "duration"}
+              labelPrefix="时长"
+              onSelect={(value) => {
+                setOpenToolbarDropdown(null);
+                if (readOnly) {
+                  return;
+                }
+                onUpdateNode(node.id, {
+                  model_params: {
+                    ...modelParams,
+                    duration_sec: Number(value),
+                  },
+                });
+              }}
+              onToggle={() => {
+                setOpenToolbarDropdown((current) =>
+                  current === "duration" ? null : "duration",
+                );
+                setIsMoreOpen(false);
+              }}
+              onDismiss={() => setOpenToolbarDropdown(null)}
+              options={durationControlOptions(
+                durations,
+                Number(modelParams.duration_sec),
+              )}
+              value={String(modelParams.duration_sec)}
+            />
+          ) : null}
+          {hasTemperatureParam ? (
+            <label className="node-composer-param-control node-composer-temperature-control">
+              <span>温度</span>
+              <input
+                aria-label="设置温度"
+                defaultValue={String(modelParams.temperature)}
+                disabled={isUpdatingNode || readOnly}
+                key={`${node.id}-${modelParams.temperature}`}
+                max="1"
+                min="0"
+                onBlur={(event) => {
+                  if (readOnly) {
+                    return;
                   }
-                  value={operation}
-                >
-                  {operationOptions.map(({ value, label }) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="node-composer-select node-composer-model-select">
-                <span>模型</span>
-                <select
-                  disabled={
-                    isModelCapabilitiesLoading ||
-                    isUpdatingNode ||
-                    compatibleCapabilities.length === 0
-                  }
-                  onChange={(event) => {
-                    onUpdateNode(
-                      node.id,
-                      productionConfigPatchForSelectedModel(
-                        node,
-                        modelCapabilities,
-                        event.currentTarget.value,
-                      ),
-                    );
-                  }}
-                  value={selectedModelKey}
-                >
-                  {compatibleCapabilities.length > 0 ? (
-                    compatibleCapabilities.map((capability) => (
-                      <option
-                        key={capabilityKey(capability)}
-                        value={capabilityKey(capability)}
-                      >
-                        {capability.display_name}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">没有兼容模型</option>
-                  )}
-                </select>
-              </label>
-              {"duration_sec" in modelParams ? (
-                <label className="node-composer-select node-composer-compact-select">
-                  <span>时长</span>
-                  <select
-                    disabled={isUpdatingNode}
-                    onChange={(event) =>
-                      onUpdateNode(node.id, {
-                        model_params: {
-                          ...modelParams,
-                          duration_sec: Number(event.currentTarget.value),
-                        },
-                      })
-                    }
-                    value={String(modelParams.duration_sec)}
-                  >
-                    {durations.map((duration) => (
-                      <option key={duration} value={duration}>
-                        {duration}s
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              {"temperature" in modelParams ? (
-                <label className="node-composer-select node-composer-compact-select">
-                  <span>温度</span>
-                  <input
-                    defaultValue={String(modelParams.temperature)}
-                    disabled={isUpdatingNode}
-                    max="1"
-                    min="0"
-                    onBlur={(event) =>
-                      onUpdateNode(node.id, {
-                        model_params: {
-                          ...modelParams,
-                          temperature: Number(event.currentTarget.value),
-                        },
-                      })
-                    }
-                    step="0.1"
-                    type="number"
-                  />
-                </label>
-              ) : null}
-            </div>
+                  onUpdateNode(node.id, {
+                    model_params: {
+                      ...modelParams,
+                      temperature: Number(event.currentTarget.value),
+                    },
+                  })
+                }}
+                step="0.1"
+                type="number"
+              />
+            </label>
           ) : null}
         </div>
         <div className="node-composer-actions">
           <button
             className="node-composer-more-button"
+            ref={moreButtonRef}
             onClick={() => {
-              setIsMoreOpen((open) => !open);
-              setIsSettingsOpen(false);
+              if (isMoreOpen) {
+                setIsMoreOpen(false);
+                return;
+              }
+              openDetailsPopover();
             }}
             type="button"
           >
@@ -811,8 +941,12 @@ function NodePropertyPanel({
           {latestJob?.status === "failed" ? (
             <button
               className="node-composer-secondary-button"
-              disabled={isRetryingJob || Boolean(retryReason)}
-              onClick={() => onRetryJob(latestJob.id)}
+              disabled={isRetryingJob || Boolean(retryReason) || readOnly}
+              onClick={() => {
+                if (!readOnly) {
+                  onRetryJob(latestJob.id);
+                }
+              }}
               type="button"
             >
               {isRetryingJob ? "重试中" : "重试"}
@@ -820,14 +954,19 @@ function NodePropertyPanel({
           ) : null}
           <button
             className="node-composer-run-button"
-            disabled={Boolean(disabledReason) || isRunningNode || isUpdatingNode}
-            onClick={() =>
+            disabled={
+              Boolean(disabledReason) || isRunningNode || isUpdatingNode || readOnly
+            }
+            onClick={() => {
+              if (readOnly) {
+                return;
+              }
               onRunNode(
                 node.id,
                 productionConfigPatchForRun(node, modelCapabilities) ??
                   undefined,
-              )
-            }
+              );
+            }}
             type="button"
           >
             {isRunningNode ? "…" : "↑"}
@@ -844,12 +983,27 @@ function NodePropertyPanel({
           aria-label="Versions 与诊断"
           className="node-composer-details-popover"
           role="dialog"
+          style={
+            detailsPopoverPosition
+              ? {
+                  left: detailsPopoverPosition.left,
+                  top: detailsPopoverPosition.top,
+                }
+              : undefined
+          }
         >
-          <div className="node-composer-details-header">
+          <div
+            className="node-composer-details-header"
+            onPointerCancel={endDetailsDrag}
+            onPointerDown={beginDetailsDrag}
+            onPointerMove={moveDetailsDrag}
+            onPointerUp={endDetailsDrag}
+          >
             <strong>Versions 与诊断</strong>
             <button
               aria-label="关闭 Versions 与诊断"
               onClick={() => setIsMoreOpen(false)}
+              onPointerDown={(event) => event.stopPropagation()}
               type="button"
             >
               ×
@@ -876,14 +1030,18 @@ function NodePropertyPanel({
                 <VersionPreviewPanel
                   currentVersionId={currentVersion?.id ?? null}
                   detailVersionId={detailVersionId}
-                  isSelectingVersion={isSelectingVersion}
+                  isSelectingVersion={isSelectingVersion || readOnly}
                   nodeId={node.id}
                   onOpenDetails={(versionId) =>
                     setDetailVersionId((current) =>
                       current === versionId ? null : versionId,
                     )
                   }
-                  onSelectVersion={onSelectVersion}
+                  onSelectVersion={(nodeId, versionId) => {
+                    if (!readOnly) {
+                      onSelectVersion(nodeId, versionId);
+                    }
+                  }}
                   version={previewVersion}
                 />
                 {detailVersion ? (
@@ -943,6 +1101,105 @@ function NodePropertyPanel({
         </div>
       ) : null}
     </aside>
+  );
+}
+
+function NodeComposerDropdown({
+  ariaLabel,
+  className,
+  disabled,
+  isOpen,
+  labelPrefix,
+  options,
+  value,
+  onDismiss,
+  onSelect,
+  onToggle,
+}: {
+  ariaLabel: string;
+  className: string;
+  disabled: boolean;
+  isOpen: boolean;
+  labelPrefix?: string;
+  options: Array<{ value: string; label: string }>;
+  value: string;
+  onDismiss: () => void;
+  onSelect: (value: string) => void;
+  onToggle: () => void;
+}) {
+  const selectedOption =
+    options.find((option) => option.value === value) ?? options[0] ?? null;
+  const dropdownRootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    const handleDocumentPointerDown = (event: globalThis.PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        dropdownRootRef.current &&
+        dropdownRootRef.current.contains(event.target)
+      ) {
+        return;
+      }
+      onDismiss();
+    };
+    document.addEventListener("pointerdown", handleDocumentPointerDown, true);
+    return () => {
+      document.removeEventListener(
+        "pointerdown",
+        handleDocumentPointerDown,
+        true,
+      );
+    };
+  }, [isOpen, onDismiss]);
+
+  return (
+    <div
+      className={`node-composer-dropdown node-composer-dropdown-root ${className}`}
+      ref={dropdownRootRef}
+    >
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+        className="node-composer-dropdown-button"
+        disabled={disabled}
+        onClick={onToggle}
+        type="button"
+      >
+        <span className="node-composer-dropdown-button-icon" />
+        {labelPrefix ? (
+          <span className="node-composer-dropdown-prefix">{labelPrefix}</span>
+        ) : null}
+        {labelPrefix ? " " : null}
+        <span>{selectedOption?.label ?? "选择"}</span>
+        <span className="node-composer-dropdown-chevron">⌄</span>
+      </button>
+      {isOpen ? (
+        <div
+          aria-label={ariaLabel}
+          className="node-composer-dropdown-menu"
+          role="listbox"
+        >
+          {options.map((option) => (
+            <button
+              aria-selected={option.value === value}
+              className="node-composer-dropdown-option"
+              data-active={option.value === value}
+              key={option.value}
+              onClick={() => onSelect(option.value)}
+              role="option"
+              type="button"
+            >
+              <span className="node-composer-dropdown-option-icon" />
+              <span>{option.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1194,6 +1451,10 @@ function truncateInline(value: string, maxLength: number) {
   return normalized.length > maxLength
     ? `${normalized.slice(0, maxLength - 1)}…`
     : normalized;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function PropertyPromptEditor({
@@ -1466,6 +1727,16 @@ function durationOptions(capability: ModelCapability | undefined) {
     return durations;
   }
   return [4, 5, 8];
+}
+
+function durationControlOptions(durations: number[], currentDuration: number) {
+  const values = Number.isFinite(currentDuration)
+    ? Array.from(new Set([...durations, currentDuration]))
+    : durations;
+  return values.map((duration) => ({
+    value: String(duration),
+    label: `${duration}s`,
+  }));
 }
 
 function PanelHeader({ eyebrow, title }: { eyebrow: string; title: string }) {

@@ -4,7 +4,7 @@
 
 **Goal:** Build a DB-first, workspace-scoped OpenSandbox execution layer for Agent media workflows.
 
-**Architecture:** ClipAnvil keeps sandbox bindings, permissions, MinIO writes, assets, nodes, and WebSocket events in the Go backend. OpenSandbox owns container lifecycle and in-sandbox command/file operations. Each workspace has a stable `/workspace` volume and a replaceable current sandbox container recorded in `workspace_sandbox`.
+**Architecture:** ClipAnvil keeps sandbox edges, permissions, MinIO writes, assets, nodes, and WebSocket events in the Go backend. OpenSandbox owns container lifecycle and in-sandbox command/file operations. Each workspace has a stable `/workspace` volume and a replaceable current sandbox container recorded in `workspace_sandbox`.
 
 **Tech Stack:** Go 1.26, Hertz, pgx/sqlc/goose, MinIO Go SDK, OpenSandbox Go SDK, Docker Compose, PostgreSQL 16, Redis 7, MinIO, NGINX.
 
@@ -18,7 +18,7 @@
 - Create `deploy/config/sandbox.toml`: local OpenSandbox Docker runtime config.
 - Modify `apps/server/config.yaml`: add sandbox runtime config.
 - Modify `apps/server/internal/config/config.go`: add `SandboxConfig` and nested resource limits.
-- Create `apps/server/migrations/005_add_workspace_sandbox.sql`: DB-first sandbox binding table.
+- Create `apps/server/migrations/005_add_workspace_sandbox.sql`: DB-first sandbox edge table.
 - Create `apps/server/sqlc/queries/sandbox.sql`: CRUD and row-lock queries for `workspace_sandbox`.
 - Regenerate `apps/server/internal/store/db/*`: sqlc generated code.
 - Create `apps/server/internal/sandbox/config.go`: constants and config validation helpers.
@@ -693,15 +693,15 @@ func NewManager(client Client, cfg config.SandboxConfig) *Manager {
 	return &Manager{client: client, cfg: cfg}
 }
 
-func (m *Manager) ensureWithBinding(ctx context.Context, workspaceID pgtype.UUID, binding Binding) (WorkspaceSandbox, error) {
-	if binding.SandboxID != "" && binding.Status == StatusRunning {
-		if err := m.client.Ping(ctx, binding.SandboxID); err == nil {
-			return WorkspaceSandbox{WorkspaceID: workspaceID, SandboxID: binding.SandboxID, VolumeName: binding.VolumeName}, nil
+func (m *Manager) ensureWithBinding(ctx context.Context, workspaceID pgtype.UUID, edge Binding) (WorkspaceSandbox, error) {
+	if edge.SandboxID != "" && edge.Status == StatusRunning {
+		if err := m.client.Ping(ctx, edge.SandboxID); err == nil {
+			return WorkspaceSandbox{WorkspaceID: workspaceID, SandboxID: edge.SandboxID, VolumeName: edge.VolumeName}, nil
 		}
 	}
 	info, err := m.client.Create(ctx, CreateRequest{
 		Image:          m.cfg.Image,
-		VolumeName:     binding.VolumeName,
+		VolumeName:     edge.VolumeName,
 		MountPath:      m.cfg.Workdir,
 		TimeoutSeconds: m.cfg.TimeoutSeconds,
 		ResourceCPU:    m.cfg.ResourceLimits.CPU,
@@ -713,11 +713,11 @@ func (m *Manager) ensureWithBinding(ctx context.Context, workspaceID pgtype.UUID
 	if info.ID == "" {
 		return WorkspaceSandbox{}, errors.New("opensandbox returned empty sandbox id")
 	}
-	return WorkspaceSandbox{WorkspaceID: workspaceID, SandboxID: info.ID, VolumeName: binding.VolumeName}, nil
+	return WorkspaceSandbox{WorkspaceID: workspaceID, SandboxID: info.ID, VolumeName: edge.VolumeName}, nil
 }
 ```
 
-Adapt the exact public method shape to the final transaction wrapper. Preserve the tested behavior: DB binding first, ping running sandbox, recreate with the same volume on failure.
+Adapt the exact public method node to the final transaction wrapper. Preserve the tested behavior: DB edge first, ping running sandbox, recreate with the same volume on failure.
 
 - [ ] **Step 9: Run migration and tests**
 
@@ -945,7 +945,7 @@ git add apps/server/internal/sandbox/workspace.go apps/server/internal/sandbox/w
 git commit -m "feat(server): prepare sandbox workspace files"
 ```
 
-## Task 4: sandbox_exec Tool Logic
+## Task 4: sandbox_exec Edge Logic
 
 **Files:**
 - Create: `apps/server/internal/sandbox/exec.go`
@@ -1103,7 +1103,7 @@ git add apps/server/internal/sandbox/exec.go apps/server/internal/sandbox/exec_t
 git commit -m "feat(server): add sandbox exec tool logic"
 ```
 
-## Task 5: submit_artifact Tool Logic
+## Task 5: submit_artifact Edge Logic
 
 **Files:**
 - Create: `apps/server/internal/sandbox/paths.go`

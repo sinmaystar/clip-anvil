@@ -3,6 +3,7 @@ import {
   Background,
   ConnectionMode,
   Controls,
+  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
@@ -21,7 +22,9 @@ import type {
   MediaGroup,
   MediaNode,
 } from "../../lib/api";
+import { mediaNodeDisplaySize } from "../../lib/canvas";
 import { isValidConnectionTarget } from "../../lib/connectionGeometry";
+import type { MediaDimensions } from "../../lib/nodePreviewLayout";
 import {
   canvasToFlowEdges,
   canvasToFlowNodes,
@@ -113,20 +116,58 @@ function CanvasFlowSurfaceContent({
   const dragStartPositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const connectionSourceRef = useRef<string | null>(null);
   const connectedTargetRef = useRef<string | null>(null);
+  const [nodes, setNodes] = useState<CanvasFlowNode[]>(() =>
+    canvasToFlowNodes(canvas),
+  );
+  const [mediaDimensionsByNode, setMediaDimensionsByNode] = useState<
+    Record<string, MediaDimensions | undefined>
+  >({});
+  const handleMediaDimensionsChange = useCallback(
+    (nodeId: string, dimensions: MediaDimensions) => {
+      setMediaDimensionsByNode((current) => {
+        const currentDimensions = current[nodeId];
+        if (
+          currentDimensions?.width === dimensions.width &&
+          currentDimensions?.height === dimensions.height
+        ) {
+          return current;
+        }
+        return { ...current, [nodeId]: dimensions };
+      });
+    },
+    [],
+  );
   const derivedNodes = useMemo(
     () =>
-      canvasToFlowNodes(canvas).map((node) => ({
-        ...node,
-        data:
-          node.type === "media"
-            ? { ...node.data, onRenameNode }
-            : node.data,
-        selected:
-          node.type === "group"
-            ? node.id === selectedGroupId
-            : node.id === selectedNodeId,
-      })),
-    [canvas, onRenameNode, selectedGroupId, selectedNodeId],
+      canvasToFlowNodes(canvas).map((node): CanvasFlowNode => {
+        if (node.type === "media") {
+          const dimensions = mediaDimensionsByNode[node.id];
+          const sizedNode = dimensions
+            ? applyMediaNodeDimensions(node, dimensions)
+            : node;
+          return {
+            ...sizedNode,
+            data: {
+              ...sizedNode.data,
+              onMediaDimensionsChange: handleMediaDimensionsChange,
+              onRenameNode,
+            },
+            selected: node.id === selectedNodeId,
+          };
+        }
+        return {
+          ...node,
+          selected: node.id === selectedGroupId,
+        };
+      }),
+    [
+      canvas,
+      handleMediaDimensionsChange,
+      mediaDimensionsByNode,
+      onRenameNode,
+      selectedGroupId,
+      selectedNodeId,
+    ],
   );
   const derivedEdges = useMemo(
     () =>
@@ -136,7 +177,6 @@ function CanvasFlowSurfaceContent({
       })),
     [canvas, selectedEdgeId],
   );
-  const [nodes, setNodes] = useState<CanvasFlowNode[]>(derivedNodes);
   const selectedNode = canvas.nodes.find((node) => node.id === selectedNodeId);
 
   useEffect(() => {
@@ -335,7 +375,14 @@ function CanvasFlowSurfaceContent({
           zoomOnScroll={policy.canPanZoom}
         >
           <Background />
-          <Controls showInteractive={false} />
+          <MiniMap
+            className="canvas-flow-minimap"
+            nodeStrokeWidth={2}
+            pannable
+            position="bottom-left"
+            zoomable
+          />
+          <Controls position="bottom-right" showInteractive={false} />
         </ReactFlow>
         {renderInspector && selectedNode ? (
           <NodeInspectorPopover
@@ -356,6 +403,24 @@ function CanvasFlowSurfaceContent({
 function noopRunNode() {}
 
 function noopUpdateNode() {}
+
+function applyMediaNodeDimensions(
+  node: CanvasMediaFlowNode,
+  dimensions: MediaDimensions,
+) {
+  const size = mediaNodeDisplaySize(node.data.node, dimensions);
+  return {
+    ...node,
+    width: size.w,
+    height: size.h,
+    measured: { width: size.w, height: size.h },
+    style: {
+      ...node.style,
+      width: size.w,
+      height: size.h,
+    },
+  };
+}
 
 function clientPointFromConnectionEvent(event: MouseEvent | TouchEvent) {
   if ("changedTouches" in event) {

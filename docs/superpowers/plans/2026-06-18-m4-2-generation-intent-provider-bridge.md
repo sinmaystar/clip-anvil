@@ -43,7 +43,7 @@ Non-goals for M4.2:
 - Modify `apps/server/internal/production/mock_provider.go`: implement the registry provider interface.
 - Create `apps/server/internal/production/volcengine_provider.go`: env-backed stub adapter that fails before network calls when API key is missing.
 - Modify `apps/server/internal/production/service.go`: build intent first, create failed jobs for bridge/config errors, then persist success.
-- Modify `apps/server/internal/production/service_test.go`: unit-test intent shape, registry selection, mock run, and missing API key error.
+- Modify `apps/server/internal/production/service_test.go`: unit-test intent node, registry selection, mock run, and missing API key error.
 - Modify `apps/server/sqlc/queries/production.sql`: add job lookup queries needed by API/smoke.
 - Regenerate `apps/server/internal/store/db/production.sql.go`.
 - Modify `apps/server/internal/api/node_handler.go`: accept production fields on create/update.
@@ -242,7 +242,7 @@ Run:
 GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/config -run 'TestLoadProductionConfig' -count=1
 ```
 
-Expected: FAIL because `Config.Production` and env bindings do not exist yet.
+Expected: FAIL because `Config.Production` and env edges do not exist yet.
 
 - [ ] **Step 3: Implement production config**
 
@@ -420,12 +420,12 @@ Expected: PASS.
 - Modify: `apps/server/internal/production/intent.go`
 - Modify: `apps/server/internal/production/service_test.go`
 
-- [ ] **Step 1: Write failing intent-shape tests**
+- [ ] **Step 1: Write failing intent-node tests**
 
 Add these tests to `apps/server/internal/production/service_test.go`:
 
 ```go
-func TestGenerationIntentJSONShape(t *testing.T) {
+func TestGenerationIntentJSONNode(t *testing.T) {
 	workspaceID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 	nodeID := pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
 	intent := GenerationIntent{
@@ -491,7 +491,7 @@ import (
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/production -run TestGenerationIntentJSONShape -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/production -run TestGenerationIntentJSONNode -count=1
 ```
 
 Expected: FAIL because the current `GenerationIntent` still uses flat `model_provider/model_id` fields.
@@ -554,7 +554,7 @@ type ProviderBridge interface {
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/production -run TestGenerationIntentJSONShape -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/production -run TestGenerationIntentJSONNode -count=1
 ```
 
 Expected: PASS after dependent mock provider compile fixes from Task 3 are in place. If compile fails now, continue to Task 3 and rerun.
@@ -1783,7 +1783,7 @@ Run:
 CLIPANVIL_API_BASE=http://127.0.0.1:<server-port>/api scripts/smoke-m4-1.sh
 ```
 
-Expected: PASS after updating the script to read `run.node.current_version_id` if M4.2 changes the run response shape.
+Expected: PASS after updating the script to read `run.node.current_version_id` if M4.2 changes the run response node.
 
 - [ ] **Step 3: Run M4.2 smoke**
 

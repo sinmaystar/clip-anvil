@@ -271,7 +271,7 @@ Expected: PASS when MinIO is available.
 
 - [ ] **Step 1: Add failing node asset tests**
 
-Add asset binding tests with concrete assertions:
+Add asset edge tests with concrete assertions:
 
 ```go
 func TestNodeHandlerCreateWithAssetID(t *testing.T) {
@@ -322,7 +322,7 @@ In `createNodeRequest`:
 AssetID string `json:"asset_id"`
 ```
 
-- [ ] **Step 3: Validate asset binding**
+- [ ] **Step 3: Validate asset edge**
 
 When `AssetID` is present:
 
@@ -404,7 +404,7 @@ Create component that accepts:
 ```ts
 interface FileDropZoneProps {
   workspaceId: string;
-  editor: Editor | null;
+  editor: React Flow | null;
   onAssetNodeCreated: (node: MediaNode) => void;
 }
 ```
@@ -443,7 +443,7 @@ In `WorkspaceDetailPage.tsx`, render inside the canvas frame:
       queryClient.setQueryData<CanvasPayload>(["workspace", id, "canvas"], (current) =>
         appendCanvasNode(current, node),
       );
-      editorRef.current?.createShapes([nodeToShape(node)]);
+      editorRef.current?.createNodes([nodeToFlowNode(node)]);
     }}
     workspaceId={id}
   />

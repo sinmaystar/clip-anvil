@@ -13,7 +13,7 @@ M1 在 M0 骨架基础上交付 4 个可独立验收的阶段：
 | 1. 基础设施 | goose 迁移 + sqlc 代码生成 + 配置扩展 | `make migrate-up && make sqlc-generate && make server-build` 全部通过 |
 | 2. 注册登录 | 后端 auth API + 前端登录/注册页 + 路由守卫 | 注册账号 → 拿到 token → 访问受保护 API |
 | 3. Workspace | 后端 CRUD API + 前端列表/创建页 | 创建项目 → 列表可见 → 点击进入 |
-| 4. 画布 + 文本节点 | 后端 canvas/node API + 前端 MediaShape + 位置持久化 | 创建节点 → 拖拽 → 刷新后位置保持 |
+| 4. 画布 + 文本节点 | 后端 canvas/node API + 前端 MediaFlowNode + 位置持久化 | 创建节点 → 拖拽 → 刷新后位置保持 |
 
 **不在范围内**（留后续迭代）：
 - WebSocket 事件推送
@@ -25,7 +25,7 @@ M1 在 M0 骨架基础上交付 4 个可独立验收的阶段：
 
 **M1 实际交互补充**：
 - 画布页已实现轻量左侧栏，用于项目返回、主题切换、媒体节点列表和折叠展开；完整资源树仍留给 M1.x。
-- 已隐藏 tldraw 原生顶部/底部/右侧工具 UI，并禁用绘图类快捷键；保留选择、删除、复制、撤销等必要快捷键。
+- 已隐藏 React Flow 原生顶部/底部/右侧工具 UI，并禁用绘图类快捷键；保留选择、删除、复制、撤销等必要快捷键。
 - 创建节点入口改为画布右键菜单，不再使用固定“+ 文本节点”导航按钮。
 - 节点编辑改为单击节点后在节点下方显示内联编辑面板，支持标题、引用占位、Prompt 和模型选择；标题/Prompt 自动保存，点击画布其他区域隐藏。
 - 画布支持明亮/暗夜外观切换。
@@ -475,16 +475,16 @@ nodeGroup.DELETE("/:id", nodeHandler.Delete)
 
 注意 `batch-position` 路由注册在 `/:id` 之前，避免路由冲突。
 
-### 5.2 前端自定义 MediaShape
+### 5.2 前端自定义 MediaFlowNode
 
-**类型定义**（`packages/canvas-schema/src/index.ts`）：
+**类型定义**（`apps/web/src/components/canvas-flow/flowTypes.ts`）：
 
 ```typescript
 export type MediaType = 'text' | 'image' | 'video' | 'audio'
 export type NodeStatus = 'draft' | 'ready' | 'queued' | 'running'
   | 'succeeded' | 'failed' | 'stale' | 'user_editing'
 
-export interface MediaShapeProps {
+export interface MediaFlowNodeProps {
   w: number
   h: number
   nodeId: string
@@ -495,9 +495,9 @@ export interface MediaShapeProps {
 }
 ```
 
-**ShapeUtil 实现**（`apps/web/src/shapes/MediaShapeUtil.tsx`）：
+**FlowNode 实现**（`apps/web/src/components/canvas-flow/MediaFlowNode.tsx`）：
 
-- `extends ShapeUtil<MediaShape>`
+- `extends FlowNode<MediaFlowNode>`
 - `static type = 'media'`
 - `getDefaultProps()` — `{ w: 200, h: 120, nodeId: '', nodeType: 'text', title: '', status: 'draft', prompt: '' }`
 - `component()` — 渲染节点卡片：
@@ -506,14 +506,14 @@ export interface MediaShapeProps {
   - 状态色块颜色：draft 灰、ready 灰、running 蓝、succeeded 绿、failed 红、stale 黄
 - `getIndicatorPath()` — 返回矩形选中边框路径
 - 尺寸固定 200×120（M1 不支持 resize）
-- 不使用 tldraw 内置文本编辑模式（M1 用节点下方内联编辑面板）
+- 不使用 React Flow 内置文本编辑模式（M1 用节点下方内联编辑面板）
 
-**nodeToShape 映射函数**（`apps/web/src/lib/canvas.ts`）：
+**nodeToFlowNode 映射函数**（`apps/web/src/lib/canvas.ts`）：
 
 ```typescript
-function nodeToShape(node: MediaNodeDTO): TLShapePartial<MediaShape> {
+function nodeToFlowNode(node: MediaNodeDTO): Node<MediaFlowNode> {
   return {
-    id: createShapeId(node.id),
+    id: createNodeId(node.id),
     type: 'media',
     x: node.canvasX,
     y: node.canvasY,
@@ -530,7 +530,7 @@ function nodeToShape(node: MediaNodeDTO): TLShapePartial<MediaShape> {
 }
 ```
 
-> 说明：API JSON 字段按 Go 项目惯例使用 `snake_case`（如 `canvas_x`、`canvas_w`、`node_type`）。前端 `api.ts` 负责把响应映射成 TypeScript 侧 camelCase DTO，`nodeToShape` 只消费 DTO。
+> 说明：API JSON 字段按 Go 项目惯例使用 `snake_case`（如 `canvas_x`、`canvas_w`、`node_type`）。前端 `api.ts` 负责把响应映射成 TypeScript 侧 camelCase DTO，`nodeToFlowNode` 只消费 DTO。
 
 ### 5.3 前端画布页面
 
@@ -539,7 +539,7 @@ function nodeToShape(node: MediaNodeDTO): TLShapePartial<MediaShape> {
 布局：
 ```
 ┌───────────────┬──────────────────────────┐
-│ Studio 侧栏    │        tldraw 画布        │
+│ Studio 侧栏    │        React Flow 画布        │
 │ 返回项目列表   │                          │
 │ 外观切换       │   [右键菜单: 创建文本节点] │
 │ 媒体节点列表   │                          │
@@ -550,30 +550,30 @@ function nodeToShape(node: MediaNodeDTO): TLShapePartial<MediaShape> {
 **初始加载**：
 1. `GET /api/workspaces/:id` → 获取 workspace 名称显示在顶部
 2. `GET /api/workspaces/:id/canvas` → 获取 camera + nodes
-3. `editor.createShapes(nodes.map(nodeToShape))`
+3. `editor.createNodes(nodes.map(nodeToFlowNode))`
 4. `editor.setCamera({ x: camera.x, y: camera.y, z: camera.zoom })`
 
 **创建节点交互**：
-- 右键画布空白处 → 自定义 context menu（覆盖 tldraw 默认菜单）→ "文本节点"
+- 右键画布空白处 → 自定义 context menu（覆盖 React Flow 默认菜单）→ "文本节点"
 - 点击 → `POST /api/nodes { workspace_id, node_type: 'text', title: '未命名文本', canvas_x: 右键位置.x, canvas_y: 右键位置.y }`
-- 成功 → `editor.createShape(nodeToShape(response))`
+- 成功 → `editor.createNode(nodeToFlowNode(response))`
 - 失败 → toast 提示
 
 **编辑标题/Prompt 交互**：
 - 单击节点 → 节点下方显示内联编辑面板
 - 面板上部展示引用资源占位，中部编辑 Prompt，底部选择模型
 - 标题和 Prompt 自动保存：失焦或输入防抖后 `PATCH /api/nodes/:id { title, prompt }`
-- 保存成功后同步 shape props，确保删除后 `Cmd+Z` 撤销能恢复标题和 Prompt
+- 保存成功后同步 node data，确保删除后 `Cmd+Z` 撤销能恢复标题和 Prompt
 - 点击画布空白处或选择其他节点时隐藏编辑面板
 
 **删除节点交互**：
 - 选中节点 → 按 Delete/Backspace
-- tldraw 删除 shape 后触发后端 `DELETE /api/nodes/:id`
+- React Flow 删除 node 后触发后端 `DELETE /api/nodes/:id`
 - `Cmd+Z` 恢复节点时重新向后端创建/更新对应节点数据，保持左侧列表、画布和后端一致
 
 ### 5.4 位置持久化
 
-监听 `editor.store.listen('change')`，过滤 MediaShape 的 x/y 变化：
+监听 `editor.store.listen('change')`，过滤 MediaFlowNode 的 x/y 变化：
 
 - 收集变化的节点 ID + 新坐标
 - 短防抖批量提交（当前实现约 500ms）
@@ -587,15 +587,15 @@ Camera 变更同理：
 - `PATCH /api/workspaces/:id/camera { x, y, zoom }`
 - 失败忽略
 
-### 5.5 tldraw 配置
+### 5.5 React Flow 配置
 
-传入 `<Tldraw>` 的配置：
+传入 `<React Flow>` 的配置：
 
-- `shapeUtils: [MediaShapeUtil]` — 注册自定义 shape
+- `nodeTypes: [MediaFlowNode]` — 注册自定义 node
 - `tools: []` — M1 不注册自定义工具
-- 使用 `TLUiComponents` 将原生顶部工具栏、底部工具、右侧样式面板等置空
+- 使用 `CanvasFlowSurfaceProps` 将原生顶部工具栏、底部工具、右侧样式面板等置空
 - 右键菜单由页面层自定义渲染，位置按画布坐标转换
-- `options={{ enableToolbarKeyboardShortcuts: false }}` 并拦截 D/E 等绘图快捷键，避免用户进入画笔/橡皮模式
+- `options={{ enableEdgebarKeyboardShortcuts: false }}` 并拦截 D/E 等绘图快捷键，避免用户进入画笔/橡皮模式
 
 ### 5.6 验收标准
 
@@ -801,7 +801,7 @@ apps/web/src/
 ├── main.css                    — TailwindCSS 入口
 ├── lib/
 │   ├── api.ts                  — fetch 封装，自动注入 Authorization
-│   └── canvas.ts               — nodeToShape 映射
+│   └── canvas.ts               — nodeToFlowNode 映射
 ├── stores/
 │   ├── appearance.ts           — 明亮/暗夜外观
 │   └── auth.ts                 — Zustand auth store
@@ -814,9 +814,9 @@ apps/web/src/
 │   ├── LoginPage.tsx
 │   ├── RegisterPage.tsx
 │   ├── WorkspaceListPage.tsx
-│   └── WorkspaceDetailPage.tsx — Studio shell + tldraw + MediaShape + 右键菜单 + 内联编辑
-└── shapes/
-    └── MediaShapeUtil.tsx      — 自定义 ShapeUtil
+│   └── WorkspaceDetailPage.tsx — Studio shell + React Flow + MediaFlowNode + 右键菜单 + 内联编辑
+└── nodes/
+    └── MediaFlowNode.tsx      — 自定义 FlowNode
 ```
 
 ### 7.3 依赖变更汇总

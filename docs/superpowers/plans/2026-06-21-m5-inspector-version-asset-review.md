@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the backend version/job lifecycle unchanged and use existing `ArtifactVersion` fields as the UI source of truth. Move low-frequency call data into per-version details, add a reusable fullscreen asset review overlay, and tune canvas preview sizing so nodes remain compact while full content is reviewed in the overlay.
 
-**Tech Stack:** React 19, TypeScript, tldraw 5, Tailwind/CSS, existing Go/Hertz/sqlc APIs, node:test helper tests.
+**Tech Stack:** React 19, TypeScript, React Flow, Tailwind/CSS, existing Go/Hertz/sqlc APIs, node:test helper tests.
 
 ---
 
@@ -59,7 +59,7 @@ Expected: tests and lint pass.
 
 **Files:**
 - Modify: `apps/web/src/components/PropertyPanel.tsx`
-- Modify: `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify: `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
 - Modify: `apps/web/src/main.css`
 - Modify: `apps/web/src/lib/canvasLayering.test.mjs`
 
@@ -81,7 +81,7 @@ Add local state in `NodePropertyPanel` for the fullscreen version. Add `AssetRev
 
 - [x] **Step 3: Add fullscreen entry points**
 
-Add `Fullscreen` action to `VersionPreviewPanel`. Add a small expand button on `MediaNodeShape` that dispatches a browser event containing the node id; the page opens the selected node Inspector/fullscreen current asset where possible.
+Add `Fullscreen` action to `VersionPreviewPanel`. Add a small expand button on `MediaNodeNode` that dispatches a browser event containing the node id; the page opens the selected node Inspector/fullscreen current asset where possible.
 
 - [x] **Step 4: Style overlay**
 

@@ -6,7 +6,7 @@
 
 **Architecture:** Keep Eino Graph as the explicit orchestration primitive. Producer remains the user-facing coordinator and invokes model-facing tools; ReviewerGraph is a first-class scoped graph that reviews generated artifacts and writes durable review facts; retry dispatch routes back through existing Craftsman/Worker preview generation. Dependency readiness is derived from DB production facts and emitted as durable Agent events, not stored in model summaries.
 
-**Tech Stack:** Go 1.26, CloudWeGo Eino, Hertz, pgx/sqlc, PostgreSQL JSONB, existing ClipAnvil Agent runtime, existing M4/M5 production service, React 19/Vite/tldraw, Agent UI message blocks, `/ws/agent`, `/ws/canvas`.
+**Tech Stack:** Go 1.26, CloudWeGo Eino, Hertz, pgx/sqlc, PostgreSQL JSONB, existing ClipAnvil Agent runtime, existing M4/M5 production service, React 19/Vite/React Flow, Agent UI message blocks, `/ws/agent`, `/ws/canvas`.
 
 ---
 
@@ -49,7 +49,7 @@ M6.7 does **not** add:
 - `production.Service.SelectArtifactVersion` already performs winner selection, node current version update, stale resolution, and downstream stale propagation.
 - `RunHandler.SelectNodeVersion` is currently Studio-only because it calls `requireStudioWorkspace`; Agent must select through an Agent tool, not through that user-facing Studio endpoint.
 - Producer tools are registered in `apps/server/cmd/server/main.go`.
-- Current Producer tool calls already flow through Eino native tool calling and `compose.ToolsNode`.
+- Current Producer tool calls already flow through Eino native tool calling and `compose.EdgesNode`.
 - Agent UI message protocol already supports typed blocks; M6.7 should extend it instead of returning raw JSON.
 
 ## File Map
@@ -220,7 +220,7 @@ Notes:
 - `attempt_no`, `max_attempts`, and `parent_review_record_id` make retry chains queryable without parsing JSON.
 - `target_phase='preview_image'` is the only phase M6.7 must execute; `shot_video` and `final_video` are schema-compatible for M6.8.
 
-## Tool Contracts
+## Edge Contracts
 
 ### `review_shot`
 
@@ -559,7 +559,7 @@ GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/reviewer -run '
 
 Expected: PASS.
 
-## Task 5: Agent Tools For Review, Selection, And Retry
+## Task 5: Agent Edges For Review, Selection, And Retry
 
 **Files:**
 
@@ -669,7 +669,7 @@ Blocked: waiting for shot-01 preview review accepted
   - `blocked_shots`
   - `accepted_winners`
 - [ ] `production-state` includes `review_records` for selected node.
-- [ ] Add `review_card` block shape:
+- [ ] Add `review_card` block node:
 
 ```json
 {

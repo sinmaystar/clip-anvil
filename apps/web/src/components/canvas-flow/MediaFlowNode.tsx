@@ -5,11 +5,18 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import {
+  Handle,
+  Position,
+  useUpdateNodeInternals,
+  type NodeProps,
+  type Node,
+} from "@xyflow/react";
 import { MarkdownPreview } from "../MarkdownPreview";
 import { mediaNodeDisplaySize } from "../../lib/canvas";
 import { winnerPreviewText } from "../../lib/productionPreview";
 import { materialKindLabel } from "../../lib/sourceMaterial";
+import type { MediaDimensions } from "../../lib/nodePreviewLayout";
 import type { CanvasFlowNodeData } from "./flowTypes";
 import {
   useCanvasFlowPolicy,
@@ -39,12 +46,19 @@ export function MediaFlowNode({
   selected,
 }: NodeProps<MediaFlowNodeModel>) {
   const policy: CanvasFlowPolicy = useCanvasFlowPolicy();
+  const updateNodeInternals = useUpdateNodeInternals();
   const node = data.node;
-  const size = mediaNodeDisplaySize(node);
   const previewText = winnerPreviewText(node);
   const previewAssetUrl = node.production_preview?.access_url ?? node.asset_url;
   const previewThumbnailUrl =
     node.production_preview?.thumbnail_url ?? node.thumbnail_url;
+  const imagePreviewUrl = previewAssetUrl || previewThumbnailUrl;
+  const [imageNaturalSize, setImageNaturalSize] =
+    useState<MediaDimensions | null>(null);
+  const size = mediaNodeDisplaySize(
+    node,
+    node.node_type === "image" ? imageNaturalSize : null,
+  );
   const hasPreviewContent =
     Boolean(previewText) || Boolean(previewAssetUrl) || Boolean(previewThumbnailUrl);
   const title = node.title || `未命名${materialKindLabel(node)}`;
@@ -56,6 +70,14 @@ export function MediaFlowNode({
   useEffect(() => {
     setTitleDraft(title);
   }, [node.id, title]);
+
+  useEffect(() => {
+    setImageNaturalSize(null);
+  }, [node.id, imagePreviewUrl]);
+
+  useEffect(() => {
+    updateNodeInternals(node.id);
+  }, [node.id, size.h, size.w, updateNodeInternals]);
 
   useEffect(() => {
     if (isEditingTitle) {
@@ -193,6 +215,23 @@ export function MediaFlowNode({
                 <img
                   alt={node.title || materialKindLabel(node)}
                   draggable={false}
+                  onLoad={(event) => {
+                    const { naturalHeight, naturalWidth } = event.currentTarget;
+                    if (naturalWidth <= 0 || naturalHeight <= 0) {
+                      return;
+                    }
+                    const nextSize = {
+                      width: naturalWidth,
+                      height: naturalHeight,
+                    };
+                    setImageNaturalSize((current) =>
+                      current?.width === naturalWidth &&
+                      current?.height === naturalHeight
+                        ? current
+                        : nextSize,
+                    );
+                    data.onMediaDimensionsChange?.(node.id, nextSize);
+                  }}
                   src={previewAssetUrl || previewThumbnailUrl}
                 />
               ) : (

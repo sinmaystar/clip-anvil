@@ -479,7 +479,7 @@ Expected: PASS.
 - Modify: `apps/server/internal/production/service.go`
 - Modify: `apps/server/internal/production/input_hash.go`
 
-- [ ] **Step 1: Add stale detail shape**
+- [ ] **Step 1: Add stale detail node**
 
 Add to `apps/server/internal/production/service.go`:
 

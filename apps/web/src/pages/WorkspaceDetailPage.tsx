@@ -48,6 +48,7 @@ import {
   overlayActiveNodeStatuses,
   productionStateWithSubmittedJob,
 } from "../lib/canvasRunState";
+import { preserveCanvasAssetUrls } from "../lib/canvasAssetUrls";
 import { ConnectionStatus } from "../components/ConnectionStatus";
 import {
   FileDropZone,
@@ -204,10 +205,15 @@ export function WorkspaceDetailPage() {
     enabled: Boolean(id),
   });
 
-  const canvasQuery = useQuery({
+  const canvasQuery = useQuery<CanvasPayload>({
     queryKey: ["workspace", id, "canvas"],
     queryFn: () => fetchCanvas(id ?? ""),
     enabled: Boolean(id),
+    structuralSharing: (oldData, newData) =>
+      preserveCanvasAssetUrls(
+        oldData as CanvasPayload | undefined,
+        newData as CanvasPayload,
+      ),
   });
 
   const modelCapabilitiesQuery = useQuery({

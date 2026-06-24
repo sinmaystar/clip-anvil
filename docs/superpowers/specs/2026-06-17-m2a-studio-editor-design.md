@@ -1,4 +1,4 @@
-# M2a Studio Canvas Editor Polish 设计与工作项
+# M2a Studio Canvas React Flow Polish 设计与工作项
 
 **状态**：待评审
 **日期**：2026-06-17
@@ -17,7 +17,7 @@
 但当前能力仍偏“功能打通”，还没有达到专业编辑器的日常可用体验：
 
 - 分组只能完成基础创建和展示，资源组织能力不够完整。
-- 连线文档仍保留 reference、sequence、transition 等复杂语义，且部分文档仍描述旧的 tldraw ArrowShape 投影，和下一阶段产品决策及当前 SVG 动效连线实现不一致。
+- 连线文档仍保留 reference、sequence、transition 等复杂语义，且部分文档仍描述旧的 React Flow custom dependency edge 投影，和下一阶段产品决策及当前 SVG 动效连线实现不一致。
 - 右侧属性面板视觉粗糙，信息密度、编辑能力和不同媒体类型的专属信息都不足。
 - 资源树能展示基础列表，但还不能承担复杂项目的主导航职责。
 
@@ -31,7 +31,7 @@
 
 - dependency edge 的 REST API 默认行为、DAG 环检测、重复边校验和删除接口。
 - 连线创建采用从输出端口拖拽到任意目标 Node 的方式。
-- 连线使用 SVG overlay 渲染曲线、流动动效和箭头，不再依赖 tldraw ArrowShape 作为用户可见连线。
+- 连线使用 SVG overlay 渲染曲线、流动动效和箭头，不再依赖 React Flow custom dependency edge 作为用户可见连线。
 - 连线可直接选中并用 Delete / Backspace 删除。
 - 成环失败已经使用画布级 toast 提示，文案解释“这条线会形成循环”。
 - 分组后端 API 已支持创建、重命名、删除、替换成员；节点 API 已支持更新 `group_id`。
@@ -266,7 +266,7 @@ reference、sequence、transition 暂不作为 Studio 用户功能暴露。原�
 
 实现说明：
 
-- M2a 不再恢复 tldraw ArrowShape 作为可见连线。旧 ArrowShape 只作为历史兼容清理对象。
+- M2a 不再恢复 React Flow custom dependency edge 作为可见连线。旧 custom dependency edge 只作为历史兼容清理对象。
 - 上游/下游依赖优先由 `CanvasPayload.edges + nodes` 在前端派生，避免新增 `/nodes/:id/outputs` 接口。
 
 ### 4.6 画布编辑基础体验补强

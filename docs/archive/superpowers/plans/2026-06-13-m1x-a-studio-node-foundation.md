@@ -4,9 +4,9 @@
 
 **Goal:** Expand the current text-only Studio canvas into a four-media-type node canvas with stable backend defaults and frontend placeholder rendering.
 
-**Architecture:** Keep the current M1 data model as the source of truth and reuse the existing `media_type` enum. The backend only relaxes node type validation and returns type-specific sizes; the frontend maps the existing node DTO into richer shape props and renders type-specific cards without introducing assets, edges, groups, or WebSocket state.
+**Architecture:** Keep the current M1 data model as the source of truth and reuse the existing `media_type` enum. The backend only relaxes node type validation and returns type-specific sizes; the frontend maps the existing node DTO into richer node data and renders type-specific cards without introducing assets, edges, groups, or WebSocket state.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, tldraw 5, TanStack Query, TailwindCSS 4.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, React Flow, TanStack Query, TailwindCSS 4.
 
 ---
 
@@ -14,10 +14,10 @@
 
 - Modify `apps/server/internal/api/node_handler.go`: allow four node types and return type-specific dimensions.
 - Modify `apps/server/internal/api/node_handler_test.go`: cover four-type creation, dimensions, and invalid type rejection.
-- Modify `packages/canvas-schema/src/index.ts`: add optional `thumbnailUrl` to `MediaShapeProps`.
+- Modify `apps/web/src/components/canvas-flow/flowTypes.ts`: add optional `thumbnailUrl` to `MediaFlowNodeProps`.
 - Modify `apps/web/src/lib/api.ts`: add `thumbnail_url?: string` to `MediaNode`.
 - Modify `apps/web/src/lib/canvas.ts`: map `thumbnail_url` to `thumbnailUrl`.
-- Modify `apps/web/src/shapes/MediaShapeUtil.tsx`: render text/image/video/audio cards.
+- Modify `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`: render text/image/video/audio cards.
 - Modify `apps/web/src/pages/WorkspaceDetailPage.tsx`: make the context menu create four node types and show type-aware sidebar rows.
 - Modify `apps/web/src/main.css`: add styles for type placeholders and menu rows if existing styles are insufficient.
 
@@ -141,19 +141,19 @@ make server-test
 
 Expected: PASS for all Go packages.
 
-### Task 2: Shared Shape Contract
+### Task 2: Shared Node Contract
 
 **Files:**
-- Modify: `packages/canvas-schema/src/index.ts`
+- Modify: `apps/web/src/components/canvas-flow/flowTypes.ts`
 - Modify: `apps/web/src/lib/api.ts`
 - Modify: `apps/web/src/lib/canvas.ts`
 
-- [ ] **Step 1: Extend shape props with optional thumbnail URL**
+- [ ] **Step 1: Extend node data with optional thumbnail URL**
 
-In `packages/canvas-schema/src/index.ts`, change `MediaShapeProps` to:
+In `apps/web/src/components/canvas-flow/flowTypes.ts`, change `MediaFlowNodeProps` to:
 
 ```ts
-export interface MediaShapeProps {
+export interface MediaFlowNodeProps {
   nodeId: string;
   nodeType: MediaType;
   title: string;
@@ -188,12 +188,12 @@ export interface MediaNode {
 }
 ```
 
-- [ ] **Step 3: Map the optional field into shape props**
+- [ ] **Step 3: Map the optional field into node data**
 
-In `apps/web/src/lib/canvas.ts`, update `nodeToShapeProps`:
+In `apps/web/src/lib/canvas.ts`, update `nodeToFlowNodeData`:
 
 ```ts
-export function nodeToShapeProps(node: MediaNode): MediaShapeProps {
+export function nodeToFlowNodeData(node: MediaNode): MediaFlowNodeProps {
   return {
     nodeId: node.id,
     nodeType: node.node_type,
@@ -229,17 +229,17 @@ Run:
 pnpm --filter @clip-anvil/web... build
 ```
 
-Expected: TypeScript succeeds or fails only on components that still need `thumbnailUrl` prop validation. If it fails on `MediaShapeUtil.props`, continue to Task 3 Step 1.
+Expected: TypeScript succeeds or fails only on components that still need `thumbnailUrl` prop validation. If it fails on `MediaFlowNode.props`, continue to Task 3 Step 1.
 
-### Task 3: Type-Specific MediaShape Rendering
+### Task 3: Type-Specific MediaFlowNode Rendering
 
 **Files:**
-- Modify: `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify: `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
 - Modify: `apps/web/src/main.css`
 
 - [ ] **Step 1: Add optional prop validation**
 
-In `MediaShapeUtil.props`, add:
+In `MediaFlowNode.props`, add:
 
 ```ts
 thumbnailUrl: T.optional(T.string),
@@ -251,7 +251,7 @@ Add this near `statusText`:
 
 ```ts
 const nodeTypeMeta: Record<
-  MediaShape["props"]["nodeType"],
+  MediaFlowNode["props"]["nodeType"],
   { icon: string; label: string; emptyTitle: string }
 > = {
   text: { icon: "T", label: "Text", emptyTitle: "未命名文本" },
@@ -263,10 +263,10 @@ const nodeTypeMeta: Record<
 
 - [ ] **Step 3: Render type-specific content**
 
-Inside `MediaNodeShape`, destructure `nodeType` and `thumbnailUrl`, then replace the fixed content with:
+Inside `MediaNodeNode`, destructure `nodeType` and `thumbnailUrl`, then replace the fixed content with:
 
 ```tsx
-const { title, prompt, status, nodeType, thumbnailUrl, w, h } = shape.props;
+const { title, prompt, status, nodeType, thumbnailUrl, w, h } = node.props;
 const typeMeta = nodeTypeMeta[nodeType];
 ```
 
@@ -546,7 +546,7 @@ Expected: PASS.
 Run:
 
 ```bash
-git diff -- apps/server/internal/api/node_handler.go apps/server/internal/api/node_handler_test.go packages/canvas-schema/src/index.ts apps/web/src/lib/api.ts apps/web/src/lib/canvas.ts apps/web/src/shapes/MediaShapeUtil.tsx apps/web/src/pages/WorkspaceDetailPage.tsx apps/web/src/main.css
+git diff -- apps/server/internal/api/node_handler.go apps/server/internal/api/node_handler_test.go apps/web/src/components/canvas-flow/flowTypes.ts apps/web/src/lib/api.ts apps/web/src/lib/canvas.ts apps/web/src/components/canvas-flow/MediaFlowNode.tsx apps/web/src/pages/WorkspaceDetailPage.tsx apps/web/src/main.css
 ```
 
 Expected: only M1.x-A node foundation changes are present.
@@ -554,6 +554,6 @@ Expected: only M1.x-A node foundation changes are present.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add apps/server/internal/api/node_handler.go apps/server/internal/api/node_handler_test.go packages/canvas-schema/src/index.ts apps/web/src/lib/api.ts apps/web/src/lib/canvas.ts apps/web/src/shapes/MediaShapeUtil.tsx apps/web/src/pages/WorkspaceDetailPage.tsx apps/web/src/main.css
+git add apps/server/internal/api/node_handler.go apps/server/internal/api/node_handler_test.go apps/web/src/components/canvas-flow/flowTypes.ts apps/web/src/lib/api.ts apps/web/src/lib/canvas.ts apps/web/src/components/canvas-flow/MediaFlowNode.tsx apps/web/src/pages/WorkspaceDetailPage.tsx apps/web/src/main.css
 git commit -m "feat: support multi-type studio nodes"
 ```

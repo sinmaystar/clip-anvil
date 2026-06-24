@@ -57,7 +57,7 @@ export function DependencyFlowEdge({
       <path
         className="connection-overlay-flow"
         d={edgePath}
-        style={{ strokeDashoffset: selected ? -24 : 0 }}
+        pathLength={1}
       />
     </g>
   );

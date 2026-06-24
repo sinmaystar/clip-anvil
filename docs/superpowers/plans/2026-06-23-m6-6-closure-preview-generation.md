@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the current Producer -> `dispatch_craftsman` -> CraftsmanGraph -> Worker -> `production.Service.SubmitGenerationIntent` architecture. Add focused storage queries, a Worker input-ref resolver, a shot preview status reducer, and an Agent event bridge from production terminal events. Keep preview generation separate from M6.7 review/retry and M6.8 video/composer.
 
-**Tech Stack:** Go 1.26, CloudWeGo Eino, Hertz, pgx/sqlc, PostgreSQL, ClipAnvil production service, Agent runtime service, Canvas/Agent WebSocket hubs, React 19/Vite/tldraw for browser E2E.
+**Tech Stack:** Go 1.26, CloudWeGo Eino, Hertz, pgx/sqlc, PostgreSQL, ClipAnvil production service, Agent runtime service, Canvas/Agent WebSocket hubs, React 19/Vite/React Flow for browser E2E.
 
 ---
 
@@ -21,7 +21,7 @@ In scope:
 - Create dependency edges for resolved preview inputs.
 - Persist preview shot status transitions.
 - Emit durable Agent events when preview generation terminal production events occur.
-- Make Agent-created canvas websocket node payloads use the same UI-ready response shape as canvas GET.
+- Make Agent-created canvas websocket node payloads use the same UI-ready response node as canvas GET.
 - Add explicit unit, integration, and browser E2E acceptance standards.
 
 Out of scope:
@@ -1131,7 +1131,7 @@ Open the printed Agent URL in browser automation. Verify:
 2. The user message is visible after refresh.
 3. Agent creates or updates storyboard through `update_storyboard`.
 4. Agent calls `dispatch_craftsman` with `mode=preview_image`.
-5. Tool status card updates from running to completed in one card, not duplicate cards.
+5. Edge status card updates from running to completed in one card, not duplicate cards.
 6. Canvas shows one preview image node per dispatched shot without manual refresh.
 7. At least one preview node detail drawer shows:
    - `Shot ID`
@@ -1210,7 +1210,7 @@ M6.6 Closure is complete only when all of these are true:
 - `dispatch_craftsman` moves selected shots to `preview_running`.
 - Production terminal events move preview shots to `preview_ready` or `failed`.
 - Agent preview terminal events are persisted and websocket-broadcast.
-- Canvas websocket `NodeCreated`/`NodeUpdated` payloads use UI-ready canvas response shape.
+- Canvas websocket `NodeCreated`/`NodeUpdated` payloads use UI-ready canvas response node.
 - Agent read-only canvas updates without browser refresh.
 - PSS shows preview node, job, version, and shot status.
 - Backend and frontend verification commands pass.

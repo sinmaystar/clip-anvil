@@ -1,4 +1,4 @@
-# M6.5C Eino Native ToolNode Design
+# M6.5C Eino Native EdgeNode Design
 
 **Status**: Draft for review
 **Date**: 2026-06-22
@@ -15,7 +15,7 @@ The current Producer model call already depends on Eino:
 - It concatenates stream chunks with `schema.ConcatMessages`.
 - It reads Eino `schema.Message.Content` and `schema.Message.ReasoningContent`.
 
-Therefore this phase does not rewrite model provider selection, thinking policy, streaming, or Volcengine Ark configuration. The core change is to stop asking the model to emit function calls as text and stop parsing `<|FunctionCallBegin|>` / JSON snippets in the normal path. Tool calls must come from Eino `schema.Message.ToolCalls` and be executed by Eino `compose.ToolsNode`.
+Therefore this phase does not rewrite model provider selection, thinking policy, streaming, or Volcengine Ark configuration. The core change is to stop asking the model to emit function calls as text and stop parsing `<|FunctionCallBegin|>` / JSON snippets in the normal path. Edge calls must come from Eino `schema.Message.EdgeCalls` and be executed by Eino `compose.EdgesNode`.
 
 ## Current Problem
 
@@ -29,23 +29,23 @@ But `draft_response` calls `runProducerLoop`, and the loop currently does this:
 
 ```text
 Responder.Respond
--> ParseToolCall(out.AssistantText)
--> RegistryToolExecutor.ExecuteProducerTool
+-> ParseEdgeCall(out.AssistantText)
+-> RegistryEdgeExecutor.ExecuteProducerEdge
 -> append same-turn assistant/tool messages
 -> call model again
 ```
 
 This has three structural problems:
 
-1. Tool use depends on provider-specific or prompt-specific text formatting instead of model-native tool calls.
-2. Tool arguments are less reliable because the model is not constrained by the Eino tool schema at inference time.
-3. The implementation duplicates responsibilities Eino already provides: tool schema binding, tool-call extraction, tool execution dispatch, unknown-tool handling, and tool-call result messages.
+1. Edge use depends on provider-specific or prompt-specific text formatting instead of model-native tool calls.
+2. Edge arguments are less reliable because the model is not constrained by the Eino tool schema at inference time.
+3. The implementation duplicates responsibilities Eino already provides: tool schema edge, tool-call extraction, tool execution dispatch, unknown-tool handling, and tool-call result messages.
 
 The recent support for `<|FunctionCallBegin|>...<|FunctionCallEnd|>` is useful as a tactical compatibility patch, but it should not remain the primary Agent action protocol.
 
 ## Design Decision
 
-Use **custom Eino Graph orchestration + Eino ToolCallingChatModel + Eino ToolsNode**.
+Use **custom Eino Graph orchestration + Eino EdgeCallingChatModel + Eino EdgesNode**.
 
 Do not use `react.NewAgent` in this phase. The high-level ReAct Agent hides too much of the execution loop for ClipAnvil's needs:
 
@@ -57,7 +57,7 @@ Do not use `react.NewAgent` in this phase. The high-level ReAct Agent hides too 
 - per-tool audit records;
 - later Producer / Craftsman / Worker / Composer graph branching.
 
-The target shape is still a custom Graph:
+The target node is still a custom Graph:
 
 ```text
 load_context
@@ -76,8 +76,8 @@ The important change is inside the model/tool boundary:
 
 ```text
 Eino ChatModel stream returns schema.Message
--> schema.Message.ToolCalls is inspected
--> compose.ToolsNode executes registered tools
+-> schema.Message.EdgeCalls is inspected
+-> compose.EdgesNode executes registered tools
 -> tool result messages are appended to same-turn context
 -> next model call receives assistant tool calls + tool results
 ```
@@ -86,11 +86,11 @@ Eino ChatModel stream returns schema.Message
 
 ### In Scope
 
-- Convert existing ClipAnvil `agenttools.Definition` into Eino `schema.ToolInfo`.
-- Add an adapter from existing `agenttools.Executor` to Eino `tool.InvokableTool`.
+- Convert existing ClipAnvil `agenttools.Definition` into Eino `schema.EdgeInfo`.
+- Add an adapter from existing `agenttools.Executor` to Eino `tool.InvokableEdge`.
 - Bind all Producer-visible tools to the Eino Ark ChatModel call.
-- Replace the normal `ParseToolCall` path with Eino `schema.Message.ToolCalls`.
-- Execute tool calls through `compose.ToolsNode`.
+- Replace the normal `ParseEdgeCall` path with Eino `schema.Message.EdgeCalls`.
+- Execute tool calls through `compose.EdgesNode`.
 - Preserve existing tool business implementations:
   - `read_workspace_context`;
   - `get_production_state`;
@@ -114,7 +114,7 @@ Eino ChatModel stream returns schema.Message
   - tool name;
   - tool call id;
   - argument validation failure;
-  - Eino ToolsNode failure;
+  - Eino EdgesNode failure;
   - fallback parser usage.
 - Add deterministic tests that do not depend on live model output.
 - Add browser E2E for a real prompt that creates a 3-shot storyboard through native tool calling.
@@ -133,12 +133,12 @@ Eino ChatModel stream returns schema.Message
 
 Eino `AgenticMessage` is a richer protocol for Responses-style models and agentic providers. It can represent reasoning blocks, function tools, server tools, MCP tools, and structured content blocks.
 
-However, Eino `compose.ToolsNode` currently consumes assistant `schema.Message` values with `ToolCalls`. The current ClipAnvil model path already uses `schema.Message` and the Ark ChatModel already implements Eino's tool-calling chat model interface.
+However, Eino `compose.EdgesNode` currently consumes assistant `schema.Message` values with `EdgeCalls`. The current ClipAnvil model path already uses `schema.Message` and the Ark ChatModel already implements Eino's tool-calling chat model interface.
 
 For this phase, the lower-risk migration is:
 
 ```text
-schema.Message + ToolCalls + ToolsNode
+schema.Message + EdgeCalls + EdgesNode
 ```
 
 instead of:
@@ -149,9 +149,9 @@ AgenticMessage + agenticark + new response protocol + new tool bridge
 
 `AgenticMessage` should be evaluated in a later provider-specific phase if ClipAnvil needs Responses API semantics, richer reasoning passback, provider-managed tools, or MCP/server tools.
 
-## Tool Adapter Design
+## Edge Adapter Design
 
-### Existing Tool Definition
+### Existing Edge Definition
 
 Current tools already expose:
 
@@ -167,15 +167,15 @@ type Definition struct {
 }
 ```
 
-This remains the single source of truth for tool name, description, parameters, result shape, safety, timeout, and UI visibility.
+This remains the single source of truth for tool name, description, parameters, result node, safety, timeout, and UI visibility.
 
-### Eino ToolInfo Conversion
+### Eino EdgeInfo Conversion
 
 Add a conversion layer:
 
 ```text
 agenttools.Definition
--> schema.ToolInfo
+-> schema.EdgeInfo
 ```
 
 Rules:
@@ -187,9 +187,9 @@ Rules:
 - `Definition.Safety` remains ClipAnvil runtime policy, not model-facing authority.
 - `Definition.Visibility` remains UI rendering policy.
 
-The adapter must not duplicate descriptions in the system prompt. Tool descriptions should be supplied through Eino's tool binding so the provider receives actual tool schema.
+The adapter must not duplicate descriptions in the system prompt. Edge descriptions should be supplied through Eino's tool edge so the provider receives actual tool schema.
 
-### Eino InvokableTool Adapter
+### Eino InvokableEdge Adapter
 
 Add a Producer-scoped adapter around each existing `agenttools.Executor`.
 
@@ -203,7 +203,7 @@ InvokableRun(ctx, argumentsJSON)
 -> encode ExecuteOutput.Result as JSON string
 ```
 
-This preserves the existing service reuse boundary. Tools still call existing store/service code internally; Eino only becomes the calling protocol.
+This preserves the existing service reuse boundary. Edges still call existing store/service code internally; Eino only becomes the calling protocol.
 
 ### Context Injection
 
@@ -242,7 +242,7 @@ The final message must retain:
 
 - `Content`;
 - `ReasoningContent`;
-- `ToolCalls`;
+- `EdgeCalls`;
 - response metadata and usage;
 - provider request id when available.
 
@@ -253,25 +253,25 @@ The final message must retain:
 - no tool calls and non-empty content: finalize assistant response;
 - no tool calls and only reasoning: use the existing empty-content fallback policy;
 - tool calls present: execute tools;
-- tool calls present but `ToolExecutor` or registry is missing: fail with `agent_tool_executor_missing`;
+- tool calls present but `EdgeExecutor` or registry is missing: fail with `agent_tool_executor_missing`;
 - tool call count exceeds configured turn limit: fail with `agent_tool_loop_exhausted`.
 
-### Tool Node
+### Edge Node
 
-`execute_tools` should use Eino `compose.ToolsNode`.
+`execute_tools` should use Eino `compose.EdgesNode`.
 
-The ToolsNode should receive the assistant message containing `ToolCalls`, not parsed text. It should return Eino tool result messages.
+The EdgesNode should receive the assistant message containing `EdgeCalls`, not parsed text. It should return Eino tool result messages.
 
 ClipAnvil must still persist tool events. There are two acceptable implementation patterns:
 
-1. **Adapter-owned persistence**: each Eino tool adapter wraps the existing `RegistryToolExecutor` and returns the executor result JSON.
-2. **ToolsNode middleware persistence**: Eino `ToolCallMiddlewares` handle started/completed/failed events around each tool call.
+1. **Adapter-owned persistence**: each Eino tool adapter wraps the existing `RegistryEdgeExecutor` and returns the executor result JSON.
+2. **EdgesNode middleware persistence**: Eino `EdgeCallMiddlewares` handle started/completed/failed events around each tool call.
 
-Use adapter-owned persistence first because it reuses the current `RegistryToolExecutor` behavior and avoids duplicating message/task/event semantics. Middleware can be introduced later if ClipAnvil needs cross-cutting instrumentation independent of the existing executor.
+Use adapter-owned persistence first because it reuses the current `RegistryEdgeExecutor` behavior and avoids duplicating message/task/event semantics. Middleware can be introduced later if ClipAnvil needs cross-cutting instrumentation independent of the existing executor.
 
 ### Same-Turn Context
 
-After ToolsNode returns result messages, Producer must append same-turn messages before the next model call:
+After EdgesNode returns result messages, Producer must append same-turn messages before the next model call:
 
 ```text
 assistant message:
@@ -313,11 +313,11 @@ The model must not continue after a HITL tool in the same turn. Later resume sho
 
 ## Legacy Parser Policy
 
-`ParseToolCall` should no longer be used in the normal path.
+`ParseEdgeCall` should no longer be used in the normal path.
 
 Keep it temporarily as a compatibility fallback only when all conditions are true:
 
-1. Model returns no native `ToolCalls`.
+1. Model returns no native `EdgeCalls`.
 2. Model returns content containing a recognized legacy tool-call envelope.
 3. Backend config enables fallback parsing.
 
@@ -365,9 +365,9 @@ Add tool-call related fields when applicable:
 - `model_supports_tool_calling`;
 - `tool_binding_count`.
 
-### Tool Errors
+### Edge Errors
 
-Tool failures must still create:
+Edge failures must still create:
 
 - `tool_call_failed` event;
 - failed tool task;
@@ -376,9 +376,9 @@ Tool failures must still create:
 
 The Producer turn should fail unless the tool explicitly returns a recoverable result. Silent tool failure is not allowed.
 
-### Unknown Tool
+### Unknown Edge
 
-Unknown native tool calls should be handled by Eino ToolsNode unknown-tool handling and mapped to a ClipAnvil error:
+Unknown native tool calls should be handled by Eino EdgesNode unknown-tool handling and mapped to a ClipAnvil error:
 
 ```text
 agent_tool_not_found
@@ -390,8 +390,8 @@ This must be persisted and logged with the requested tool name.
 
 - Producer model path confirmed as existing Eino Ark ChatModel path.
 - New Eino tool adapter package or file near Producer/tool execution code.
-- Producer Graph revised to route native `schema.Message.ToolCalls`.
-- Eino `compose.ToolsNode` used for normal tool execution.
+- Producer Graph revised to route native `schema.Message.EdgeCalls`.
+- Eino `compose.EdgesNode` used for normal tool execution.
 - Existing tool registry and tool business logic reused.
 - Existing tool-call persistence semantics preserved.
 - Legacy parser gated as fallback, not default.
@@ -414,19 +414,19 @@ This must be persisted and logged with the requested tool name.
 
 - Current Eino Ark ChatModel model invocation remains in place.
 - No high-level `react.NewAgent` is introduced.
-- Normal path does not call `ParseToolCall`.
-- Eino `compose.ToolsNode` is used to execute native tool calls.
-- Tool definitions come from the existing ClipAnvil Tool Registry.
+- Normal path does not call `ParseEdgeCall`.
+- Eino `compose.EdgesNode` is used to execute native tool calls.
+- Edge definitions come from the existing ClipAnvil Edge Registry.
 - Existing tool implementations are reused without duplicating production/canvas services.
-- Tool call IDs are stable across assistant tool call, persisted task/event/message, and tool result.
-- Tool loop limit defaults to 50.
-- Tool execution timeout defaults to 300 seconds.
+- Edge call IDs are stable across assistant tool call, persisted task/event/message, and tool result.
+- Edge loop limit defaults to 50.
+- Edge execution timeout defaults to 300 seconds.
 
 ### Observability
 
 - Logs include whether native tool calling or fallback parsing was used.
-- Logs include model id, tool binding count, native tool-call count, tool names, and provider request id when available.
-- Tool failures include the underlying error message and tool call id.
+- Logs include model id, tool edge count, native tool-call count, tool names, and provider request id when available.
+- Edge failures include the underlying error message and tool call id.
 - Empty model content after reasoning still uses the existing diagnostic path.
 
 ## Required Verification Commands
@@ -493,11 +493,11 @@ Stop local app processes after verification:
 
 The implementation plan should split work into these tasks:
 
-1. Add tests proving current model path can return native Eino `ToolCalls` through a fake streamer.
-2. Add `agenttools` to Eino ToolInfo conversion tests.
-3. Add an Eino `InvokableTool` adapter around the existing registry executor.
+1. Add tests proving current model path can return native Eino `EdgeCalls` through a fake streamer.
+2. Add `agenttools` to Eino EdgeInfo conversion tests.
+3. Add an Eino `InvokableEdge` adapter around the existing registry executor.
 4. Refactor Producer responder output so it can return the final `schema.Message`, not only assistant text.
-5. Replace `runProducerLoop` normal path with native tool call routing and ToolsNode execution.
-6. Keep `ParseToolCall` behind an explicit fallback gate with warning logs.
+5. Replace `runProducerLoop` normal path with native tool call routing and EdgesNode execution.
+6. Keep `ParseEdgeCall` behind an explicit fallback gate with warning logs.
 7. Add integration tests for `update_storyboard` and `get_production_state`.
 8. Run browser E2E and inspect logs/DB.

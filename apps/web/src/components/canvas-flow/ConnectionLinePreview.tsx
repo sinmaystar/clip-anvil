@@ -26,7 +26,11 @@ export function ConnectionLinePreview({
     <g className="connection-overlay-preview-edge">
       <path className="connection-overlay-preview-shadow" d={edgePath} />
       <path className="connection-overlay-preview" d={edgePath} />
-      <path className="connection-overlay-preview-flow" d={edgePath} />
+      <path
+        className="connection-overlay-preview-flow"
+        d={edgePath}
+        pathLength={1}
+      />
     </g>
   );
 }

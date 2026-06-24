@@ -1,11 +1,16 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { MediaEdge, MediaGroup, MediaNode } from "../../lib/api";
+import type { MediaDimensions } from "../../lib/nodePreviewLayout";
 
 export type CanvasFlowMode = "studio" | "agent";
 
 export interface CanvasFlowNodeData extends Record<string, unknown> {
   kind: "media";
   node: MediaNode;
+  onMediaDimensionsChange?: (
+    nodeId: string,
+    dimensions: MediaDimensions,
+  ) => void;
   onRenameNode?: (nodeId: string, title: string) => void;
 }
 

@@ -80,11 +80,17 @@ describe("studio React Flow canvas", () => {
 
   it("renders media nodes as lightweight icon title cards instead of type tabs", async () => {
     const mediaSource = await readFile(mediaFlowNodeUrl, "utf8");
+    const surfaceSource = await readFile(canvasSurfaceUrl, "utf8");
     const cssSource = await readFile(mainCssUrl, "utf8");
 
     assert.match(mediaSource, /media-node-floating-title/);
     assert.match(mediaSource, /media-node-kind-icon/);
     assert.match(mediaSource, /aria-label=\{nodeTypeLabel/);
+    assert.match(mediaSource, /naturalWidth/);
+    assert.match(mediaSource, /useUpdateNodeInternals/);
+    assert.match(mediaSource, /onMediaDimensionsChange/);
+    assert.match(surfaceSource, /handleMediaDimensionsChange/);
+    assert.match(surfaceSource, /mediaNodeDisplaySize\(node\.data\.node,\s*dimensions\)/);
     assert.doesNotMatch(mediaSource, /media-node-header/);
     assert.doesNotMatch(mediaSource, /media-node-title-row/);
     assert.doesNotMatch(mediaSource, /media-node-status/);
@@ -112,28 +118,76 @@ describe("studio React Flow canvas", () => {
     assert.match(propertyPanelSource, /node-composer-prompt/);
     assert.match(propertyPanelSource, /node-composer-toolbar/);
     assert.match(propertyPanelSource, /node-composer-run-button/);
-    assert.match(propertyPanelSource, /node-composer-settings-button/);
-    assert.match(propertyPanelSource, /node-composer-settings-popover/);
+    assert.match(propertyPanelSource, /NodeComposerDropdown/);
+    assert.match(propertyPanelSource, /node-composer-operation-select/);
+    assert.match(propertyPanelSource, /node-composer-model-select/);
+    assert.match(propertyPanelSource, /ariaLabel="选择生成任务"/);
+    assert.match(propertyPanelSource, /ariaLabel="选择模型"/);
+    assert.match(propertyPanelSource, /node-composer-dropdown-button/);
+    assert.match(propertyPanelSource, /node-composer-dropdown-menu/);
+    assert.match(propertyPanelSource, /node-composer-dropdown-root/);
+    assert.match(propertyPanelSource, /document\.addEventListener\("pointerdown"[\s\S]*true\)/);
+    assert.match(propertyPanelSource, /document\.removeEventListener\([\s\S]*"pointerdown"[\s\S]*true/);
+    assert.match(propertyPanelSource, /dropdownRootRef\.current\.contains/);
+    assert.match(propertyPanelSource, /node-composer-duration-select/);
+    assert.match(propertyPanelSource, /ariaLabel="选择时长"/);
+    assert.match(propertyPanelSource, /labelPrefix="时长"/);
+    assert.match(propertyPanelSource, /node-composer-temperature-control/);
+    assert.match(propertyPanelSource, /aria-label="设置温度"/);
     assert.match(propertyPanelSource, /node-composer-more-button/);
     assert.match(propertyPanelSource, /node-composer-details-popover/);
+    assert.match(propertyPanelSource, /detailsPopoverPosition/);
+    assert.match(propertyPanelSource, /setPointerCapture/);
+    assert.match(propertyPanelSource, /onPointerDown=\{beginDetailsDrag\}/);
+    assert.match(propertyPanelSource, /onPointerMove=\{moveDetailsDrag\}/);
+    assert.match(propertyPanelSource, /onPointerUp=\{endDetailsDrag\}/);
     assert.match(propertyPanelSource, /data-has-preview/);
     assert.match(propertyPanelSource, /property-input-strip/);
     assert.match(propertyPanelSource, /Versions 与诊断/);
     assert.doesNotMatch(propertyPanelSource, /property-run-footer/);
     assert.doesNotMatch(propertyPanelSource, /node-composer-toggle/);
     assert.doesNotMatch(propertyPanelSource, /node-composer-control-row/);
+    assert.doesNotMatch(propertyPanelSource, /<span>Operation<\/span>/);
+    assert.doesNotMatch(propertyPanelSource, /<span>Model<\/span>/);
+    assert.doesNotMatch(propertyPanelSource, /node-composer-settings-button/);
+    assert.doesNotMatch(propertyPanelSource, /node-composer-settings-popover/);
+    assert.doesNotMatch(propertyPanelSource, />参数<\/button>/);
+    assert.doesNotMatch(propertyPanelSource, /<select[\s\S]{0,240}选择生成任务/);
+    assert.doesNotMatch(propertyPanelSource, /<select[\s\S]{0,240}选择模型/);
     assert.doesNotMatch(propertyPanelSource, /mock_fail/);
     assert.doesNotMatch(propertyPanelSource, /<details className="property-section property-more-details node-composer-more">/);
     assert.match(cssSource, /\.node-production-popover\s*\{[\s\S]*max-width:\s*min\(760px/);
     assert.match(cssSource, /\.node-composer-prompt textarea\s*\{[\s\S]*min-height:\s*96px/);
     assert.match(cssSource, /\.node-composer-prompt textarea\s*\{[\s\S]*font-size:\s*14px/);
     assert.match(cssSource, /\.node-composer-toolbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto;/);
+    assert.match(cssSource, /\.node-composer-dropdown-button\s*\{[\s\S]*width:\s*max-content;/);
+    assert.match(cssSource, /\.node-composer-dropdown-button:focus-visible\s*\{[\s\S]*box-shadow:\s*none;/);
+    assert.match(cssSource, /\.node-composer-dropdown-menu\s*\{[\s\S]*width:\s*max-content;/);
     assert.match(cssSource, /\.node-composer-inputs \.property-input-chip\[data-has-preview="false"\]\s*\{[\s\S]*border:\s*1px dashed/);
     assert.match(cssSource, /\.node-composer-run-button\s*\{[\s\S]*width:\s*32px/);
+    assert.match(cssSource, /\.node-composer-secondary-button,\n\.node-composer-more-button\s*\{[\s\S]*font-size:\s*12\.5px/);
     assert.match(cssSource, /\.node-composer-panel\s*\{[\s\S]*background:\s*color-mix\(in srgb, var\(--color-panel-elevated\)/);
+    assert.match(cssSource, /\.node-composer-details-popover\s*\{[\s\S]*position:\s*fixed;/);
+    assert.match(cssSource, /\.node-composer-details-header\s*\{[\s\S]*cursor:\s*grab;/);
     assert.match(cssSource, /\.node-composer-details-popover\s*\{[\s\S]*background:\s*color-mix\(in srgb, var\(--color-panel-elevated\)/);
     assert.doesNotMatch(cssSource, /\.node-composer-panel\s*\{[\s\S]*#272727/);
     assert.match(pageSource, /onDeleteInputEdge=\{deleteEdgeById\}/);
+  });
+
+  it("uses the same compact composer language for source material nodes", async () => {
+    const propertyPanelSource = await readFile(
+      new URL("../components/PropertyPanel.tsx", import.meta.url),
+      "utf8",
+    );
+    const cssSource = await readFile(mainCssUrl, "utf8");
+
+    assert.match(propertyPanelSource, /node-composer-source-panel/);
+    assert.match(propertyPanelSource, /source-material-preview-card/);
+    assert.match(propertyPanelSource, /source-material-readonly-note/);
+    assert.doesNotMatch(propertyPanelSource, /<aside className="property-panel node-production-panel">[\s\S]*这是用户素材节点/);
+    assert.match(cssSource, /\.node-composer-source-panel\s*\{[\s\S]*width:\s*min\(520px/);
+    assert.match(cssSource, /\.source-material-preview-card\s*\{[\s\S]*border:\s*0;/);
+    assert.match(cssSource, /\.source-material-readonly-note\s*\{[\s\S]*border-top:\s*1px solid var\(--border-subtle\)/);
   });
 
   it("keeps selected node composer below the rendered node even when media display size differs from stored canvas size", async () => {
@@ -308,6 +362,7 @@ describe("studio React Flow canvas", () => {
     const edgeSource = await readFile(dependencyFlowEdgeUrl, "utf8");
     const connectionLineSource = await readFile(connectionLinePreviewUrl, "utf8");
     const apiSource = await readFile(new URL("../lib/api.ts", import.meta.url), "utf8");
+    const cssSource = await readFile(mainCssUrl, "utf8");
 
     assert.match(surfaceSource, /connectionLineComponent=\{ConnectionLinePreview\}/);
     assert.match(surfaceSource, /boundaryAnchorFromFlowPoint/);
@@ -315,7 +370,8 @@ describe("studio React Flow canvas", () => {
     assert.match(surfaceSource, /anchors:\s*\{\s*target:\s*targetAnchor/s);
     assert.match(apiSource, /interface EdgeMetadata/);
     assert.match(edgeSource, /connection-overlay-flow/);
-    assert.match(edgeSource, /strokeDashoffset/);
+    assert.match(edgeSource, /pathLength=\{1\}/);
+    assert.doesNotMatch(edgeSource, /strokeDashoffset/);
     assert.match(edgeSource, /useReactFlow/);
     assert.match(edgeSource, /sourcePosition:\s*Position\.Right/);
     assert.match(edgeSource, /targetPosition:\s*Position\.Left/);
@@ -326,6 +382,7 @@ describe("studio React Flow canvas", () => {
     assert.doesNotMatch(edgeSource, /metadata\?\.anchors\?\.target/);
     assert.doesNotMatch(edgeSource, /positionForAnchor/);
     assert.match(connectionLineSource, /connection-overlay-preview-flow/);
+    assert.match(connectionLineSource, /pathLength=\{1\}/);
     assert.match(connectionLineSource, /getBezierPath/);
     assert.match(connectionLineSource, /useStore/);
     assert.match(connectionLineSource, /pointerToFlowPoint/);
@@ -333,6 +390,20 @@ describe("studio React Flow canvas", () => {
     assert.match(connectionLineSource, /targetY:\s*targetPoint\.y/);
     assert.doesNotMatch(connectionLineSource, /targetX:\s*pointer\.x/);
     assert.doesNotMatch(connectionLineSource, /targetY:\s*pointer\.y/);
+    assert.match(cssSource, /\.connection-overlay-flow,[\s\S]*stroke-dasharray:\s*0\.075 1\.025/);
+    assert.match(cssSource, /@keyframes connection-flow[\s\S]*stroke-dashoffset:\s*-1\.1/);
+    assert.doesNotMatch(cssSource, /stroke-dasharray:\s*18 84/);
+  });
+
+  it("keeps React Flow controls readable and adds a canvas minimap", async () => {
+    const surfaceSource = await readFile(canvasSurfaceUrl, "utf8");
+    const cssSource = await readFile(mainCssUrl, "utf8");
+
+    assert.match(surfaceSource, /MiniMap/);
+    assert.match(surfaceSource, /className="canvas-flow-minimap"/);
+    assert.match(cssSource, /\.canvas-flow-surface \.react-flow__controls\s*\{[\s\S]*background:\s*color-mix\(in srgb, var\(--color-panel-elevated\)/);
+    assert.match(cssSource, /\.canvas-flow-surface \.react-flow__controls button\s*\{[\s\S]*color:\s*var\(--fg-primary\)/);
+    assert.match(cssSource, /\.canvas-flow-minimap\s*\{[\s\S]*background:\s*color-mix\(in srgb, var\(--color-panel-elevated\)/);
   });
 
   it("creates ordinary Studio nodes with generation operations by default", async () => {

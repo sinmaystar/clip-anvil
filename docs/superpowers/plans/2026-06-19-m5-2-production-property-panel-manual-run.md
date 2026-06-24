@@ -640,7 +640,7 @@ Add this mutation near the other mutations:
         (payload) => replaceCanvasNode(payload, node),
       );
       editorRef.current?.store.mergeRemoteChanges(() => {
-        editorRef.current?.updateShapes([
+        editorRef.current?.updateNodes([
           {
             id: shapeIdForNode(node.id),
             type: "media",

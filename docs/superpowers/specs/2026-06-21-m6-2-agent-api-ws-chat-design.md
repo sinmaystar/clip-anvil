@@ -58,7 +58,7 @@ M6.2 不自动创建 assistant message，也不创建 `producer_turn` task。这
 - 自动 assistant 回复。
 - `producer_turn` task 创建。
 - Eino Graph checkpoint/resume。
-- Tool registry。
+- Edge registry。
 - HITL 决策卡。
 - Storyboard/PSS。
 - Craftsman / Worker / Reviewer / Composer。
@@ -210,7 +210,7 @@ GET /ws/agent?workspaceId=<uuid>&token=<jwt>
 - 只接受 Agent Workspace；Studio Workspace 返回 forbidden。
 - 当前阶段客户端不需要向 socket 写业务消息；服务端读循环只用于感知断开。
 
-### 5.2 Event shape
+### 5.2 Event node
 
 ```ts
 type AgentSocketEvent =
@@ -287,7 +287,7 @@ agent-workspace-shell
 
 ### 6.3 只读 canvas
 
-M6.2 不重建 Studio tldraw 编辑器。Agent 页面继续使用当前只读节点概览，但视觉结构从左侧 chat + 右侧 canvas 改成 canvas 底层 + 右侧浮层 chat。
+M6.2 不重建 Studio React Flow 编辑器。Agent 页面继续使用当前只读节点概览，但视觉结构从左侧 chat + 右侧 canvas 改成 canvas 底层 + 右侧浮层 chat。
 
 普通用户对 Agent Workspace 的节点、边、分组、相机写操作仍由后端返回 `403`；前端不暴露编辑控件。
 

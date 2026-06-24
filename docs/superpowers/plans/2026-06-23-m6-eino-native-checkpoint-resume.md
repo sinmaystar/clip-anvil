@@ -381,7 +381,7 @@ using `github.com/cloudwego/eino/components/tool` imported as `einotool`.
 
 **Tests First**
 
-- `TestEinoProducerToolAdapterRaisesStatefulInterruptForDecision`
+- `TestEinoProducerEdgeAdapterRaisesStatefulInterruptForDecision`
 - `TestProducerExecutorMarksTaskWaitingForNativeInterrupt`
 - `TestProducerLoopDoesNotEmitFallbackTextForInterrupt`
 - `TestDecisionRequestedEventStoresCheckpointKey`
@@ -389,7 +389,7 @@ using `github.com/cloudwego/eino/components/tool` imported as `einotool`.
 **Verification**
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestEinoProducerToolAdapterRaisesStatefulInterruptForDecision|TestProducerExecutorMarksTaskWaitingForNativeInterrupt|TestProducerLoopDoesNotEmitFallbackTextForInterrupt' -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestEinoProducerEdgeAdapterRaisesStatefulInterruptForDecision|TestProducerExecutorMarksTaskWaitingForNativeInterrupt|TestProducerLoopDoesNotEmitFallbackTextForInterrupt' -count=1
 GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/hitl -run 'TestDecisionRequestedEventStoresCheckpointKey' -count=1
 ```
 

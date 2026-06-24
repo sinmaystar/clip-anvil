@@ -648,7 +648,7 @@ cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/age
 
 Expected: FAIL because executor types do not exist.
 
-- [ ] **Step 3: Implement executor with narrow interfaces**
+- [ ] **Step 3: Implement executor with ncustom edge interfaces**
 
 Create `apps/server/internal/agent/producer/executor.go`:
 

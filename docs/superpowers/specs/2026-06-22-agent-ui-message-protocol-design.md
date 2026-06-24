@@ -83,7 +83,7 @@
 - Markdown block 使用 `react-markdown + remark-gfm`，禁用 HTML。
 - Thinking block 使用可折叠渲染，流式时显示光影动效。
 - Decision card block 替代当前散落的 `decisionCardFromMessage` 直接分支。
-- Tool status block 渲染工具调用和工具结果。
+- Edge status block 渲染工具调用和工具结果。
 - Attachment / media block 支持图片、视频、文本附件和后续产物预览。
 - Error block 渲染失败信息。
 - Composer 多行输入和底部工具栏。
@@ -211,10 +211,10 @@ interface DecisionCardBlock extends BaseBlock {
 - 用户提交后，后端更新相关 card block 状态或写入新的 resolved block。
 - 前端只根据 block 渲染卡片，不再从零散 `content.card_type` 推断。
 
-### 4.6 Tool Status Block
+### 4.6 Edge Status Block
 
 ```ts
-interface ToolStatusBlock extends BaseBlock {
+interface EdgeStatusBlock extends BaseBlock {
   type: "tool_status";
   tool_call_id: string;
   tool_name: string;
@@ -351,7 +351,7 @@ apps/server/internal/agent/uimessage/
 职责：
 
 - 定义 Go 侧 block struct。
-- 提供 `NewUserMarkdownMessage`、`NewAssistantMarkdownMessage`、`NewThinkingBlock`、`NewDecisionCardMessage`、`NewToolStatusMessage` 等 builder。
+- 提供 `NewUserMarkdownMessage`、`NewAssistantMarkdownMessage`、`NewThinkingBlock`、`NewDecisionCardMessage`、`NewEdgeStatusMessage` 等 builder。
 - 统一生成 block id。
 - 统一 JSON marshal。
 
@@ -432,7 +432,7 @@ apps/web/src/components/agent/AgentComposer.tsx
 apps/web/src/components/agent/AgentMarkdownBlock.tsx
 apps/web/src/components/agent/AgentThinkingBlock.tsx
 apps/web/src/components/agent/AgentDecisionCardBlock.tsx
-apps/web/src/components/agent/AgentToolStatusBlock.tsx
+apps/web/src/components/agent/AgentEdgeStatusBlock.tsx
 apps/web/src/components/agent/AgentMediaBlock.tsx
 ```
 
@@ -542,7 +542,7 @@ composer shell
 - Markdown 正常渲染。
 - Thinking block 可折叠，流式时有光影动效。
 - Decision card 通过 block renderer 渲染。
-- Tool status 通过 block renderer 渲染。
+- Edge status 通过 block renderer 渲染。
 - Attachment/media/error/unknown block 有可用 UI。
 - 现有右侧悬浮、resize、折叠小球、自动滚动不回归。
 

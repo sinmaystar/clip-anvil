@@ -4,9 +4,9 @@
 
 **Goal:** Add Studio organization and editing surfaces: persistent groups, a full resource tree, and a right-side property panel for nodes, edges, and groups.
 
-**Architecture:** `media_group` and `media_node.group_id` become the source of truth for grouping. The frontend projects groups as custom `group-container` shapes and builds the resource tree and property panel from the canvas payload plus focused REST endpoints.
+**Architecture:** `media_group` and `media_node.group_id` become the source of truth for grouping. The frontend projects groups as custom `group-container` nodes and builds the resource tree and property panel from the canvas payload plus focused REST endpoints.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, goose, React 19, TypeScript 6, tldraw 5, TanStack Query.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, goose, React 19, TypeScript 6, React Flow, TanStack Query.
 
 ---
 
@@ -20,14 +20,14 @@
 - Modify `apps/server/internal/api/node_handler.go`: `group_id` updates and `/inputs`.
 - Modify `apps/server/internal/api/canvas_handler.go`: include `groups`.
 - Modify `apps/server/cmd/server/main.go`: route registration.
-- Create `apps/web/src/shapes/GroupContainerShapeUtil.tsx`: group container rendering.
+- Create `apps/web/src/components/canvas-flow/GroupFlowNode.tsx`: group container rendering.
 - Create `apps/web/src/components/ResourceTree.tsx`: left tree.
 - Create `apps/web/src/components/PropertyPanel.tsx`: right panel shell.
 - Create `apps/web/src/components/NodePropertyPanel.tsx`: node details.
 - Create `apps/web/src/components/EdgePropertyPanel.tsx`: edge details.
 - Create `apps/web/src/components/GroupPropertyPanel.tsx`: group details.
 - Modify `apps/web/src/lib/api.ts`: group DTOs and API calls.
-- Modify `apps/web/src/lib/canvas.ts`: group shape mapping.
+- Modify `apps/web/src/lib/canvas.ts`: group node mapping.
 - Modify `apps/web/src/pages/WorkspaceDetailPage.tsx`: three-pane layout and selection wiring.
 - Modify `apps/web/src/main.css`: resource tree, property panel, group container styles.
 
@@ -371,7 +371,7 @@ Expected: PASS.
 **Files:**
 - Modify: `apps/web/src/lib/api.ts`
 - Modify: `apps/web/src/lib/canvas.ts`
-- Create: `apps/web/src/shapes/GroupContainerShapeUtil.tsx`
+- Create: `apps/web/src/components/canvas-flow/GroupFlowNode.tsx`
 
 - [ ] **Step 1: Add DTOs and API functions**
 
@@ -427,17 +427,17 @@ export function fetchNodeInputs(id: string) {
 }
 ```
 
-- [ ] **Step 2: Add group shape schema**
+- [ ] **Step 2: Add group node schema**
 
-Create `GroupContainerShapeUtil.tsx` with:
+Create `GroupFlowNode.tsx` with:
 
 ```tsx
-import { HTMLContainer, Rectangle2d, ShapeUtil, T, type Geometry2d, type RecordProps } from "tldraw";
-import type { TLBaseShape } from "@tldraw/tlschema";
+import { div, Rectangle2d, FlowNode, T, type Geometry2d, type RecordProps } from "/react";
+import type { Node } from "@React/react";
 
 export const GROUP_CONTAINER_SHAPE_TYPE = "group-container" as const;
 
-export interface GroupContainerShapeProps {
+export interface group container nodeProps {
   groupId: string;
   name: string;
   nodeCount: number;
@@ -446,11 +446,11 @@ export interface GroupContainerShapeProps {
   h: number;
 }
 
-export type GroupContainerShape = TLBaseShape<typeof GROUP_CONTAINER_SHAPE_TYPE, GroupContainerShapeProps>;
+export type group container node = Node<typeof GROUP_CONTAINER_SHAPE_TYPE, group container nodeProps>;
 
-export class GroupContainerShapeUtil extends ShapeUtil<GroupContainerShape> {
+export class GroupFlowNode extends FlowNode<group container node> {
   static override type = GROUP_CONTAINER_SHAPE_TYPE;
-  static override props: RecordProps<GroupContainerShape> = {
+  static override props: RecordProps<group container node> = {
     groupId: T.string,
     name: T.string,
     nodeCount: T.number,
@@ -459,30 +459,30 @@ export class GroupContainerShapeUtil extends ShapeUtil<GroupContainerShape> {
     h: T.number,
   };
 
-  override getDefaultProps(): GroupContainerShapeProps {
+  override getDefaultProps(): group container nodeProps {
     return { groupId: "", name: "未命名分组", nodeCount: 0, collapsed: false, w: 320, h: 220 };
   }
 
-  override getGeometry(shape: GroupContainerShape): Geometry2d {
-    return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: false });
+  override getGeometry(node: group container node): Geometry2d {
+    return new Rectangle2d({ width: node.props.w, height: node.props.h, isFilled: false });
   }
 
-  override component(shape: GroupContainerShape) {
+  override component(node: group container node) {
     return (
-      <HTMLContainer>
-        <div className="group-container-shape" data-collapsed={shape.props.collapsed} style={{ width: shape.props.w, height: shape.props.h }}>
+      <div>
+        <div className="group-container-node" data-collapsed={node.props.collapsed} style={{ width: node.props.w, height: node.props.h }}>
           <div className="group-container-title">
-            <span>{shape.props.name}</span>
-            <span>{shape.props.nodeCount}</span>
+            <span>{node.props.name}</span>
+            <span>{node.props.nodeCount}</span>
           </div>
         </div>
-      </HTMLContainer>
+      </div>
     );
   }
 
-  override getIndicatorPath(shape: GroupContainerShape) {
+  override getIndicatorPath(node: group container node) {
     const path = new Path2D();
-    path.rect(0, 0, shape.props.w, shape.props.h);
+    path.rect(0, 0, node.props.w, node.props.h);
     return path;
   }
 }
@@ -490,14 +490,14 @@ export class GroupContainerShapeUtil extends ShapeUtil<GroupContainerShape> {
 
 - [ ] **Step 3: Add group mapping helpers**
 
-In `canvas.ts`, add `shapeIdForGroup` and `groupToShape`:
+In `canvas.ts`, add `shapeIdForGroup` and `groupToFlowNode`:
 
 ```ts
 export function shapeIdForGroup(groupId: string) {
-  return createShapeId(`group-${groupId}`);
+  return createNodeId(`group-${groupId}`);
 }
 
-export function groupToShape(group: MediaGroup, nodes: MediaNode[]): TLShapePartial {
+export function groupToFlowNode(group: MediaGroup, nodes: MediaNode[]): Node {
   const groupNodes = nodes.filter((node) => group.node_ids.includes(node.id));
   const bounds = boundsForNodes(groupNodes);
   return {
@@ -676,8 +676,8 @@ const selectGroup = useCallback((groupId: string) => {
     return;
   }
   const shapeId = shapeIdForGroup(groupId);
-  if (editor.getShape(shapeId)) {
-    editor.setSelectedShapes([shapeId]);
+  if (editor.getNode(shapeId)) {
+    editor.setSelectedNodes([shapeId]);
     editor.zoomToSelection();
   }
 }, []);
@@ -819,7 +819,7 @@ export function GroupPropertyPanel({ group }: { group: MediaGroup }) {
 
 - [ ] **Step 5: Wire panel selection in page**
 
-Track selected shape IDs and derive selected node/edge/group from `canvasQuery.data`. Render:
+Track selected node IDs and derive selected node/edge/group from `canvasQuery.data`. Render:
 
 ```tsx
 <PropertyPanel
@@ -847,23 +847,23 @@ Expected: PASS.
 - Modify: `apps/web/src/pages/WorkspaceDetailPage.tsx`
 - Modify: `apps/web/src/main.css`
 
-- [ ] **Step 1: Register group shape util**
+- [ ] **Step 1: Register group node util**
 
-Change shape utils:
+Change node utils:
 
 ```ts
-const shapeUtils = useMemo(() => [MediaShapeUtil, GroupContainerShapeUtil], []);
+const nodeTypes = useMemo(() => [MediaFlowNode, GroupFlowNode], []);
 ```
 
-- [ ] **Step 2: Create group shapes on initial load**
+- [ ] **Step 2: Create group nodes on initial load**
 
-After node and edge shape creation:
+After node and edge node creation:
 
 ```ts
-const groupShapes = canvasQuery.data.groups.map((group) => groupToShape(group, canvasQuery.data.nodes));
-if (groupShapes.length > 0) {
+const groupNodes = canvasQuery.data.groups.map((group) => groupToFlowNode(group, canvasQuery.data.nodes));
+if (groupNodes.length > 0) {
   editor.store.mergeRemoteChanges(() => {
-    editor.createShapes(groupShapes);
+    editor.createNodes(groupNodes);
   });
 }
 ```
@@ -879,9 +879,9 @@ const createGroupFromSelection = () => {
     return;
   }
   const nodeIds = editor
-    .getSelectedShapes()
-    .filter(isMediaShape)
-    .map((shape) => shape.props.nodeId);
+    .getSelectedNodes()
+    .filter(isMediaFlowNode)
+    .map((node) => node.props.nodeId);
   if (nodeIds.length < 2) {
     return;
   }
@@ -894,7 +894,7 @@ const createGroupFromSelection = () => {
 - [ ] **Step 4: Add group CSS**
 
 ```css
-.group-container-shape {
+.group-container-node {
   border: 1px dashed color-mix(in_srgb, var(--fg-tertiary) 70%, transparent);
   border-radius: 8px;
   background: color-mix(in_srgb, var(--color-panel) 35%, transparent);

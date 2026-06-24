@@ -40,7 +40,7 @@ M5 Studio 已经支持节点运行、版本、参考包、Prompt 引用和真实
 - **生成节点**：由模型生成，有 Prompt、Model、Params、Run、Versions。
 - **素材节点**：由用户上传或手动输入，只作为输入资源，不运行模型。
 
-这样可以复用现有依赖边、参考包、画布 shape、Prompt 引用和 provider input resolver。
+这样可以复用现有依赖边、参考包、画布 node、Prompt 引用和 provider input resolver。
 
 ### 2.2 素材节点不是草稿
 
@@ -106,7 +106,7 @@ Prompt renderer 和 provider input resolver 应统一处理这两类上游。
 
 ### 4.1 包含
 
-- 明确上传文件创建的是同类型“素材节点”，不是 tldraw 原生图片/视频 shape。
+- 明确上传文件创建的是同类型“素材节点”，不是 React Flow 原生图片/视频 node。
 - 图片/视频/音频上传节点不展示 Prompt、Model、Params、Run。
 - 新增文本素材创建路径，用于用户手写或粘贴已有脚本。
 - 文本素材节点的编辑区叫“内容”，不是“Prompt”。
@@ -216,7 +216,7 @@ isSourceMaterialNode(node) =
 1. 文件上传到 workspace storage。
 2. 创建对应类型素材节点。
 3. 节点出现在释放位置。
-4. 节点样式和普通 ClipAnvil node 保持一致，不创建 tldraw 原生 image shape。
+4. 节点样式和普通 ClipAnvil node 保持一致，不创建 React Flow 原生 image node。
 
 节点文案：
 
@@ -470,7 +470,7 @@ AI 主视觉 · 图片生成
 
 验收：
 
-- 节点是 ClipAnvil video node，不是浏览器原生文件对象或 tldraw image shape。
+- 节点是 ClipAnvil video node，不是浏览器原生文件对象或 React Flow image node。
 - Inspector 不显示 Run。
 - 视频可预览或至少展示 poster/视频占位。
 - 下游视频生成节点可引用它作为 media input。
@@ -525,7 +525,7 @@ AI 主视觉 · 图片生成
 
 ### 12.1 产品验收
 
-- 用户拖入图片/视频后，看到的是 ClipAnvil 素材节点，而不是孤立媒体 shape。
+- 用户拖入图片/视频后，看到的是 ClipAnvil 素材节点，而不是孤立媒体 node。
 - 素材节点的视觉身份清楚：图片素材、视频素材、文本素材。
 - 素材节点没有 Run 按钮，不会诱导用户运行模型。
 - 文本素材使用“内容”而不是“Prompt”。

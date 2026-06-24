@@ -869,6 +869,7 @@ a:focus-visible {
 }
 
 .agent-canvas-surface {
+  position: relative;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -2686,6 +2687,10 @@ a:focus-visible {
   overflow: visible;
 }
 
+.node-production-popover > .node-composer-source-panel {
+  width: min(520px, calc(100vw - 32px));
+}
+
 .property-panel-header p {
   color: var(--accent);
   font-size: 11.5px;
@@ -3349,9 +3354,9 @@ a:focus-visible {
 .node-composer-panel {
   position: relative;
   gap: 10px;
-  border-color: color-mix(in srgb, white 12%, transparent);
+  border-color: var(--border-default);
   border-radius: 14px;
-  background: color-mix(in srgb, #272727 92%, transparent);
+  background: color-mix(in srgb, var(--color-panel-elevated) 94%, transparent);
   padding: 12px;
 }
 
@@ -3380,6 +3385,14 @@ a:focus-visible {
   padding: 0;
 }
 
+.node-composer-inputs .property-input-chip[data-has-preview="false"] {
+  min-width: 74px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg-primary) 3%, transparent);
+  padding: 6px;
+}
+
 .node-composer-inputs .property-input-chip > div {
   min-width: 0;
 }
@@ -3400,8 +3413,8 @@ a:focus-visible {
   right: -7px;
   width: 20px;
   height: 20px;
-  border: 1px solid color-mix(in srgb, white 18%, transparent);
-  background: color-mix(in srgb, black 42%, transparent);
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--color-panel-elevated) 88%, transparent);
   color: var(--fg-secondary);
   opacity: 0;
 }
@@ -3415,7 +3428,7 @@ a:focus-visible {
 .node-composer-inputs .property-input-icon {
   width: 58px;
   height: 44px;
-  border: 1px solid color-mix(in srgb, white 12%, transparent);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
   box-shadow: var(--shadow-card);
 }
@@ -3425,7 +3438,7 @@ a:focus-visible {
 }
 
 .node-composer-inputs .property-input-empty {
-  border: 1px dashed color-mix(in srgb, white 16%, transparent);
+  border: 1px dashed var(--border-strong);
   border-radius: 12px;
   padding: 11px 13px;
 }
@@ -3459,15 +3472,16 @@ a:focus-visible {
 }
 
 .node-composer-toolbar {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  border-top: 1px solid color-mix(in srgb, white 9%, transparent);
+  border-top: 1px solid var(--border-subtle);
   padding-top: 9px;
 }
 
-.node-composer-control-row,
+.node-composer-toolbar-controls,
 .node-composer-actions {
   display: flex;
   min-width: 0;
@@ -3475,8 +3489,8 @@ a:focus-visible {
   gap: 8px;
 }
 
-.node-composer-control-row {
-  overflow: hidden;
+.node-composer-toolbar-controls {
+  position: relative;
 }
 
 .node-composer-actions {
@@ -3485,48 +3499,170 @@ a:focus-visible {
 
 .node-composer-select {
   display: inline-grid;
-  min-width: 92px;
-  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  grid-template-columns: 64px minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
+  gap: 10px;
   color: var(--fg-secondary);
   font-size: 12.5px;
   font-weight: 640;
 }
 
 .node-composer-model-select {
-  min-width: min(190px, 24vw);
-}
-
-.node-composer-compact-select {
-  min-width: 72px;
-}
-
-.node-composer-select > span,
-.node-composer-toggle span {
-  color: var(--fg-tertiary);
-  font-size: 11px;
-  font-weight: 720;
-  text-transform: uppercase;
-}
-
-.node-composer-select select,
-.node-composer-select input {
   min-width: 0;
-  height: 28px;
+}
+
+.node-composer-dropdown {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  width: max-content;
+}
+
+.node-composer-dropdown-button {
+  display: inline-flex;
+  width: max-content;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg-primary) 5%, transparent);
+  color: var(--fg-primary);
+  font-size: 13px;
+  font-weight: 660;
+  line-height: 1;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.node-composer-dropdown-button:hover,
+.node-composer-dropdown-button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--fg-primary) 8%, transparent);
+}
+
+.node-composer-dropdown-button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.node-composer-dropdown-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.node-composer-dropdown-button-icon,
+.node-composer-dropdown-option-icon {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg-primary) 9%, transparent);
+}
+
+.node-composer-dropdown-button-icon::before,
+.node-composer-dropdown-option-icon::before {
+  width: 10px;
+  height: 10px;
+  content: "";
+  background:
+    linear-gradient(currentColor 0 0) 1px 6px / 2px 4px no-repeat,
+    linear-gradient(currentColor 0 0) 4px 3px / 2px 7px no-repeat,
+    linear-gradient(currentColor 0 0) 7px 1px / 2px 9px no-repeat;
+  opacity: 0.82;
+}
+
+.node-composer-dropdown-chevron {
+  color: var(--fg-tertiary);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.node-composer-dropdown-prefix {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.node-composer-dropdown-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 10;
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  gap: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-panel-elevated) 98%, transparent);
+  box-shadow: var(--shadow-popover);
+  padding: 8px;
+  white-space: nowrap;
+}
+
+.node-composer-dropdown-option {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
   border: 0;
   border-radius: 10px;
   background: transparent;
   color: var(--fg-primary);
-  font-size: 12.5px;
-  font-weight: 620;
-  outline: none;
-  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+  padding: 7px 10px 7px 7px;
+  text-align: left;
+  white-space: nowrap;
 }
 
-.node-composer-select select:focus,
-.node-composer-select input:focus {
-  background: color-mix(in srgb, white 8%, transparent);
+.node-composer-dropdown-option:hover,
+.node-composer-dropdown-option[data-active="true"] {
+  background: color-mix(in srgb, var(--fg-primary) 9%, transparent);
+}
+
+.node-composer-param-control {
+  display: inline-flex;
+  width: max-content;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg-primary) 5%, transparent);
+  color: var(--fg-primary);
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.node-composer-param-control > span {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.node-composer-param-control input {
+  width: 44px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-primary);
+  font-size: 13px;
+  font-weight: 680;
+  outline: none;
+  padding: 0;
+}
+
+.node-composer-param-control input::-webkit-outer-spin-button,
+.node-composer-param-control input::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
 }
 
 .node-composer-secondary-button,
@@ -3535,31 +3671,32 @@ a:focus-visible {
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 14px;
+  border-radius: 10px;
   font-weight: 760;
 }
 
-.node-composer-secondary-button {
+.node-composer-secondary-button,
+.node-composer-more-button {
   min-height: 30px;
-  background: color-mix(in srgb, white 10%, transparent);
-  color: var(--fg-primary);
+  background: color-mix(in srgb, var(--fg-primary) 8%, transparent);
+  color: var(--fg-secondary);
+  font-size: 12.5px;
+  line-height: 1;
   padding: 0 10px;
 }
 
-.node-composer-more-button {
-  min-height: 30px;
-  background: color-mix(in srgb, white 8%, transparent);
-  color: var(--fg-secondary);
-  font-size: 12px;
-  padding: 0 10px;
+.node-composer-secondary-button:hover,
+.node-composer-more-button:hover {
+  background: color-mix(in srgb, var(--fg-primary) 12%, transparent);
+  color: var(--fg-primary);
 }
 
 .node-composer-run-button {
-  width: 38px;
-  height: 38px;
+  width: 32px;
+  height: 32px;
   background: var(--fg-primary);
-  color: #101010;
-  font-size: 22px;
+  color: var(--color-canvas);
+  font-size: 18px;
   line-height: 1;
 }
 
@@ -3575,10 +3712,8 @@ a:focus-visible {
 }
 
 .node-composer-details-popover {
-  position: absolute;
-  right: 10px;
-  bottom: calc(100% + 8px);
-  z-index: 8;
+  position: fixed;
+  z-index: 120;
   display: grid;
   width: min(520px, calc(100vw - 32px));
   max-height: min(520px, calc(100vh - 32px));
@@ -3586,7 +3721,7 @@ a:focus-visible {
   overflow: auto;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-panel-elevated) 96%, black);
+  background: color-mix(in srgb, var(--color-panel-elevated) 96%, transparent);
   box-shadow: var(--shadow-popover);
   padding: 12px;
 }
@@ -3597,7 +3732,13 @@ a:focus-visible {
   justify-content: space-between;
   gap: var(--space-3);
   color: var(--fg-primary);
+  cursor: grab;
   font-size: 13px;
+  user-select: none;
+}
+
+.node-composer-details-header:active {
+  cursor: grabbing;
 }
 
 .node-composer-details-header button {
@@ -3610,6 +3751,40 @@ a:focus-visible {
   background: transparent;
   color: var(--fg-secondary);
   font-size: 16px;
+}
+
+.node-composer-source-panel {
+  gap: 12px;
+}
+
+.source-material-preview-card {
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg-primary) 4%, transparent);
+  padding: 0;
+}
+
+.source-material-preview-card .property-version-media {
+  display: block;
+  width: 100%;
+  max-height: 340px;
+  object-fit: contain;
+  border-radius: 12px;
+}
+
+.source-material-content-field textarea {
+  max-height: 220px;
+}
+
+.source-material-readonly-note {
+  margin: 0;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--fg-tertiary);
+  font-size: 11.5px;
+  line-height: 1.45;
+  padding: 10px 4px 0;
 }
 
 .property-content-field textarea {
@@ -3912,16 +4087,18 @@ a:focus-visible {
   fill: none;
   pointer-events: none;
   stroke: color-mix(in srgb, var(--fg-on-primary) 56%, transparent);
-  stroke-dasharray: 18 84;
+  stroke-dasharray: 0.075 1.025;
+  stroke-dashoffset: 0;
   stroke-linecap: round;
-  stroke-width: 1px;
-  animation: connection-flow 1.15s linear infinite;
+  stroke-width: 1.25px;
+  animation: connection-flow 1.8s linear infinite;
 }
 
 .connection-overlay-preview-flow {
   stroke: color-mix(in srgb, var(--fg-on-primary) 58%, transparent);
-  stroke-dasharray: 18 54;
+  stroke-dasharray: 0.09 1.01;
   stroke-width: 1.15px;
+  animation-duration: 1.35s;
 }
 
 .dependency-flow-edge-layer[data-selected="true"] .connection-overlay-path-shadow {
@@ -3954,6 +4131,49 @@ a:focus-visible {
 
 .canvas-flow-surface .react-flow {
   min-height: 420px;
+}
+
+.canvas-flow-surface .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-panel-elevated) 94%, transparent);
+  box-shadow: var(--shadow-card);
+}
+
+.canvas-flow-surface .react-flow__controls button {
+  width: 30px;
+  height: 30px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--fg-primary);
+  fill: currentColor;
+}
+
+.canvas-flow-surface .react-flow__controls button:hover {
+  background: color-mix(in srgb, var(--fg-primary) 8%, transparent);
+}
+
+.canvas-flow-surface .react-flow__controls button svg {
+  fill: currentColor;
+}
+
+.canvas-flow-minimap {
+  margin-bottom: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-panel-elevated) 90%, transparent);
+  box-shadow: var(--shadow-card);
+}
+
+.canvas-flow-minimap .react-flow__minimap-mask {
+  fill: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.canvas-flow-minimap .react-flow__minimap-node {
+  fill: color-mix(in srgb, var(--fg-primary) 28%, transparent);
+  stroke: color-mix(in srgb, var(--fg-primary) 54%, transparent);
 }
 
 .canvas-flow-surface .react-flow__handle {
@@ -4130,7 +4350,7 @@ a:focus-visible {
 
 @keyframes connection-flow {
   to {
-    stroke-dashoffset: -112;
+    stroke-dashoffset: -1.1;
   }
 }
 
@@ -4520,6 +4740,32 @@ a:focus-visible {
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.media-node-title-button {
+  display: block;
+  border: 0;
+  background: transparent;
+  cursor: text;
+  padding: 0;
+  pointer-events: auto;
+  text-align: left;
+}
+
+.media-node-title-button:disabled {
+  cursor: default;
+}
+
+.media-node-title-input {
+  width: min(220px, 100%);
+  height: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-panel-elevated) 96%, transparent);
+  outline: none;
+  padding: 0 6px;
+  pointer-events: auto;
+  box-shadow: var(--shadow-card);
 }
 
 .media-node-stale-badge {

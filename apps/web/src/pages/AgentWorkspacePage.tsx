@@ -1,6 +1,8 @@
 import {
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type SyntheticEvent,
   useEffect,
   useRef,
   useState,
@@ -10,6 +12,9 @@ import { Navigate, useNavigate, useParams } from "react-router";
 import {
   type CanvasPayload,
   fetchCanvas,
+  fetchModelCapabilities,
+  fetchNodeProductionState,
+  fetchReferencePackItems,
   fetchWorkspace,
   type MediaNode,
 } from "../lib/api";
@@ -42,6 +47,7 @@ import {
 } from "../components/agent/AgentMessageRenderer";
 import { AgentProductionStatusBar } from "../components/agent/AgentProductionStatusBar";
 import { AgentFlowCanvas } from "../components/canvas-flow/AgentFlowCanvas";
+import { PropertyPanel } from "../components/PropertyPanel";
 import { AgentStoryboardPanel } from "../components/agent/AgentStoryboardPanel";
 import { AgentTaskTimeline } from "../components/agent/AgentTaskTimeline";
 import {
@@ -93,6 +99,8 @@ import {
 } from "../lib/agentWs";
 import { connectCanvasSocket } from "../lib/ws";
 import { createClientMessageId } from "../lib/clientMessageId";
+import { preserveCanvasAssetUrls } from "../lib/canvasAssetUrls";
+import { isSourceMaterialNode } from "../lib/sourceMaterial";
 import { workspaceModeRoute } from "../lib/workspaceRoutes";
 import { useAuthStore } from "../stores/auth";
 
@@ -171,12 +179,19 @@ export function AgentWorkspacePage() {
   const [sendError, setSendError] = useState("");
   const [attachmentError, setAttachmentError] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [nodeEditorPosition, setNodeEditorPosition] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
   const [connectionStatus, setConnectionStatus] =
     useState<AgentConnectionStatus>("offline");
   const [canvasConnectionStatus, setCanvasConnectionStatus] =
     useState<AgentConnectionStatus>("offline");
   const lastSeqRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const agentCanvasSurfaceRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const shouldPinToBottomRef = useRef(true);
   const restoreDragRef = useRef({
@@ -191,7 +206,7 @@ export function AgentWorkspacePage() {
     queryFn: () => fetchWorkspace(id ?? ""),
     enabled: Boolean(id),
   });
-  const canvasQuery = useQuery({
+  const canvasQuery = useQuery<CanvasPayload>({
     queryKey: ["workspace", id, "canvas"],
     queryFn: () => fetchCanvas(id ?? ""),
     enabled: Boolean(id),
@@ -200,8 +215,29 @@ export function AgentWorkspacePage() {
       shouldPollCanvasForProductionUpdates(query.state.data)
         ? 2_000
         : false,
+    structuralSharing: (oldData, newData) =>
+      preserveCanvasAssetUrls(
+        oldData as CanvasPayload | undefined,
+        newData as CanvasPayload,
+      ),
   });
   const canvas = canvasQuery.data;
+  const selectedNode =
+    canvas?.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const modelCapabilitiesQuery = useQuery({
+    queryKey: ["model-capabilities"],
+    queryFn: fetchModelCapabilities,
+  });
+  const selectedNodeProductionStateQuery = useQuery({
+    queryKey: ["node", selectedNodeId, "production-state"],
+    queryFn: () => fetchNodeProductionState(selectedNodeId ?? ""),
+    enabled: Boolean(selectedNodeId),
+  });
+  const selectedReferencePackItemsQuery = useQuery({
+    queryKey: ["reference-pack", selectedNodeId, "items"],
+    queryFn: () => fetchReferencePackItems(selectedNodeId ?? ""),
+    enabled: selectedNode?.node_type === "reference_pack",
+  });
   const agentEnabled = Boolean(id && workspaceQuery.data?.mode === "agent");
   const agentThreadQuery = useQuery({
     queryKey: ["agent", id, "thread"],
@@ -549,6 +585,53 @@ export function AgentWorkspacePage() {
     });
   }, [id, queryClient, token, workspaceQuery.data?.mode]);
 
+  useEffect(() => {
+    if (!selectedNode || !canvas) {
+      setNodeEditorPosition(null);
+      return;
+    }
+    const frame = agentCanvasSurfaceRef.current;
+    const frameRect = frame?.getBoundingClientRect();
+    if (!frame || !frameRect) {
+      setNodeEditorPosition(null);
+      return;
+    }
+    const isComposerPopover =
+      selectedNode.node_type !== "reference_pack" &&
+      !isSourceMaterialNode(selectedNode);
+    const minWidth = isComposerPopover ? 460 : 420;
+    const maxWidth = isComposerPopover ? 680 : 560;
+    const width = Math.min(maxWidth, Math.max(minWidth, frameRect.width - 24));
+    const maxHeight = Math.round(
+      Math.min(720, Math.max(320, frameRect.height - 32)),
+    );
+    const renderedNodeRect = frame
+      .querySelector(
+        `.react-flow__node[data-id="${cssSelectorValue(selectedNode.id)}"]`,
+      )
+      ?.getBoundingClientRect();
+    const fallbackBottomLeft = {
+      x: selectedNode.canvas_x * canvas.camera.zoom + canvas.camera.x,
+      y:
+        (selectedNode.canvas_y + selectedNode.canvas_h) * canvas.camera.zoom +
+        canvas.camera.y,
+    };
+    const nodeLeftX = renderedNodeRect
+      ? renderedNodeRect.left - frameRect.left
+      : fallbackBottomLeft.x;
+    const nodeBottomY = renderedNodeRect
+      ? renderedNodeRect.bottom - frameRect.top
+      : fallbackBottomLeft.y;
+    setNodeEditorPosition({
+      left: Math.round(
+        clamp(nodeLeftX, 12, Math.max(12, frameRect.width - width - 12)),
+      ),
+      top: Math.round(nodeBottomY + 28),
+      width: Math.round(width),
+      maxHeight,
+    });
+  }, [canvas, selectedNode]);
+
   if (workspaceQuery.isLoading) {
     return (
       <div className="app-route-loading" role="status" aria-label="正在加载" />
@@ -819,6 +902,7 @@ export function AgentWorkspacePage() {
     if (!collapsed) {
       setCollapsed(true);
     }
+    setSelectedNodeId(null);
   };
 
   return (
@@ -854,16 +938,75 @@ export function AgentWorkspacePage() {
             </div>
             <span>{canvas?.nodes.length ?? 0} 个节点</span>
           </div>
-          <div className="agent-canvas-surface">
+          <div className="agent-canvas-surface" ref={agentCanvasSurfaceRef}>
             {canvasQuery.isLoading ? (
               <p className="agent-empty-text">正在加载画布</p>
             ) : canvas && canvas.nodes.length > 0 && id ? (
-              <AgentFlowCanvas
-                canvas={canvas}
-                onSelectNode={setSelectedNodeId}
-                selectedNodeId={selectedNodeId}
-                workspaceId={id}
-              />
+              <>
+                <AgentFlowCanvas
+                  canvas={canvas}
+                  onSelectNode={setSelectedNodeId}
+                  selectedNodeId={selectedNodeId}
+                  workspaceId={id}
+                />
+                {selectedNode && nodeEditorPosition ? (
+                  <div
+                    className="node-editor-overlay node-production-popover agent-node-production-popover"
+                    onClick={stopCanvasEvent}
+                    onContextMenu={stopCanvasEvent}
+                    onKeyDown={stopCanvasEvent}
+                    onPointerDown={stopCanvasEvent}
+                    onWheel={stopCanvasEvent}
+                    style={
+                      {
+                        left: nodeEditorPosition.left,
+                        top: nodeEditorPosition.top,
+                        width: nodeEditorPosition.width,
+                        maxHeight: nodeEditorPosition.maxHeight,
+                        "--node-editor-max-height": `${nodeEditorPosition.maxHeight}px`,
+                      } as CSSProperties
+                    }
+                  >
+                    <PropertyPanel
+                      edges={canvas.edges}
+                      groups={canvas.groups}
+                      isModelCapabilitiesLoading={
+                        modelCapabilitiesQuery.isLoading
+                      }
+                      isProductionStateLoading={
+                        selectedNodeProductionStateQuery.isLoading
+                      }
+                      isReferencePackItemsLoading={
+                        selectedReferencePackItemsQuery.isLoading
+                      }
+                      isRetryingJob={false}
+                      isRunningNode={false}
+                      isSelectingVersion={false}
+                      isUpdatingGroupMembers={false}
+                      isUpdatingNode={false}
+                      isUpdatingReferencePackItems={false}
+                      modelCapabilities={modelCapabilitiesQuery.data ?? []}
+                      nodeProductionState={
+                        selectedNodeProductionStateQuery.data ?? null
+                      }
+                      nodes={canvas.nodes}
+                      readOnly
+                      referencePackItems={
+                        selectedReferencePackItemsQuery.data ?? []
+                      }
+                      selectedEdgeId={null}
+                      selectedGroupId={null}
+                      selectedNodeId={selectedNodeId}
+                      onReplaceReferencePackItems={noopReplaceReferencePackItems}
+                      onPromptRefSelect={noopPromptRefSelect}
+                      onRetryJob={noopStringCallback}
+                      onRunNode={noopRunNode}
+                      onSelectVersion={noopSelectVersion}
+                      onUpdateNode={noopUpdateNode}
+                    />
+                  </div>
+                ) : null}
+              </>
             ) : (
               <p className="agent-empty-text">Agent 尚未创建画布节点。</p>
             )}
@@ -1216,6 +1359,40 @@ function canvasNodeFromEventPayload(node: unknown): MediaNode | null {
     return node as MediaNode;
   }
   return null;
+}
+
+function stopCanvasEvent(event: SyntheticEvent) {
+  event.stopPropagation();
+}
+
+function noopStringCallback(_id: string) {}
+
+function noopRunNode(_nodeId: string, _patch?: unknown) {}
+
+function noopUpdateNode(_nodeId: string, _patch: unknown) {}
+
+function noopReplaceReferencePackItems(
+  _packNodeId: string,
+  _memberNodeIds: string[],
+) {}
+
+function noopPromptRefSelect(
+  _targetNode: MediaNode,
+  _refNode: MediaNode,
+  _prompt: string,
+) {}
+
+function noopSelectVersion(_nodeId: string, _versionId: string) {}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function cssSelectorValue(value: string) {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function upsertCanvasNode(

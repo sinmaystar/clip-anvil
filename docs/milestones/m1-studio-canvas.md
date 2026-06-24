@@ -9,9 +9,9 @@
 1. **基础设施**：goose 迁移、sqlc 查询生成、JWT 配置扩展、Makefile 迁移/生成命令。
 2. **注册登录**：注册、登录、`/me`、JWT 路由守卫、登录/注册页。
 3. **Workspace**：项目列表、创建项目弹窗、项目详情入口、后端 Workspace API。
-4. **Studio Canvas**：tldraw 自定义 `MediaShape`、右键创建文本节点、节点拖拽位置持久化、Camera 持久化。
+4. **Studio Canvas**：React Flow 媒体节点、右键创建文本节点、节点拖拽位置持久化、Camera 持久化。
 5. **节点编辑**：单击节点后在节点下方显示编辑面板，支持标题、Prompt、引用占位和模型选择；标题/Prompt 自动保存。
-6. **画布体验**：隐藏 tldraw 原生顶部/底部/右侧工具 UI，保留必要快捷键；支持明亮/暗夜外观切换。
+6. **画布体验**：提供轻量画布控件、节点选择和拖拽交互；支持明亮/暗夜外观切换。
 
 ## 当前实现边界
 
@@ -48,7 +48,7 @@ pnpm --filter @clip-anvil/web build
 
 - 已升级到 `@vitejs/plugin-react@6`，消除旧 React Babel 插件在 Vite 8 下的 deprecated option warning。
 - 已将 Studio 画布页改为路由级懒加载，首屏 JS chunk 从约 2MB 降到约 331KB。
-- Studio 画布 chunk 仍约 1.7MB，这是 tldraw 进入画布页时按需加载的成本；`vite.config.ts` 已按该 lazy chunk 设置 `chunkSizeWarningLimit`，避免把非首屏画布包误报为构建风险。
+- Studio 画布页按路由懒加载；`vite.config.ts` 已按该 lazy chunk 设置 `chunkSizeWarningLimit`，避免把非首屏画布包误报为构建风险。
 - Node 25 下仍可能显示 `DEP0205 module.register()`，trace 显示来源是 `@tailwindcss/node@4.3.0`，不是应用代码或 Vite 配置。
 
 ## 后续建议

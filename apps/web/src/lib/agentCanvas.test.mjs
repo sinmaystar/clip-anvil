@@ -41,11 +41,24 @@ describe("agent React Flow canvas", () => {
 
     assert.match(source, /CanvasFlowSurface/);
     assert.match(source, /mode="agent"/);
+    assert.match(source, /renderInspector=\{false\}/);
     assert.match(source, /batchUpdateNodePositions/);
     assert.match(source, /updateCamera/);
     assert.match(pageSource, /AgentFlowCanvas/);
     assert.doesNotMatch(pageSource, /AgentReadonlyCanvas/);
     assert.doesNotMatch(pageSource, /AgentNodeDetailDrawer/);
+  });
+
+  it("uses the shared read-only property panel for Agent node details", async () => {
+    const pageSource = await readFile(agentPageUrl, "utf8");
+
+    assert.match(pageSource, /PropertyPanel/);
+    assert.match(pageSource, /readOnly/);
+    assert.match(pageSource, /agent-node-production-popover/);
+    assert.match(pageSource, /selectedNodeProductionStateQuery/);
+    assert.match(pageSource, /fetchModelCapabilities/);
+    assert.match(pageSource, /fetchReferencePackItems/);
+    assert.match(pageSource, /preserveCanvasAssetUrls/);
   });
 
   it("keeps Agent layout interactive while blocking edit and execution capabilities", async () => {
@@ -75,6 +88,8 @@ describe("agent React Flow canvas", () => {
     assert.match(source, /settledPositions/);
     assert.match(source, /onMoveEnd/);
     assert.match(source, /onViewportChange/);
+    assert.match(source, /<Controls position="bottom-right"/);
+    assert.match(source, /<MiniMap[\s\S]*position="bottom-left"/);
     assert.match(agentSource, /batchUpdateNodePositions/);
     assert.match(agentSource, /updateCamera/);
     assert.match(agentSource, /queryClient\.setQueryData<CanvasPayload>/);

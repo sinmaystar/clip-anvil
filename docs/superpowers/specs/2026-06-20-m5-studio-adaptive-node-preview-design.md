@@ -20,17 +20,17 @@ M5 已经把 Studio 手动生产链路接入画布：节点可以配置 Prompt�
 当前相关实现位于：
 
 - `apps/web/src/lib/canvas.ts`
-  - `nodeToShapeProps`
+  - `nodeToFlowNodeData`
   - `mediaNodeDisplaySize`
-- `apps/web/src/shapes/MediaShapeUtil.tsx`
-  - 自定义 tldraw media shape 渲染。
+- `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
+  - 自定义 React Flow media node 渲染。
   - `canResize()` 当前为 `false`。
 - `apps/web/src/components/PropertyPanel.tsx`
   - 节点点击后的生产编辑弹窗主体。
 - `apps/web/src/main.css`
   - `.media-node-*` 与 `.property-*` 样式。
-- `packages/canvas-schema/src/index.ts`
-  - `MediaShapeProps` 的 shape props 定义。
+- `apps/web/src/components/canvas-flow/flowTypes.ts`
+  - `MediaFlowNodeProps` 的 node data 定义。
 
 当前问题的核心不是后端默认尺寸，而是前端缺少内容感知的展示策略。`mediaNodeDisplaySize` 现在只取 `canvas_w/canvas_h` 和最小尺寸的最大值，不会根据文本长度、Markdown 结构、图片比例或视频比例调整节点尺寸。
 
@@ -68,7 +68,7 @@ M5 已经把 Studio 手动生产链路接入画布：节点可以配置 Prompt�
 
 ### 3.4 用户手动 resize 优先于自动尺寸
 
-本轮可以先实现“自动推荐尺寸”。如果开启 tldraw resize，应区分：
+本轮可以先实现“自动推荐尺寸”。如果开启 React Flow resize，应区分：
 
 - auto size：系统根据内容推导。
 - manual size：用户手动调整后持久化，后续不再被自动尺寸覆盖。
@@ -106,7 +106,7 @@ M5 已经把 Studio 手动生产链路接入画布：节点可以配置 Prompt�
 
 备选方案 A 是只放大所有节点默认尺寸。实现最快，但无法解决长文本、竖图、宽图、视频比例差异，后续还会反复打补丁。
 
-备选方案 B 是立即开放 tldraw 手动 resize。用户自由度高，但需要同时处理持久化、自动尺寸冲突、箭头端点刷新和多工作区一致性，风险更高。
+备选方案 B 是立即开放 React Flow 手动 resize。用户自由度高，但需要同时处理持久化、自动尺寸冲突、箭头端点刷新和多工作区一致性，风险更高。
 
 推荐方案先把系统默认展示做专业：基于内容计算推荐尺寸，配合清晰最大值和完整弹窗。手动 resize 可以作为后续增量。
 
@@ -159,7 +159,7 @@ M5 已经把 Studio 手动生产链路接入画布：节点可以配置 Prompt�
 首选从后端 asset metadata 读取宽高。如果当前 API 尚未稳定提供图片宽高，本轮前端使用两层策略：
 
 1. 如果 `production_preview` 或 asset metadata 有 `width/height`，直接使用。
-2. 否则先用默认比例渲染，图片加载后通过 `onLoad` 得到 naturalWidth/naturalHeight，并只调整当前 shape 的前端展示尺寸。
+2. 否则先用默认比例渲染，图片加载后通过 `onLoad` 得到 naturalWidth/naturalHeight，并只调整当前 node 的前端展示尺寸。
 
 首版不要求把 `naturalWidth/naturalHeight` 回写数据库，避免图片加载导致频繁写画布位置。
 
@@ -229,7 +229,7 @@ Prompt textarea 应获得足够空间。调试信息默认折叠，不占主视�
 可能需要的前端类型扩展：
 
 - `ProductionPreview` 增加可选 `width` / `height` / `duration_ms`，如果后端已经可从 asset metadata 透出。
-- `MediaShapeProps` 可增加 `previewWidth` / `previewHeight`，用于 shape 渲染。
+- `MediaFlowNodeProps` 可增加 `previewWidth` / `previewHeight`，用于 node 渲染。
 
 如果后端当前没有透出 asset metadata，首版可以先用前端 `img.onload` 兜底，不阻塞整体体验。
 
@@ -346,7 +346,7 @@ Prompt textarea 应获得足够空间。调试信息默认折叠，不占主视�
 
 ## 12. 风险与约束
 
-- tldraw shape 尺寸变化会影响箭头连接点，需要同步验证 edge geometry。
+- React Flow node 尺寸变化会影响箭头连接点，需要同步验证 edge geometry。
 - 图片 natural size 如果只存在前端内存中，刷新页面后会先回到默认比例再调整；可接受，但需要避免明显闪动。
 - Markdown 渲染依赖需要通过前端 build 和 lint。
 - 真实 Volcengine 调用耗时和费用不可控，E2E 默认用 mock provider；真实 provider 只做人工 smoke。

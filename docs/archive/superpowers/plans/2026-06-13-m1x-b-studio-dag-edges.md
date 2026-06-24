@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add persistent dependency edges with backend DAG validation and frontend ArrowShape projection.
+**Goal:** Add persistent dependency edges with backend DAG validation and frontend custom dependency edge projection.
 
-**Architecture:** `media_edge` becomes the business source of truth for dependency relationships. Backend APIs create/delete edges with serializable cycle checks; the frontend loads edges from canvas payload and maps them to tldraw arrows while using REST as the authority for business operations.
+**Architecture:** `media_edge` becomes the business source of truth for dependency relationships. Backend APIs create/delete edges with serializable cycle checks; the frontend loads edges from canvas payload and maps them to React Flow custom edges while using REST as the authority for business operations.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, goose migrations, React 19, TypeScript 6, tldraw 5.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, goose migrations, React 19, TypeScript 6, React Flow.
 
 ---
 
@@ -20,10 +20,10 @@
 - Modify `apps/server/internal/api/canvas_handler.go`: include edges in canvas response.
 - Modify `apps/server/cmd/server/main.go`: register edge routes.
 - Modify `apps/web/src/lib/api.ts`: edge DTO and API functions.
-- Modify `apps/web/src/lib/canvas.ts`: edge arrow IDs and conversion helpers.
-- Modify `apps/web/src/pages/WorkspaceDetailPage.tsx`: load arrows, create/delete edges.
-- Modify `apps/web/src/shapes/MediaShapeUtil.tsx`: show connection ports.
-- Modify `apps/web/src/main.css`: port and arrow-related visuals.
+- Modify `apps/web/src/lib/canvas.ts`: edge custom edge IDs and conversion helpers.
+- Modify `apps/web/src/pages/WorkspaceDetailPage.tsx`: load custom edges, create/delete edges.
+- Modify `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`: show connection ports.
+- Modify `apps/web/src/main.css`: port and custom edge-related visuals.
 
 ### Task 1: Database and sqlc Edge Foundation
 
@@ -226,7 +226,7 @@ Expected: PASS.
 
 - [ ] **Step 1: Add edge API tests**
 
-Create `edge_handler_test.go` with table-driven HTTP assertions. The file should include this helper shape and one case per behavior:
+Create `edge_handler_test.go` with table-driven HTTP assertions. The file should include this helper node and one case per behavior:
 
 ```go
 func postEdge(t *testing.T, server http.Handler, token string, workspaceID string, fromNodeID string, toNodeID string) *httptest.ResponseRecorder {
@@ -478,67 +478,67 @@ export function deleteMediaEdge(id: string) {
 }
 ```
 
-- [ ] **Step 2: Add edge arrow helpers**
+- [ ] **Step 2: Add edge custom edge helpers**
 
 In `apps/web/src/lib/canvas.ts`, add:
 
 ```ts
 import {
   createBindingId,
-  createShapeId,
-  type TLBindingPartial,
-  type TLShapePartial,
-} from "tldraw";
+  createNodeId,
+  type Edge,
+  type Node,
+} from "/react";
 import type { MediaEdge, MediaNode } from "./api";
 
 export function shapeIdForEdge(edgeId: string) {
-  return createShapeId(`edge-${edgeId}`);
+  return createNodeId(`edge-${edgeId}`);
 }
 
-export function edgeToArrow(
+export function edgeToFlowEdge(
   edge: MediaEdge,
   nodes: MediaNode[],
-): { arrow: TLShapePartial; bindings: TLBindingPartial[] } | null {
+): { edge: Node; edges: Edge[] } | null {
   const fromNode = nodes.find((node) => node.id === edge.from_node_id);
   const toNode = nodes.find((node) => node.id === edge.to_node_id);
   if (!fromNode || !toNode) {
     return null;
   }
 
-  const arrowId = shapeIdForEdge(edge.id);
-  const fromShapeId = shapeIdForNode(edge.from_node_id);
-  const toShapeId = shapeIdForNode(edge.to_node_id);
+  const custom edgeId = shapeIdForEdge(edge.id);
+  const fromNodeId = shapeIdForNode(edge.from_node_id);
+  const toNodeId = shapeIdForNode(edge.to_node_id);
 
   return {
-    arrow: {
-      id: arrowId,
-      type: "arrow",
+    edge: {
+      id: custom edgeId,
+      type: "custom edge",
       x: fromNode.canvas_x + fromNode.canvas_w,
       y: fromNode.canvas_y + fromNode.canvas_h / 2,
       props: {
         color: "blue",
         size: "m",
         dash: "draw",
-        arrowheadEnd: "arrow",
+        custom edgeheadEnd: "custom edge",
       },
       meta: {
         edgeId: edge.id,
         edgeType: edge.edge_type,
       },
     },
-    bindings: [
+    edges: [
       {
         id: createBindingId(),
-        type: "arrow",
-        fromId: arrowId,
-        toId: fromShapeId,
+        type: "custom edge",
+        fromId: custom edgeId,
+        toId: fromNodeId,
         props: { terminal: "start" },
       },
       {
         id: createBindingId(),
-        type: "arrow",
-        fromId: arrowId,
-        toId: toShapeId,
+        type: "custom edge",
+        fromId: custom edgeId,
+        toId: toNodeId,
         props: { terminal: "end" },
       },
     ],
@@ -546,9 +546,9 @@ export function edgeToArrow(
 }
 ```
 
-If tldraw's exact binding prop shape differs, update this helper during Task 5 spike and keep all arrow creation inside this single helper.
+If React Flow's exact edge prop node differs, update this helper during Task 5 spike and keep all custom edge creation inside this single helper.
 
-- [ ] **Step 3: Build to expose tldraw type issues**
+- [ ] **Step 3: Build to expose React Flow type issues**
 
 Run:
 
@@ -556,36 +556,36 @@ Run:
 pnpm --filter @clip-anvil/web... build
 ```
 
-Expected: either PASS or TypeScript errors isolated to `edgeToArrow` binding props. Fix the helper to match installed tldraw v5 types before continuing.
+Expected: either PASS or TypeScript errors isolated to `edgeToFlowEdge` edge props. Fix the helper to match installed React Flow types before continuing.
 
 ### Task 5: Frontend Edge Loading and Deletion
 
 **Files:**
 - Modify: `apps/web/src/pages/WorkspaceDetailPage.tsx`
 
-- [ ] **Step 1: Load edge arrows after node shapes**
+- [ ] **Step 1: Load edge custom edges after node nodes**
 
-In `handleMount`, after creating node shapes, add:
+In `handleMount`, after creating node nodes, add:
 
 ```ts
 const edgeRecords = canvasQuery.data.edges
-  .map((edge) => edgeToArrow(edge, canvasQuery.data.nodes))
+  .map((edge) => edgeToFlowEdge(edge, canvasQuery.data.nodes))
   .filter((record): record is NonNullable<typeof record> => Boolean(record));
 
 if (edgeRecords.length > 0) {
   editor.store.mergeRemoteChanges(() => {
-    editor.createShapes(edgeRecords.map((record) => record.arrow));
-    editor.createBindings(edgeRecords.flatMap((record) => record.bindings));
+    editor.createNodes(edgeRecords.map((record) => record.custom edge));
+    editor.createBindings(edgeRecords.flatMap((record) => record.edges));
   });
 }
 ```
 
-- [ ] **Step 2: Track deleted arrow shapes**
+- [ ] **Step 2: Track deleted custom dependency edges**
 
-In the `entry.changes.removed` loop, detect arrow shapes:
+In the `entry.changes.removed` loop, detect custom dependency edges:
 
 ```ts
-if (record.typeName === "shape" && "meta" in record) {
+if (record.typeName === "node" && "meta" in record) {
   const edgeId = (record as { meta?: { edgeId?: unknown } }).meta?.edgeId;
   if (typeof edgeId === "string") {
     void deleteMediaEdge(edgeId).catch(() => {
@@ -610,13 +610,13 @@ Expected: PASS.
 ### Task 6: Edge Creation Interaction Spike and Implementation
 
 **Files:**
-- Modify: `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify: `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
 - Modify: `apps/web/src/pages/WorkspaceDetailPage.tsx`
 - Modify: `apps/web/src/main.css`
 
-- [ ] **Step 1: Add visual ports to MediaShape**
+- [ ] **Step 1: Add visual ports to MediaFlowNode**
 
-In `MediaShapeUtil.tsx`, render two port elements inside `.media-node`:
+In `MediaFlowNode.tsx`, render two port elements inside `.media-node`:
 
 ```tsx
 <span className="media-node-port media-node-port-input" data-port="input" />
@@ -651,7 +651,7 @@ Add CSS:
 }
 ```
 
-- [ ] **Step 2: Implement manual output-to-input drag if tldraw arrow binding is not ready**
+- [ ] **Step 2: Implement manual output-to-input drag if React Flow custom edge edge is not ready**
 
 In `WorkspaceDetailPage.tsx`, add page-level pointer handling:
 
@@ -676,11 +676,11 @@ void createMediaEdge({
     queryClient.setQueryData<CanvasPayload>(["workspace", id, "canvas"], (current) =>
       current ? { ...current, edges: [...current.edges, edge] } : current,
     );
-    const record = edgeToArrow(edge, nodeSnapshots);
+    const record = edgeToFlowEdge(edge, nodeSnapshots);
     if (record) {
       editorRef.current?.store.mergeRemoteChanges(() => {
-        editorRef.current?.createShapes([record.arrow]);
-        editorRef.current?.createBindings(record.bindings);
+        editorRef.current?.createNodes([record.custom edge]);
+        editorRef.current?.createBindings(record.edges);
       });
     }
   })
@@ -689,7 +689,7 @@ void createMediaEdge({
   });
 ```
 
-Use `data-node-id={shape.props.nodeId}` on `.media-node-shell` so the page can identify the target node.
+Use `data-node-id={node.props.nodeId}` on `.media-node-shell` so the page can identify the target node.
 
 - [ ] **Step 3: Build and manually verify two-node connection**
 
@@ -701,7 +701,7 @@ pnpm --filter @clip-anvil/web... build
 
 Expected: PASS.
 
-Manual check: create two nodes, drag from first output port to second node, and see an arrow after the REST call succeeds.
+Manual check: create two nodes, drag from first output port to second node, and see an custom edge after the REST call succeeds.
 
 ### Task 7: Final M1.x-B Verification and Commit
 
@@ -742,6 +742,6 @@ Expected: PASS.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add apps/server/migrations/002_add_edges.sql apps/server/sqlc/queries/edge.sql apps/server/internal/store/db apps/server/internal/api apps/server/cmd/server/main.go apps/web/src/lib/api.ts apps/web/src/lib/canvas.ts apps/web/src/pages/WorkspaceDetailPage.tsx apps/web/src/shapes/MediaShapeUtil.tsx apps/web/src/main.css
+git add apps/server/migrations/002_add_edges.sql apps/server/sqlc/queries/edge.sql apps/server/internal/store/db apps/server/internal/api apps/server/cmd/server/main.go apps/web/src/lib/api.ts apps/web/src/lib/canvas.ts apps/web/src/pages/WorkspaceDetailPage.tsx apps/web/src/components/canvas-flow/MediaFlowNode.tsx apps/web/src/main.css
 git commit -m "feat: add studio dependency edges"
 ```

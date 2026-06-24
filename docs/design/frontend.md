@@ -116,7 +116,7 @@ Studio 是全屏工作台：
 - `.studio-canvas-frame` 是 `position: absolute; inset: 0;` 的画布底。
 - `.studio-sidebar` 是左上角绝对定位浮层，展开态宽 298px。
 - sidebar 收起后只保留 `.studio-sidebar-peek`，展示“影 + 项目名 + 展开箭头”。
-- 不再渲染右侧 Inspector；节点属性由 `NodeEditorOverlay` 承担。
+- 不再渲染右侧 Inspector；节点属性由 `NodeReact FlowOverlay` 承担。
 
 ## 5. Studio Navigation
 
@@ -186,7 +186,7 @@ Studio 是全屏工作台：
 - 拖拽预览可使用虚线和细流动线，但必须保持轻量。
 - 成环等失败反馈用 toast，不在画布上堆叠强警告面板。
 
-## 8. Node Editor Overlay
+## 8. Node React Flow Overlay
 
 单击节点后的浮层是当前节点详情主入口。
 

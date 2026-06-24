@@ -6,7 +6,7 @@ Make canvas dependency linking feel direct and expressive: drag from a node outp
 
 ## Current Behavior
 
-The current canvas uses a custom DOM output port on each media node. Clicking the output port enters a pending state, shows "选择目标节点", and the next target click creates a dependency edge. Saved edges are tldraw arrow shapes with `kind: "arc"` but `bend: 0`, so they read as straight lines and have no motion.
+The current canvas uses a custom DOM output port on each media node. Clicking the output port enters a pending state, shows "选择目标节点", and the next target click creates a dependency edge. Saved edges are React Flow custom dependency edges with `kind: "arc"` but `bend: 0`, so they read as straight lines and have no motion.
 
 ## Interaction Design
 
@@ -22,14 +22,14 @@ The current canvas uses a custom DOM output port on each media node. Clicking th
 Use the selected option B direction:
 
 - Long cubic Bezier curve from source to target, with stronger horizontal pull so the line has flow.
-- Blue-to-purple/orange accent stroke, depending on what tldraw's built-in arrow styling can support safely.
+- Blue-to-purple/orange accent stroke, depending on what React Flow's built-in custom edge styling can support safely.
 - Animated light band or dash moving from start to end.
 - Arrowhead remains at the target side.
 - Preview line matches the saved edge style closely enough that drag and final result feel like one interaction.
 
 ## Architecture
 
-Keep the database and API unchanged. `media_edge` remains the single persisted relationship record. The frontend continues to project edges into tldraw arrows for editing/deletion, and adds a lightweight SVG overlay for custom animated visuals and drag preview.
+Keep the database and API unchanged. `media_edge` remains the single persisted relationship record. The frontend continues to project edges into React Flow custom edges for editing/deletion, and adds a lightweight SVG overlay for custom animated visuals and drag preview.
 
 The overlay reads node and edge geometry from React query canvas data and editor camera state. It does not persist independent state. Edge creation still goes through `POST /api/edges`, preserving backend duplicate and cycle validation.
 

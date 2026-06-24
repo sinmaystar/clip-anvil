@@ -37,7 +37,7 @@
 - Create `apps/server/internal/api/reference_pack_handler.go`: list/replace pack members.
 - Create `apps/server/internal/api/reference_pack_handler_test.go`: request/response and nesting validation tests.
 - Modify `apps/server/cmd/server/main.go`: wire pack routes and pass production service to the handler.
-- Modify `apps/server/internal/api/node_handler.go`: allow `reference_pack` node creation and reject asset binding for packs.
+- Modify `apps/server/internal/api/node_handler.go`: allow `reference_pack` node creation and reject asset edge for packs.
 - Modify `apps/server/internal/production/intent.go`: richer `InputRef` fields for expanded refs.
 - Modify `apps/server/internal/production/input_hash.go`: pack member facts in hash.
 - Modify `apps/server/internal/production/input_hash_test.go`: hash changes when pack membership/member winner changes.
@@ -285,7 +285,7 @@ func assetTypeForNodeType(nodeType db.NodeType) db.AssetType {
 }
 ```
 
-In `Create`, reject asset binding for packs:
+In `Create`, reject asset edge for packs:
 
 ```go
 if nodeType == db.NodeTypeReferencePack && strings.TrimSpace(req.AssetID) != "" {
@@ -786,7 +786,7 @@ Update all existing `InputHashFactsForNode` callers to pass a fourth argument.
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/production -run 'TestComputeInputHash|TestGenerationIntentJSONShape' -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/production -run 'TestComputeInputHash|TestGenerationIntentJSONNode' -count=1
 GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/production -count=1
 ```
 

@@ -6,7 +6,7 @@
 
 **Architecture:** Reuse the M4 Reference Pack backend primitives and M5.1-M5.3 Studio foundation. Add a lightweight canvas pack preview so pack cards can show member counts without per-pack frontend fetches, then wire the selected pack property panel to the existing `fetchReferencePackItems` / `replaceReferencePackItems` API helpers. Keep membership separate from dependency edges and keep Prompt `@` references deferred to M5.5.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, TanStack Query, tldraw 5, Vite 8, Node test runner, in-app browser smoke.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, TanStack Query, React Flow, Vite 8, Node test runner, in-app browser smoke.
 
 ---
 
@@ -62,11 +62,11 @@ M5.4 does not include:
 - Create `apps/web/src/lib/referencePack.test.mjs`
   - Unit tests for helper behavior.
 - Modify `apps/web/src/lib/productionPreview.ts`
-  - Prefer Reference Pack preview summary for `reference_pack` shape text.
+  - Prefer Reference Pack preview summary for `reference_pack` node text.
 - Modify `apps/web/src/lib/canvas.ts`
-  - Pass Reference Pack preview summary into media shape props through `winnerPreviewText`.
-- Modify `apps/web/src/shapes/MediaShapeUtil.tsx`
-  - Keep current shape renderer; no new shape props expected if `previewText` carries the pack summary.
+  - Pass Reference Pack preview summary into media node data through `winnerPreviewText`.
+- Modify `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
+  - Keep current node renderer; no new node data expected if `previewText` carries the pack summary.
 - Modify `apps/web/src/components/PropertyPanel.tsx`
   - Add Reference Pack-specific member management UI.
   - Keep group, dependency, stale, and version/job sections visible where useful.

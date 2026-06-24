@@ -4,7 +4,7 @@
 
 - 本地个人项目优先，单机 Docker Compose 一键启动
 - Monorepo + AI Coding Agent 友好（清晰边界、最小心智负担）
-- Studio / Agent 双模式共用同一个 tldraw 画布抽象
+- Studio / Agent 双模式共用同一个 React Flow 画布抽象
 - 代码层无状态，未来可平滑切到多副本/云端，但本地不预先做副本
 
 ## 二、Monorepo 目录结构
@@ -12,11 +12,11 @@
 ```
 clip-anvil/
 ├── apps/
-│   ├── web/                       前端 (Vite + React + TS + tldraw)
+│   ├── web/                       前端 (Vite + React + TS + React Flow)
 │   └── server/                    后端 (Go + Hertz)
 ├── packages/
 │   ├── shared-types/              TS 类型 (从 Go 生成 OpenAPI / 手写)
-│   ├── canvas-schema/             画布 Shape/Tool 定义 (Studio + Agent 共用)
+│   ├── canvas-schema/             画布 Node/Edge 定义 (Studio + Agent 共用)
 │   └── eslint-config/             共享前端配置
 ├── sandbox/
 │   └── code-interpreter-ffmpeg/   基于 OpenSandbox 镜像的扩展 (装 ffmpeg/yt-dlp 等)
@@ -68,7 +68,7 @@ postgres:16       redis:7         minio:latest    opensandbox-server
 |---|---|
 | 构建 | Vite 8 |
 | 框架 | React 19 + TypeScript 6 |
-| 画布 | `tldraw` v5 + 自定义 Shape/Tool |
+| 画布 | `React Flow` v5 + 自定义 Node/Edge |
 | 样式 | TailwindCSS + shadcn/ui (Radix) |
 | 状态 | Zustand（画布外 UI 状态） |
 | 数据 | TanStack Query + Axios/Fetch |
@@ -100,12 +100,12 @@ postgres:16       redis:7         minio:latest    opensandbox-server
 
 ## 五、关键模块边界
 
-### 5.1 `packages/canvas-schema`（最重要）
+### 5.1 `apps/web/src/components/canvas-flow`（最重要）
 两种模式都依赖的契约层。定义：
 - 节点类型：`text-to-image` / `image-to-image` / `image-to-video` / `text-to-video` / `composite` / `output` 等
 - 节点 IO Schema（输入输出端口类型）
 - 工作流 DAG 序列化格式（JSON）
-- Agent 操作画布的工具定义（与 tldraw editor API 一一对应：createShape / connect / setProps 等）
+- Agent 操作画布的工具定义（与 React Flow editor API 一一对应：createNode / connect / setProps 等）
 
 ### 5.2 后端模块（Go）
 ```
@@ -113,7 +113,7 @@ apps/server/internal/
 ├── api/            HTTP/WS handler
 ├── auth/           注册/登录 + JWT 签发/校验/中间件
 ├── workflow/       Studio 模式 DAG 编排执行器
-├── agent/          Agent 模式编排 (基于 eino: ChatModel / Tool / Graph)
+├── agent/          Agent 模式编排 (基于 eino: ChatModel / Edge / Graph)
 ├── sandbox/        OpenSandbox Go SDK 封装（创建/复用/回收沙箱）
 ├── media/          ffmpeg/对象存储/资产管理
 ├── dashscope/      DashScope API 封装（LLM / 文生图 / 图生视频等）
@@ -133,7 +133,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ### Studio 模式
 ```
-用户在 tldraw 画布拖拽节点 → 前端序列化为 DAG
+用户在 React Flow 画布拖拽节点 → 前端序列化为 DAG
   → POST /api/workflows/run
   → server 拓扑排序 → 逐节点执行
        ├─ LLM 节点：调用 llm 模块
@@ -147,16 +147,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ```
 用户对话 → /ws/chat 建立连接
   → server.agent 模块（eino Graph 编排）
-  → ChatModel 循环推理 + Tool 调用
-     · Tool 集 = canvas-schema 暴露的画布操作 + Studio 节点能力
+  → ChatModel 循环推理 + Edge 调用
+     · Edge 集 = canvas-schema 暴露的画布操作 + Studio 节点能力
   → 对话流式输出通过 /ws/chat 推送给前端
-  → 画布变更通过 /ws/canvas 推送给前端 tldraw store
+  → 画布变更通过 /ws/canvas 推送给前端 React Flow store
   → 直到产出最终视频
 ```
 
 关键：
 - Agent 工具集与 Studio 节点能力 **同一套底层**，复用 workflow 执行器；eino 只负责”推理 + 工具选择 + 状态机”，业务能力不耦合到框架
-- WebSocket 双通道分离关注点：`/ws/chat` 承载对话交互（流式文本、工具调用状态），`/ws/canvas` 承载画布状态同步（Shape 增删改、连线变更、节点执行状态），两者可靠性要求不同
+- WebSocket 双通道分离关注点：`/ws/chat` 承载对话交互（流式文本、工具调用状态），`/ws/canvas` 承载画布状态同步（Node 增删改、连线变更、节点执行状态），两者可靠性要求不同
 
 ## 七、本地启动流程
 
@@ -180,7 +180,7 @@ make server-dev              # 后端 air/CompileDaemon 热重载
 
 | 里程碑 | 范围 | 关键交付 |
 |---|---|---|
-| M0 基建 | Monorepo 骨架 + compose 跑通 + 前后端 hello world | `docker compose up` 后浏览器能看到带 tldraw 空画布的页面，调通一个 `/api/health` |
+| M0 基建 | Monorepo 骨架 + compose 跑通 + 前后端 hello world | `docker compose up` 后浏览器能看到带 React Flow 空画布的页面，调通一个 `/api/health` |
 | M1 Studio 静态 | 自定义节点 1-2 个 + 画布序列化 | 文生图节点 + 输出节点，可手动连线但不执行 |
 | M2 Studio 执行 | DAG 执行器 + LLM/图像 API 接入 + MinIO 存储 | 一条最简单链路（文字→图片）端到端跑通 |
 | M3 沙箱集成 | OpenSandbox Go SDK 接入 + ffmpeg 节点 | 多图合成短视频成功输出 |
@@ -192,7 +192,7 @@ make server-dev              # 后端 air/CompileDaemon 热重载
 1. 中间件**不打到一个容器里**，独立容器 + compose 编排（你已同意"全上"，按 Postgres/Redis/MinIO 三件套独立部署）
 2. nginx 保留，但**本地只起单实例 web 服务**，不真起多副本（代码无状态化，留扩展位即可）
 3. Sandbox 用阿里 **OpenSandbox**（已确认），自定义镜像加 ffmpeg
-4. 前端定 **Vite + React + tldraw + Tailwind + shadcn/ui** 主流栈
+4. 前端定 **Vite + React + React Flow + Tailwind + shadcn/ui** 主流栈
 
 ## 十、已确认的细节
 

@@ -72,8 +72,8 @@ ProducerGraph
 - 真实 LLM API 接入。
 - Eino checkpoint store 接入和 resume。
 - HITL interrupt/resume。
-- Tool registry。
-- Tool call message 和 tool result message。
+- Edge registry。
+- Edge call message 和 tool result message。
 - Storyboard/PSS schema。
 - Craftsman / Worker / Reviewer / Composer。
 - 调用 M4/M5 production service 生成文本、图像、视频或成片。

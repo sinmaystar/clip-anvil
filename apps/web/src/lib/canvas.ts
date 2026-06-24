@@ -1,5 +1,8 @@
 import type { MediaNode } from "./api";
-import { adaptiveMediaNodeSize } from "./nodePreviewLayout";
+import {
+  adaptiveMediaNodeSize,
+  type MediaDimensions,
+} from "./nodePreviewLayout";
 
 export function mediaNodeDisplaySize(
   node: Pick<
@@ -11,7 +14,8 @@ export function mediaNodeDisplaySize(
     | "production_preview"
     | "reference_pack_preview"
   >,
+  measuredMediaDimensions?: MediaDimensions | null,
 ) {
-  const size = adaptiveMediaNodeSize(node);
+  const size = adaptiveMediaNodeSize(node, measuredMediaDimensions);
   return { w: size.w, h: size.h };
 }

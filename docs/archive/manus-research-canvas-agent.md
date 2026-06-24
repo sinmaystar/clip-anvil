@@ -1,56 +1,56 @@
-# 基于 tldraw 的多媒体画布与 Agent 视频生成业务交互设计
+# React Flow 多媒体画布与 Agent 视频生成业务交互设计
 
 作者：**Manus AI**
 日期：2026-06-11
 
 ## 1. 结论摘要
 
-你的需求可以拆成两个层面：第一层是**无限画布上的多媒体资产组织与可视化编辑**，第二层是**围绕视频生成过程的 Agent 编排、可追踪血缘、增量修改与质量控制**。从调研结果看，tldraw 比较适合作为第一层的画布 SDK。它原生提供无限画布、shape、asset、binding、store、Editor API、自定义工具和自定义 UI 等能力；其中 shape 是画布上的 JSON 记录，asset 用于管理图片、视频、书签等外部资源，Editor API 可以程序化创建、更新、删除 shape 和 asset，binding/arrow 可以表达形状之间的连接关系。[1] [2] [3] [4]
+你的需求可以拆成两个层面：第一层是**无限画布上的多媒体资产组织与可视化编辑**，第二层是**围绕视频生成过程的 Agent 编排、可追踪血缘、增量修改与质量控制**。从调研结果看，React Flow 比较适合作为第一层的画布 SDK。它原生提供无限画布、node、asset、edge、store、React Flow API、自定义工具和自定义 UI 等能力；其中 node 是画布上的 JSON 记录，asset 用于管理图片、视频、书签等外部资源，React Flow API 可以程序化创建、更新、删除 node 和 asset，edge/custom edge 可以表达形状之间的连接关系。[1] [2] [3] [4]
 
-不过，tldraw 不应该被设计成你的核心业务数据库。更稳妥的架构是：**业务数据层是事实源，tldraw 是可交互的 UI 投影层**。Workspace、媒体资源、资源分组、节点、边、生成任务、模型调用、版本、评审结果和最终视频，都应该在你的业务数据库中建模；tldraw snapshot 主要保存布局、视口、选择状态以及画布呈现所需的 shape 映射。这样 Studio 模式可以充分使用画布编辑能力，而 Agent 模式则可以通过受控业务命令自动创建节点、连线、分组和生成任务，画布实时呈现 Agent 的执行过程。
+不过，React Flow 不应该被设计成你的核心业务数据库。更稳妥的架构是：**业务数据层是事实源，React Flow 是可交互的 UI 投影层**。Workspace、媒体资源、资源分组、节点、边、生成任务、模型调用、版本、评审结果和最终视频，都应该在你的业务数据库中建模；React Flow snapshot 主要保存布局、视口、选择状态以及画布呈现所需的 node 映射。这样 Studio 模式可以充分使用画布编辑能力，而 Agent 模式则可以通过受控业务命令自动创建节点、连线、分组和生成任务，画布实时呈现 Agent 的执行过程。
 
-> 推荐的核心判断是：**Agent 模式不应以“模拟用户鼠标操作 tldraw”为主，而应以“调用业务命令改变业务状态，tldraw 订阅状态并可视化”为主。** 这会显著降低自动化脆弱性，并让每一步生成过程可审计、可回滚、可增量重算。
+> 推荐的核心判断是：**Agent 模式不应以“模拟用户鼠标操作 React Flow”为主，而应以“调用业务命令改变业务状态，React Flow 订阅状态并可视化”为主。** 这会显著降低自动化脆弱性，并让每一步生成过程可审计、可回滚、可增量重算。
 
 spark-video 的架构非常值得借鉴。它不是单纯写死一个 CLI 流水线，而是把视频生成拆成 Producer、Screenwriter、Director、Cast/Set/Prop、VFX Review、Clip Review 等 Skill，并用确定性脚本完成校验、编译、渲染、拼接和状态写入。[5] [6] 这对你的产品最大的启发是：Agent 模式应当是一个**可视化 DAG 工作流 + Skill 化角色分工 + 确定性执行器 + 人类确认 Gate** 的组合，而不是一个从 Prompt 到最终视频的黑盒按钮。
 
 | 决策点 | 建议结论 | 理由 |
 |---|---|---|
-| tldraw 是否满足基础需求 | **基本满足，但需要业务层补齐** | 自定义 shape、asset、binding、Editor API、持久化和自定义 UI 足以支撑画布交互；音频、生成任务、版本、评审、资产状态需要自定义业务模型。[1] [2] [3] [4] |
+| React Flow 是否满足基础需求 | **基本满足，但需要业务层补齐** | 自定义 node、asset、edge、React Flow API、持久化和自定义 UI 足以支撑画布交互；音频、生成任务、版本、评审、资产状态需要自定义业务模型。[1] [2] [3] [4] |
 | 媒体资源如何建模 | **Asset + MediaNode 双层模型** | asset 负责文件元数据和存储 URL，MediaNode 负责画布节点、生成参数、状态、输入依赖和版本。 |
 | Agent 如何操作画布 | **调用命令 API，而非操作 DOM/鼠标** | 命令 API 可以保证权限、校验、事务、审计、回滚和增量重算。 |
 | Studio 与 Agent 如何共存 | **同一套数据模型，不同编辑权限与交互入口** | Studio 是用户直接编辑；Agent 是自动编排，用户通过对话、Gate 和局部接管参与。 |
 | 是否借鉴 spark-video | **强烈建议借鉴 Skill、Gate、状态机和资产一致性规则** | 它解决的是长视频生成中的跨镜头一致性、叙事统一、重试评审和增量修改问题。[5] [6] [7] [8] |
 
-## 2. tldraw 能力适配分析
+## 2. React Flow 能力适配分析
 
 ### 2.1 可满足的能力
 
-按照你的通用模式，Workspace 是最高组织单位，每个 Workspace 拥有一张无限画布。tldraw 本身并不定义 Workspace 概念，但它的 store、snapshot 和 persistence 能保存一个文档中的 shapes、pages、bindings 等记录；官方文档也说明可以通过 `getSnapshot` 和 `loadSnapshot` 将 document/session 分开保存，其中 document 包含 shapes、pages、bindings，session 包含 camera、selection、UI state。[3] 因此，Workspace 可以由你自己的业务层定义，而每个 Workspace 对应一个 tldraw document 或一个业务 canvas document。
+按照你的通用模式，Workspace 是最高组织单位，每个 Workspace 拥有一张无限画布。React Flow 本身并不定义 Workspace 概念，但它的 store、snapshot 和 persistence 能保存一个文档中的 nodes、pages、edges 等记录；官方文档也说明可以通过 `getSnapshot` 和 `loadSnapshot` 将 document/session 分开保存，其中 document 包含 nodes、pages、edges，session 包含 camera、selection、UI state。[3] 因此，Workspace 可以由你自己的业务层定义，而每个 Workspace 对应一个 React Flow document 或一个业务 canvas document。
 
-多媒体资源方面，tldraw 内置 asset 类型包含 image、video、bookmark。官方文档说明，asset 是外部资源记录，存储尺寸、MIME 类型、源 URL 等元数据，实际文件可以存在 S3、Google Cloud Storage 或你自己的 API 中；shape 通过 `assetId` 引用 asset，同一 asset 可被多个 shape 复用。[2] 这正好适合图片和视频资源。音频不是内置基础类型，但 tldraw 文档明确提到可以通过 custom asset type 和 AssetUtil 扩展音频等领域资产。[2] 文本则可以使用内置 text shape，也可以为了业务一致性实现自定义 TextMediaShape。
+多媒体资源方面，React Flow 内置 asset 类型包含 image、video、bookmark。官方文档说明，asset 是外部资源记录，存储尺寸、MIME 类型、源 URL 等元数据，实际文件可以存在 S3、Google Cloud Storage 或你自己的 API 中；node 通过 `assetId` 引用 asset，同一 asset 可被多个 node 复用。[2] 这正好适合图片和视频资源。音频不是内置基础类型，但 React Flow 文档明确提到可以通过 custom asset type 和 AssetUtil 扩展音频等领域资产。[2] 文本则可以使用内置 text node，也可以为了业务一致性实现自定义 TextMediaFlowNode。
 
-连线方面，tldraw 支持 arrow shape，也支持 BindingUtil。官方示例展示了如何用 Editor API 在两个 shape 之间创建 arrow，并为 arrow 的 start/end terminal 创建 binding。[4] 另一个 binding 示例说明可以自定义绑定关系，并在目标 shape 变化或删除时触发响应。[9] 这足以支撑视觉上的 A → B → C 依赖关系。但是，你的语义是“媒体输入依赖”和“生成血缘”，不只是视觉连线，所以应在业务表中维护 Edge/DAG，再同步渲染为 tldraw arrow 或 custom edge shape。
+连线方面，React Flow 支持 custom dependency edge，也支持 React Flow edge utility。官方示例展示了如何用 React Flow API 在两个 node 之间创建 custom edge，并为 custom edge 的 start/end terminal 创建 edge。[4] 另一个 edge 示例说明可以自定义绑定关系，并在目标 node 变化或删除时触发响应。[9] 这足以支撑视觉上的 A → B → C 依赖关系。但是，你的语义是“媒体输入依赖”和“生成血缘”，不只是视觉连线，所以应在业务表中维护 Edge/DAG，再同步渲染为 React Flow custom edge 或 custom edge。
 
-| 需求 | tldraw 原生/扩展能力 | 产品侧应补充的内容 |
+| 需求 | React Flow 原生/扩展能力 | 产品侧应补充的内容 |
 |---|---|---|
-| Workspace 与无限画布 | tldraw 提供无限画布和 store，Workspace 由业务层定义。[1] [3] | Workspace 表、权限、协作成员、项目设置、默认模型配置。 |
-| 文本、图片、视频、音频 | 图片/视频 asset 原生支持；音频可 custom asset；文本可 shape。[1] [2] | 统一 MediaAsset、MediaNode、Artifact、Version 模型。 |
-| 分组 | tldraw 有 group shape 和 shape 组织能力。[1] | 业务 Group/Folder 与左侧导航树的层级关系。 |
-| 左侧资源导航树 | tldraw 可替换或隐藏默认 UI，也可自定义组件。[10] [11] | 自研资源树、搜索、筛选、状态徽标、拖拽定位节点。 |
-| 右键创建资源 | tldraw 支持自定义 context menu 和工具栏。[10] | 创建空白媒体资源的业务命令、默认布局和权限校验。 |
-| 节点弹框输入 Prompt | 自定义 shape component 与外部面板均可实现。[1] [11] | Prompt 编辑器、@引用、模型选择、参数配置、任务提交。 |
-| 节点连线作为输入依赖 | arrow/binding 可视化实现。[4] [9] | DAG 校验、依赖解析、循环检测、生成上下文组装。 |
-| Agent 自动创建过程 | Editor API 可程序化创建 shapes/assets/bindings。[1] [4] | Agent 命令层、事务、审计日志、进度事件和回滚。 |
+| Workspace 与无限画布 | React Flow 提供无限画布和 store，Workspace 由业务层定义。[1] [3] | Workspace 表、权限、协作成员、项目设置、默认模型配置。 |
+| 文本、图片、视频、音频 | 图片/视频 asset 原生支持；音频可 custom asset；文本可 node。[1] [2] | 统一 MediaAsset、MediaNode、Artifact、Version 模型。 |
+| 分组 | React Flow 有 group node 和 node 组织能力。[1] | 业务 Group/Folder 与左侧导航树的层级关系。 |
+| 左侧资源导航树 | React Flow 可替换或隐藏默认 UI，也可自定义组件。[10] [11] | 自研资源树、搜索、筛选、状态徽标、拖拽定位节点。 |
+| 右键创建资源 | React Flow 支持自定义 context menu 和工具栏。[10] | 创建空白媒体资源的业务命令、默认布局和权限校验。 |
+| 节点弹框输入 Prompt | 自定义 node component 与外部面板均可实现。[1] [11] | Prompt 编辑器、@引用、模型选择、参数配置、任务提交。 |
+| 节点连线作为输入依赖 | custom edge/edge 可视化实现。[4] [9] | DAG 校验、依赖解析、循环检测、生成上下文组装。 |
+| Agent 自动创建过程 | React Flow API 可程序化创建 nodes/assets/edges。[1] [4] | Agent 命令层、事务、审计日志、进度事件和回滚。 |
 
-### 2.2 tldraw 的边界
+### 2.2 React Flow 的边界
 
-tldraw 更像一个强大的**画布编辑引擎**，而不是一个多媒体 AIGC 业务平台。它能渲染和编辑 shape，能保存画布状态，能处理 assets 和 bindings，但它不会替你解决资源版本管理、模型供应商路由、生成任务队列、长任务状态、失败重试、视频拼接、Prompt 血缘、质量评审和增量重算。这些应由你的应用层实现。
+React Flow 更像一个强大的**画布编辑引擎**，而不是一个多媒体 AIGC 业务平台。它能渲染和编辑 node，能保存画布状态，能处理 assets 和 edges，但它不会替你解决资源版本管理、模型供应商路由、生成任务队列、长任务状态、失败重试、视频拼接、Prompt 血缘、质量评审和增量重算。这些应由你的应用层实现。
 
-因此，建议避免把 tldraw shape 的 `props` 当成所有业务数据的唯一来源。shape 的 `props` 可以保存 UI 展示必要字段，例如标题、状态、缩略图、尺寸、业务 nodeId；但完整的媒体元数据、生成参数、模型调用记录、输入引用、版本、review、artifact URL 和审计信息，应存储在后端业务表中。这样做的好处是，当 Agent 在后台执行时，即使画布未打开，也能完整运行；当用户打开画布时，前端只需要把业务状态投影成节点和边。
+因此，建议避免把 React Flow node data 当成所有业务数据的唯一来源。node data 可以保存 UI 展示必要字段，例如标题、状态、缩略图、尺寸、业务 nodeId；但完整的媒体元数据、生成参数、模型调用记录、输入引用、版本、review、artifact URL 和审计信息，应存储在后端业务表中。这样做的好处是，当 Agent 在后台执行时，即使画布未打开，也能完整运行；当用户打开画布时，前端只需要把业务状态投影成节点和边。
 
 ## 3. 推荐的信息架构与数据模型
 
-产品层建议采用“业务事实源 + 画布投影”的双层模型。业务事实源描述 Workspace 中真实存在的媒体资源、生成任务和血缘；画布投影描述这些对象在 tldraw 上的位置、尺寸、折叠状态、选中状态和视觉样式。
+产品层建议采用“业务事实源 + 画布投影”的双层模型。业务事实源描述 Workspace 中真实存在的媒体资源、生成任务和血缘；画布投影描述这些对象在 React Flow 上的位置、尺寸、折叠状态、选中状态和视觉样式。
 
 ```mermaid
 flowchart LR
@@ -60,16 +60,16 @@ flowchart LR
     Q --> M[模型供应商 / 渲染器]
     M --> DB
     DB --> E[实时事件流]
-    E --> UI[tldraw 画布投影]
+    E --> UI[React Flow 画布投影]
     UI --> C
 ```
 
 | 实体 | 关键字段 | 说明 |
 |---|---|---|
 | Workspace | id、name、owner、mode、settings | 第一层组织单位，一张或多张画布都可归属 Workspace。 |
-| CanvasDocument | id、workspaceId、tldrawSnapshot、layoutVersion | 保存画布布局和 UI 投影，不承载全部业务事实。 |
+| CanvasDocument | id、workspaceId、React FlowSnapshot、layoutVersion | 保存画布布局和 UI 投影，不承载全部业务事实。 |
 | MediaAsset | id、type、mime、storageUrl、thumbnailUrl、duration、size、meta | 文件级资产，包括图片、视频、音频和文本内容。 |
-| MediaNode | id、workspaceId、assetId、nodeType、title、status、currentVersionId | 画布上的业务节点，shape 通过 nodeId 映射它。 |
+| MediaNode | id、workspaceId、assetId、nodeType、title、status、currentVersionId | 画布上的业务节点，node 通过 nodeId 映射它。 |
 | MediaGroup | id、workspaceId、name、parentId、nodeIds、groupType | 对应左侧导航树和画布分组。 |
 | MediaEdge | id、fromNodeId、toNodeId、edgeType、role、order | 表示输入依赖、参考依赖、首尾帧依赖、拼接依赖等。 |
 | GenerationJob | id、targetNodeId、provider、model、prompt、params、status、costEstimate | 一次生成或处理任务。 |
@@ -77,13 +77,13 @@ flowchart LR
 | ReviewRecord | id、versionId、rubric、score、critique、verdict | 自动或人工评审结果。 |
 | AgentStep | id、workspaceId、stepType、input、output、status、createdNodes | Agent 操作审计，用于复盘视频如何生成。 |
 
-> 在这个模型中，tldraw shape 是 `MediaNode` 的可视化实例，tldraw arrow/binding 是 `MediaEdge` 的可视化实例。真正的依赖计算、输入组装和增量重算，不依赖用户是否打开画布。
+> 在这个模型中，React Flow node 是 `MediaNode` 的可视化实例，React Flow custom edge/edge 是 `MediaEdge` 的可视化实例。真正的依赖计算、输入组装和增量重算，不依赖用户是否打开画布。
 
 ## 4. Studio 模式业务交互设计
 
-Studio 模式的定位是“用户主导的自由创作空间”。它应该尽可能开放 tldraw 的画布编辑能力，让用户自行创建、移动、分组、连接和生成媒体资源。用户可以像使用白板一样组织素材，也可以像使用节点编辑器一样把媒体资源连成生成流程。
+Studio 模式的定位是“用户主导的自由创作空间”。它应该尽可能开放 React Flow 的画布编辑能力，让用户自行创建、移动、分组、连接和生成媒体资源。用户可以像使用白板一样组织素材，也可以像使用节点编辑器一样把媒体资源连成生成流程。
 
-Studio 模式的核心交互流程可以设计为：用户进入 Workspace 后，左侧导航树显示所有媒体资源和分组；中间是无限画布；右侧或弹框是当前节点的属性与生成面板。用户可以通过左侧新建、拖拽上传、画布右键、快捷工具栏等方式创建资源。创建资源时，系统先生成一个空白 MediaNode 和空 MediaAsset，再在画布上创建对应 shape。用户单击节点时弹出媒体预览和 Prompt 输入框，支持选择模型供应商、设置参数、用 @ 引用其他媒体资源，并提交生成任务。
+Studio 模式的核心交互流程可以设计为：用户进入 Workspace 后，左侧导航树显示所有媒体资源和分组；中间是无限画布；右侧或弹框是当前节点的属性与生成面板。用户可以通过左侧新建、拖拽上传、画布右键、快捷工具栏等方式创建资源。创建资源时，系统先生成一个空白 MediaNode 和空 MediaAsset，再在画布上创建对应 node。用户单击节点时弹出媒体预览和 Prompt 输入框，支持选择模型供应商、设置参数、用 @ 引用其他媒体资源，并提交生成任务。
 
 | 场景 | 用户动作 | 系统行为 | 画布反馈 |
 |---|---|---|---|
@@ -91,7 +91,7 @@ Studio 模式的核心交互流程可以设计为：用户进入 Workspace 后�
 | 创建图片节点 | 右键选择“新建图片” | 创建 ImageMediaNode，asset 暂为空 | 出现图片占位卡，提示输入 Prompt 或上传。 |
 | 创建视频节点 | 右键选择“新建视频” | 创建 VideoMediaNode，asset 暂为空 | 出现视频占位卡，支持生成或上传。 |
 | 创建音频节点 | 右键选择“新建音频” | 创建 AudioMediaNode，使用 custom audio asset | 出现音频波形/播放器占位。 |
-| 建立依赖 | 从 A 拖线到 B | 创建 MediaEdge，并渲染 arrow/binding | B 的输入区展示 A 的缩略图。 |
+| 建立依赖 | 从 A 拖线到 B | 创建 MediaEdge，并渲染 custom edge/edge | B 的输入区展示 A 的缩略图。 |
 | @引用资源 | 在 Prompt 输入 `@角色A` | 插入资源引用 token，并建立可选引用边 | Prompt 中高亮引用，节点间出现虚线或输入标记。 |
 | 提交生成 | 点击“生成” | 创建 GenerationJob，解析上游输入 | 节点进入 Queued/Running，进度可见。 |
 | 查看版本 | 点击节点版本列表 | 查询 ArtifactVersion | 可预览、设为 winner、回滚或派生。 |
@@ -217,7 +217,7 @@ Agent 先生成 Script 节点，再拆分为 Scene 节点。每个 Scene 节点�
 
 ## 7. Agent 可调用工具与命令 API 设计
 
-为了让 Agent 可靠地操作画布，建议定义一组业务命令。每个命令都应具备参数 schema、权限校验、事务、幂等 key、审计日志和事件广播。前端 tldraw 订阅事件后更新画布，而不是由 Agent 直接调用 tldraw 前端实例。
+为了让 Agent 可靠地操作画布，建议定义一组业务命令。每个命令都应具备参数 schema、权限校验、事务、幂等 key、审计日志和事件广播。前端 React Flow 订阅事件后更新画布，而不是由 Agent 直接调用 React Flow 前端实例。
 
 | 命令 | 用途 | 典型参数 |
 |---|---|---|
@@ -255,7 +255,7 @@ Skill 与确定性执行器要分工明确。Skill 负责判断、生成、解�
 
 ## 9. 左侧导航树与画布的关系
 
-左侧导航树不应只是 tldraw shapes 的列表，而应是 Workspace 中业务资源的主索引。它可以按资源类型、分组、流程阶段、状态、标签、时间线等方式切换视图。画布则是一个或多个视图中的空间化呈现。
+左侧导航树不应只是 React Flow nodes 的列表，而应是 Workspace 中业务资源的主索引。它可以按资源类型、分组、流程阶段、状态、标签、时间线等方式切换视图。画布则是一个或多个视图中的空间化呈现。
 
 | 导航树视图 | 组织方式 | 适用场景 |
 |---|---|---|
@@ -265,7 +265,7 @@ Skill 与确定性执行器要分工明确。Skill 负责判断、生成、解�
 | 状态视图 | Draft、Running、Rejected、Stale、Succeeded | 排查任务和处理失败。 |
 | 时间线视图 | 按最终视频片段顺序排列 | 从成片回溯到镜头。 |
 
-当用户点击导航树中的资源时，画布应定位到对应节点；当 Agent 创建新节点时，导航树应同步出现资源和状态徽标。对于没有放置到画布上的资源，可以显示为“未上画布”；用户拖入画布时创建 shape 投影，但不重复创建业务资源。
+当用户点击导航树中的资源时，画布应定位到对应节点；当 Agent 创建新节点时，导航树应同步出现资源和状态徽标。对于没有放置到画布上的资源，可以显示为“未上画布”；用户拖入画布时创建 node 投影，但不重复创建业务资源。
 
 ## 10. 关键产品机制建议
 
@@ -304,7 +304,7 @@ Skill 与确定性执行器要分工明确。Skill 负责判断、生成、解�
 
 ## 11. 实施路线建议
 
-第一阶段应先完成 Studio 模式的基础闭环：Workspace、资源树、tldraw 画布、媒体节点、连线、Prompt 弹框、模型选择、生成任务、产物版本和基础持久化。此时 Agent 可以先作为“辅助生成”存在，只对用户当前选中的节点执行生成或改写。
+第一阶段应先完成 Studio 模式的基础闭环：Workspace、资源树、React Flow 画布、媒体节点、连线、Prompt 弹框、模型选择、生成任务、产物版本和基础持久化。此时 Agent 可以先作为“辅助生成”存在，只对用户当前选中的节点执行生成或改写。
 
 第二阶段再建设 Agent 模式的生产 DAG：Brief → Script → Storyboard → Shot → Clip → Review → Final。此阶段重点不是追求所有视频类型，而是跑通一个最典型的视频生成流程，例如 30–60 秒短视频或广告片。要建立 Agent 命令 API、节点状态机、Gate、审计日志、增量重算和局部接管。
 
@@ -319,11 +319,11 @@ Skill 与确定性执行器要分工明确。Skill 负责判断、生成、解�
 
 ## 12. 风险与规避
 
-最大的风险是把 tldraw 当成完整业务平台，导致后期 Agent、任务队列、增量重算和审计无法稳定实现。规避方式是从一开始就建立业务事实源，tldraw 只做投影。第二个风险是 Agent 自动流程过黑盒，用户不知道视频为何这样生成。规避方式是把 Agent 每一步都落成画布节点和 AgentStep 日志。第三个风险是用户手动修改与 Agent 自动执行冲突。规避方式是节点锁、UserEditing 状态、影响分析和 Stale 机制。第四个风险是长视频一致性差。规避方式是借鉴 spark-video，把角色、场景、道具作为独立资产状态，并在生成和评审阶段强制引用它们。[8] [12] [13]
+最大的风险是把 React Flow 当成完整业务平台，导致后期 Agent、任务队列、增量重算和审计无法稳定实现。规避方式是从一开始就建立业务事实源，React Flow 只做投影。第二个风险是 Agent 自动流程过黑盒，用户不知道视频为何这样生成。规避方式是把 Agent 每一步都落成画布节点和 AgentStep 日志。第三个风险是用户手动修改与 Agent 自动执行冲突。规避方式是节点锁、UserEditing 状态、影响分析和 Stale 机制。第四个风险是长视频一致性差。规避方式是借鉴 spark-video，把角色、场景、道具作为独立资产状态，并在生成和评审阶段强制引用它们。[8] [12] [13]
 
 | 风险 | 典型表现 | 规避策略 |
 |---|---|---|
-| 画布数据与业务数据混乱 | 节点移动或复制导致生成血缘丢失 | 业务 DB 为事实源，tldraw shape 仅保存 nodeId 和布局。 |
+| 画布数据与业务数据混乱 | 节点移动或复制导致生成血缘丢失 | 业务 DB 为事实源，React Flow node 仅保存 nodeId 和布局。 |
 | Agent 操作不可控 | 自动修改用户刚改过的节点 | 节点锁、UserEditing、事务和审计日志。 |
 | 视频生成成本失控 | 分镜错误但直接批量渲染 | 渲染前预算 Gate 和预渲染 QA。 |
 | 跨镜头漂移 | 同一角色每个镜头长相不同 | 角色/场景/道具状态资产 + 强制引用 + 后评审。 |
@@ -332,7 +332,7 @@ Skill 与确定性执行器要分工明确。Skill 负责判断、生成、解�
 
 ## 13. 最终建议
 
-建议你的产品形态可以概括为：**一张以 tldraw 为交互底座的多媒体生产画布，一套以业务 DAG 为事实源的生成系统，以及一个以 Skill 为角色分工的可视化 Agent。** Studio 模式提供开放编辑能力，Agent 模式提供自动化生产能力，但二者共享同一套 Workspace、MediaNode、MediaEdge、ArtifactVersion 和 GenerationJob 数据模型。
+建议你的产品形态可以概括为：**一张以 React Flow 为交互底座的多媒体生产画布，一套以业务 DAG 为事实源的生成系统，以及一个以 Skill 为角色分工的可视化 Agent。** Studio 模式提供开放编辑能力，Agent 模式提供自动化生产能力，但二者共享同一套 Workspace、MediaNode、MediaEdge、ArtifactVersion 和 GenerationJob 数据模型。
 
 Agent 模式不需要牺牲用户手动修改能力。相反，如果把每一步都可视化为节点、边、版本和评审，用户会比传统表单式生成工具更容易理解和介入。用户可以在剧本阶段改文字，在分镜阶段改镜头，在渲染阶段换版本，在成片阶段定位回源镜头。Agent 负责解释影响范围、执行增量重算和维护一致性。
 
@@ -340,16 +340,16 @@ Agent 模式不需要牺牲用户手动修改能力。相反，如果把每一�
 
 ## References
 
-[1]: https://tldraw.dev/docs/editor "tldraw Docs — Editor"
-[2]: https://tldraw.dev/sdk-features/assets "tldraw Docs — Assets"
-[3]: https://tldraw.dev/docs/persistence "tldraw Docs — Persistence"
-[4]: https://tldraw.dev/examples/create-arrow "tldraw Docs — Create an arrow"
+[1]: https://reactflow.dev/docs/editor "React Flow Docs — React Flow"
+[2]: https://reactflow.dev/sdk-features/assets "React Flow Docs — Assets"
+[3]: https://reactflow.dev/docs/persistence "React Flow Docs — Persistence"
+[4]: https://reactflow.dev/examples/create-custom-edge "React Flow Docs — Create an custom edge"
 [5]: https://github.com/JohnKeating1997/spark-video/blob/main/docs/architecture.md "spark-video — Architecture"
 [6]: https://raw.githubusercontent.com/JohnKeating1997/spark-video/main/references/spark-video-episode/SKILL.md "spark-video — Producer / Episode Skill"
 [7]: https://raw.githubusercontent.com/JohnKeating1997/spark-video/main/references/spark-video-director/SKILL.md "spark-video — Director Skill"
 [8]: https://raw.githubusercontent.com/JohnKeating1997/spark-video/main/references/spark-video-cast/SKILL.md "spark-video — Cast / Set / Prop Skill"
-[9]: https://tldraw.dev/examples/sticker-bindings "tldraw Docs — Attach shapes together (bindings)"
-[10]: https://tldraw.dev/examples/custom-menus "tldraw Docs — Changing menus"
-[11]: https://tldraw.dev/examples/custom-ui "tldraw Docs — Replace the entire UI"
+[9]: https://reactflow.dev/examples/sticker-edges "React Flow Docs — Attach nodes together (edges)"
+[10]: https://reactflow.dev/examples/custom-menus "React Flow Docs — Changing menus"
+[11]: https://reactflow.dev/examples/custom-ui "React Flow Docs — Replace the entire UI"
 [12]: https://raw.githubusercontent.com/JohnKeating1997/spark-video/main/references/spark-video-vfx-review/SKILL.md "spark-video — VFX Review Skill"
 [13]: https://raw.githubusercontent.com/JohnKeating1997/spark-video/main/references/spark-video-clip-review/SKILL.md "spark-video — Clip Review Skill"

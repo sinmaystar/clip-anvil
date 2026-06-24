@@ -6,7 +6,7 @@
 
 **Architecture:** Producer 仍然是用户对话入口，只通过 Eino native tool call 调用 `dispatch_craftsman`。Craftsman 是独立 Eino Graph，使用 shot-scoped `agent_thread`、`agent_message` 和 `eino_checkpoint` 持久化执行过程；Worker 是确定性的独立 `agent_task`，负责创建 Agent-owned image node 并调用现有 `production.Service.SubmitGenerationIntent`。Agent task 表示调度/提交状态，真实生成进度继续由 `generation_job` / `artifact_version` 表示。
 
-**Tech Stack:** Go 1.26, CloudWeGo Eino v0.9.9, Hertz, pgx/sqlc, PostgreSQL migrations, ClipAnvil Agent runtime, ClipAnvil production service, Vite/React/tldraw read-only Agent canvas, Playwright/browser E2E.
+**Tech Stack:** Go 1.26, CloudWeGo Eino v0.9.9, Hertz, pgx/sqlc, PostgreSQL migrations, ClipAnvil Agent runtime, ClipAnvil production service, Vite/React/React Flow read-only Agent canvas, Playwright/browser E2E.
 
 ---
 
@@ -441,9 +441,9 @@ fake store 返回 3 个 active shots。断言：
 实现：
 
 ```go
-func NewDispatchCraftsmanTool(store CraftsmanDispatcherStore, runtime CraftsmanRuntime, enqueuer CraftsmanTaskEnqueuer) DispatchCraftsmanTool
-func (t DispatchCraftsmanTool) Definition() Definition
-func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) (ExecuteOutput, error)
+func NewDispatchCraftsmanEdge(store CraftsmanDispatcherStore, runtime CraftsmanRuntime, enqueuer CraftsmanTaskEnqueuer) DispatchCraftsmanEdge
+func (t DispatchCraftsmanEdge) Definition() Definition
+func (t DispatchCraftsmanEdge) Execute(ctx context.Context, input ExecuteInput) (ExecuteOutput, error)
 ```
 
 核心规则：
@@ -894,13 +894,13 @@ git commit -m "feat: add craftsman preview graph"
 
 - [ ] **Step 1: 调整初始化顺序**
 
-`dispatch_craftsman` 需要 production/craftsman/worker 依赖，而现有 `agentToolRegistry` 初始化早于 `productionService`。调整 `main.go` 顺序：
+`dispatch_craftsman` 需要 production/craftsman/worker 依赖，而现有 `agentEdgeRegistry` 初始化早于 `productionService`。调整 `main.go` 顺序：
 
 1. 创建 `agentRuntime`、`agentModelSelection`、`agentBroadcaster`、`hitlService`、`producerPSSBuilder`、`storyboardService`。
 2. 创建 provider registry、sandbox job service、production service、production runner。
 3. 创建 worker executor。
 4. 创建 craftsman graph/executor。
-5. 创建 `agentToolRegistry`，注册 `dispatch_craftsman`。
+5. 创建 `agentEdgeRegistry`，注册 `dispatch_craftsman`。
 6. 创建 Producer graph/executor。
 
 - [ ] **Step 2: 实现内存 enqueuer**
@@ -931,7 +931,7 @@ Worker enqueuer 同理。实现时必须避免 nil executor panic；nil 时只�
 在 `agenttools.NewRegistry(...)` 中增加：
 
 ```go
-agenttools.NewDispatchCraftsmanTool(queries, agentRuntime, craftsmanEnqueuer)
+agenttools.NewDispatchCraftsmanEdge(queries, agentRuntime, craftsmanEnqueuer)
 ```
 
 工具描述中用户可见 label 不使用 Producer / Craftsman 字样。

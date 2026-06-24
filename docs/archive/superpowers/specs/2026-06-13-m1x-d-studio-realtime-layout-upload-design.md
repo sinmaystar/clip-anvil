@@ -255,12 +255,12 @@ GET /ws/canvas?workspaceId=uuid&token=jwt
 
 事件处理：
 
-- `NodeCreated`：shape 已存在则 update，不存在则 create。
-- `NodeUpdated`：更新 query cache 和 shape props。
-- `NodeDeleted`：shape 不存在则跳过。
-- `EdgeCreated`：edge arrow 已存在则 update，不存在则 create。
+- `NodeCreated`：node 已存在则 update，不存在则 create。
+- `NodeUpdated`：更新 query cache 和 node data。
+- `NodeDeleted`：node 不存在则跳过。
+- `EdgeCreated`：edge custom edge 已存在则 update，不存在则 create。
 - `GroupCreated`：group container 已存在则 update，不存在则 create。
-- `GroupDeleted`：只删除 group container，不删除 member MediaShape。
+- `GroupDeleted`：只删除 group container，不删除 member MediaFlowNode。
 
 连接状态展示在 Studio 顶部或侧栏底部，文案保持短：已连接、重连中、离线。
 
@@ -284,8 +284,8 @@ pnpm --filter @clip-anvil/web add @dagrejs/dagre
 2. 构造 dagre graph。
 3. 每个节点使用实际 `canvas_w/canvas_h`。
 4. 计算新坐标。
-5. `editor.updateShapes()` 更新 MediaShape。
-6. 根据组内节点包围盒更新 GroupContainerShape。
+5. `editor.updateNodes()` 更新 MediaFlowNode。
+6. 根据组内节点包围盒更新 group container node。
 7. `PATCH /api/nodes/batch-position` 持久化节点坐标。
 
 本阶段不依赖 dagre compound graph。分组聚集通过后处理实现：同组节点布局后，group container 根据成员包围盒重算位置和尺寸。

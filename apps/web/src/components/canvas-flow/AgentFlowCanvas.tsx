@@ -72,6 +72,7 @@ export function AgentFlowCanvas({
       onSelectEdge={setSelectedEdgeId}
       onSelectNode={onSelectNode}
       onViewportChange={(camera) => cameraMutation.mutate(camera)}
+      renderInspector={false}
     />
   );
 }
