@@ -76,6 +76,7 @@ interface PropertyPanelProps {
   onAddGroupMember?: (groupId: string, nodeId: string) => void;
   onDeleteEdge?: (edgeId: string) => void;
   onDeleteGroup?: (groupId: string) => void;
+  onDeleteInputEdge?: (edgeId: string) => void;
   onRemoveGroupMember?: (groupId: string, nodeId: string) => void;
   onRenameGroup?: (groupId: string, name: string) => void;
   onReplaceReferencePackItems: (
@@ -134,6 +135,7 @@ export function PropertyPanel({
   onAddGroupMember,
   onDeleteEdge,
   onDeleteGroup,
+  onDeleteInputEdge,
   onRemoveGroupMember,
   onRenameGroup,
   onReplaceReferencePackItems,
@@ -197,6 +199,7 @@ export function PropertyPanel({
         referencePackItems={referencePackItems}
         onReplaceReferencePackItems={onReplaceReferencePackItems}
         onPromptRefSelect={onPromptRefSelect}
+        onDeleteInputEdge={onDeleteInputEdge ?? onDeleteEdge}
         onRetryJob={onRetryJob}
         onRunNode={onRunNode}
         onSelectVersion={onSelectVersion}
@@ -232,6 +235,16 @@ function GroupPropertyPanel({
   onRemoveGroupMember?: (groupId: string, nodeId: string) => void;
   onRenameGroup?: (groupId: string, name: string) => void;
 }) {
+  const commitGroupRename = useCallback(
+    (input: HTMLInputElement) => {
+      const nextName = input.value.trim();
+      if (nextName && nextName !== group.name) {
+        onRenameGroup?.(group.id, nextName);
+      }
+    },
+    [group.id, group.name, onRenameGroup],
+  );
+
   return (
     <aside className="property-panel">
       <PanelHeader eyebrow="Group" title={group.name} />
@@ -241,10 +254,16 @@ function GroupPropertyPanel({
           <input
             defaultValue={group.name}
             key={group.id}
-            onBlur={(event) => {
-              const nextName = event.currentTarget.value.trim();
-              if (nextName && nextName !== group.name) {
-                onRenameGroup(group.id, nextName);
+            onBlur={(event) => commitGroupRename(event.currentTarget)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.currentTarget.value = group.name;
+                event.currentTarget.blur();
               }
             }}
           />
@@ -496,6 +515,7 @@ function NodePropertyPanel({
   referencePackItems,
   onReplaceReferencePackItems,
   onPromptRefSelect,
+  onDeleteInputEdge,
   onRetryJob,
   onRunNode,
   onSelectVersion,
@@ -524,6 +544,7 @@ function NodePropertyPanel({
     refNode: MediaNode,
     prompt: string,
   ) => void;
+  onDeleteInputEdge?: (edgeId: string) => void;
   onRetryJob: (jobId: string) => void;
   onRunNode: (nodeId: string, patch?: NodePatch) => void;
   onSelectVersion: (nodeId: string, versionId: string) => void;
@@ -557,13 +578,10 @@ function NodePropertyPanel({
     null;
   const retryReason = retryDisabledReason(latestJob);
   const durations = durationOptions(selectedCapability);
-  const [titleValue, setTitleValue] = useState(node.title);
   const [previewVersionId, setPreviewVersionId] = useState<string | null>(null);
-  const [isTitleEditing, setIsTitleEditing] = useState(false);
   const [detailVersionId, setDetailVersionId] = useState<string | null>(null);
-  const titleValueRef = useRef(titleValue);
-  const nodeTitleRef = useRef(node.title);
-  const onUpdateNodeRef = useRef(onUpdateNode);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const previewVersion =
     (previewVersionId
       ? versions.find((version) => version.id === previewVersionId)
@@ -573,17 +591,11 @@ function NodePropertyPanel({
     null;
 
   useEffect(() => {
-    onUpdateNodeRef.current = onUpdateNode;
-  }, [onUpdateNode]);
-
-  useEffect(() => {
-    setTitleValue(node.title);
-    titleValueRef.current = node.title;
-    nodeTitleRef.current = node.title;
     setPreviewVersionId(null);
     setDetailVersionId(null);
-    setIsTitleEditing(false);
-  }, [node.id, node.title]);
+    setIsMoreOpen(false);
+    setIsSettingsOpen(false);
+  }, [node.id]);
 
   useEffect(() => {
     if (
@@ -594,261 +606,255 @@ function NodePropertyPanel({
     }
   }, [previewVersionId, versions]);
 
-  const commitTitle = useCallback(() => {
-    const title = titleValueRef.current.trim();
-    if (title && title !== nodeTitleRef.current) {
-      onUpdateNodeRef.current(node.id, { title });
-      nodeTitleRef.current = title;
-    }
-    setTitleValue(title || nodeTitleRef.current);
-    setIsTitleEditing(false);
-  }, [node.id]);
-
-  const cancelTitleEdit = useCallback(() => {
-    titleValueRef.current = nodeTitleRef.current;
-    setTitleValue(nodeTitleRef.current);
-    setIsTitleEditing(false);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      commitTitle();
-    };
-  }, [commitTitle]);
-
   const detailVersion =
     (detailVersionId
       ? versions.find((version) => version.id === detailVersionId)
       : null) ?? null;
 
-  return (
-    <aside className="property-panel node-production-panel">
-      <div className="property-panel-title-row">
-        <EditablePanelHeader
-          eyebrow={nodeTypeLabel[node.node_type]}
-          isEditing={isTitleEditing}
-          isUpdating={isUpdatingNode}
-          onCancel={cancelTitleEdit}
-          onCommit={commitTitle}
-          onEdit={() => setIsTitleEditing(true)}
-          onTitleChange={(next) => {
-            titleValueRef.current = next;
-            setTitleValue(next);
-          }}
-          title={titleValue}
-        />
-        <span className="property-status-pill" data-status={node.status}>
-          {statusLabel[node.status]}
-        </span>
-      </div>
-      {isReferencePack ? (
-        <>
-          <div className="property-section">
-            <p className="studio-section-label">Reference Pack</p>
-            <p className="property-empty">
-              Reference Pack 管理已有节点的直接成员；成员关系不会改变分组，也不会自动包含成员的上游依赖。
-            </p>
-          </div>
-          <ReferencePackMembersSection
-            candidates={candidateReferencePackMembers(
-              node,
-              nodes,
-              referencePackItems,
-            )}
-            isLoading={isReferencePackItemsLoading}
-            isUpdating={isUpdatingReferencePackItems}
-            members={memberNodesForPack(referencePackItems, nodes)}
-            onToggleMember={(memberNodeId, checked) =>
-              onReplaceReferencePackItems(
-                node.id,
-                memberIdsAfterToggle(
-                  referencePackItems,
-                  memberNodeId,
-                  checked,
-                ),
-              )
-            }
+  if (isReferencePack) {
+    return (
+      <aside className="property-panel node-production-panel">
+        <div className="property-panel-title-row">
+          <PanelHeader
+            eyebrow={nodeTypeLabel[node.node_type]}
+            title={node.title || "未命名参考包"}
           />
-        </>
-      ) : (
-        <>
-          <div className="property-section property-run-section">
-            {disabledReason ? (
-              <p className="property-empty">{disabledReason}</p>
-            ) : null}
-            <button
-              className="studio-secondary-button property-run-button"
-              disabled={
-                Boolean(disabledReason) || isRunningNode || isUpdatingNode
-              }
-              onClick={() =>
-                onRunNode(
-                  node.id,
-                  productionConfigPatchForRun(node, modelCapabilities) ??
-                    undefined,
-                )
-              }
-              type="button"
-            >
-              {isRunningNode ? "运行中" : "运行节点"}
-            </button>
-            {latestJob?.status === "failed" ? (
-              <>
-                {retryReason ? (
-                  <p className="property-empty">{retryReason}</p>
-                ) : null}
-                <button
-                  className="studio-secondary-button"
-                  disabled={isRetryingJob || Boolean(retryReason)}
-                  onClick={() => onRetryJob(latestJob.id)}
-                  type="button"
-                >
-                  {isRetryingJob ? "重试中" : "重试失败任务"}
-                </button>
-              </>
-            ) : null}
-          </div>
-          <PropertyPromptEditor
+          <span className="property-status-pill" data-status={node.status}>
+            {statusLabel[node.status]}
+          </span>
+        </div>
+        <div className="property-section">
+          <p className="studio-section-label">Reference Pack</p>
+          <p className="property-empty">
+            Reference Pack 管理已有节点的直接成员；成员关系不会改变分组，也不会自动包含成员的上游依赖。
+          </p>
+        </div>
+        <ReferencePackMembersSection
+          candidates={candidateReferencePackMembers(
+            node,
+            nodes,
+            referencePackItems,
+          )}
+          isLoading={isReferencePackItemsLoading}
+          isUpdating={isUpdatingReferencePackItems}
+          members={memberNodesForPack(referencePackItems, nodes)}
+          onToggleMember={(memberNodeId, checked) =>
+            onReplaceReferencePackItems(
+              node.id,
+              memberIdsAfterToggle(
+                referencePackItems,
+                memberNodeId,
+                checked,
+              ),
+            )
+          }
+        />
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="property-panel node-production-panel node-composer-panel">
+      <div className="node-composer-inputs">
+          <NodeInputStrip
             edges={edges}
-            isUpdatingNode={isUpdatingNode}
             node={node}
             nodes={nodes}
-            onPromptRefSelect={onPromptRefSelect}
-            onUpdateNode={onUpdateNode}
+            onDeleteInputEdge={onDeleteInputEdge}
           />
-          <label className="property-field">
-            <span>Operation</span>
-            <select
-              disabled={isUpdatingNode}
-              onChange={(event) =>
-                onUpdateNode(
-                  node.id,
-                  productionConfigPatchForOperation(
-                    node,
-                    modelCapabilities,
-                    event.currentTarget.value,
-                  ),
-                )
-              }
-              value={operation}
+      </div>
+      <PropertyPromptEditor
+        className="node-composer-prompt"
+        edges={edges}
+        isUpdatingNode={isUpdatingNode}
+        node={node}
+        nodes={nodes}
+        onPromptRefSelect={onPromptRefSelect}
+        onUpdateNode={onUpdateNode}
+      />
+      <div className="node-composer-toolbar">
+        <div className="node-composer-toolbar-controls">
+          <button
+            className="node-composer-settings-button"
+            onClick={() => {
+              setIsSettingsOpen((open) => !open);
+              setIsMoreOpen(false);
+            }}
+            type="button"
+          >
+            设置
+          </button>
+          <span className="node-composer-active-model">
+            {selectedCapability?.display_name ?? "选择模型"}
+          </span>
+          {isSettingsOpen ? (
+            <div
+              aria-label="节点运行设置"
+              className="node-composer-settings-popover"
+              role="dialog"
             >
-              {operationOptions.map(({ value, label }) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="property-field">
-            <span>Model</span>
-            <select
-              disabled={
-                isModelCapabilitiesLoading ||
-                isUpdatingNode ||
-                compatibleCapabilities.length === 0
-              }
-              onChange={(event) => {
-                onUpdateNode(
-                  node.id,
-                  productionConfigPatchForSelectedModel(
-                    node,
-                    modelCapabilities,
-                    event.currentTarget.value,
-                  ),
-                );
-              }}
-              value={selectedModelKey}
-            >
-              {compatibleCapabilities.length > 0 ? (
-                compatibleCapabilities.map((capability) => (
-                  <option
-                    key={capabilityKey(capability)}
-                    value={capabilityKey(capability)}
-                  >
-                    {capability.display_name}
-                  </option>
-                ))
-              ) : (
-                <option value="">没有兼容模型</option>
-              )}
-            </select>
-          </label>
-          <div className="property-section">
-            <p className="studio-section-label">Params</p>
-            {"temperature" in modelParams ? (
-              <label className="property-field">
-                <span>Temperature</span>
-                <input
-                  defaultValue={String(modelParams.temperature)}
-                  disabled={isUpdatingNode}
-                  max="1"
-                  min="0"
-                  onBlur={(event) =>
-                    onUpdateNode(node.id, {
-                      model_params: {
-                        ...modelParams,
-                        temperature: Number(event.currentTarget.value),
-                      },
-                    })
-                  }
-                  step="0.1"
-                  type="number"
-                />
-              </label>
-            ) : null}
-            {"duration_sec" in modelParams ? (
-              <label className="property-field">
-                <span>Duration</span>
+              <label className="node-composer-select">
+                <span>任务</span>
                 <select
                   disabled={isUpdatingNode}
                   onChange={(event) =>
-                    onUpdateNode(node.id, {
-                      model_params: {
-                        ...modelParams,
-                        duration_sec: Number(event.currentTarget.value),
-                      },
-                    })
+                    onUpdateNode(
+                      node.id,
+                      productionConfigPatchForOperation(
+                        node,
+                        modelCapabilities,
+                        event.currentTarget.value,
+                      ),
+                    )
                   }
-                  value={String(modelParams.duration_sec)}
+                  value={operation}
                 >
-                  {durations.map((duration) => (
-                    <option key={duration} value={duration}>
-                      {duration}s
+                  {operationOptions.map(({ value, label }) => (
+                    <option key={value} value={value}>
+                      {label}
                     </option>
                   ))}
                 </select>
               </label>
-            ) : null}
-            <label className="property-check-row">
-              <input
-                checked={Boolean(modelParams.mock_fail)}
-                disabled={isUpdatingNode}
-                onChange={(event) =>
-                  onUpdateNode(node.id, {
-                    model_params: {
-                      ...modelParams,
-                      mock_fail: event.currentTarget.checked,
-                    },
-                  })
-                }
-                type="checkbox"
-              />
-              <span>Mock failure</span>
-            </label>
-          </div>
-          {node.production_preview?.text ? (
-            <div className="property-section property-output-section">
-              <p className="studio-section-label">Output</p>
-              <MarkdownPreview
-                value={node.production_preview.text}
-                variant="panel"
-              />
+              <label className="node-composer-select node-composer-model-select">
+                <span>模型</span>
+                <select
+                  disabled={
+                    isModelCapabilitiesLoading ||
+                    isUpdatingNode ||
+                    compatibleCapabilities.length === 0
+                  }
+                  onChange={(event) => {
+                    onUpdateNode(
+                      node.id,
+                      productionConfigPatchForSelectedModel(
+                        node,
+                        modelCapabilities,
+                        event.currentTarget.value,
+                      ),
+                    );
+                  }}
+                  value={selectedModelKey}
+                >
+                  {compatibleCapabilities.length > 0 ? (
+                    compatibleCapabilities.map((capability) => (
+                      <option
+                        key={capabilityKey(capability)}
+                        value={capabilityKey(capability)}
+                      >
+                        {capability.display_name}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">没有兼容模型</option>
+                  )}
+                </select>
+              </label>
+              {"duration_sec" in modelParams ? (
+                <label className="node-composer-select node-composer-compact-select">
+                  <span>时长</span>
+                  <select
+                    disabled={isUpdatingNode}
+                    onChange={(event) =>
+                      onUpdateNode(node.id, {
+                        model_params: {
+                          ...modelParams,
+                          duration_sec: Number(event.currentTarget.value),
+                        },
+                      })
+                    }
+                    value={String(modelParams.duration_sec)}
+                  >
+                    {durations.map((duration) => (
+                      <option key={duration} value={duration}>
+                        {duration}s
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {"temperature" in modelParams ? (
+                <label className="node-composer-select node-composer-compact-select">
+                  <span>温度</span>
+                  <input
+                    defaultValue={String(modelParams.temperature)}
+                    disabled={isUpdatingNode}
+                    max="1"
+                    min="0"
+                    onBlur={(event) =>
+                      onUpdateNode(node.id, {
+                        model_params: {
+                          ...modelParams,
+                          temperature: Number(event.currentTarget.value),
+                        },
+                      })
+                    }
+                    step="0.1"
+                    type="number"
+                  />
+                </label>
+              ) : null}
             </div>
           ) : null}
-        </>
-      )}
-      {!isReferencePack ? (
-        <>
+        </div>
+        <div className="node-composer-actions">
+          <button
+            className="node-composer-more-button"
+            onClick={() => {
+              setIsMoreOpen((open) => !open);
+              setIsSettingsOpen(false);
+            }}
+            type="button"
+          >
+            更多
+          </button>
+          {latestJob?.status === "failed" ? (
+            <button
+              className="node-composer-secondary-button"
+              disabled={isRetryingJob || Boolean(retryReason)}
+              onClick={() => onRetryJob(latestJob.id)}
+              type="button"
+            >
+              {isRetryingJob ? "重试中" : "重试"}
+            </button>
+          ) : null}
+          <button
+            className="node-composer-run-button"
+            disabled={Boolean(disabledReason) || isRunningNode || isUpdatingNode}
+            onClick={() =>
+              onRunNode(
+                node.id,
+                productionConfigPatchForRun(node, modelCapabilities) ??
+                  undefined,
+              )
+            }
+            type="button"
+          >
+            {isRunningNode ? "…" : "↑"}
+          </button>
+        </div>
+      </div>
+      {disabledReason || (latestJob?.status === "failed" && retryReason) ? (
+        <p className="node-composer-run-note">
+          {disabledReason || retryReason}
+        </p>
+      ) : null}
+      {isMoreOpen ? (
+        <div
+          aria-label="Versions 与诊断"
+          className="node-composer-details-popover"
+          role="dialog"
+        >
+          <div className="node-composer-details-header">
+            <strong>Versions 与诊断</strong>
+            <button
+              aria-label="关闭 Versions 与诊断"
+              onClick={() => setIsMoreOpen(false)}
+              type="button"
+            >
+              ×
+            </button>
+          </div>
           <div className="property-section property-version-section">
             <div className="property-section-heading">
               <span>Versions</span>
@@ -913,20 +919,29 @@ function NodePropertyPanel({
               <p className="property-empty">尚无 artifact version。</p>
             )}
           </div>
-        </>
+          {node.production_preview?.text ? (
+            <div className="property-section property-output-section">
+              <p className="studio-section-label">Output</p>
+              <MarkdownPreview
+                value={node.production_preview.text}
+                variant="panel"
+              />
+            </div>
+          ) : null}
+          <div className="property-section property-details">
+            <p className="studio-section-label">Stale Reasons</p>
+            {nodeProductionState?.active_stale_reasons.length ? (
+              <ul className="property-stale-list">
+                {nodeProductionState.active_stale_reasons.map((reason) => (
+                  <li key={reason.id}>{staleReasonText(reason)}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="property-empty">当前节点没有 active stale reason。</p>
+            )}
+          </div>
+        </div>
       ) : null}
-      <details className="property-section property-details">
-        <summary>Stale Reasons</summary>
-        {nodeProductionState?.active_stale_reasons.length ? (
-          <ul className="property-stale-list">
-            {nodeProductionState.active_stale_reasons.map((reason) => (
-              <li key={reason.id}>{staleReasonText(reason)}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="property-empty">当前节点没有 active stale reason。</p>
-        )}
-      </details>
     </aside>
   );
 }
@@ -1067,7 +1082,122 @@ function VersionPreviewBody({ version }: { version: ArtifactVersion }) {
   return <p className="property-empty">{version.asset.mime || "素材已生成"}</p>;
 }
 
+function NodeInputStrip({
+  edges,
+  node,
+  nodes,
+  onDeleteInputEdge,
+}: {
+  edges: MediaEdge[];
+  node: MediaNode;
+  nodes: MediaNode[];
+  onDeleteInputEdge?: (edgeId: string) => void;
+}) {
+  const upstreamInputs = edges
+    .filter((edge) => edge.edge_type === "dependency" && edge.to_node_id === node.id)
+    .flatMap((edge) => {
+      const inputNode = nodes.find((item) => item.id === edge.from_node_id);
+      return inputNode ? [{ edge, node: inputNode }] : [];
+    });
+
+  return (
+    <div className="property-section property-input-strip">
+      <div className="property-section-heading">
+        <span>输入</span>
+        <small>{upstreamInputs.length} 个依赖</small>
+      </div>
+      {upstreamInputs.length ? (
+        <div className="property-input-chip-list">
+          {upstreamInputs.map((input) => (
+            <div
+              className="property-input-chip"
+              data-has-preview={hasInputVisualPreview(input.node)}
+              data-type={input.node.node_type}
+              key={input.edge.id}
+            >
+              <InputNodePreview node={input.node} />
+              <div>
+                <strong>{input.node.title || nodeTypeLabel[input.node.node_type]}</strong>
+                <span>{inputSummary(input.node)}</span>
+              </div>
+              {onDeleteInputEdge ? (
+                <button
+                  aria-label={`删除 ${input.node.title || "输入"} 依赖`}
+                  onClick={() => onDeleteInputEdge(input.edge.id)}
+                  type="button"
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="property-input-empty">
+          拖入依赖连线，或在 Prompt 中输入 @ 引用节点。
+        </p>
+      )}
+    </div>
+  );
+}
+
+function hasInputVisualPreview(node: MediaNode) {
+  return Boolean(
+    (node.node_type === "image" || node.node_type === "video") &&
+      (node.production_preview?.thumbnail_url ??
+        node.thumbnail_url ??
+        node.production_preview?.access_url ??
+        node.asset_url),
+  );
+}
+
+function InputNodePreview({ node }: { node: MediaNode }) {
+  const previewUrl =
+    node.production_preview?.thumbnail_url ??
+    node.thumbnail_url ??
+    node.production_preview?.access_url ??
+    node.asset_url;
+  if (
+    (node.node_type === "image" || node.node_type === "video") &&
+    previewUrl
+  ) {
+    return (
+      <img
+        alt={node.title || nodeTypeLabel[node.node_type]}
+        className="property-input-thumb"
+        src={previewUrl}
+      />
+    );
+  }
+  return (
+    <span className="property-input-icon" data-type={node.node_type}>
+      {nodeTypeLabel[node.node_type].slice(0, 1)}
+    </span>
+  );
+}
+
+function inputSummary(node: MediaNode) {
+  if (node.production_preview?.text) {
+    return truncateInline(node.production_preview.text, 34);
+  }
+  if (node.prompt) {
+    return truncateInline(node.prompt, 34);
+  }
+  if (node.reference_pack_preview) {
+    return `${node.reference_pack_preview.member_count} 个成员`;
+  }
+  return nodeTypeLabel[node.node_type];
+}
+
+function truncateInline(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength - 1)}…`
+    : normalized;
+}
+
 function PropertyPromptEditor({
+  className,
   edges,
   isUpdatingNode,
   node,
@@ -1075,6 +1205,7 @@ function PropertyPromptEditor({
   onPromptRefSelect,
   onUpdateNode,
 }: {
+  className?: string;
   edges: MediaEdge[];
   isUpdatingNode: boolean;
   node: MediaNode;
@@ -1142,7 +1273,11 @@ function PropertyPromptEditor({
   }, [commitPrompt]);
 
   return (
-    <label className="property-field property-prompt-editor">
+    <label
+      className={`property-field property-prompt-editor${
+        className ? ` ${className}` : ""
+      }`}
+    >
       <span>Prompt</span>
       <textarea
         disabled={isUpdatingNode}

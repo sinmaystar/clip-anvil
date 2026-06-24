@@ -34,6 +34,7 @@ import {
   updateMediaNode,
   type CanvasPayload,
   type CreateMediaNodeRequest,
+  type EdgeMetadata,
   type MediaEdge,
   type MediaGroup,
   type MediaNode,
@@ -70,8 +71,12 @@ import {
   promptRefRenamePatch,
   promptRefsAfterSelect,
 } from "../lib/promptRefs";
-import { mergeNodeUpdateResponse } from "../lib/productionPanel";
+import {
+  defaultOperationForNode,
+  mergeNodeUpdateResponse,
+} from "../lib/productionPanel";
 import { isReferencePackMemberDependency } from "../lib/referencePack";
+import { isSourceMaterialNode } from "../lib/sourceMaterial";
 import {
   openArtifactViewInNewTab,
   type ArtifactViewSource,
@@ -381,13 +386,16 @@ export function WorkspaceDetailPage() {
         nodeCreateOptions.find((item) => item.type === nodeType) ??
         nodeCreateOptions[0];
       const position = input?.point ?? { x: 120, y: 120 };
+      const operationType =
+        input?.patch?.operation_type ??
+        defaultOperationForNode({ node_type: nodeType, operation_type: "" });
       return createMediaNode({
         workspace_id: id,
         node_type: nodeType,
         title: input?.patch?.title ?? option.defaultTitle,
         prompt: input?.patch?.prompt,
         status: input?.patch?.status,
-        operation_type: input?.patch?.operation_type,
+        operation_type: operationType,
         model_provider: input?.patch?.model_provider,
         model_id: input?.patch?.model_id,
         model_params: input?.patch?.model_params,
@@ -603,7 +611,12 @@ export function WorkspaceDetailPage() {
   });
 
   const createDependencyEdge = useCallback(
-    (fromNodeId: string, toNodeId: string) => {
+    (input: {
+      fromNodeId: string;
+      toNodeId: string;
+      metadata?: EdgeMetadata;
+    }) => {
+      const { fromNodeId, toNodeId } = input;
       if (!id || fromNodeId === toNodeId) {
         return;
       }
@@ -633,6 +646,7 @@ export function WorkspaceDetailPage() {
         workspace_id: id,
         from_node_id: fromNodeId,
         to_node_id: toNodeId,
+        metadata: input.metadata,
       })
         .then((edge) => {
           queryClient.setQueryData<CanvasPayload>(
@@ -814,8 +828,34 @@ export function WorkspaceDetailPage() {
           break;
         }
         case "NodeDeleted":
-        case "EdgeCreated":
-        case "EdgeDeleted":
+          void queryClient.invalidateQueries({
+            queryKey: ["workspace", id, "canvas"],
+          });
+          break;
+        case "EdgeCreated": {
+          const edge = canvasEdgeFromEventPayload(event.payload.edge);
+          if (edge) {
+            queryClient.setQueryData<CanvasPayload>(
+              ["workspace", id, "canvas"],
+              (current) => appendCanvasEdge(current, edge),
+            );
+          }
+          void queryClient.invalidateQueries({
+            queryKey: ["workspace", id, "canvas"],
+          });
+          break;
+        }
+        case "EdgeDeleted": {
+          const edgeId = event.payload.edge_id;
+          queryClient.setQueryData<CanvasPayload>(
+            ["workspace", id, "canvas"],
+            (current) => removeCanvasEdge(current, edgeId),
+          );
+          void queryClient.invalidateQueries({
+            queryKey: ["workspace", id, "canvas"],
+          });
+          break;
+        }
         case "GroupCreated":
         case "GroupUpdated":
         case "GroupDeleted":
@@ -939,7 +979,16 @@ export function WorkspaceDetailPage() {
     const safeLeft = isSidebarCollapsed
       ? nodeEditorSafeLeft.collapsed
       : nodeEditorSafeLeft.expanded;
-    const width = Math.min(720, Math.max(520, frameRect.width - safeLeft - 24));
+    const isComposerPopover =
+      selectedNode &&
+      selectedNode.node_type !== "reference_pack" &&
+      !isSourceMaterialNode(selectedNode);
+    const minWidth = isComposerPopover ? 460 : 420;
+    const maxWidth = isComposerPopover ? 680 : 560;
+    const width = Math.min(
+      maxWidth,
+      Math.max(minWidth, frameRect.width - safeLeft - 24),
+    );
     const maxHeight = Math.round(
       Math.min(720, Math.max(320, frameRect.height - 32)),
     );
@@ -953,18 +1002,29 @@ export function WorkspaceDetailPage() {
       });
       return;
     }
-    const bottomLeft = {
+    const renderedNodeRect = canvasFrameRef.current
+      ?.querySelector(
+        `.react-flow__node[data-id="${cssSelectorValue(selectedNode.id)}"]`,
+      )
+      ?.getBoundingClientRect();
+    const fallbackBottomLeft = {
       x: selectedNode.canvas_x * effectiveCanvas.camera.zoom + effectiveCanvas.camera.x,
       y:
         (selectedNode.canvas_y + selectedNode.canvas_h) *
           effectiveCanvas.camera.zoom +
         effectiveCanvas.camera.y,
     };
+    const nodeLeftX = renderedNodeRect
+      ? renderedNodeRect.left - frameRect.left
+      : fallbackBottomLeft.x;
+    const nodeBottomY = renderedNodeRect
+      ? renderedNodeRect.bottom - frameRect.top
+      : fallbackBottomLeft.y;
     setNodeEditorPosition({
       left: Math.round(
-        clamp(bottomLeft.x, safeLeft, Math.max(12, frameRect.width - width - 12)),
+        clamp(nodeLeftX, safeLeft, Math.max(12, frameRect.width - width - 12)),
       ),
-      top: Math.round(clamp(bottomLeft.y + 12, 16, maxTop)),
+      top: Math.round(nodeBottomY + 28),
       width: Math.round(width),
       maxHeight,
     });
@@ -1047,7 +1107,7 @@ export function WorkspaceDetailPage() {
           edge.from_node_id === refNode.id && edge.to_node_id === targetNode.id,
       );
       if (!hasEdge && id) {
-        createDependencyEdge(refNode.id, targetNode.id);
+        createDependencyEdge({ fromNodeId: refNode.id, toNodeId: targetNode.id });
       }
       commitNodePatch(targetNode.id, {
         prompt,
@@ -1163,6 +1223,7 @@ export function WorkspaceDetailPage() {
       ) {
         return;
       }
+      blurEditableTargetBeforeHide();
       hideActiveNodeEditor();
     };
 
@@ -1437,8 +1498,8 @@ export function WorkspaceDetailPage() {
           <div className="studio-canvas-host">
             <StudioFlowCanvas
               canvas={effectiveCanvas ?? canvasQuery.data}
-              onConnectNodes={({ fromNodeId, toNodeId }) => {
-                createDependencyEdge(fromNodeId, toNodeId);
+              onConnectNodes={({ fromNodeId, toNodeId, metadata }) => {
+                createDependencyEdge({ fromNodeId, toNodeId, metadata });
               }}
               onCreateNodeAtPoint={({ flowPoint, screenX, screenY }) => {
                 setContextMenu({
@@ -1448,6 +1509,9 @@ export function WorkspaceDetailPage() {
                 });
               }}
               onGroupMove={moveGroupMembers}
+              onRenameNode={(nodeId, title) =>
+                updateNodeMutation.mutate({ nodeId, patch: { title } })
+              }
               onSelectEdge={(edgeId) => {
                 if (edgeId) {
                   selectEdge(edgeId);
@@ -1524,6 +1588,7 @@ export function WorkspaceDetailPage() {
               selectedNodeId={selectedNodeId}
               onAddGroupMember={addGroupMember}
               onDeleteEdge={deleteEdgeById}
+              onDeleteInputEdge={deleteEdgeById}
               onDeleteGroup={(groupId) => deleteGroupMutation.mutate(groupId)}
               onRemoveGroupMember={removeGroupMember}
               onRenameGroup={(groupId, name) =>
@@ -1643,6 +1708,18 @@ function canvasNodeFromEventPayload(node: unknown): MediaNode | null {
     typeof (node as { id?: unknown }).id === "string"
   ) {
     return node as MediaNode;
+  }
+  return null;
+}
+
+function canvasEdgeFromEventPayload(edge: unknown): MediaEdge | null {
+  if (
+    typeof edge === "object" &&
+    edge !== null &&
+    "id" in edge &&
+    typeof (edge as { id?: unknown }).id === "string"
+  ) {
+    return edge as MediaEdge;
   }
   return null;
 }
@@ -1807,6 +1884,20 @@ function isEditableTarget(target: EventTarget | null) {
   );
 }
 
+function blurEditableTargetBeforeHide() {
+  const activeElement = document.activeElement;
+  if (isEditableTarget(activeElement) && activeElement instanceof HTMLElement) {
+    activeElement.blur();
+  }
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function cssSelectorValue(value: string) {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }

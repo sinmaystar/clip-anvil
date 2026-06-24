@@ -2,11 +2,13 @@
 INSERT INTO media_edge (
     workspace_id,
     from_node_id,
-    to_node_id
+    to_node_id,
+    metadata
 ) VALUES (
     $1,
     $2,
-    $3
+    $3,
+    $4
 ) RETURNING *;
 
 -- name: ListMediaEdgesByWorkspace :many

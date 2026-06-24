@@ -1,5 +1,6 @@
 import {
   getBezierPath,
+  useStore,
   type ConnectionLineComponentProps,
 } from "@xyflow/react";
 
@@ -7,16 +8,17 @@ export function ConnectionLinePreview({
   fromX,
   fromY,
   fromPosition,
-  toX,
-  toY,
+  pointer,
   toPosition,
 }: ConnectionLineComponentProps) {
+  const transform = useStore((state) => state.transform);
+  const targetPoint = pointerToFlowPoint(pointer, transform);
   const [edgePath] = getBezierPath({
     sourceX: fromX,
     sourceY: fromY,
     sourcePosition: fromPosition,
-    targetX: toX,
-    targetY: toY,
+    targetX: targetPoint.x,
+    targetY: targetPoint.y,
     targetPosition: toPosition,
   });
 
@@ -27,4 +29,15 @@ export function ConnectionLinePreview({
       <path className="connection-overlay-preview-flow" d={edgePath} />
     </g>
   );
+}
+
+function pointerToFlowPoint(
+  pointer: { x: number; y: number },
+  transform: [number, number, number],
+) {
+  const [translateX, translateY, zoom] = transform;
+  return {
+    x: (pointer.x - translateX) / zoom,
+    y: (pointer.y - translateY) / zoom,
+  };
 }

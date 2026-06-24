@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -29,9 +30,10 @@ func NewEdgeHandler(pool *pgxpool.Pool, queries *db.Queries, hub ...*CanvasHub) 
 }
 
 type createEdgeRequest struct {
-	WorkspaceID string `json:"workspace_id"`
-	FromNodeID  string `json:"from_node_id"`
-	ToNodeID    string `json:"to_node_id"`
+	WorkspaceID string          `json:"workspace_id"`
+	FromNodeID  string          `json:"from_node_id"`
+	ToNodeID    string          `json:"to_node_id"`
+	Metadata    json.RawMessage `json:"metadata,omitempty"`
 }
 
 type edgeCreationResult struct {
@@ -81,8 +83,13 @@ func (h *EdgeHandler) Create(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusBadRequest, "invalid request")
 		return
 	}
+	metadata, ok := normalizedEdgeMetadata(req.Metadata)
+	if !ok {
+		writeError(c, consts.StatusBadRequest, "invalid request")
+		return
+	}
 
-	result := h.createDependencyEdge(ctx, accountID, workspaceID, fromNodeID, toNodeID)
+	result := h.createDependencyEdge(ctx, accountID, workspaceID, fromNodeID, toNodeID, metadata)
 	if result.status != consts.StatusOK {
 		writeError(c, result.status, result.message)
 		return
@@ -139,6 +146,7 @@ func (h *EdgeHandler) createDependencyEdge(
 	workspaceID pgtype.UUID,
 	fromNodeID pgtype.UUID,
 	toNodeID pgtype.UUID,
+	metadata []byte,
 ) edgeCreationResult {
 	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
@@ -180,6 +188,7 @@ func (h *EdgeHandler) createDependencyEdge(
 		WorkspaceID: workspaceID,
 		FromNodeID:  fromNodeID,
 		ToNodeID:    toNodeID,
+		Metadata:    metadata,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -193,6 +202,21 @@ func (h *EdgeHandler) createDependencyEdge(
 	}
 
 	return edgeCreationResult{edge: edge, status: consts.StatusOK}
+}
+
+func normalizedEdgeMetadata(raw json.RawMessage) ([]byte, bool) {
+	if len(raw) == 0 {
+		return []byte(`{}`), true
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil || payload == nil {
+		return nil, false
+	}
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false
+	}
+	return normalized, true
 }
 
 func (h *EdgeHandler) validateEdgeEndpoints(

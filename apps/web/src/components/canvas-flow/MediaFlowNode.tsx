@@ -1,8 +1,15 @@
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import { MarkdownPreview } from "../MarkdownPreview";
 import { mediaNodeDisplaySize } from "../../lib/canvas";
 import { winnerPreviewText } from "../../lib/productionPreview";
-import { materialKindLabel, materialStatusLabel } from "../../lib/sourceMaterial";
+import { materialKindLabel } from "../../lib/sourceMaterial";
 import type { CanvasFlowNodeData } from "./flowTypes";
 import {
   useCanvasFlowPolicy,
@@ -11,15 +18,20 @@ import {
 
 type MediaFlowNodeModel = Node<CanvasFlowNodeData, "media">;
 
-const statusText: Record<CanvasFlowNodeData["node"]["status"], string> = {
-  draft: "草稿",
-  ready: "就绪",
-  queued: "排队",
-  running: "运行中",
-  succeeded: "完成",
-  failed: "失败",
-  stale: "需更新",
-  user_editing: "编辑中",
+const nodeTypeLabel: Record<CanvasFlowNodeData["node"]["node_type"], string> = {
+  text: "文本",
+  image: "图片",
+  video: "视频",
+  audio: "音频",
+  reference_pack: "参考素材",
+};
+
+const nodeTypeIcon: Record<CanvasFlowNodeData["node"]["node_type"], string> = {
+  text: "T",
+  image: "▧",
+  video: "▶",
+  audio: "≋",
+  reference_pack: "⌘",
 };
 
 export function MediaFlowNode({
@@ -33,9 +45,56 @@ export function MediaFlowNode({
   const previewAssetUrl = node.production_preview?.access_url ?? node.asset_url;
   const previewThumbnailUrl =
     node.production_preview?.thumbnail_url ?? node.thumbnail_url;
-  const statusLabel = materialStatusLabel(node) || statusText[node.status];
   const hasPreviewContent =
     Boolean(previewText) || Boolean(previewAssetUrl) || Boolean(previewThumbnailUrl);
+  const title = node.title || `未命名${materialKindLabel(node)}`;
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(title);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const canRenameTitle = policy.canEditNodeContent && Boolean(data.onRenameNode);
+
+  useEffect(() => {
+    setTitleDraft(title);
+  }, [node.id, title]);
+
+  useEffect(() => {
+    if (isEditingTitle) {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    }
+  }, [isEditingTitle]);
+
+  const stopTitlePointer = (event: PointerEvent<HTMLElement>) => {
+    event.stopPropagation();
+  };
+
+  const commitTitleEdit = () => {
+    const nextTitle = titleDraft.trim();
+    setIsEditingTitle(false);
+    if (!nextTitle) {
+      setTitleDraft(title);
+      return;
+    }
+    if (nextTitle !== node.title) {
+      data.onRenameNode?.(node.id, nextTitle);
+    }
+  };
+
+  const cancelTitleEdit = () => {
+    setTitleDraft(title);
+    setIsEditingTitle(false);
+  };
+
+  const handleTitleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitTitleEdit();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelTitleEdit();
+    }
+  };
 
   return (
     <div
@@ -63,7 +122,7 @@ export function MediaFlowNode({
       ) : null}
       {hasPreviewContent ? (
         <button
-          aria-label={`查看 ${node.title || materialKindLabel(node)}`}
+          aria-label={`查看 ${title}`}
           className="media-node-expand-button nodrag"
           disabled={!policy.canSelect}
           type="button"
@@ -71,27 +130,57 @@ export function MediaFlowNode({
           ↗
         </button>
       ) : null}
+      <div className="media-node-floating-title nodrag nopan">
+        <span
+          aria-label={nodeTypeLabel[node.node_type]}
+          className="media-node-kind-icon"
+        >
+          {nodeTypeIcon[node.node_type]}
+        </span>
+        {isEditingTitle ? (
+          <input
+            aria-label="编辑节点名称"
+            className="media-node-title media-node-title-input nodrag nopan"
+            onBlur={commitTitleEdit}
+            onChange={(event) => setTitleDraft(event.currentTarget.value)}
+            onKeyDown={handleTitleKeyDown}
+            onPointerDown={stopTitlePointer}
+            ref={titleInputRef}
+            value={titleDraft}
+          />
+        ) : (
+          <button
+            aria-label={`重命名 ${title}`}
+            className="media-node-title media-node-title-button nodrag nopan"
+            disabled={!canRenameTitle}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              if (canRenameTitle) {
+                setIsEditingTitle(true);
+              }
+            }}
+            onPointerDown={stopTitlePointer}
+            title={title}
+            type="button"
+          >
+            {title}
+          </button>
+        )}
+        {node.status === "stale" || Number(node.active_stale_reason_count) > 0 ? (
+          <span className="media-node-stale-badge">
+            stale
+            {node.active_stale_reason_count
+              ? ` · ${node.active_stale_reason_count}`
+              : ""}
+          </span>
+        ) : null}
+      </div>
       <article
         className="media-node"
         data-status={node.status}
         data-type={node.node_type}
         style={{ width: size.w, height: size.h }}
       >
-        <div className="media-node-header">
-          <span className="media-node-icon">{materialKindLabel(node)}</span>
-          <p className="media-node-title">
-            {node.title || `未命名${materialKindLabel(node)}`}
-          </p>
-          <span className="media-node-status">{statusLabel}</span>
-          {node.status === "stale" || Number(node.active_stale_reason_count) > 0 ? (
-            <span className="media-node-stale-badge">
-              stale
-              {node.active_stale_reason_count
-                ? ` · ${node.active_stale_reason_count}`
-                : ""}
-            </span>
-          ) : null}
-        </div>
         <div className="media-node-content" data-type={node.node_type}>
           {node.node_type === "text" ? (
             <MarkdownPreview

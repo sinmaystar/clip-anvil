@@ -5,20 +5,28 @@ import {
   Controls,
   ReactFlow,
   ReactFlowProvider,
-  applyEdgeChanges,
   applyNodeChanges,
   useReactFlow,
   type Connection,
-  type EdgeChange,
   type EdgeTypes,
   type NodeChange,
   type NodeTypes,
   type OnConnectEnd,
   type OnConnectStart,
 } from "@xyflow/react";
-import type { CanvasCamera, CanvasPayload } from "../../lib/api";
+import type {
+  CanvasCamera,
+  CanvasPayload,
+  EdgeMetadata,
+  MediaGroup,
+  MediaNode,
+} from "../../lib/api";
 import { isValidConnectionTarget } from "../../lib/connectionGeometry";
-import { canvasToFlowEdges, canvasToFlowNodes } from "./canvasViewModel";
+import {
+  canvasToFlowEdges,
+  canvasToFlowNodes,
+  groupToFlowNode,
+} from "./canvasViewModel";
 import { cameraToViewport, viewportToCamera } from "./canvasViewport";
 import { ConnectionLinePreview } from "./ConnectionLinePreview";
 import { DependencyFlowEdge } from "./DependencyFlowEdge";
@@ -30,6 +38,9 @@ import {
   CanvasFlowPolicyProvider,
   policyForCanvasMode,
 } from "./flowModePolicy";
+
+type CanvasMediaFlowNode = Extract<CanvasFlowNode, { type: "media" }>;
+type CanvasGroupFlowNode = Extract<CanvasFlowNode, { type: "group" }>;
 
 const nodeTypes: NodeTypes = {
   media: MediaFlowNode,
@@ -63,7 +74,12 @@ export interface CanvasFlowSurfaceProps {
     screenX: number;
     screenY: number;
   }) => void;
-  onConnectNodes?: (input: { fromNodeId: string; toNodeId: string }) => void;
+  onConnectNodes?: (input: {
+    fromNodeId: string;
+    toNodeId: string;
+    metadata?: EdgeMetadata;
+  }) => void;
+  onRenameNode?: (nodeId: string, title: string) => void;
   renderInspector?: boolean;
 }
 
@@ -89,23 +105,28 @@ function CanvasFlowSurfaceContent({
   onViewportChange,
   onCreateNodeAtPoint,
   onConnectNodes,
+  onRenameNode,
   renderInspector = true,
 }: CanvasFlowSurfaceProps) {
   const policy = policyForCanvasMode(mode);
   const { screenToFlowPosition } = useReactFlow<CanvasFlowNode, CanvasFlowEdge>();
   const dragStartPositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const connectionSourceRef = useRef<string | null>(null);
-  const connectedOnHandleRef = useRef(false);
+  const connectedTargetRef = useRef<string | null>(null);
   const derivedNodes = useMemo(
     () =>
       canvasToFlowNodes(canvas).map((node) => ({
         ...node,
+        data:
+          node.type === "media"
+            ? { ...node.data, onRenameNode }
+            : node.data,
         selected:
           node.type === "group"
             ? node.id === selectedGroupId
             : node.id === selectedNodeId,
       })),
-    [canvas, selectedGroupId, selectedNodeId],
+    [canvas, onRenameNode, selectedGroupId, selectedNodeId],
   );
   const derivedEdges = useMemo(
     () =>
@@ -116,20 +137,22 @@ function CanvasFlowSurfaceContent({
     [canvas, selectedEdgeId],
   );
   const [nodes, setNodes] = useState<CanvasFlowNode[]>(derivedNodes);
-  const [edges, setEdges] = useState<CanvasFlowEdge[]>(derivedEdges);
   const selectedNode = canvas.nodes.find((node) => node.id === selectedNodeId);
 
   useEffect(() => {
     setNodes(derivedNodes);
   }, [derivedNodes]);
 
-  useEffect(() => {
-    setEdges(derivedEdges);
-  }, [derivedEdges]);
-
   const handleNodesChange = useCallback(
     (changes: NodeChange<CanvasFlowNode>[]) => {
-      setNodes((current) => applyNodeChanges(changes, current));
+      setNodes((current) => {
+        const isDraggingGroup = hasDraggingGroup(current, changes);
+        const groupDraggedNodes = applyGroupDragDelta(current, changes);
+        const nextNodes = applyNodeChanges(changes, groupDraggedNodes);
+        return isDraggingGroup
+          ? nextNodes
+          : syncGroupNodeLayout(nextNodes, canvas.groups);
+      });
       const settledPositions = changes.flatMap((change) => {
         if (
           change.type !== "position" ||
@@ -154,24 +177,15 @@ function CanvasFlowSurfaceContent({
         onNodePositionsChange?.(settledPositions);
       }
     },
-    [nodes, onNodePositionsChange],
+    [canvas.groups, nodes, onNodePositionsChange],
   );
-
-  const handleEdgesChange = useCallback((changes: EdgeChange<CanvasFlowEdge>[]) => {
-    setEdges((current) => applyEdgeChanges(changes, current));
-  }, []);
 
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!policy.canCreateEdges || !connection.source || !connection.target) {
         return;
       }
-      connectedOnHandleRef.current = true;
-      connectionSourceRef.current = null;
-      onConnectNodes?.({
-        fromNodeId: connection.source,
-        toNodeId: connection.target,
-      });
+      connectedTargetRef.current = connection.target;
     },
     [onConnectNodes, policy.canCreateEdges],
   );
@@ -183,7 +197,7 @@ function CanvasFlowSurfaceContent({
         return;
       }
       connectionSourceRef.current = params.nodeId ?? null;
-      connectedOnHandleRef.current = false;
+      connectedTargetRef.current = null;
     },
     [policy.canCreateEdges],
   );
@@ -196,25 +210,31 @@ function CanvasFlowSurfaceContent({
       if (!policy.canCreateEdges || !fromNodeId) {
         return;
       }
-      if (connectedOnHandleRef.current) {
-        connectedOnHandleRef.current = false;
-        return;
-      }
       const point = clientPointFromConnectionEvent(event);
       if (!point) {
         return;
       }
       const target = mediaNodeShellFromConnectionPoint(point);
-      if (!target) {
+      const toNodeId = connectedTargetRef.current ?? target?.dataset.nodeId;
+      connectedTargetRef.current = null;
+      if (!toNodeId) {
         return;
       }
-      const toNodeId = target.dataset.nodeId;
       if (!isValidConnectionTarget(fromNodeId, toNodeId)) {
         return;
       }
-      onConnectNodes?.({ fromNodeId, toNodeId });
+      const targetNode = nodes.find(
+        (node): node is CanvasMediaFlowNode =>
+          node.id === toNodeId && node.type === "media",
+      );
+      const targetAnchor = targetNode ? boundaryAnchorFromFlowPoint() : null;
+      onConnectNodes?.({
+        fromNodeId,
+        toNodeId,
+        metadata: targetAnchor ? { anchors: { target: targetAnchor } } : undefined,
+      });
     },
-    [onConnectNodes, policy.canCreateEdges],
+    [nodes, onConnectNodes, policy.canCreateEdges],
   );
 
   return (
@@ -229,7 +249,7 @@ function CanvasFlowSurfaceContent({
           defaultViewport={cameraToViewport(canvas.camera)}
           deleteKeyCode={null}
           edgeTypes={edgeTypes}
-          edges={edges}
+          edges={derivedEdges}
           edgesFocusable={policy.canSelect}
           edgesReconnectable={policy.canCreateEdges}
           elementsSelectable={policy.canSelect}
@@ -241,8 +261,9 @@ function CanvasFlowSurfaceContent({
           onConnect={handleConnect}
           onConnectEnd={handleConnectEnd}
           onConnectStart={handleConnectStart}
-          onEdgesChange={handleEdgesChange}
           onEdgeClick={(_, edge) => {
+            onSelectNode(null);
+            onSelectGroup?.(null);
             onSelectEdge(edge.id);
           }}
           onMoveEnd={(_, viewport) => {
@@ -344,6 +365,18 @@ function clientPointFromConnectionEvent(event: MouseEvent | TouchEvent) {
   return { x: event.clientX, y: event.clientY };
 }
 
+function hasDraggingGroup(
+  nodes: CanvasFlowNode[],
+  changes: NodeChange<CanvasFlowNode>[],
+) {
+  return changes.some((change) => {
+    if (change.type !== "position" || !change.dragging) {
+      return false;
+    }
+    return nodes.some((node) => node.id === change.id && node.type === "group");
+  });
+}
+
 function mediaNodeShellFromConnectionPoint(point: { x: number; y: number }) {
   const shell = document
     .elementsFromPoint(point.x, point.y)
@@ -354,4 +387,73 @@ function mediaNodeShellFromConnectionPoint(point: { x: number; y: number }) {
     )
     ?.closest(".media-node-shell");
   return shell instanceof HTMLElement ? shell : null;
+}
+
+function applyGroupDragDelta(
+  nodes: CanvasFlowNode[],
+  changes: NodeChange<CanvasFlowNode>[],
+) {
+  return changes.reduce((nextNodes, change) => {
+    if (change.type !== "position" || !change.position || !change.dragging) {
+      return nextNodes;
+    }
+    const groupNode = nextNodes.find(
+      (node): node is CanvasGroupFlowNode =>
+        node.id === change.id && node.type === "group",
+    );
+    if (!groupNode) {
+      return nextNodes;
+    }
+    const deltaX = change.position.x - groupNode.position.x;
+    const deltaY = change.position.y - groupNode.position.y;
+    if (deltaX === 0 && deltaY === 0) {
+      return nextNodes;
+    }
+    const memberIds = new Set(groupNode.data.nodeIds);
+    return nextNodes.map((node) =>
+      node.type === "media" && memberIds.has(node.id)
+        ? {
+            ...node,
+            position: {
+              x: node.position.x + deltaX,
+              y: node.position.y + deltaY,
+            },
+          }
+        : node,
+    );
+  }, nodes);
+}
+
+function syncGroupNodeLayout(nodes: CanvasFlowNode[], groups: MediaGroup[]) {
+  const mediaNodes = mediaNodesFromFlowNodes(nodes);
+  const groupNodesById = new Map(
+    groups.map((group) => [group.id, groupToFlowNode(group, mediaNodes)]),
+  );
+  return nodes.map((node) => {
+    if (node.type !== "group") {
+      return node;
+    }
+    const nextNode = groupNodesById.get(node.id);
+    return nextNode ? { ...nextNode, selected: node.selected } : node;
+  });
+}
+
+function mediaNodesFromFlowNodes(nodes: CanvasFlowNode[]): MediaNode[] {
+  return nodes.flatMap((node) =>
+    node.type === "media"
+      ? [
+          {
+            ...node.data.node,
+            canvas_x: node.position.x,
+            canvas_y: node.position.y,
+            canvas_w: node.width ?? node.data.node.canvas_w,
+            canvas_h: node.height ?? node.data.node.canvas_h,
+          },
+        ]
+      : [],
+  );
+}
+
+function boundaryAnchorFromFlowPoint() {
+  return { x: 0, y: 0.5 };
 }

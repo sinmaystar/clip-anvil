@@ -44,7 +44,7 @@ describe("adaptive media node layout", () => {
 
     assert.ok(size.w <= mediaNodePreviewLimits.image.maxW);
     assert.ok(size.h <= mediaNodePreviewLimits.image.maxH);
-    assert.ok(size.w <= 380, `width ${size.w} should stay compact`);
+    assert.ok(size.w <= 440, `width ${size.w} should stay inspectable`);
     assert.ok(Math.abs(size.w / mediaContentHeight(size.h) - 16 / 9) < 0.05);
   });
 
@@ -60,7 +60,7 @@ describe("adaptive media node layout", () => {
     });
 
     assert.ok(size.h <= mediaNodePreviewLimits.image.maxH);
-    assert.ok(size.h <= 420, `height ${size.h} should stay compact`);
+    assert.ok(size.h <= 380, `height ${size.h} should stay inspectable`);
     assert.ok(Math.abs(size.w / mediaContentHeight(size.h) - 9 / 16) < 0.05);
   });
 
@@ -87,7 +87,7 @@ describe("adaptive media node layout", () => {
       },
     });
 
-    assert.ok(size.w <= 420, `width ${size.w} should stay compact`);
+    assert.ok(size.w <= 480, `width ${size.w} should stay inspectable`);
     assert.ok(Math.abs(size.w / mediaContentHeight(size.h) - 16 / 9) < 0.05);
   });
 });

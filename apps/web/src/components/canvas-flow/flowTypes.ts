@@ -6,6 +6,7 @@ export type CanvasFlowMode = "studio" | "agent";
 export interface CanvasFlowNodeData extends Record<string, unknown> {
   kind: "media";
   node: MediaNode;
+  onRenameNode?: (nodeId: string, title: string) => void;
 }
 
 export interface CanvasFlowGroupData extends Record<string, unknown> {

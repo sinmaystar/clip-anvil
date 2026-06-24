@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -68,6 +69,35 @@ func TestReferencePackContainsMemberDetectsDirectMember(t *testing.T) {
 	}
 	if referencePackContainsMember(items, testUUID(0x06)) {
 		t.Fatal("unexpected non-member dependency detection")
+	}
+}
+
+func TestNormalizedEdgeMetadataDefaultsToObject(t *testing.T) {
+	metadata, ok := normalizedEdgeMetadata(nil)
+	if !ok {
+		t.Fatal("expected empty metadata to be accepted")
+	}
+	if string(metadata) != "{}" {
+		t.Fatalf("metadata = %s, want {}", metadata)
+	}
+}
+
+func TestNormalizedEdgeMetadataAcceptsObject(t *testing.T) {
+	metadata, ok := normalizedEdgeMetadata(json.RawMessage(`{"anchors":{"target":{"x":0,"y":0.25}}}`))
+	if !ok {
+		t.Fatal("expected object metadata to be accepted")
+	}
+	if !json.Valid(metadata) {
+		t.Fatalf("metadata is invalid JSON: %s", metadata)
+	}
+}
+
+func TestNormalizedEdgeMetadataRejectsNonObject(t *testing.T) {
+	if _, ok := normalizedEdgeMetadata(json.RawMessage(`[{"x":0}]`)); ok {
+		t.Fatal("expected array metadata to be rejected")
+	}
+	if _, ok := normalizedEdgeMetadata(json.RawMessage(`null`)); ok {
+		t.Fatal("expected null metadata to be rejected")
 	}
 }
 

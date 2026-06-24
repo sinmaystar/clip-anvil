@@ -16,7 +16,7 @@ interface NodePreviewLimit {
   maxH: number;
 }
 
-export const mediaNodeHeaderHeight = 42;
+export const mediaNodeHeaderHeight = 34;
 
 export const mediaNodePreviewLimits: Record<MediaType, NodePreviewLimit> = {
   text: {
@@ -28,20 +28,20 @@ export const mediaNodePreviewLimits: Record<MediaType, NodePreviewLimit> = {
     maxH: 300,
   },
   image: {
-    minW: 220,
-    minH: 180,
-    defaultW: 320,
-    defaultH: 260,
-    maxW: 380,
-    maxH: 420,
+    minW: 190,
+    minH: 190,
+    defaultW: 360,
+    defaultH: 280,
+    maxW: 440,
+    maxH: 380,
   },
   video: {
     minW: 280,
-    minH: 190,
-    defaultW: 360,
-    defaultH: 245,
-    maxW: 420,
-    maxH: 300,
+    minH: 188,
+    defaultW: 400,
+    defaultH: 260,
+    maxW: 480,
+    maxH: 330,
   },
   audio: {
     minW: 320,

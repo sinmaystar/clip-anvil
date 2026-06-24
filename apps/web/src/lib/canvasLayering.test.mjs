@@ -82,8 +82,12 @@ describe("canvas layering", () => {
       "media nodes should not spend canvas space on type/prompt footer metadata",
     );
     assert.ok(
-      css.includes("grid-template-rows: 42px minmax(0, 1fr);"),
-      "media node layout should reserve the remaining card area for artifact preview",
+      css.includes("grid-template-rows: minmax(0, 1fr);"),
+      "media node layout should reserve the full card area for artifact preview",
+    );
+    assert.ok(
+      mediaFlowNode.includes("media-node-floating-title"),
+      "media node title should sit outside the preview card",
     );
   });
 

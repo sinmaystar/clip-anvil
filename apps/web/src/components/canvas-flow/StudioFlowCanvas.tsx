@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { CanvasCamera, CanvasPayload } from "../../lib/api";
+import type { CanvasCamera, CanvasPayload, EdgeMetadata } from "../../lib/api";
 import {
   batchUpdateNodePositions,
   updateCamera,
@@ -20,12 +20,17 @@ interface StudioFlowCanvasProps {
     screenX: number;
     screenY: number;
   }) => void;
-  onConnectNodes: (input: { fromNodeId: string; toNodeId: string }) => void;
+  onConnectNodes: (input: {
+    fromNodeId: string;
+    toNodeId: string;
+    metadata?: EdgeMetadata;
+  }) => void;
   onGroupMove: (input: {
     groupId: string;
     deltaX: number;
     deltaY: number;
   }) => void;
+  onRenameNode?: (nodeId: string, title: string) => void;
 }
 
 export function StudioFlowCanvas({
@@ -40,6 +45,7 @@ export function StudioFlowCanvas({
   onCreateNodeAtPoint,
   onConnectNodes,
   onGroupMove,
+  onRenameNode,
 }: StudioFlowCanvasProps) {
   const queryClient = useQueryClient();
   const positionMutation = useMutation({
@@ -93,6 +99,7 @@ export function StudioFlowCanvas({
       onConnectNodes={onConnectNodes}
       onCreateNodeAtPoint={onCreateNodeAtPoint}
       onGroupMove={onGroupMove}
+      onRenameNode={onRenameNode}
       onNodePositionsChange={(positions) => positionMutation.mutate(positions)}
       onSelectEdge={onSelectEdge}
       onSelectGroup={onSelectGroup}
