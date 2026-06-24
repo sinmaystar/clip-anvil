@@ -48,6 +48,12 @@ func main() {
 	}
 
 	ctx := context.Background()
+	agentTracing := initAgentTracing(ctx, slog.Default())
+	defer func() {
+		if err := agentTracing.Shutdown(context.Background()); err != nil {
+			slog.Warn("failed to shutdown cozeloop agent tracing", "error", err)
+		}
+	}()
 
 	pgPool, err := pgxpool.New(ctx, cfg.Postgres.DSN)
 	if err != nil {
@@ -170,6 +176,7 @@ func main() {
 			inputResolver,
 		)
 	}
+	productionRuntime = production.NewTracingRuntime(productionRuntime, agentTracing.Tracer)
 	productionBroadcaster := api.NewProductionBroadcaster(canvasHub, queries, storageService)
 	productionBroadcaster.SetAgentPreviewEventSink(agentPreviewEventSink{runtime: agentRuntime, broadcaster: agentBroadcaster})
 	productionRunner := production.NewProductionRunner(
@@ -178,6 +185,7 @@ func main() {
 		cfg.Production.WorkerConcurrency,
 		productionBroadcaster,
 	)
+	productionRunner.SetTracer(agentTracing.Tracer)
 	productionService.SetRunner(productionRunner)
 	productionRunner.Start(ctx)
 	agentCanvasBroadcaster := api.NewAgentCanvasNodeBroadcaster(canvasHub, queries, storageService)
@@ -186,6 +194,7 @@ func main() {
 		Store:       queries,
 		Production:  productionService,
 		Broadcaster: agentCanvasBroadcaster,
+		Tracer:      agentTracing.Tracer,
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
 	composerGraph, err := agentcomposer.NewGraph(agentcomposer.GraphConfig{
@@ -201,8 +210,9 @@ func main() {
 		os.Exit(1)
 	}
 	composerExecutor := agentcomposer.NewExecutor(agentcomposer.ExecutorConfig{
-		Runtime: agentRuntime,
-		Graph:   composerGraph,
+		Runtime:        agentRuntime,
+		Graph:          composerGraph,
+		TraceCallbacks: agentTracing.Callbacks,
 	})
 	composerEnqueuer := agentComposerTaskEnqueuer{executor: composerExecutor}
 	craftsmanGraph, err := agentcraftsman.NewGraph(agentcraftsman.GraphConfig{
@@ -228,8 +238,9 @@ func main() {
 		os.Exit(1)
 	}
 	craftsmanExecutor := agentcraftsman.NewExecutor(agentcraftsman.ExecutorConfig{
-		Runtime: agentRuntime,
-		Graph:   craftsmanGraph,
+		Runtime:        agentRuntime,
+		Graph:          craftsmanGraph,
+		TraceCallbacks: agentTracing.Callbacks,
 	})
 	craftsmanEnqueuer := agentCraftsmanTaskEnqueuer{executor: craftsmanExecutor}
 	retryGenerationTool := agenttools.NewRetryGenerationTool(queries, agentRuntime, craftsmanEnqueuer)
@@ -261,8 +272,9 @@ func main() {
 		os.Exit(1)
 	}
 	reviewerExecutor := agentreviewer.NewExecutor(agentreviewer.ExecutorConfig{
-		Runtime: agentRuntime,
-		Graph:   reviewerGraph,
+		Runtime:        agentRuntime,
+		Graph:          reviewerGraph,
+		TraceCallbacks: agentTracing.Callbacks,
 	})
 	reviewerEnqueuer := agentReviewerTaskEnqueuer{executor: reviewerExecutor}
 	agentToolRegistry, err := agenttools.NewRegistry(
@@ -306,11 +318,12 @@ func main() {
 		os.Exit(1)
 	}
 	producerExecutor := agentproducer.NewExecutor(agentproducer.ExecutorConfig{
-		Runtime:      agentRuntime,
-		Graph:        producerGraph,
-		Broadcaster:  agentBroadcaster,
-		MaxToolCalls: cfg.Agent.ProducerMaxToolCalls,
-		ToolTimeout:  time.Duration(cfg.Agent.ToolTimeoutSeconds) * time.Second,
+		Runtime:        agentRuntime,
+		Graph:          producerGraph,
+		Broadcaster:    agentBroadcaster,
+		MaxToolCalls:   cfg.Agent.ProducerMaxToolCalls,
+		ToolTimeout:    time.Duration(cfg.Agent.ToolTimeoutSeconds) * time.Second,
+		TraceCallbacks: agentTracing.Callbacks,
 	})
 	agentHandler := api.NewAgentHandler(queries, agentRuntime, agentHub, producerExecutor)
 	agentHandler.SetAttachmentStorage(storageService)
@@ -486,12 +499,13 @@ type agentCraftsmanTaskEnqueuer struct {
 	executor *agentcraftsman.Executor
 }
 
-func (e agentCraftsmanTaskEnqueuer) EnqueueCraftsmanTask(_ context.Context, task db.AgentTask) {
+func (e agentCraftsmanTaskEnqueuer) EnqueueCraftsmanTask(ctx context.Context, task db.AgentTask) {
 	if e.executor == nil {
 		return
 	}
+	runCtx := context.WithoutCancel(ctx)
 	go func() {
-		if err := e.executor.RunTask(context.Background(), agentcraftsman.RunTaskInput{
+		if err := e.executor.RunTask(runCtx, agentcraftsman.RunTaskInput{
 			WorkspaceID: task.WorkspaceID,
 			ThreadID:    task.ThreadID,
 			TaskID:      task.ID,
@@ -507,12 +521,13 @@ type agentWorkerTaskEnqueuer struct {
 	executor *agentworker.Executor
 }
 
-func (e agentWorkerTaskEnqueuer) EnqueueWorkerTask(_ context.Context, task db.AgentTask) {
+func (e agentWorkerTaskEnqueuer) EnqueueWorkerTask(ctx context.Context, task db.AgentTask) {
 	if e.executor == nil {
 		return
 	}
+	runCtx := context.WithoutCancel(ctx)
 	go func() {
-		if err := e.executor.RunTask(context.Background(), agentworker.RunTaskInput{Task: task}); err != nil {
+		if err := e.executor.RunTask(runCtx, agentworker.RunTaskInput{Task: task}); err != nil {
 			slog.Warn("failed to run worker task", "task_id", task.ID, "error", err)
 		}
 	}()
@@ -522,12 +537,13 @@ type agentComposerTaskEnqueuer struct {
 	executor *agentcomposer.Executor
 }
 
-func (e agentComposerTaskEnqueuer) EnqueueComposerTask(_ context.Context, task db.AgentTask) {
+func (e agentComposerTaskEnqueuer) EnqueueComposerTask(ctx context.Context, task db.AgentTask) {
 	if e.executor == nil {
 		return
 	}
+	runCtx := context.WithoutCancel(ctx)
 	go func() {
-		if err := e.executor.RunTask(context.Background(), agentcomposer.RunTaskInput{Task: task}); err != nil {
+		if err := e.executor.RunTask(runCtx, agentcomposer.RunTaskInput{Task: task}); err != nil {
 			slog.Warn("failed to run composer task", "task_id", task.ID, "error", err)
 		}
 	}()
@@ -537,12 +553,13 @@ type agentReviewerTaskEnqueuer struct {
 	executor *agentreviewer.Executor
 }
 
-func (e agentReviewerTaskEnqueuer) EnqueueReviewerTask(_ context.Context, task db.AgentTask) {
+func (e agentReviewerTaskEnqueuer) EnqueueReviewerTask(ctx context.Context, task db.AgentTask) {
 	if e.executor == nil {
 		return
 	}
+	runCtx := context.WithoutCancel(ctx)
 	go func() {
-		if err := e.executor.RunTask(context.Background(), agentreviewer.RunTaskInput{Task: task}); err != nil {
+		if err := e.executor.RunTask(runCtx, agentreviewer.RunTaskInput{Task: task}); err != nil {
 			slog.Warn("failed to run reviewer task", "task_id", task.ID, "error", err)
 		}
 	}()

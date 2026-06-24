@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -77,19 +79,62 @@ func TestCraftsmanExecutorPassesTaskInputToGraph(t *testing.T) {
 	}
 }
 
+func TestCraftsmanExecutorPassesTraceCallbacksToGraph(t *testing.T) {
+	runtime := &fakeCraftsmanExecutorRuntime{}
+	graph := fakeCraftsmanRunner{output: GraphOutput{
+		Strategy:   Strategy{Strategy: "方向", PreviewPrompt: "prompt"},
+		WorkerTask: db.AgentTask{ID: uuidWithByte(20), TaskType: "worker_generation"},
+		Metadata:   map[string]any{"checkpoint_key": "craftsman:key"},
+	}}
+	traceCallback := callbacks.NewHandlerBuilder().Build()
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:        runtime,
+		Graph:          &graph,
+		TraceCallbacks: []callbacks.Handler{traceCallback},
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(3),
+		TaskID:      uuidWithByte(4),
+		ShotID:      uuidWithByte(2),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(graph.runOptions.Callbacks) != 1 {
+		t.Fatalf("callbacks len = %d, want 1", len(graph.runOptions.Callbacks))
+	}
+	if got := traceAttribute(graph.ctx, "clipanvil.agent.role"); got != "craftsman" {
+		t.Fatalf("trace role = %q, want craftsman", got)
+	}
+}
+
 type fakeCraftsmanRunner struct {
 	output     GraphOutput
 	err        error
 	input      GraphInput
 	runOptions agenteino.RunOptions
+	ctx        context.Context
 }
 
-func (f *fakeCraftsmanRunner) Run(_ context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
+func (f *fakeCraftsmanRunner) Run(ctx context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
+	f.ctx = ctx
 	f.input = input
 	if len(options) > 0 {
 		f.runOptions = options[0]
 	}
 	return f.output, f.err
+}
+
+func traceAttribute(ctx context.Context, key string) string {
+	for _, attr := range cozelooptrace.AttributesFromContext(ctx) {
+		if string(attr.Key) == key {
+			return attr.Value.AsString()
+		}
+	}
+	return ""
 }
 
 type fakeCraftsmanExecutorRuntime struct {

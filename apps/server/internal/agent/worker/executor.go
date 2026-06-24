@@ -10,6 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/preview"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
@@ -49,6 +52,7 @@ type ExecutorConfig struct {
 	Production  ProductionSubmitter
 	Broadcaster NodeBroadcaster
 	Logger      *slog.Logger
+	Tracer      trace.Tracer
 }
 
 type Executor struct {
@@ -57,6 +61,7 @@ type Executor struct {
 	production  ProductionSubmitter
 	broadcaster NodeBroadcaster
 	logger      *slog.Logger
+	tracer      trace.Tracer
 }
 
 func NewExecutor(config ExecutorConfig) *Executor {
@@ -66,10 +71,11 @@ func NewExecutor(config ExecutorConfig) *Executor {
 		production:  config.Production,
 		broadcaster: config.Broadcaster,
 		logger:      config.Logger,
+		tracer:      config.Tracer,
 	}
 }
 
-func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
+func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr error) {
 	task := input.Task
 	if e == nil || e.runtime == nil || e.store == nil || e.production == nil || !task.ID.Valid || !task.WorkspaceID.Valid {
 		return ErrInvalidConfig
@@ -80,6 +86,18 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	workerInput, err := parseGenerationInput(task.Input)
 	if err != nil {
 		return e.fail(ctx, task, "worker_generation_invalid_input", err)
+	}
+	ctx, span := e.startSpan(ctx, task, workerInput)
+	if span != nil {
+		defer func() {
+			if runErr != nil {
+				span.RecordError(runErr)
+				span.SetStatus(codes.Error, runErr.Error())
+			} else {
+				span.SetStatus(codes.Ok, "")
+			}
+			span.End()
+		}()
 	}
 	_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: task.WorkspaceID,
@@ -152,6 +170,28 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		})
 	}
 	return nil
+}
+
+func (e *Executor) startSpan(ctx context.Context, task db.AgentTask, input GenerationInput) (context.Context, trace.Span) {
+	if e == nil || e.tracer == nil {
+		return ctx, nil
+	}
+	return e.tracer.Start(ctx, "worker_generation", trace.WithAttributes(
+		attribute.String("clipanvil.workspace_id", uuidString(task.WorkspaceID)),
+		attribute.String("clipanvil.agent.thread_id", uuidString(task.ThreadID)),
+		attribute.String("clipanvil.agent.task_id", uuidString(task.ID)),
+		attribute.String("clipanvil.agent.role", "worker"),
+		attribute.String("clipanvil.agent.task_type", task.TaskType),
+		attribute.String("clipanvil.agent.scope_type", task.ScopeType),
+		attribute.String("clipanvil.agent.scope_id", uuidString(task.ScopeID)),
+		attribute.String("clipanvil.agent.shot_id", input.ShotID),
+		attribute.String("clipanvil.agent.shot_client_key", input.ShotClientKey),
+		attribute.String("clipanvil.agent.mode", input.Mode),
+		attribute.String("clipanvil.production.output_type", generationSpec(input).OutputType),
+		attribute.String("clipanvil.production.operation_type", generationSpec(input).OperationType),
+		attribute.String("clipanvil.production.model_provider", strings.TrimSpace(input.Model.Provider)),
+		attribute.String("clipanvil.production.model_id", strings.TrimSpace(input.Model.ModelID)),
+	))
 }
 
 func (e *Executor) resolveTargetNode(ctx context.Context, task db.AgentTask, input GenerationInput) (db.MediaNode, bool, error) {

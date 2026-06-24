@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coze-dev/cozeloop-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -62,6 +63,45 @@ func (c Config) OTLPEndpointURL() (string, error) {
 	return parsed.String(), nil
 }
 
+func (c Config) APIBaseURL() (string, error) {
+	endpoint := strings.TrimSpace(c.Endpoint)
+	if endpoint == "" {
+		endpoint = DefaultEndpoint
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("cozeloop endpoint must include scheme and host")
+	}
+	parsed.Path = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+func NewClient(config Config) (cozeloop.Client, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	apiBaseURL, err := config.APIBaseURL()
+	if err != nil {
+		return nil, err
+	}
+	timeout := config.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	return cozeloop.NewClient(
+		cozeloop.WithAPIBaseURL(apiBaseURL),
+		cozeloop.WithWorkspaceID(strings.TrimSpace(config.WorkspaceID)),
+		cozeloop.WithAPIToken(normalizeAPIToken(config.Authorization)),
+		cozeloop.WithTimeout(timeout),
+		cozeloop.WithUploadTimeout(timeout),
+	)
+}
+
 func NewTracerProvider(ctx context.Context, config Config) (*sdktrace.TracerProvider, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -101,6 +141,14 @@ func NewTracerProvider(ctx context.Context, config Config) (*sdktrace.TracerProv
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
 	), nil
+}
+
+func normalizeAPIToken(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(strings.ToLower(value), "bearer ") {
+		return strings.TrimSpace(value[len("bearer "):])
+	}
+	return value
 }
 
 func normalizeAuthorization(value string) string {

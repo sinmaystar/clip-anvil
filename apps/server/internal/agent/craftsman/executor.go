@@ -7,8 +7,11 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -28,19 +31,26 @@ type Runner interface {
 }
 
 type ExecutorConfig struct {
-	Runtime ExecutorRuntime
-	Graph   Runner
-	Logger  *slog.Logger
+	Runtime        ExecutorRuntime
+	Graph          Runner
+	Logger         *slog.Logger
+	TraceCallbacks []callbacks.Handler
 }
 
 type Executor struct {
-	runtime ExecutorRuntime
-	graph   Runner
-	logger  *slog.Logger
+	runtime        ExecutorRuntime
+	graph          Runner
+	logger         *slog.Logger
+	traceCallbacks []callbacks.Handler
 }
 
 func NewExecutor(config ExecutorConfig) *Executor {
-	return &Executor{runtime: config.Runtime, graph: config.Graph, logger: config.Logger}
+	return &Executor{
+		runtime:        config.Runtime,
+		graph:          config.Graph,
+		logger:         config.Logger,
+		traceCallbacks: config.TraceCallbacks,
+	}
 }
 
 func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
@@ -72,7 +82,18 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		WorkerParams: taskInput.WorkerParams,
 	}
 	checkpointKey := agenteino.CheckpointKey("craftsman_generation", input.WorkspaceID, input.ThreadID, input.TaskID)
-	out, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{CheckPointID: checkpointKey})
+	ctx = cozelooptrace.ContextWithAttributes(ctx,
+		attribute.String("clipanvil.workspace_id", uuidString(input.WorkspaceID)),
+		attribute.String("clipanvil.agent.thread_id", uuidString(input.ThreadID)),
+		attribute.String("clipanvil.agent.task_id", uuidString(input.TaskID)),
+		attribute.String("clipanvil.agent.role", "craftsman"),
+		attribute.String("clipanvil.agent.task_type", "craftsman_turn"),
+		attribute.String("clipanvil.agent.shot_id", uuidString(input.ShotID)),
+	)
+	out, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{
+		CheckPointID: checkpointKey,
+		Callbacks:    e.traceCallbacks,
+	})
 	if err != nil {
 		return e.fail(ctx, input, "craftsman_failed", err)
 	}

@@ -13,8 +13,6 @@ import (
 
 	"github.com/cloudwego/eino/compose"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 )
@@ -52,7 +50,7 @@ func run(ctx context.Context, args []string) error {
 	endpoint := flags.String("endpoint", envOrDefault("CLIPANVIL_COZELOOP_ENDPOINT", cozelooptrace.DefaultEndpoint), "Coze Loop app endpoint")
 	workspaceID := flags.String("workspace-id", os.Getenv("CLIPANVIL_COZELOOP_WORKSPACE_ID"), "Coze Loop workspace id")
 	authorization := flags.String("authorization", envOrDefault("CLIPANVIL_COZELOOP_AUTHORIZATION", os.Getenv("CLIPANVIL_COZELOOP_PAT")), "Coze Loop PAT token or Authorization header")
-	serviceName := flags.String("service-name", envOrDefault("CLIPANVIL_COZELOOP_SERVICE_NAME", "clipanvil-cozeloop-trace-smoke"), "OpenTelemetry service.name")
+	serviceName := flags.String("service-name", envOrDefault("CLIPANVIL_COZELOOP_SERVICE_NAME", "clipanvil-cozeloop-trace-smoke"), "CozeLoop service name")
 	prompt := flags.String("prompt", "hello from ClipAnvil Eino smoke", "demo prompt text")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -65,7 +63,7 @@ func run(ctx context.Context, args []string) error {
 		ServiceName:   *serviceName,
 		Timeout:       10 * time.Second,
 	}
-	tracerProvider, err := cozelooptrace.NewTracerProvider(ctx, config)
+	client, err := cozelooptrace.NewClient(config)
 	if err != nil {
 		if errors.Is(err, cozelooptrace.ErrMissingWorkspaceID) {
 			return fmt.Errorf("%w; set CLIPANVIL_COZELOOP_WORKSPACE_ID or pass -workspace-id", err)
@@ -76,42 +74,40 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = tracerProvider.Shutdown(shutdownCtx)
+		client.Close(closeCtx)
 	}()
 
-	tracer := tracerProvider.Tracer("clipanvil/eino/cozeloop-smoke")
-	rootCtx, rootSpan := tracer.Start(ctx, "clipanvil.coze_loop.trace_smoke",
-		trace.WithAttributes(traceAttributes(config.WorkspaceID, *prompt)...),
-	)
+	rootCtx, rootSpan := client.StartSpan(ctx, "clipanvil.coze_loop.trace_smoke", "graph")
+	rootSpan.SetServiceName(rootCtx, config.ServiceName)
+	rootSpan.SetTags(rootCtx, traceTags(config.WorkspaceID, *prompt))
+	rootCtx = cozelooptrace.ContextWithAttributes(rootCtx, traceAttributes(config.WorkspaceID, *prompt)...)
 
 	graph, err := newSmokeGraph()
 	if err != nil {
-		rootSpan.RecordError(err)
-		rootSpan.SetStatus(codes.Error, err.Error())
-		rootSpan.End()
+		rootSpan.SetError(rootCtx, err)
+		rootSpan.SetStatusCode(rootCtx, -1)
+		rootSpan.Finish(rootCtx)
 		return err
 	}
-	output, err := graph.Invoke(rootCtx, smokeInput{Prompt: *prompt}, compose.WithCallbacks(cozelooptrace.NewCallbackHandler(tracer)))
+	output, err := graph.Invoke(rootCtx, smokeInput{Prompt: *prompt}, compose.WithCallbacks(cozelooptrace.NewOfficialCallbackHandler(client, config.ServiceName)))
 	if err != nil {
-		rootSpan.RecordError(err)
-		rootSpan.SetStatus(codes.Error, err.Error())
-		rootSpan.End()
+		rootSpan.SetError(rootCtx, err)
+		rootSpan.SetStatusCode(rootCtx, -1)
+		rootSpan.Finish(rootCtx)
 		return err
 	}
-	traceID := rootSpan.SpanContext().TraceID().String()
-	rootSpan.SetAttributes(attribute.String("smoke.answer", output.Answer))
-	rootSpan.SetStatus(codes.Ok, "")
-	rootSpan.End()
+	traceID := rootSpan.GetTraceID()
+	rootSpan.SetOutput(rootCtx, output)
+	rootSpan.SetTags(rootCtx, map[string]interface{}{"smoke.answer": output.Answer})
+	rootSpan.Finish(rootCtx)
 
 	flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := tracerProvider.ForceFlush(flushCtx); err != nil {
-		return err
-	}
+	client.Flush(flushCtx)
 
-	endpointURL, _ := config.OTLPEndpointURL()
+	endpointURL, _ := config.APIBaseURL()
 	fmt.Printf("sent Coze Loop trace\n")
 	fmt.Printf("workspace_id: %s\n", config.WorkspaceID)
 	fmt.Printf("trace_id: %s\n", traceID)
@@ -158,9 +154,15 @@ func newSmokeGraph() (compose.Runnable[smokeInput, smokeOutput], error) {
 	return graph.Compile(context.Background(), compose.WithGraphName("clipanvil_cozeloop_trace_smoke"))
 }
 
+func traceTags(workspaceID string, prompt string) map[string]interface{} {
+	return map[string]interface{}{
+		"cozeloop.workspace_id": workspaceID,
+		"smoke.prompt":          prompt,
+	}
+}
+
 func traceAttributes(workspaceID string, prompt string) []attribute.KeyValue {
 	return []attribute.KeyValue{
-		attribute.String("cozeloop.span_type", "graph"),
 		attribute.String("cozeloop.workspace_id", workspaceID),
 		attribute.String("smoke.prompt", prompt),
 	}
@@ -190,7 +192,7 @@ func loadDotEnv(path string) {
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {

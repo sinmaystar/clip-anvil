@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -51,6 +53,45 @@ func TestReviewerExecutorRunsReviewerTurnTask(t *testing.T) {
 	}
 }
 
+func TestReviewerExecutorPassesTraceCallbacksToGraph(t *testing.T) {
+	runtime := &fakeReviewerExecutorRuntime{}
+	graph := &fakeReviewerRunner{output: GraphOutput{Decision: ReviewDecision{Status: ReviewStatusAccepted}}}
+	traceCallback := callbacks.NewHandlerBuilder().Build()
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:        runtime,
+		Graph:          graph,
+		TraceCallbacks: []callbacks.Handler{traceCallback},
+	})
+	input := TaskInput{
+		TargetPhase:       TargetPhasePreviewImage,
+		ShotID:            uuidString(uuidWithByte(2)),
+		NodeID:            uuidString(uuidWithByte(3)),
+		ArtifactVersionID: uuidString(uuidWithByte(4)),
+		AttemptNo:         1,
+		MaxAttempts:       3,
+	}
+	raw, _ := json.Marshal(input)
+	task := db.AgentTask{
+		ID:          uuidWithByte(9),
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(8),
+		Role:        "reviewer",
+		TaskType:    "reviewer_turn",
+		Input:       raw,
+	}
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(graph.runOptions.Callbacks) != 1 {
+		t.Fatalf("callbacks len = %d, want 1", len(graph.runOptions.Callbacks))
+	}
+	if got := traceAttribute(graph.ctx, "clipanvil.agent.role"); got != "reviewer" {
+		t.Fatalf("trace role = %q, want reviewer", got)
+	}
+}
+
 type fakeReviewerExecutorRuntime struct {
 	running          bool
 	succeeded        bool
@@ -82,12 +123,23 @@ type fakeReviewerRunner struct {
 	input      GraphInput
 	output     GraphOutput
 	runOptions agenteino.RunOptions
+	ctx        context.Context
 }
 
-func (f *fakeReviewerRunner) Run(_ context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
+func (f *fakeReviewerRunner) Run(ctx context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
+	f.ctx = ctx
 	f.input = input
 	if len(options) > 0 {
 		f.runOptions = options[0]
 	}
 	return f.output, nil
+}
+
+func traceAttribute(ctx context.Context, key string) string {
+	for _, attr := range cozelooptrace.AttributesFromContext(ctx) {
+		if string(attr.Key) == key {
+			return attr.Value.AsString()
+		}
+	}
+	return ""
 }

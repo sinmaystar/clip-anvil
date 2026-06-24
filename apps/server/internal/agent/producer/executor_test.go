@@ -9,8 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
@@ -85,6 +87,34 @@ func TestExecutorBroadcastsStreamDeltasBeforeFinalMessage(t *testing.T) {
 	}
 	if broadcaster.messageCount != 1 {
 		t.Fatalf("message broadcasts = %d, want 1", broadcaster.messageCount)
+	}
+}
+
+func TestExecutorPassesTraceCallbacksToGraph(t *testing.T) {
+	runtime := &fakeRuntime{}
+	graph := &fakeGraph{output: ProducerTurnOutput{AssistantText: "assistant reply"}}
+	traceCallback := callbacks.NewHandlerBuilder().Build()
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:        runtime,
+		Graph:          graph,
+		TraceCallbacks: []callbacks.Handler{traceCallback},
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID:      uuidWithByte(1),
+		ThreadID:         uuidWithByte(2),
+		TaskID:           uuidWithByte(3),
+		TriggerMessageID: uuidWithByte(4),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(graph.runOptions.Callbacks) != 1 {
+		t.Fatalf("callbacks len = %d, want 1", len(graph.runOptions.Callbacks))
+	}
+	if got := traceAttribute(graph.ctx, "clipanvil.agent.role"); got != "producer" {
+		t.Fatalf("trace role = %q, want producer", got)
 	}
 }
 
@@ -252,9 +282,11 @@ type fakeGraph struct {
 	deltas     []string
 	err        error
 	runOptions agenteino.RunOptions
+	ctx        context.Context
 }
 
 func (f *fakeGraph) Run(ctx context.Context, input ProducerTurnInput, options ...agenteino.RunOptions) (ProducerTurnOutput, error) {
+	f.ctx = ctx
 	if len(options) > 0 {
 		f.runOptions = options[0]
 	}
@@ -266,6 +298,15 @@ func (f *fakeGraph) Run(ctx context.Context, input ProducerTurnInput, options ..
 		}
 	}
 	return f.output, f.err
+}
+
+func traceAttribute(ctx context.Context, key string) string {
+	for _, attr := range cozelooptrace.AttributesFromContext(ctx) {
+		if string(attr.Key) == key {
+			return attr.Value.AsString()
+		}
+	}
+	return ""
 }
 
 type fakeBroadcaster struct {
