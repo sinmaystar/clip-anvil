@@ -42,7 +42,7 @@
   - Eino model call
   - streaming response
   - thinking stream
-  - native tool calling through `schema.Message.ToolCalls` and `compose.ToolsNode`
+  - native tool calling through `schema.Message.EdgeCalls` and `compose.EdgesNode`
   - provider-specific thinking policy
 - HITL foundation：
   - `request_user_decision`
@@ -347,7 +347,7 @@ review rejected
 - 同步失败和异步失败都要有错误码；
 - retry exhausted 后写 `retry_exhausted` event，并让 Producer 能向用户解释。
 
-## Version Selection Tool
+## Version Selection Edge
 
 新增 Agent production tool：
 
@@ -463,7 +463,7 @@ Memory kinds：
 - `constraints`
 - `script_notes`
 
-## Tools
+## Edges
 
 新增：
 
@@ -753,7 +753,7 @@ WebSocket 只是 delivery，不是 storage。所有关键事件必须可恢复�
 
 ---
 
-# Tool Registry Target State
+# Edge Registry Target State
 
 当前已有或部分已有：
 

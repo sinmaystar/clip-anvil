@@ -205,7 +205,7 @@ Executors compute the checkpoint ID from task/thread/workspace and pass it into 
 Current HITL creates a decision card and marks task `waiting_for_user`, but the ProducerGraph returns a normal output like "等待你的选择。". The target is:
 
 1. `request_user_decision` tool detects it must pause.
-2. Tool returns or raises an Eino `StatefulInterrupt` containing:
+2. Edge returns or raises an Eino `StatefulInterrupt` containing:
    - decision request ID
    - message/card ID if already persisted
    - tool call ID
@@ -221,14 +221,14 @@ Current HITL creates a decision card and marks task `waiting_for_user`, but the 
 
 The user-facing card/message storage remains in `agent_message`; Eino checkpoint only stores execution state required to resume the Graph.
 
-### ToolNode Interaction
+### EdgeNode Interaction
 
-Producer currently uses Eino `ToolsNode` inside `draft_response`. For native Eino HITL, interrupt support should be implemented at the tool adapter layer:
+Producer currently uses Eino `EdgesNode` inside `draft_response`. For native Eino HITL, interrupt support should be implemented at the tool adapter layer:
 
 - Normal tools return Eino tool result messages.
 - HITL tools use Eino interrupt primitives and preserve tool call state.
-- Tool execution events still persist to `agent_event`.
-- Tool call/result UI remains driven by `agent_message` and WebSocket events.
+- Edge execution events still persist to `agent_event`.
+- Edge call/result UI remains driven by `agent_message` and WebSocket events.
 
 This preserves current frontend protocol while making ProducerGraph resume real.
 
@@ -262,7 +262,7 @@ Responsibilities:
 
 - Load long-term context from `agent_message`, PSS, workspace facts.
 - Stream model deltas.
-- Execute native tool calls through `ToolsNode`.
+- Execute native tool calls through `EdgesNode`.
 - Persist tool status messages and task events.
 - Interrupt on HITL.
 - Resume same Graph run after user decision.
@@ -425,7 +425,7 @@ Add structured logs for:
 - task id
 - thread id
 - interrupt id
-- resume data shape, not full sensitive payload
+- resume data node, not full sensitive payload
 - checkpoint read/write errors
 - resume result
 

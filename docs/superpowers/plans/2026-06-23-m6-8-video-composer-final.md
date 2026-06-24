@@ -86,7 +86,7 @@ M6.8 does not implement:
   - Support role-aware refs later, but M6.8 only requires video generation to resolve the preview image node/version.
 - Modify worker tests.
 
-### Tools
+### Edges
 
 - Create `apps/server/internal/agent/tools/generate_shot_video.go`
   - Producer-facing tool to schedule shot video generation.
@@ -550,7 +550,7 @@ GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/worker ./intern
 
 Expected: PASS.
 
-## Task 4: `generate_shot_video` Tool
+## Task 4: `generate_shot_video` Edge
 
 **Files:**
 - Create: `apps/server/internal/agent/tools/generate_shot_video.go`
@@ -603,7 +603,7 @@ Set shot status to `video_running` when queued.
 Add in `cmd/server/main.go`:
 
 ```go
-agenttools.NewGenerateShotVideoTool(queries, agentRuntime, craftsmanEnqueuer)
+agenttools.NewGenerateShotVideoEdge(queries, agentRuntime, craftsmanEnqueuer)
 ```
 
 - [ ] **Step 4: Test**
@@ -797,7 +797,7 @@ GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/sandbox ./internal/pr
 
 Expected: PASS.
 
-## Task 8: ComposerGraph And `compose_final` Tool
+## Task 8: ComposerGraph And `compose_final` Edge
 
 **Files:**
 - Create: `apps/server/internal/agent/composer/types.go`
@@ -847,7 +847,7 @@ For M6.8, `draft_composition_plan` can be deterministic with optional model resp
 
 - [ ] **Step 4: Implement `compose_final` tool**
 
-Tool schema:
+Edge schema:
 
 ```json
 {
@@ -943,7 +943,7 @@ pnpm --filter @clip-anvil/web... build
 
 Expected: PASS.
 
-## Task 10: PSS Final Output And Tool Registry State
+## Task 10: PSS Final Output And Edge Registry State
 
 **Files:**
 - Modify: `apps/server/internal/agent/pss/producer.go`

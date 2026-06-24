@@ -2,7 +2,7 @@
 
 ## 0. 与既有设计的关键修正
 
-本文档基于 `business-interaction-design.md`（v1）和 `基于 tldraw 的多媒体画布与 Agent 视频生成业务交互设计.md`（Manus 调研）重新设计。以下是核心修正点：
+本文档基于 `business-interaction-design.md`（v1）和 `React Flow 多媒体画布与 Agent 视频生成业务交互设计.md`（Manus 调研）重新设计。以下是核心修正点：
 
 | # | v1 设计 | v2 修正 | 理由 |
 |---|---|---|---|
@@ -18,7 +18,7 @@
 | 9 | Agent 感知 Workspace State Summary（画布级描述） | **改为 Production State Summary**（生产级描述） | Agent 眼中只有分镜/素材/进度，没有节点/连线/分组 |
 
 保留不变的核心原则：
-- 业务 DB 为唯一事实源，tldraw 只做投影
+- 业务 DB 为唯一事实源，React Flow 只做投影
 - 不弹框，不打断画布流
 - 节点卡片内联编辑 + 右侧属性面板深度编辑（Studio 模式）
 
@@ -31,7 +31,7 @@ v1 是"业务层 + 画布层"双层。v2 初版在中间插入 Agent 感知层�
 ```
 ┌──────────────────────────────────────────────────────┐
 │                    用户界面层                          │
-│   tldraw 画布（可视化投影）+ 对话面板（Agent 交互）      │
+│   React Flow 画布（可视化投影）+ 对话面板（Agent 交互）      │
 └───────────────────┬──────────────────────────────────┘
                     │ WebSocket 事件流 / REST API
 ┌───────────────────┴──────────────────────────────────┐
@@ -71,10 +71,10 @@ v1 是"业务层 + 画布层"双层。v2 初版在中间插入 Agent 感知层�
 
 | 层 | 知道什么 | 不知道什么 |
 |---|---|---|
-| 用户界面层 | tldraw shape、画布坐标、视觉样式、事件渲染 | Agent 内部编排逻辑、生产翻译规则 |
-| 业务层 | 完整数据模型、DAG、版本、任务状态 | tldraw、Agent 提示词 |
-| 生产翻译层 | 生产操作 ↔ 业务命令的映射规则 | tldraw、Agent 提示词 |
-| Agent 层 | 分镜、素材、生成、评审、拼接 | 节点、连线、分组、画布坐标、布局、tldraw |
+| 用户界面层 | React Flow node、画布坐标、视觉样式、事件渲染 | Agent 内部编排逻辑、生产翻译规则 |
+| 业务层 | 完整数据模型、DAG、版本、任务状态 | React Flow、Agent 提示词 |
+| 生产翻译层 | 生产操作 ↔ 业务命令的映射规则 | React Flow、Agent 提示词 |
+| Agent 层 | 分镜、素材、生成、评审、拼接 | 节点、连线、分组、画布坐标、布局、React Flow |
 
 核心设计决策：**Agent 完全不知道画布的存在。Agent 眼中只有"项目里有哪些分镜、什么进度、用了哪些参考素材"。节点、连线、分组、布局——全部由生产翻译层自动派生。**
 
@@ -202,24 +202,15 @@ PSS 分为 **全量快照** 和 **增量更新** 两种形式。注意：没有"
 
 Agent 的工具不是画布操作（create_node、create_edge），而是**生产操作**（create_storyboard、generate_shot）。每个生产工具在内部自动翻译为多个业务命令（创建节点、建连线、提交任务等），Agent 完全不感知这些底层操作。
 
-**对比**：
+典型调用：
 
 ```
-旧设计（Agent 调 14 个画布原子工具，7 步生成一个镜头）:
-  create_media_node("video", "镜头01")
-  update_media_node(nodeId, {prompt: "..."})
-  create_media_edge(productImage, nodeId, "dependency")
-  create_media_edge(logo, nodeId, "dependency")
-  submit_generation(nodeId, provider, model, ...)
-  [等待完成]
-  auto_layout()
-
-新设计（Agent 调 1 个生产工具）:
-  generate_shot("镜头01", {
-    prompt: "...",
-    model: "qwen-vl-max",
-    reference_inputs: [{id: "产品主图ID", role: "product"}, {id: "LogoID", role: "brand"}]
-  })
+generate_shot("镜头01", {
+  prompt: "...",
+  model: "qwen-vl-max",
+  reference_inputs: [{id: "产品主图ID", role: "product"}, {id: "LogoID", role: "brand"}]
+})
+```
   → 系统自动: 更新节点prompt + 从reference_inputs建依赖连线 + 提交生成 + 完成后更新状态/缩略图
 ```
 
@@ -280,7 +271,7 @@ Agent 调用生产工具（如 generate_shot）
   │     └── 审计日志（agent_step 表）
   │
   ├── 广播 WebSocket 事件
-  │     └── 前端收到 → 创建/更新 tldraw shape + arrow → 画布刷新
+  │     └── 前端收到 → 创建/更新 React Flow node + custom edge → 画布刷新
   │
   └── 返回结果给 Agent（生产语言，非画布语言）:
         ├── {shot_id, status: "generating", job_id}
@@ -638,7 +629,7 @@ Producer 并行调度:
 - `stitch_final` × 1
 - 总计 ~20 次工具调用
 
-**旧设计同等工作量需要**：~60+ 次画布原子操作（create_node × 10, create_edge × 15, create_group × 3, update_node × 10, submit_generation × 6, auto_layout × 3, ...）
+整条链路保持生产工具粒度，画布节点、依赖连线、状态更新和版本选择由系统内部业务命令完成。
 
 ### 6.2 用户中途干预
 
@@ -728,7 +719,7 @@ Agent 模式下节点创建后必须自动布局。Studio 模式下用户可手�
 │          │                                   │              │
 │[类型筛选] │                                   │ [选中节点时   │
 │          │         画布区域                    │  展示属性面板] │
-│ 📁 素材   │      （tldraw 无限画布）            │              │
+│ 📁 素材   │      （React Flow 无限画布）            │              │
 │  🖼 ...   │                                   │ [未选中时     │
 │ 📁 分镜   │    [媒体节点卡片]                   │  面板隐藏]    │
 │  🎬 ...   │    [连线 / 箭头]                   │              │
@@ -746,7 +737,7 @@ Agent 模式下节点创建后必须自动布局。Studio 模式下用户可手�
 ├──────────┬───────────────────────────────────┬───────────────┤
 │          │                                   │ 💬 对话       │
 │ 🔍搜索    │         画布区域                   │              │
-│          │    （tldraw 无限画布，只读）         │ [Agent 状态栏] │
+│          │    （React Flow 无限画布，只读）         │ [Agent 状态栏] │
 │[类型筛选] │                                   │ 🔵 正在生成... │
 │          │    [媒体节点卡片]                   │              │
 │ 📁 素材   │    [连线 / 箭头]                   │ [对话消息]    │
@@ -916,13 +907,13 @@ CREATE TABLE agent_session (
 
 ### M0: Studio 画布基础（当前阶段）
 
-已有基础：tldraw 空画布、Go 后端骨架、PostgreSQL schema。
+已有基础：React Flow 空画布、Go 后端骨架、PostgreSQL schema。
 
 目标：用户可手动创建媒体节点、连线、分组，并提交生成。
 
 交付：
-- 自定义 MediaShape（四种类型的节点卡片）
-- 自定义 ArrowShape（三种连线类型）
+- 自定义 MediaFlowNode（四种类型的节点卡片）
+- 自定义 custom dependency edge（三种连线类型）
 - 右键菜单创建节点
 - 拖拽连线
 - 左侧资源树

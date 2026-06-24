@@ -6,7 +6,7 @@
 
 **Architecture:** Keep edge persistence unchanged and add frontend-only interaction/visual layers. A pure geometry helper computes Bezier paths for tests and rendering. `WorkspaceDetailPage` owns drag state and edge creation; a new overlay component renders previews, target highlights, and animated saved-edge paths from existing canvas data.
 
-**Tech Stack:** React 19, TypeScript 6, Vite 8, tldraw 5, Node built-in test runner for pure helper tests.
+**Tech Stack:** React 19, TypeScript 6, Vite 8, React Flow, Node built-in test runner for pure helper tests.
 
 ---
 
@@ -17,7 +17,7 @@
 - Create `apps/web/tsconfig.test.json`: emits the pure helper to `apps/web/dist-test` without changing the app build.
 - Create `apps/web/src/components/ConnectionOverlay.tsx`: SVG overlay for saved animated edges, drag preview, and target highlights.
 - Modify `apps/web/src/pages/WorkspaceDetailPage.tsx`: track pointer drag state, update drag preview, detect release target, and render `ConnectionOverlay`.
-- Modify `apps/web/src/shapes/MediaShapeUtil.tsx`: make output port pointer-down start drag cleanly, keep click fallback, and expose source pointer metadata.
+- Modify `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`: make output port pointer-down start drag cleanly, keep click fallback, and expose source pointer metadata.
 - Modify `apps/web/src/main.css`: add overlay animation, target highlight states, and B-style flow visuals.
 - Modify `apps/web/package.json`: add a focused `test:connections` script.
 
@@ -199,18 +199,18 @@ Add `.connection-overlay`, `.connection-overlay-path`, `.connection-overlay-flow
 
 - [ ] **Step 3: Render overlay in the canvas frame**
 
-In `WorkspaceDetailPage.tsx`, render `ConnectionOverlay` above the tldraw host and below menus/drop zones. Pass `canvasQuery.data?.nodes`, `canvasQuery.data?.edges`, current editor, and drag state.
+In `WorkspaceDetailPage.tsx`, render `ConnectionOverlay` above the React Flow host and below menus/drop zones. Pass `canvasQuery.data?.nodes`, `canvasQuery.data?.edges`, current editor, and drag state.
 
 ## Task 3: Pointer Drag Interaction
 
 **Files:**
 - Modify: `apps/web/src/pages/WorkspaceDetailPage.tsx`
-- Modify: `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify: `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
 - Modify: `apps/web/src/main.css`
 
 - [ ] **Step 1: Extend connection event detail**
 
-In `MediaShapeUtil.tsx`, include `clientX` and `clientY` in `clip-anvil:connection-start` detail when pointer down starts a drag.
+In `MediaFlowNode.tsx`, include `clientX` and `clientY` in `clip-anvil:connection-start` detail when pointer down starts a drag.
 
 - [ ] **Step 2: Track drag preview**
 

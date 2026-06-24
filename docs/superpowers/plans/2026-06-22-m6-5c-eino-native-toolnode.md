@@ -1,10 +1,10 @@
-# M6.5C Eino Native ToolNode Implementation Plan
+# M6.5C Eino Native EdgeNode Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace Producer's hand-written tool-call parsing path with Eino-native `schema.Message.ToolCalls` and `compose.ToolsNode`, while keeping the existing Eino Ark ChatModel model invocation.
+**Goal:** Replace Producer's hand-written tool-call parsing path with Eino-native `schema.Message.EdgeCalls` and `compose.EdgesNode`, while keeping the existing Eino Ark ChatModel model invocation.
 
-**Architecture:** The custom Producer Eino Graph remains the top-level orchestrator. The Volcengine responder continues to call Eino `ark.NewChatModel` and `model.Stream`, but its output now retains the final Eino `schema.Message`; the graph routes native tool calls into an Eino `ToolsNode` backed by adapters around the existing ClipAnvil Tool Registry and `RegistryToolExecutor`.
+**Architecture:** The custom Producer Eino Graph remains the top-level orchestrator. The Volcengine responder continues to call Eino `ark.NewChatModel` and `model.Stream`, but its output now retains the final Eino `schema.Message`; the graph routes native tool calls into an Eino `EdgesNode` backed by adapters around the existing ClipAnvil Edge Registry and `RegistryEdgeExecutor`.
 
 **Tech Stack:** Go 1.26, CloudWeGo Eino v0.9.9, Eino Ark model extension v0.1.68, Hertz, pgx/sqlc, Vite/React for browser E2E.
 
@@ -13,27 +13,27 @@
 ## File Structure
 
 - Modify `apps/server/internal/agent/producer/types.go`
-  - Add `ModelMessage *schema.Message` and `UsedLegacyToolParser bool` to `ProducerTurnOutput`.
+  - Add `ModelMessage *schema.Message` and `UsedLegacyEdgeParser bool` to `ProducerTurnOutput`.
 - Modify `apps/server/internal/agent/producer/model_responder.go`
-  - Bind Eino tools with `ToolCallingChatModel.WithTools`.
+  - Bind Eino tools with `EdgeCallingChatModel.WithEdges`.
   - Return final `schema.Message` in `ProducerTurnOutput`.
   - Keep existing streaming/thinking behavior.
 - Create `apps/server/internal/agent/producer/eino_tool_adapter.go`
-  - Convert existing `agenttools.Definition` to Eino `schema.ToolInfo`.
-  - Wrap existing `ToolExecutor` as Eino `tool.InvokableTool`.
+  - Convert existing `agenttools.Definition` to Eino `schema.EdgeInfo`.
+  - Wrap existing `EdgeExecutor` as Eino `tool.InvokableEdge`.
 - Modify `apps/server/internal/agent/producer/graph.go`
-  - Use native `ModelMessage.ToolCalls` in the normal loop.
-  - Execute tool calls through `compose.ToolsNode`.
+  - Use native `ModelMessage.EdgeCalls` in the normal loop.
+  - Execute tool calls through `compose.EdgesNode`.
   - Keep legacy parser only as fallback.
 - Modify `apps/server/internal/agent/producer/graph_test.go`
-  - Replace JSON-text tool-call normal-path tests with native `schema.ToolCall` tests.
+  - Replace JSON-text tool-call normal-path tests with native `schema.EdgeCall` tests.
   - Keep one explicit legacy fallback test.
 - Modify `apps/server/internal/agent/producer/model_responder_test.go`
-  - Verify tool binding and native tool-call output retention.
+  - Verify tool edge and native tool-call output retention.
 - Add `apps/server/internal/agent/producer/eino_tool_adapter_test.go`
-  - Verify tool schema conversion, invokable execution, and ToolsNode invocation.
+  - Verify tool schema conversion, invokable execution, and EdgesNode invocation.
 
-## Task 1: Prove Native Tool Calls In Producer Output
+## Task 1: Prove Native Edge Calls In Producer Output
 
 **Files:**
 - Modify: `apps/server/internal/agent/producer/types.go`
@@ -45,11 +45,11 @@
 Add to `apps/server/internal/agent/producer/model_responder_test.go`:
 
 ```go
-func TestVolcengineModelResponderReturnsNativeToolCalls(t *testing.T) {
+func TestVolcengineModelResponderReturnsNativeEdgeCalls(t *testing.T) {
 	streamer := &fakeArkStreamer{
 		chunks: []*schema.Message{
 			{
-				ToolCalls: []schema.ToolCall{
+				EdgeCalls: []schema.EdgeCall{
 					{
 						ID:   "call-update-storyboard",
 						Type: "function",
@@ -77,11 +77,11 @@ func TestVolcengineModelResponderReturnsNativeToolCalls(t *testing.T) {
 	if out.ModelMessage == nil {
 		t.Fatal("ModelMessage is nil")
 	}
-	if len(out.ModelMessage.ToolCalls) != 1 {
-		t.Fatalf("tool calls = %#v", out.ModelMessage.ToolCalls)
+	if len(out.ModelMessage.EdgeCalls) != 1 {
+		t.Fatalf("tool calls = %#v", out.ModelMessage.EdgeCalls)
 	}
-	if out.ModelMessage.ToolCalls[0].Function.Name != "update_storyboard" {
-		t.Fatalf("tool name = %q", out.ModelMessage.ToolCalls[0].Function.Name)
+	if out.ModelMessage.EdgeCalls[0].Function.Name != "update_storyboard" {
+		t.Fatalf("tool name = %q", out.ModelMessage.EdgeCalls[0].Function.Name)
 	}
 	if out.Metadata["native_tool_call_count"] != 1 {
 		t.Fatalf("metadata = %#v", out.Metadata)
@@ -94,7 +94,7 @@ func TestVolcengineModelResponderReturnsNativeToolCalls(t *testing.T) {
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestVolcengineModelResponderReturnsNativeToolCalls -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestVolcengineModelResponderReturnsNativeEdgeCalls -count=1
 ```
 
 Expected: fail because `ProducerTurnOutput` has no `ModelMessage`.
@@ -105,7 +105,7 @@ In `types.go`, add:
 
 ```go
 ModelMessage          *schema.Message
-UsedLegacyToolParser  bool
+UsedLegacyEdgeParser  bool
 ```
 
 to `ProducerTurnOutput`, and import `github.com/cloudwego/eino/schema`.
@@ -113,7 +113,7 @@ to `ProducerTurnOutput`, and import `github.com/cloudwego/eino/schema`.
 In `model_responder.go`, set:
 
 ```go
-metadata["native_tool_call_count"] = len(final.ToolCalls)
+metadata["native_tool_call_count"] = len(final.EdgeCalls)
 out := ProducerTurnOutput{
 	AssistantText: strings.TrimSpace(final.Content),
 	Metadata:      metadata,
@@ -127,12 +127,12 @@ return out, nil
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestVolcengineModelResponderReturnsNativeToolCalls -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestVolcengineModelResponderReturnsNativeEdgeCalls -count=1
 ```
 
 Expected: PASS.
 
-## Task 2: Add Eino Tool Adapter
+## Task 2: Add Eino Edge Adapter
 
 **Files:**
 - Create: `apps/server/internal/agent/producer/eino_tool_adapter.go`
@@ -142,9 +142,9 @@ Expected: PASS.
 
 Create `apps/server/internal/agent/producer/eino_tool_adapter_test.go` with tests that:
 
-- convert `agenttools.Definition{Name:"update_storyboard", Description:"...", Parameters: map[string]any{"type":"object"}}` to `schema.ToolInfo`;
+- convert `agenttools.Definition{Name:"update_storyboard", Description:"...", Parameters: map[string]any{"type":"object"}}` to `schema.EdgeInfo`;
 - execute an adapter through `InvokableRun`;
-- execute the same adapter through `compose.NewToolNode(...).Invoke(...)`.
+- execute the same adapter through `compose.NewEdgeNode(...).Invoke(...)`.
 
 The test tool should record the received tool name and arguments and return `{"ok":true}`.
 
@@ -153,7 +153,7 @@ The test tool should record the received tool name and arguments and return `{"o
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestEinoTool' -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestEinoEdge' -count=1
 ```
 
 Expected: fail because adapter types do not exist.
@@ -162,34 +162,34 @@ Expected: fail because adapter types do not exist.
 
 Create `eino_tool_adapter.go` with:
 
-- `type einoProducerTool struct`.
-- `func producerToolInfo(def agenttools.Definition) (*schema.ToolInfo, error)`.
-- `func newEinoProducerTools(ctx context.Context, producerContext ProducerContext, registry *agenttools.Registry, executor ToolExecutor) ([]tool.BaseTool, map[string]agenttools.Definition, error)`.
-- `func (t *einoProducerTool) Info(ctx context.Context) (*schema.ToolInfo, error)`.
-- `func (t *einoProducerTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error)`.
+- `type einoProducerEdge struct`.
+- `func producerEdgeInfo(def agenttools.Definition) (*schema.EdgeInfo, error)`.
+- `func newEinoProducerEdges(ctx context.Context, producerContext ProducerContext, registry *agenttools.Registry, executor EdgeExecutor) ([]tool.BaseEdge, map[string]agenttools.Definition, error)`.
+- `func (t *einoProducerEdge) Info(ctx context.Context) (*schema.EdgeInfo, error)`.
+- `func (t *einoProducerEdge) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error)`.
 
 Adapter execution must:
 
 ```text
 decode JSON arguments
--> call executor.ExecuteProducerTool(ctx, producerContext, ToolCall{ID: currentCallID, Name: def.Name, Arguments: args})
--> remember ToolExecutionResult by call id
+-> call executor.ExecuteProducerEdge(ctx, producerContext, EdgeCall{ID: currentCallID, Name: def.Name, Arguments: args})
+-> remember EdgeExecutionResult by call id
 -> return result JSON string
 ```
 
-Because Eino `InvokableRun` does not directly pass call id, add a `ToolCallMiddlewares` path in Task 3 to attach the call id around execution.
+Because Eino `InvokableRun` does not directly pass call id, add a `EdgeCallMiddlewares` path in Task 3 to attach the call id around execution.
 
 - [ ] **Step 4: Run tests and verify they pass**
 
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestEinoTool' -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestEinoEdge' -count=1
 ```
 
 Expected: PASS.
 
-## Task 3: Route Native Tool Calls Through ToolsNode
+## Task 3: Route Native Edge Calls Through EdgesNode
 
 **Files:**
 - Modify: `apps/server/internal/agent/producer/graph.go`
@@ -203,7 +203,7 @@ Add a test where `sequenceResponder` returns:
 ProducerTurnOutput{
 	ModelMessage: &schema.Message{
 		Role: schema.Assistant,
-		ToolCalls: []schema.ToolCall{
+		EdgeCalls: []schema.EdgeCall{
 			{
 				ID: "call-storyboard",
 				Type: "function",
@@ -224,7 +224,7 @@ The second responder output should be `AssistantText: "已更新 storyboard。"`
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestProducerGraphExecutesNativeEinoToolCall -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestProducerGraphExecutesNativeEinoEdgeCall -count=1
 ```
 
 Expected: fail because graph still parses assistant text.
@@ -234,10 +234,10 @@ Expected: fail because graph still parses assistant text.
 Change `runProducerLoop` so the first branch is:
 
 ```text
-if out.ModelMessage != nil && len(out.ModelMessage.ToolCalls) > 0:
+if out.ModelMessage != nil && len(out.ModelMessage.EdgeCalls) > 0:
   enforce max tool calls
-  create ToolsNode using per-turn Eino tool adapters
-  invoke ToolsNode with out.ModelMessage
+  create EdgesNode using per-turn Eino tool adapters
+  invoke EdgesNode with out.ModelMessage
   append assistant same-turn tool-call message
   append returned tool messages
   if any executed tool requires HITL, return interrupted output
@@ -256,46 +256,46 @@ GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run '
 
 Expected: PASS.
 
-## Task 4: Bind Tools To The Eino Ark Model
+## Task 4: Bind Edges To The Eino Ark Model
 
 **Files:**
 - Modify: `apps/server/internal/agent/producer/model_responder.go`
 - Modify: `apps/server/internal/agent/producer/model_responder_test.go`
 
-- [ ] **Step 1: Write failing test for tool binding**
+- [ ] **Step 1: Write failing test for tool edge**
 
-Extend the fake streamer/factory path so tests can verify the responder calls `WithTools` with at least `update_storyboard` when Producer context provides tool infos.
+Extend the fake streamer/factory path so tests can verify the responder calls `WithEdges` with at least `update_storyboard` when Producer context provides tool infos.
 
 - [ ] **Step 2: Run test and verify it fails**
 
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestVolcengineModelResponderBindsProducerTools -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestVolcengineModelResponderBindsProducerEdges -count=1
 ```
 
 Expected: fail because responder does not bind tools.
 
-- [ ] **Step 3: Implement tool binding**
+- [ ] **Step 3: Implement tool edge**
 
 Update responder config/context to accept tool infos:
 
 ```go
-ToolInfos []*schema.ToolInfo
+EdgeInfos []*schema.EdgeInfo
 ```
 
 Before `model.Stream`, if tool infos are present:
 
 ```go
-toolCallingModel, ok := model.(einoModel.ToolCallingChatModel)
+toolCallingModel, ok := model.(einoModel.EdgeCallingChatModel)
 if !ok {
 	return ProducerTurnOutput{}, NewAgentError("agent_model_tool_calling_unsupported", "selected Producer model does not support tool calling")
 }
-boundModel, err := toolCallingModel.WithTools(producerContext.ToolInfos)
+boundModel, err := toolCallingModel.WithEdges(producerContext.EdgeInfos)
 stream, err := boundModel.Stream(ctx, messages)
 ```
 
-Use `WithTools`, not `BindTools`.
+Use `WithEdges`, not `BindEdges`.
 
 - [ ] **Step 4: Run model responder tests**
 
@@ -315,28 +315,28 @@ Expected: PASS.
 
 - [ ] **Step 1: Add fallback test**
 
-Add one explicit test where the model returns no native `ToolCalls`, but text contains the old JSON envelope. The test should enable fallback and assert `UsedLegacyToolParser == true`.
+Add one explicit test where the model returns no native `EdgeCalls`, but text contains the old JSON envelope. The test should enable fallback and assert `UsedLegacyEdgeParser == true`.
 
 - [ ] **Step 2: Run fallback test and verify it fails**
 
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestProducerGraphUsesLegacyToolParserOnlyWhenEnabled -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run TestProducerGraphUsesLegacyEdgeParserOnlyWhenEnabled -count=1
 ```
 
 Expected: fail until fallback gate exists.
 
 - [ ] **Step 3: Implement fallback gate**
 
-Add a `GraphConfig.EnableLegacyToolParserFallback bool` or equivalent config path. Normal runtime should default this to false unless explicitly enabled.
+Add a `GraphConfig.EnableLegacyEdgeParserFallback bool` or equivalent config path. Normal runtime should default this to false unless explicitly enabled.
 
 - [ ] **Step 4: Run parser and graph tests**
 
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestProducerGraph|TestParseToolCall' -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestProducerGraph|TestParseEdgeCall' -count=1
 ```
 
 Expected: PASS.

@@ -462,7 +462,7 @@ const applyCanvasEvent = useCallback((event: CanvasEvent) => {
 }, [id, queryClient]);
 ```
 
-This first implementation uses refetch as the idempotent correctness path. Direct shape mutation can be added after this works reliably.
+This first implementation uses refetch as the idempotent correctness path. Direct node mutation can be added after this works reliably.
 
 - [ ] **Step 3: Render status**
 

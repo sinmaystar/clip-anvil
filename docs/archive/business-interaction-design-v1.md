@@ -4,7 +4,7 @@
 
 ### 1.1 一句话定位
 
-一张以 tldraw 为交互底座的多媒体生产画布，一套以业务 DAG 为事实源的生成系统，以及一个以 Skill 为角色分工的可视化 Agent。
+一张以 React Flow 为交互底座的多媒体生产画布，一套以业务 DAG 为事实源的生成系统，以及一个以 Skill 为角色分工的可视化 Agent。
 
 ### 1.2 核心原则
 
@@ -14,12 +14,12 @@
 
 1. **业务 DB 为事实源，画布只做投影**
    - Workspace、媒体资源、依赖关系、生成任务、版本、评审结果存储在业务数据库
-   - tldraw store 只保存布局信息（节点位置、大小、视口、选中状态）和用于渲染的业务字段映射（nodeId、缩略图、状态）
+   - React Flow store 只保存布局信息（节点位置、大小、视口、选中状态）和用于渲染的业务字段映射（nodeId、缩略图、状态）
    - 好处：Agent 后台执行时画布可以不打开；画布损坏不丢失业务数据；支持未来多端/协作
 
 2. **Agent 调业务命令，不操作画布 UI**
    - Agent 通过后端命令 API（create_media_node、create_media_edge 等）改变业务状态
-   - 前端通过订阅事件流将业务状态变更投影到 tldraw 画布
+   - 前端通过订阅事件流将业务状态变更投影到 React Flow 画布
    - 好处：降低自动化脆弱性，Agent 不依赖 DOM 和前端 API，每一步可审计、可回滚
 
 3. **Studio 与 Agent 不切换，而是融合**
@@ -52,24 +52,24 @@
 用户 / Agent
      │
      ▼
-业务命令 API ──→ 业务数据库（事实源）──→ 实时事件流 ──→ tldraw 画布投影
+业务命令 API ──→ 业务数据库（事实源）──→ 实时事件流 ──→ React Flow 画布投影
      │
      ▼
 生成任务队列 ──→ 模型供应商 / 渲染器 ──→ 业务数据库
 ```
 
 - **业务层**：定义 Workspace 中真实存在的媒体资源、生成任务和血缘关系
-- **画布层**：将业务对象投影为 tldraw 上的位置、大小、折叠状态和视觉样式
+- **画布层**：将业务对象投影为 React Flow 上的位置、大小、折叠状态和视觉样式
 
 ### 2.2 核心实体
 
 | 实体 | 关键字段 | 说明 |
 |---|---|---|
 | **Workspace** | id, name, owner, settings | 顶层组织单位，对应一个项目 |
-| **CanvasDocument** | id, workspaceId, tldrawSnapshot, layoutVersion | 画布布局和 UI 投影，不承载业务事实 |
+| **CanvasDocument** | id, workspaceId, React FlowSnapshot, layoutVersion | 画布布局和 UI 投影，不承载业务事实 |
 | **MediaAsset** | id, type, mime, storageUrl, thumbnailUrl, duration, size | 文件级资产（图片、视频、音频、文本内容），存储在 MinIO |
-| **MediaNode** | id, workspaceId, assetId, nodeType, title, status, prompt, modelProvider, currentVersionId | 画布上的业务节点，tldraw shape 通过 nodeId 映射 |
-| **MediaGroup** | id, workspaceId, name, parentId, nodeIds | 视觉/组织分组，对应左侧资源树和画布 group shape |
+| **MediaNode** | id, workspaceId, assetId, nodeType, title, status, prompt, modelProvider, currentVersionId | 画布上的业务节点，React Flow node 通过 nodeId 映射 |
+| **MediaGroup** | id, workspaceId, name, parentId, nodeIds | 视觉/组织分组，对应左侧资源树和画布 group node |
 | **MediaEdge** | id, fromNodeId, toNodeId, edgeType, transition | 节点间关系，edgeType 见 2.3 |
 | **GenerationJob** | id, targetNodeId, provider, model, prompt, params, status, cost | 一次生成或处理任务 |
 | **ArtifactVersion** | id, nodeId, jobId, assetId, versionNo, winner, reviewScore, inputHash | 节点产物版本，支持多候选和重试 |
@@ -119,12 +119,12 @@ Draft ──→ Ready ──→ Queued ──→ Running ──→ Succeeded
 | Stale | 上游依赖已变更，当前产物过期 | 黄色虚线边框 |
 | UserEditing | 用户正在手动编辑，Agent 暂停该分支 | 橙色边框 |
 
-### 2.5 tldraw shape 与业务实体的映射
+### 2.5 React Flow node 与业务实体的映射
 
-tldraw shape 的 `props` 只保存渲染所需的最小字段：
+React Flow node data 只保存渲染所需的最小字段：
 
 ```typescript
-interface MediaShapeProps {
+interface MediaFlowNodeProps {
   nodeId: string          // 关联 MediaNode.id
   nodeType: MediaType     // text | image | video | audio
   title: string           // 显示标题
@@ -136,7 +136,7 @@ interface MediaShapeProps {
 }
 ```
 
-完整的 Prompt、模型参数、版本历史、评审详情等通过 nodeId 从业务 API 按需加载，不存入 shape props。
+完整的 Prompt、模型参数、版本历史、评审详情等通过 nodeId 从业务 API 按需加载，不存入 node data。
 
 ## 3. 主界面布局
 
@@ -153,7 +153,7 @@ interface MediaShapeProps {
 │          │                             │  [Agent 状态]        │
 │ [类型筛选]│                             │                     │
 │          │        画布区域              │                     │
-│  📁 角色  │    （tldraw 无限画布）       │                     │
+│  📁 角色  │    （React Flow 无限画布）       │                     │
 │   🖼 ...  │                             │                     │
 │  📁 分镜  │     [媒体节点卡片]           │                     │
 │   🎬 ...  │     [连线 / 箭头]           │                     │
@@ -169,7 +169,7 @@ interface MediaShapeProps {
 | 区域 | 职责 | 交互 |
 |---|---|---|
 | **左侧资源树** | Workspace 内所有媒体资源的索引和组织 | 搜索、类型筛选（全部/图片/视频/文本/音频）、文件夹层级、拖拽到画布、状态徽标（✓/⟳/○） |
-| **中间画布** | tldraw 无限画布，承载媒体节点卡片、连线、分组 | 平移/缩放、右键创建、拖拽连线、选中节点、浮动工具栏 |
+| **中间画布** | React Flow 无限画布，承载媒体节点卡片、连线、分组 | 平移/缩放、右键创建、拖拽连线、选中节点、浮动工具栏 |
 | **右侧面板** | 对话 Tab + 属性 Tab | 对话 Tab：与 Agent 交互、查看进度；属性 Tab：选中节点的详细属性编辑 |
 
 ### 3.3 面板联动规则
@@ -224,18 +224,18 @@ Studio 和 Agent 的区别只在入口层。两者共享同一套业务命令，
 业务命令执行后广播事件，前端订阅事件更新画布：
 
 ```
-命令执行 → DB 写入 → 广播事件 → 前端收到事件 → 更新 tldraw store → 画布刷新
+命令执行 → DB 写入 → 广播事件 → 前端收到事件 → 更新 React Flow store → 画布刷新
 ```
 
 关键事件类型：
 
 | 事件 | 画布响应 |
 |---|---|
-| `NodeCreated` | 创建对应类型的 tldraw shape，自动布局 |
-| `NodeUpdated` | 更新 shape props（状态、缩略图、进度等） |
-| `NodeDeleted` | 删除 shape |
-| `EdgeCreated` | 创建 arrow + binding |
-| `EdgeDeleted` | 删除 arrow + binding |
+| `NodeCreated` | 创建对应类型的 React Flow node，自动布局 |
+| `NodeUpdated` | 更新 node data（状态、缩略图、进度等） |
+| `NodeDeleted` | 删除 node |
+| `EdgeCreated` | 创建 custom edge + edge |
+| `EdgeDeleted` | 删除 custom edge + edge |
 | `JobProgress` | 更新节点进度条 |
 | `JobCompleted` | 更新节点状态为 Succeeded，刷新缩略图 |
 | `JobFailed` | 更新节点状态为 Failed |
@@ -245,10 +245,10 @@ Studio 和 Agent 的区别只在入口层。两者共享同一套业务命令，
 
 Studio 模式下用户直接操作画布时，必须保证即时反馈：
 
-1. 用户操作 → **立即**更新 tldraw store（shape 出现在画布上）
+1. 用户操作 → **立即**更新 React Flow store（node 出现在画布上）
 2. 同时异步调用业务命令 API
 3. 成功 → 无感知（已经渲染了）
-4. 失败 → 回滚 shape，提示错误
+4. 失败 → 回滚 node，提示错误
 
 这是 Google Docs / Figma 的标准做法，确保 Studio 模式下的画布操作没有延迟感。
 
@@ -496,7 +496,7 @@ Agent 创建的节点使用蓝色虚线边框，用户手动创建的使用实�
 
 ### 7.4 分组视觉规格
 
-分组使用 tldraw 的 GroupShapeUtil，视觉表现为虚线容器：
+分组使用 React Flow 的 GroupFlowNode，视觉表现为虚线容器：
 
 ```
 ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐

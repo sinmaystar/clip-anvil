@@ -124,7 +124,19 @@ export interface MediaEdge {
   to_node_id: string;
   edge_type: "dependency" | "reference" | "sequence";
   source: string;
+  metadata?: EdgeMetadata;
   created_at: string;
+}
+
+export interface EdgeAnchorPoint {
+  x: number;
+  y: number;
+}
+
+export interface EdgeMetadata {
+  anchors?: {
+    target?: EdgeAnchorPoint;
+  };
 }
 
 export interface MediaGroup {
@@ -615,6 +627,7 @@ export function createMediaEdge(input: {
   workspace_id: string;
   from_node_id: string;
   to_node_id: string;
+  metadata?: EdgeMetadata;
 }) {
   return apiFetch<MediaEdge>("/edges", {
     method: "POST",

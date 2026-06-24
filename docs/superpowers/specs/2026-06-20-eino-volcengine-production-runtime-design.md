@@ -616,7 +616,7 @@ Producer / Craftsman 关心：
 - Model API 不返回 enabled Volcengine audio generation。
 - 手工提交 audio run 得到 failed `generation_job`，错误为 `capability_mismatch` 或 `provider_config_error`。
 
-### R6: Agent Worker Tool Reuse
+### R6: Agent Worker Edge Reuse
 
 目标：
 

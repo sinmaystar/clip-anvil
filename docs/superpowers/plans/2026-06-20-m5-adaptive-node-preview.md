@@ -6,7 +6,7 @@
 
 **Architecture:** Keep production execution unchanged. Add a small backend preview metadata pass-through for asset dimensions and duration, then move canvas sizing into focused frontend pure helpers. Render canvas nodes as compact result previews, and keep complete editing and debugging inside the existing floating `PropertyPanel` popover.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, TanStack Query, tldraw 5, Vite 8, Node test runner, `react-markdown`, `remark-gfm`.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, TanStack Query, React Flow, Vite 8, Node test runner, `react-markdown`, `remark-gfm`.
 
 ---
 
@@ -30,14 +30,14 @@
   - Add `react-markdown` and `remark-gfm` dependencies.
 - Create `apps/web/src/components/MarkdownPreview.tsx`
   - Render safe Markdown previews shared by canvas nodes and property popover output.
-- Modify `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
   - Use Markdown preview for text nodes.
   - Use adaptive image/video preview structure and stable status chrome.
-- Modify `packages/canvas-schema/src/index.ts`
-  - Add optional preview dimension props to `MediaShapeProps`.
+- Modify `apps/web/src/components/canvas-flow/flowTypes.ts`
+  - Add optional preview dimension props to `MediaFlowNodeProps`.
 - Modify `apps/web/src/lib/canvas.ts`
   - Replace fixed `mediaNodeDisplaySize` logic with `adaptiveMediaNodeSize`.
-  - Pass preview dimensions into shape props.
+  - Pass preview dimensions into node data.
 - Modify `apps/web/src/lib/canvasLayering.test.mjs`
   - Update CSS/source assertions for adaptive nodes and Markdown preview.
 - Modify `apps/web/src/components/PropertyPanel.tsx`
@@ -257,7 +257,7 @@ Expected: PASS.
 - Modify `apps/web/tsconfig.test.json`
 - Modify `apps/web/package.json`
 - Modify `apps/web/src/lib/canvas.ts`
-- Modify `packages/canvas-schema/src/index.ts`
+- Modify `apps/web/src/components/canvas-flow/flowTypes.ts`
 
 **Deliverable Standard:**
 
@@ -269,7 +269,7 @@ Expected: PASS.
 **Acceptance Standard:**
 
 - Pure Node tests cover sizing behavior without launching the browser.
-- Existing group bounds and arrow geometry continue using the updated display size.
+- Existing group bounds and custom edge geometry continue using the updated display size.
 
 **E2E Coverage:**
 
@@ -296,7 +296,7 @@ export interface ProductionPreview {
 }
 ```
 
-In `packages/canvas-schema/src/index.ts`, extend `MediaShapeProps`:
+In `apps/web/src/components/canvas-flow/flowTypes.ts`, extend `MediaFlowNodeProps`:
 
 ```ts
   previewWidth?: number;
@@ -530,7 +530,7 @@ function clamp(value: number, min: number, max: number) {
 }
 ```
 
-- [ ] **Step 6: Wire the helper into canvas shapes**
+- [ ] **Step 6: Wire the helper into canvas nodes**
 
 In `apps/web/src/lib/canvas.ts`, import and use the helper:
 
@@ -557,7 +557,7 @@ export function mediaNodeDisplaySize(
 }
 ```
 
-Update `nodeToShapeProps` to pass dimensions:
+Update `nodeToFlowNodeData` to pass dimensions:
 
 ```ts
     previewWidth: node.production_preview?.width,
@@ -565,7 +565,7 @@ Update `nodeToShapeProps` to pass dimensions:
     previewDurationMs: node.production_preview?.duration_ms,
 ```
 
-Update `MediaShapeProps` validator in `apps/web/src/shapes/MediaShapeUtil.tsx`:
+Update `MediaFlowNodeProps` validator in `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`:
 
 ```ts
     previewWidth: T.optional(T.number),
@@ -589,7 +589,7 @@ Expected: PASS.
 
 - Modify `apps/web/package.json`
 - Create `apps/web/src/components/MarkdownPreview.tsx`
-- Modify `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
 - Modify `apps/web/src/components/PropertyPanel.tsx`
 - Modify `apps/web/src/main.css`
 
@@ -644,7 +644,7 @@ export function MarkdownPreview({ value, variant }: MarkdownPreviewProps) {
 
 - [ ] **Step 3: Use MarkdownPreview in text canvas nodes**
 
-In `apps/web/src/shapes/MediaShapeUtil.tsx`, import:
+In `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`, import:
 
 ```ts
 import { MarkdownPreview } from "../components/MarkdownPreview";
@@ -754,7 +754,7 @@ Expected: PASS.
 
 **Files:**
 
-- Modify `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
 - Modify `apps/web/src/components/PropertyPanel.tsx`
 - Modify `apps/web/src/main.css`
 - Modify `apps/web/src/lib/canvasLayering.test.mjs`
@@ -783,7 +783,7 @@ Extend `apps/web/src/lib/canvasLayering.test.mjs` with:
 ```js
   it("uses adaptive media previews and Markdown instead of plain text-only nodes", () => {
     assert.ok(
-      mediaShapeUtil.includes("MarkdownPreview"),
+      mediaFlowNode.includes("MarkdownPreview"),
       "text media nodes should render MarkdownPreview",
     );
     assert.ok(
@@ -807,9 +807,9 @@ pnpm --filter @clip-anvil/web test:connections
 
 Expected: FAIL until media preview classes are implemented.
 
-- [ ] **Step 3: Update media shape markup**
+- [ ] **Step 3: Update media node markup**
 
-In `apps/web/src/shapes/MediaShapeUtil.tsx`, wrap image and video previews with dedicated frames:
+In `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`, wrap image and video previews with dedicated frames:
 
 ```tsx
             ) : nodeType === "image" ? (
@@ -889,7 +889,7 @@ In `apps/web/src/main.css`, adjust node preview styles:
 }
 ```
 
-Remove or narrow older `.media-node-content img` rules so they do not conflict with `.media-node-media-frame img`.
+Remove or ncustom edge older `.media-node-content img` rules so they do not conflict with `.media-node-media-frame img`.
 
 - [ ] **Step 5: Reorder property panel sections**
 
@@ -1083,4 +1083,4 @@ Expected: frontend and backend processes for this worktree stop; PostgreSQL / Re
 - Type consistency:
   - Backend uses `Width`, `Height`, `DurationMS`.
   - Frontend API uses `width`, `height`, `duration_ms`.
-  - Shape props use `previewWidth`, `previewHeight`, `previewDurationMs`.
+  - Node props use `previewWidth`, `previewHeight`, `previewDurationMs`.

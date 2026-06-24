@@ -16,8 +16,8 @@ export default defineConfig({
           if (!id.includes("node_modules")) {
             return;
           }
-          if (id.includes("/tldraw/") || id.includes("/@tldraw/")) {
-            return "vendor-tldraw";
+          if (id.includes("/@xyflow/react/") || id.includes("/@xyflow/system/")) {
+            return "vendor-xyflow";
           }
           if (
             id.includes("/react-markdown/") ||

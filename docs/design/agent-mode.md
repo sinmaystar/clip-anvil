@@ -14,7 +14,7 @@ Agent 模式是"默认由 Agent 主导生产，用户在关键节点确认、随
 ├──────────┬───────────────────────────────────┬───────────────┤
 │          │                                   │ 💬 对话       │
 │ 🔍搜索    │         画布区域                   │              │
-│          │    （tldraw 无限画布，只读）         │ [Agent 状态栏] │
+│          │    （React Flow 无限画布，只读）         │ [Agent 状态栏] │
 │[类型筛选] │                                   │ 🔵 正在生成... │
 │          │    [媒体节点卡片]                   │              │
 │ 📁 素材   │    [连线 / 箭头]                   │ [对话消息]    │
@@ -169,25 +169,16 @@ Agent 无需主动刷新，除非上下文窗口被压缩。
 
 Agent 的工具不是画布操作（create_node、create_edge），而是**生产操作**（create_storyboard、generate_shot）。每个生产工具在内部自动翻译为多个业务命令，Agent 完全不感知底层操作。
 
-**对比**：
+典型调用：
 
 ```
-旧设计（Agent 调 14 个画布原子工具，7 步生成一个镜头）:
-  create_media_node("video", "镜头01")
-  update_media_node(nodeId, {prompt: "..."})
-  create_media_edge(productImage, nodeId, "dependency")
-  create_media_edge(logo, nodeId, "dependency")
-  submit_generation(nodeId, provider, model, ...)
-  [等待完成]
-  auto_layout()
-
-新设计（Agent 调 1 个生产工具）:
-  generate_shot("镜头01", {
-    prompt: "...",
-    model: "qwen-vl-max",
-    reference_inputs: [{id: "产品主图ID", role: "product"}, {id: "LogoID", role: "brand"}]
-  })
-  → 系统自动: 更新节点prompt + 建依赖连线 + 提交生成 + 完成后更新状态/缩略图
+generate_shot("镜头01", {
+  prompt: "...",
+  model: "qwen-vl-max",
+  reference_inputs: [{id: "产品主图ID", role: "product"}, {id: "LogoID", role: "brand"}]
+})
+→ 系统自动: 更新节点 prompt + 建依赖连线 + 提交生成 + 完成后更新状态/缩略图
+```
 ```
 
 ### 6.2 工具列表
@@ -237,7 +228,7 @@ Agent 调用生产工具（如 generate_shot）
   │     └── 审计日志（agent_step 表）
   │
   ├── 广播 WebSocket 事件
-  │     └── 前端收到 → 创建/更新 tldraw shape → 画布刷新
+  │     └── 前端收到 → 刷新/合并 React Flow nodes 和 edges → 画布刷新
   │
   └── 返回结果给 Agent（生产语言）:
         ├── {shot_id, status: "generating", job_id}
@@ -568,7 +559,7 @@ Stitch Sub-Agent:
 
 对话面板显示视频播放器 + 时间线。
 
-**整个流程工具调用量**：~20 次（vs 旧设计 ~60+ 次画布原子操作）。
+**整个流程工具调用量**：~20 次生产工具调用。
 
 ## 11. 用户中途干预
 

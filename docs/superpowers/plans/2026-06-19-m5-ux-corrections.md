@@ -6,7 +6,7 @@
 
 **Architecture:** Reuse the existing `PropertyPanel` production controls as the single node popover instead of keeping a separate inline editor plus dock. Keep dependency graph rules enforced on both frontend helpers and backend APIs. Treat `prompt_refs.refs[].node_id` as the source of truth and rewrite known `@label` tokens when referenced node titles change.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, TanStack Query, tldraw 5, Vite 8, Node test runner.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, TanStack Query, React Flow, Vite 8, Node test runner.
 
 ---
 
@@ -42,7 +42,7 @@
 
 ## Tasks
 
-### Task 1: Simplify The Single Node Editor
+### Task 1: Simplify The Single Node React Flow
 
 - [ ] Add failing frontend tests for simplified operation choices.
 - [ ] Replace the always-on property dock with a node-positioned popover using existing production controls.

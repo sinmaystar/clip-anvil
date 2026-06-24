@@ -6,7 +6,7 @@
 
 **Architecture:** Keep `generation_job` as the execution/audit record, but make `artifact_version` the user-facing lifecycle record. A run creates `generation_job(status=queued)` and `artifact_version(status=queued, job_id=job.id)` in the same submission path. Runner progress updates both job and version. Success updates the existing version with the persisted asset and marks it current; failure leaves a failed version without changing current.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, PostgreSQL migrations, React 19, TypeScript, tldraw, existing Studio production APIs.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, PostgreSQL migrations, React 19, TypeScript, React Flow, existing Studio production APIs.
 
 ---
 

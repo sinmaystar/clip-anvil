@@ -399,7 +399,7 @@ Add or extend an Agent workspace projection endpoint:
 GET /api/agent/workspaces/:workspaceID/production-overview
 ```
 
-Response shape:
+Response node:
 
 ```json
 {

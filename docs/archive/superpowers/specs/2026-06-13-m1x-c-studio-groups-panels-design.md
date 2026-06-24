@@ -25,7 +25,7 @@ M1.x-B 完成后应具备：
 - 给 `media_node` 增加 `group_id`。
 - 新增 group CRUD API 和成员管理 API。
 - `GET /api/workspaces/:id/canvas` 返回 `groups`。
-- 前端新增自定义 `GroupContainerShapeUtil`。
+- 前端新增自定义 `GroupFlowNode`。
 - 左侧升级为完整资源树：搜索、类型筛选、分组折叠、未分组节点。
 - 右侧属性面板：节点基础属性、Prompt 编辑、上游输入引用、连线详情。
 - 新增 `GET /api/nodes/:id/inputs`。
@@ -171,11 +171,11 @@ GET /api/nodes/:id/inputs
 
 ## 6. 前端设计
 
-### 6.1 GroupContainerShape
+### 6.1 group container node
 
-新增 `apps/web/src/shapes/GroupContainerShapeUtil.tsx`。
+新增 `apps/web/src/components/canvas-flow/GroupFlowNode.tsx`。
 
-不使用 tldraw 内置 GroupShape 作为事实源，因为本产品需要“删除分组保留节点”和“折叠分组”的业务语义。自定义 shape 只负责视觉容器，成员关系由 `media_node.group_id` 决定。
+不使用 React Flow 内置 group node 作为事实源，因为本产品需要“删除分组保留节点”和“折叠分组”的业务语义。自定义 node 只负责视觉容器，成员关系由 `media_node.group_id` 决定。
 
 props：
 
@@ -188,7 +188,7 @@ props：
 行为：
 
 - 创建分组时，根据选中节点包围盒生成容器，padding 20px。
-- 删除分组只删除 group container shape，并调用 `DELETE /api/groups/:id`，不删除成员节点。
+- 删除分组只删除 group container node，并调用 `DELETE /api/groups/:id`，不删除成员节点。
 - 拖拽节点进入容器边界，调用 `PATCH /api/nodes/:id { group_id }`。
 - 拖拽节点移出容器边界，调用 `PATCH /api/nodes/:id { group_id: null }`。
 - 移动分组时，组内节点跟随移动；结束后批量持久化节点坐标。
@@ -196,7 +196,7 @@ props：
 折叠行为：
 
 - 折叠 group container 后只显示标题栏。
-- 成员 MediaShape 在前端隐藏或禁用交互。
+- 成员 MediaFlowNode 在前端隐藏或禁用交互。
 - 折叠状态属于前端 UI 状态，本阶段不要求持久化到 DB。
 
 ### 6.2 左侧资源树
@@ -211,8 +211,8 @@ props：
 - 类型筛选：全部/text/image/video/audio。
 - 分组折叠：仅影响左侧树，不影响画布 group 折叠。
 - 未分组节点区域。
-- 点击节点：`editor.zoomToShape(shapeId)` 并选中节点。
-- 点击分组：定位到 group container；若 group shape 不存在，则定位到成员节点包围盒。
+- 点击节点：`editor.zoomToNode(shapeId)` 并选中节点。
+- 点击分组：定位到 group container；若 group node 不存在，则定位到成员节点包围盒。
 
 资源树结构：
 
@@ -235,9 +235,9 @@ props：
 面板显示规则：
 
 - 未选中任何元素：隐藏。
-- 选中 MediaShape：显示节点属性。
-- 选中 ArrowShape：显示连线属性。
-- 选中 GroupContainerShape：显示分组名称和成员数。
+- 选中 MediaFlowNode：显示节点属性。
+- 选中 custom dependency edge：显示连线属性。
+- 选中 group container node：显示分组名称和成员数。
 
 节点属性：
 
@@ -268,7 +268,7 @@ M1 的节点下方内联编辑面板保留为轻量编辑入口。右侧属性�
 同步规则：
 
 - 两处编辑都通过 `updateMediaNode` 写后端。
-- 成功后更新 TanStack Query 缓存和 shape props。
+- 成功后更新 TanStack Query 缓存和 node data。
 - 如果两处同时编辑，最后一次成功响应为准。
 
 ## 7. 测试与验收
@@ -313,7 +313,7 @@ pnpm --filter @clip-anvil/web... build
 
 - Studio 具备节点组织能力：groups + resource tree。
 - Studio 具备深度编辑入口：property panel。
-- 数据事实源仍是业务 DB，tldraw 只做投影。
+- 数据事实源仍是业务 DB，React Flow 只做投影。
 - 不引入生成任务、asset 或 WebSocket 依赖。
 
 ## 9. 关联文档

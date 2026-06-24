@@ -12,7 +12,7 @@
 - 后端 `POST /api/nodes` 只允许 `text`，默认尺寸统一为 `200 x 120`。
 - `GET /api/workspaces/:id/canvas` 只返回 `camera` 和 `nodes`。
 - 前端 `WorkspaceDetailPage` 只有右键创建文本节点、轻量左侧节点列表、节点下方内联编辑面板。
-- `MediaShapeProps` 当前包含 `nodeId`、`nodeType`、`title`、`prompt`、`status`、`w`、`h`。`prompt` 暂时保留在 shape props 中，用于节点预览、内联编辑和撤销恢复。
+- `MediaFlowNodeProps` 当前包含 `nodeId`、`nodeType`、`title`、`prompt`、`status`、`w`、`h`。`prompt` 暂时保留在 node data 中，用于节点预览、内联编辑和撤销恢复。
 
 本规格不假设 M1 已经实现完整目标态 schema。后续 spec 会分别补齐 edge、group、asset。
 
@@ -23,9 +23,9 @@
 - 后端放开节点类型：`text | image | video | audio`。
 - 按节点类型设置默认尺寸。
 - 前端右键菜单支持创建四种节点。
-- `MediaShapeUtil` 按节点类型渲染不同卡片占位。
+- `MediaFlowNode` 按节点类型渲染不同卡片占位。
 - 左侧 M1 轻量节点列表显示节点类型和状态。
-- `packages/canvas-schema` 明确当前 M1.x shape 契约，新增可选缩略图字段但不要求本阶段产出真实缩略图。
+- `apps/web/src/components/canvas-flow` 明确当前 M1.x node data 契约，新增可选缩略图字段但不要求本阶段产出真实缩略图。
 - 后端和前端测试覆盖多类型节点的创建、展示和刷新持久化。
 
 ### 2.2 不包含
@@ -68,7 +68,7 @@
 
 ### 4.1 类型契约
 
-修改 `packages/canvas-schema/src/index.ts`：
+修改 `apps/web/src/components/canvas-flow/flowTypes.ts`：
 
 - 保留当前 `prompt`、`w`、`h` 字段。
 - 新增可选 `thumbnailUrl?: string`，本阶段通常为空。
@@ -76,13 +76,13 @@
 修改 `apps/web/src/lib/api.ts`：
 
 - `MediaNode` 可新增可选 `thumbnail_url?: string`，本阶段后端不一定返回。
-- `nodeToShapeProps` 将 `thumbnail_url` 映射为 `thumbnailUrl`。
+- `nodeToFlowNodeData` 将 `thumbnail_url` 映射为 `thumbnailUrl`。
 
-命名规则：API DTO 使用 snake_case，shape props 使用 camelCase。
+命名规则：API DTO 使用 snake_case，node data 使用 camelCase。
 
 ### 4.2 多类型卡片
 
-`MediaShapeUtil` 根据 `nodeType` 渲染：
+`MediaFlowNode` 根据 `nodeType` 渲染：
 
 | nodeType | 内容 |
 |---|---|
@@ -111,15 +111,15 @@
 1. 用户在画布空白处右键选择类型。
 2. 前端调用 `POST /api/nodes`。
 3. 后端返回节点。
-4. 前端 `editor.createShapes([nodeToShape(node)])`。
-5. 失败时只显示 toast，不创建本地 shape。
+4. 前端 `editor.createNodes([nodeToFlowNode(node)])`。
+5. 失败时只显示 toast，不创建本地 node。
 
 ### 4.4 左侧轻量列表
 
 保留 M1 左侧栏，不在本阶段升级为完整资源树。列表行需要：
 
 - 使用类型标识显示 text/image/video/audio。
-- 点击列表行仍定位并选中对应 shape。
+- 点击列表行仍定位并选中对应 node。
 - 空状态文案改为提示可右键创建多类型节点。
 
 ## 5. 测试与验收

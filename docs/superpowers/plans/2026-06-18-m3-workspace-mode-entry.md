@@ -6,7 +6,7 @@
 
 **Architecture:** Store `workspace.mode` as the durable routing and permission fact. The backend accepts mode at workspace creation, returns it on workspace APIs, and rejects ordinary canvas mutations for non-Studio workspaces. The frontend uses mode to navigate into `/workspaces/:id/studio` or `/workspaces/:id/agent`; Studio reuses the current canvas page, while Agent starts as a minimal read-only workbench shell.
 
-**Tech Stack:** PostgreSQL + goose migrations, sqlc + pgx, Go/Hertz API, React 19 + React Router 7 + TanStack Query, Vite 8, TypeScript 6, tldraw 5.
+**Tech Stack:** PostgreSQL + goose migrations, sqlc + pgx, Go/Hertz API, React 19 + React Router 7 + TanStack Query, Vite 8, TypeScript 6, React Flow.
 
 ---
 

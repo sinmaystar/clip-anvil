@@ -6,7 +6,7 @@
 
 **Architecture:** Extend the existing M5.2 single-node run surface instead of adding a new workflow. The canvas payload should carry a lightweight preview of each node's current winner so the canvas can render text/image/video/audio/reference-pack status without issuing one production-state request per node. The property panel continues to use `fetchNodeProductionState` for selected-node detail, with pure frontend helpers covering preview labels, version rows, latest job rows, and stale reason text.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, tldraw 5, TanStack Query, Vite 8, Node test runner, browser smoke via the in-app browser.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, React Flow, TanStack Query, Vite 8, Node test runner, browser smoke via the in-app browser.
 
 ---
 
@@ -16,7 +16,7 @@
 - `MediaNode` already includes production fields such as `operation_type`, `model_provider`, `model_id`, `model_params`, and `current_version_id`.
 - `NodeProductionState` already includes `current_version`, `versions`, `latest_job`, `active_stale_reasons`, `capability`, and `sandbox_jobs`.
 - `PropertyPanel.tsx` currently shows only a compact current-version summary and latest-job summary.
-- `MediaShapeProps` currently has `thumbnailUrl`, but not winner preview fields, asset type, version number, stale reason count, or reference-pack member summary.
+- `MediaFlowNodeProps` currently has `thumbnailUrl`, but not winner preview fields, asset type, version number, stale reason count, or reference-pack member summary.
 - `CanvasHandler.GetCanvas` only joins uploaded media assets for `thumbnail_url`; generated current winner assets are not available in the canvas payload.
 - Backend stale propagation is already implemented in M4: successful rerun resolves stale for that node and marks downstream nodes stale when input hashes change.
 
@@ -53,11 +53,11 @@ M5.3 does not include:
   - Add tests for current winner preview fields and stale metadata.
 - Modify `apps/web/src/lib/api.ts`
   - Add `ProductionPreview` to `MediaNode`.
-- Modify `packages/canvas-schema/src/index.ts`
-  - Extend `MediaShapeProps` with preview fields.
+- Modify `apps/web/src/components/canvas-flow/flowTypes.ts`
+  - Extend `MediaFlowNodeProps` with preview fields.
 - Modify `apps/web/src/lib/canvas.ts`
-  - Map node preview fields into tldraw shape props.
-- Modify `apps/web/src/shapes/MediaShapeUtil.tsx`
+  - Map node preview fields into React Flow node data.
+- Modify `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
   - Render current winner previews and stale badge on canvas cards.
 - Create `apps/web/src/lib/productionPreview.ts`
   - Pure helpers for preview text, version rows, latest job rows, stale reason copy, and short hashes.
@@ -344,13 +344,13 @@ Expected: PASS.
 
 ---
 
-## Task 2: Add Frontend Preview Helpers And Shape Props
+## Task 2: Add Frontend Preview Helpers And Node Props
 
 **Files:**
 - Create: `apps/web/src/lib/productionPreview.ts`
 - Create: `apps/web/src/lib/productionPreview.test.mjs`
 - Modify: `apps/web/src/lib/api.ts`
-- Modify: `packages/canvas-schema/src/index.ts`
+- Modify: `apps/web/src/components/canvas-flow/flowTypes.ts`
 - Modify: `apps/web/src/lib/canvas.ts`
 - Modify: `apps/web/tsconfig.test.json`
 - Modify: `apps/web/package.json`
@@ -486,9 +486,9 @@ Then add these optional fields to `MediaNode`:
   active_stale_reason_count?: number;
 ```
 
-- [ ] **Step 4: Extend shape props**
+- [ ] **Step 4: Extend node data**
 
-In `packages/canvas-schema/src/index.ts`, add to `MediaShapeProps`:
+In `apps/web/src/components/canvas-flow/flowTypes.ts`, add to `MediaFlowNodeProps`:
 
 ```ts
   previewText?: string;
@@ -562,11 +562,11 @@ export function staleReasonText(reason: Pick<StaleReason, "reason_code" | "reaso
 }
 ```
 
-Adjust type casts if TypeScript requires a narrower shape for `formatJobAttempt`; keep the public behavior covered by tests.
+Adjust type casts if TypeScript requires a ncustom edgeer node for `formatJobAttempt`; keep the public behavior covered by tests.
 
-- [ ] **Step 6: Map node preview into canvas shape props**
+- [ ] **Step 6: Map node preview into canvas node data**
 
-In `apps/web/src/lib/canvas.ts`, add to `nodeToShapeProps`:
+In `apps/web/src/lib/canvas.ts`, add to `nodeToFlowNodeData`:
 
 ```ts
     previewText: winnerPreviewText(node),
@@ -593,27 +593,27 @@ Expected: PASS.
 ## Task 3: Render Canvas Current Winner Preview And Stale Badge
 
 **Files:**
-- Modify: `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify: `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
 - Modify: `apps/web/src/main.css`
 - Modify: `apps/web/src/lib/canvasLayering.test.mjs`
 
-- [ ] **Step 1: Add source-level shape rendering guards**
+- [ ] **Step 1: Add source-level node rendering guards**
 
 Append tests in `apps/web/src/lib/canvasLayering.test.mjs`:
 
 ```js
-  it("renders production preview text and stale reason count on media shapes", () => {
+  it("renders production preview text and stale reason count on media nodes", () => {
     assert.ok(
-      mediaShapeUtil.includes("previewText"),
-      "media shape must render production preview text",
+      mediaFlowNode.includes("previewText"),
+      "media node must render production preview text",
     );
     assert.ok(
-      mediaShapeUtil.includes("activeStaleReasonCount"),
-      "media shape must render active stale reason count",
+      mediaFlowNode.includes("activeStaleReasonCount"),
+      "media node must render active stale reason count",
     );
     assert.ok(
-      mediaShapeUtil.includes("media-node-stale-badge"),
-      "media shape must expose a stale badge",
+      mediaFlowNode.includes("media-node-stale-badge"),
+      "media node must expose a stale badge",
     );
   });
 ```
@@ -624,11 +624,11 @@ Run:
 pnpm --filter @clip-anvil/web test:connections
 ```
 
-Expected: FAIL until the shape renders the new props.
+Expected: FAIL until the node renders the new props.
 
-- [ ] **Step 2: Read preview props in `MediaNodeShape`**
+- [ ] **Step 2: Read preview props in `MediaNodeNode`**
 
-In `apps/web/src/shapes/MediaShapeUtil.tsx`, read:
+In `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`, read:
 
 ```ts
 const {
@@ -644,7 +644,7 @@ const {
   activeStaleReasonCount,
   w,
   h,
-} = shape.props;
+} = node.props;
 ```
 
 - [ ] **Step 3: Render stale badge**
@@ -922,5 +922,5 @@ Expected: all commands pass.
 
 - Spec coverage: M5.3 canvas preview, version list, latest job detail, stale badge, stale reasons, and manual stale recovery are all mapped to tasks.
 - Scope: Reference Pack membership and Prompt `@` remain explicitly deferred to M5.4/M5.5.
-- Test coverage: backend response shape tests, frontend pure helper tests, source-level shape guard, existing build/lint, and browser E2E smoke are included.
+- Test coverage: backend response node tests, frontend pure helper tests, source-level node guard, existing build/lint, and browser E2E smoke are included.
 - Risk: `CanvasHandler` helper loops are acceptable for M5.3 but should become a bulk sqlc query if canvases grow or browser smoke shows latency.

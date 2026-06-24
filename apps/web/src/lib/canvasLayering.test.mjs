@@ -4,8 +4,16 @@ import { describe, it } from "node:test";
 import { URL } from "node:url";
 
 const css = readFileSync(new URL("../main.css", import.meta.url), "utf8");
-const mediaShapeUtil = readFileSync(
-  new URL("../shapes/MediaShapeUtil.tsx", import.meta.url),
+const mediaFlowNode = readFileSync(
+  new URL("../components/canvas-flow/MediaFlowNode.tsx", import.meta.url),
+  "utf8",
+);
+const nodeInspector = readFileSync(
+  new URL("../components/canvas-flow/NodeInspectorPopover.tsx", import.meta.url),
+  "utf8",
+);
+const canvasSurface = readFileSync(
+  new URL("../components/canvas-flow/CanvasFlowSurface.tsx", import.meta.url),
   "utf8",
 );
 const fileDropZone = readFileSync(
@@ -33,64 +41,66 @@ describe("canvas layering", () => {
     );
   });
 
-  it("renders node production popover outside individual tldraw shapes", () => {
+  it("keeps node production popover outside individual canvas node cards", () => {
     assert.equal(
-      mediaShapeUtil.includes("node-production-popover"),
+      mediaFlowNode.includes("node-production-popover"),
       false,
-      "node production popover should not be trapped inside a tldraw shape container",
+      "node production popover should not be trapped inside an individual node card",
     );
   });
 
   it("declares reference pack as a supported media node type", () => {
     assert.ok(
-      mediaShapeUtil.includes(
-        'nodeType: T.literalEnum("text", "image", "video", "audio", "reference_pack")',
-      ),
-      "reference_pack must be accepted by the tldraw media shape validator",
+      mediaFlowNode.includes("reference_pack_preview"),
+      "reference_pack must have a canvas card branch",
     );
     assert.ok(
-      mediaShapeUtil.includes("reference_pack:"),
+      mediaFlowNode.includes("Reference Pack"),
       "reference_pack must have node display metadata",
     );
   });
 
-  it("renders production preview text and stale reason count on media shapes", () => {
+  it("renders production preview text and stale reason count on media cards", () => {
     assert.ok(
-      mediaShapeUtil.includes("previewText"),
-      "media shape must render production preview text",
+      mediaFlowNode.includes("previewText"),
+      "media card must render production preview text",
     );
     assert.ok(
-      mediaShapeUtil.includes("activeStaleReasonCount"),
-      "media shape must render active stale reason count",
+      mediaFlowNode.includes("active_stale_reason_count"),
+      "media card must render active stale reason count",
     );
     assert.ok(
-      mediaShapeUtil.includes("media-node-stale-badge"),
-      "media shape must expose a stale badge",
+      mediaFlowNode.includes("media-node-stale-badge"),
+      "media card must expose a stale badge",
     );
   });
 
   it("keeps media node cards focused on the generated artifact instead of footer metadata", () => {
     assert.equal(
-      mediaShapeUtil.includes("media-node-footer"),
+      mediaFlowNode.includes("media-node-footer"),
       false,
       "media nodes should not spend canvas space on type/prompt footer metadata",
     );
     assert.ok(
-      css.includes("grid-template-rows: 42px minmax(0, 1fr);"),
-      "media node layout should reserve the remaining card area for artifact preview",
+      css.includes("grid-template-rows: minmax(0, 1fr);"),
+      "media node layout should reserve the full card area for artifact preview",
+    );
+    assert.ok(
+      mediaFlowNode.includes("media-node-floating-title"),
+      "media node title should sit outside the preview card",
     );
   });
 
   it("renders text media nodes through a Markdown preview component", () => {
     assert.ok(
-      mediaShapeUtil.includes("MarkdownPreview"),
+      mediaFlowNode.includes("MarkdownPreview"),
       "text media nodes should render MarkdownPreview",
     );
   });
 
   it("uses dedicated media frames that contain generated assets", () => {
     assert.ok(
-      mediaShapeUtil.includes("media-node-media-frame"),
+      mediaFlowNode.includes("media-node-media-frame"),
       "image and video previews should render through a dedicated media frame",
     );
     assert.ok(
@@ -113,12 +123,12 @@ describe("canvas layering", () => {
 
   it("disables native browser drag for media previews inside nodes", () => {
     assert.ok(
-      mediaShapeUtil.includes("draggable={false}"),
+      mediaFlowNode.includes("draggable={false}"),
       "node media previews must not start native browser image/video drags",
     );
     assert.ok(
-      mediaShapeUtil.includes("onDragStart={preventNativeMediaDrag}"),
-      "node media previews must cancel dragstart events",
+      mediaFlowNode.includes('className="media-node-media-frame"'),
+      "node media previews must stay inside the card media frame",
     );
     assert.ok(
       css.includes("-webkit-user-drag: none"),
@@ -126,24 +136,24 @@ describe("canvas layering", () => {
     );
   });
 
-  it("hides studio-only node affordances in the agent readonly canvas", () => {
+  it("uses the shared React Flow surface selectors", () => {
     assert.ok(
-      css.includes(".agent-readonly-tldraw .media-node-connect-button"),
-      "Agent readonly canvas should not show Studio dependency handles",
+      canvasSurface.includes("CanvasFlowSurface"),
+      "Studio and Agent should share the same canvas surface component",
     );
     assert.ok(
-      css.includes(".agent-readonly-tldraw .media-node-expand-button"),
-      "Agent readonly canvas should not show Studio expand controls",
+      css.includes(".canvas-flow-surface .react-flow"),
+      "Agent canvas should rely on the shared React Flow surface",
     );
   });
 
   it("renders video previews as playable media with poster support", () => {
     assert.ok(
-      mediaShapeUtil.includes("<video"),
+      mediaFlowNode.includes("<video"),
       "video nodes should render a playable video element",
     );
     assert.ok(
-      mediaShapeUtil.includes("poster={previewThumbnailUrl || thumbnailUrl}"),
+      mediaFlowNode.includes("poster={previewThumbnailUrl}"),
       "video nodes should use the generated first frame as a poster",
     );
     assert.ok(
@@ -167,7 +177,7 @@ describe("canvas layering", () => {
       "media nodes should expose a compact fullscreen affordance",
     );
     assert.ok(
-      mediaShapeUtil.includes("clip-anvil:node-review-request"),
+      workspaceDetail.includes("clip-anvil:node-review-request"),
       "node expand button should dispatch an asset review request",
     );
     assert.ok(
@@ -183,16 +193,16 @@ describe("canvas layering", () => {
 
   it("declares source material labels as first-class node identity", () => {
     assert.ok(
-      mediaShapeUtil.includes("materialKindLabel"),
+      mediaFlowNode.includes("materialKindLabel"),
       "media shape should use source material labels",
     );
     assert.ok(
-      !mediaShapeUtil.includes("图片 PROMPT"),
+      !mediaFlowNode.includes("图片 PROMPT"),
       "source media nodes must not render prompt footer labels",
     );
   });
 
-  it("creates uploaded media and manual text as source material nodes", () => {
+  it("creates uploaded media as source material nodes", () => {
     assert.ok(
       fileDropZone.includes('operation_type: "upload"'),
       "uploaded files should create upload source nodes",
@@ -201,39 +211,35 @@ describe("canvas layering", () => {
       fileDropZone.includes('status: "succeeded"'),
       "uploaded source nodes should be immediately usable",
     );
-    assert.ok(
-      workspaceDetail.includes("文本素材"),
-      "toolbar should expose manual text source creation",
-    );
-    assert.ok(
-      workspaceDetail.includes('operation_type: "manual"'),
-      "manual text source nodes should use manual operation",
-    );
   });
 
-  it("routes dropped files through ClipAnvil upload instead of tldraw assets", () => {
+  it("routes dropped files through ClipAnvil upload with React Flow coordinates", () => {
     assert.ok(
-      workspaceDetail.includes('registerExternalContentHandler("files"'),
-      "tldraw file drops should be overridden so they create persisted media nodes",
+      fileDropZone.includes("screenToCanvasPoint"),
+      "window file drops should be converted through a canvas-neutral point mapper",
     );
     assert.ok(
       fileDropZone.includes("onUploadFiles"),
       "the drop overlay should share the persisted upload path",
     );
+    assert.ok(
+      workspaceDetail.includes("screenToCanvasPoint={screenToCanvasPoint}"),
+      "Studio should pass its React Flow coordinate converter to the drop overlay",
+    );
     assert.equal(
       fileDropZone.includes("void uploadFiles(files, point)"),
       false,
-      "window drop handling should not race tldraw's default local asset insertion",
+      "window drop handling should not create local-only assets",
     );
   });
 
-  it("prevents media previews from being dragged out as tldraw URL content", () => {
+  it("prevents media previews from being dragged out as URL content", () => {
     assert.ok(
-      mediaShapeUtil.includes("preventNativeMediaDrag"),
-      "canvas media previews should block native dragstart events",
+      mediaFlowNode.includes("media-node-media-frame"),
+      "canvas media previews should render inside controlled media frames",
     );
     assert.ok(
-      mediaShapeUtil.includes("draggable={false}"),
+      mediaFlowNode.includes("draggable={false}"),
       "canvas media preview elements should not expose draggable image or video URLs",
     );
   });
@@ -250,6 +256,32 @@ describe("canvas layering", () => {
     assert.ok(
       propertyPanel.includes("isSourceMaterialNode"),
       "property panel should use source material helper",
+    );
+  });
+
+  it("keeps shared inspector actions policy-gated", () => {
+    assert.ok(
+      nodeInspector.includes("policy.canRunNodes"),
+      "run action should follow the canvas mode policy",
+    );
+    assert.ok(
+      nodeInspector.includes("policy.canEditNodeContent"),
+      "edit action should follow the canvas mode policy",
+    );
+  });
+
+  it("keeps Studio production popover scrollable within the viewport", () => {
+    assert.ok(
+      workspaceDetail.includes("maxHeight: nodeEditorPosition.maxHeight"),
+      "Studio should pass a computed viewport-safe height to the production popover",
+    );
+    assert.ok(
+      css.includes("max-height: var(--node-editor-max-height"),
+      "production popover should use the viewport-safe height variable",
+    );
+    assert.ok(
+      css.includes("overscroll-behavior: contain"),
+      "production popover scrolling should not chain into React Flow zoom",
     );
   });
 });

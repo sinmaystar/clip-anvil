@@ -26,7 +26,7 @@ The worktree already has:
 - Agent runtime persistence: `agent_thread`, `agent_message`, `agent_task`, `agent_event`, `eino_checkpoint`.
 - Producer conversation thread and right-side Agent chat panel.
 - Eino-based Producer model calls with streaming text and thinking.
-- Eino-native tool calling through `schema.Message.ToolCalls` and `compose.ToolsNode`.
+- Eino-native tool calling through `schema.Message.EdgeCalls` and `compose.EdgesNode`.
 - Producer tools including `read_workspace_context`, `get_production_state`, `update_storyboard`, `request_user_decision`, and minimal node creation.
 - Storyboard tables: `shot`, `shot_dependency`, and `media_node.shot_id`.
 - Production pipeline from M4/M5:
@@ -103,13 +103,13 @@ Eino remains the model and graph runtime. Production generation remains the exis
 - Studio / Agent import-export.
 - Running shell, FFmpeg, or script work outside the sandbox.
 
-## Producer Tool: `dispatch_craftsman`
+## Producer Edge: `dispatch_craftsman`
 
 ### Purpose
 
 `dispatch_craftsman` is the Producer-visible scheduling tool. Producer does not directly generate prompts or call production providers. It selects target shots and asks the runtime to start shot-scoped Craftsman work.
 
-### Tool Schema
+### Edge Schema
 
 ```json
 {

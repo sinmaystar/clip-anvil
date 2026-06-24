@@ -6,7 +6,7 @@
 
 **Architecture:** M6 uses Eino Graph as the primary orchestration layer. Agent runtime tables persist generic thread/message/task/event/checkpoint state for Producer, Craftsman, Reviewer, and Composer; Graph nodes call a thin ClipAnvil tool registry, and production tools reuse the existing M4/M5 generation job, artifact version, stale, provider, and sandbox services.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc/goose, Eino Graph, PostgreSQL, React 19, Vite 8, TanStack Query, WebSocket, tldraw 5, existing ClipAnvil production and sandbox services.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc/goose, Eino Graph, PostgreSQL, React 19, Vite 8, TanStack Query, WebSocket, React Flow, existing ClipAnvil production and sandbox services.
 
 ---
 
@@ -31,7 +31,7 @@ M6.1 Runtime Schema
   -> M6.2 Agent WebSocket + Right Floating Chat
   -> M6.3 ProducerGraph Skeleton
   -> M6.4 HITL Interrupt / Resume
-  -> M6.5 Tool Registry + Storyboard + PSS
+  -> M6.5 Edge Registry + Storyboard + PSS
   -> M6.6 CraftsmanGraph + Worker Preview Generation
   -> M6.7 Video Generation + Review Retry + Shot Dependency Scheduling
   -> M6.8 ComposerGraph + Final Video
@@ -216,7 +216,7 @@ git diff --check
 
 ---
 
-## M6.5 Tool Registry, Storyboard, And PSS
+## M6.5 Edge Registry, Storyboard, And PSS
 
 **Goal:** Add the first production-semantic tools and storyboard facts: `get_production_state`, `update_storyboard`, `shot`, `shot_dependency`, and full Producer PSS.
 
@@ -238,7 +238,7 @@ git diff --check
 - `shot`
 - `shot_dependency`
 - optional `media_node.shot_id`
-- Tool registry with JSON-schema-style tool metadata
+- Edge registry with JSON-schema-style tool metadata
 - `get_production_state`
 - `update_storyboard`
 - Producer PSS with workspace, source materials, shots, dependencies, nodes, versions, jobs, stale reasons, decisions, and running tasks
@@ -248,7 +248,7 @@ git diff --check
 - ProducerGraph can call `update_storyboard`.
 - Shots persist and survive refresh.
 - PSS describes current shots and dependencies.
-- Tool call/result messages appear in the chat.
+- Edge call/result messages appear in the chat.
 - Agent canvas can show shot/node association summary when available.
 
 **Verification:**

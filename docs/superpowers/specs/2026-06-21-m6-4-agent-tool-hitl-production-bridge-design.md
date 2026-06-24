@@ -1,4 +1,4 @@
-# M6.4 Agent Tool / HITL / Production Bridge 设计方案
+# M6.4 Agent Edge / HITL / Production Bridge 设计方案
 
 **状态**：待评审
 **日期**：2026-06-21
@@ -38,7 +38,7 @@ M6.4 的核心不是再做一个 UI 阶段，而是把“ClipAnvil 能对话”�
 
 ## 2. 设计结论
 
-M6.4 采用 **Eino Graph 主编排 + ClipAnvil Tool Registry + 工程化 HITL primitive**。
+M6.4 采用 **Eino Graph 主编排 + ClipAnvil Edge Registry + 工程化 HITL primitive**。
 
 Graph 仍是最高层编排，不采用 Eino ADK Agent 作为顶层黑盒。原因是 M6 后续需要对 Producer、Craftsman、Worker、Reviewer、Composer 的任务状态、并发调度、重试上限、HITL、checkpoint 和版本链路做细粒度控制。
 
@@ -74,7 +74,7 @@ M6.4 先支持一轮内最多有限次数工具调用，避免模型陷入无界
 
 ### 3.1 包含
 
-- Tool registry 基础结构。
+- Edge registry 基础结构。
 - 工具定义暴露协议：name、description、JSON schema、safety、timeout、visibility。
 - 工具调用和工具结果持久化：
   - `agent_message(message_type='tool_call')`
@@ -137,9 +137,9 @@ M6.4 先支持一轮内最多有限次数工具调用，避免模型陷入无界
 6. **测试不依赖模型随机输出**
    生产路径使用真实 Volcengine responder；自动化测试必须提供 deterministic responder 或 fixture model output 来触发 tool call / HITL，避免 CI 和本地验收依赖模型稳定性。
 
-## 5. Tool Registry
+## 5. Edge Registry
 
-### 5.1 ToolDefinition
+### 5.1 EdgeDefinition
 
 后端新增内部包建议：
 
@@ -194,7 +194,7 @@ type Executor interface {
 
 M6.4 不要求把工具 schema 暴露给前端配置面板，但 Graph 的 model prompt / tool planner 必须使用同一份定义，避免 description 和执行参数漂移。
 
-### 5.2 Tool Call Envelope
+### 5.2 Edge Call Envelope
 
 模型输出和工程层内部统一成 envelope：
 
@@ -803,7 +803,7 @@ UI 原则：
 
 M6.4 的生产桥接只定义接口和最小写工具，不直接完成完整生产。
 
-后续工具应统一走 `Tool Registry -> internal service`：
+后续工具应统一走 `Edge Registry -> internal service`：
 
 ```text
 generate_node
@@ -871,7 +871,7 @@ M6.4 完成时必须满足：
 - Agent Workspace 支持 Producer 对话模型选择，并持久化到 `workspace.settings`。
 - `producer_turn` 使用 workspace 选择的模型；未选择时使用环境变量默认模型。
 - 每条 assistant message raw metadata 或 task output 记录实际 provider/model。
-- Tool registry 能返回第一批工具定义，包含 name、description、parameters、safety 和 visibility。
+- Edge registry 能返回第一批工具定义，包含 name、description、parameters、safety 和 visibility。
 - ProducerGraph 能识别模型 tool call，并持久化 tool_call message。
 - `create_agent_text_node` 能通过工具创建 Agent-owned text source material node，普通用户画布写接口仍在 Agent Workspace 返回 `403`。
 - `request_user_decision` 能创建 ui_card、decision_requested event、checkpoint，并把当前 producer_turn 标记为 `waiting_for_user`。
@@ -916,8 +916,8 @@ git diff --check
 
 必须覆盖：
 
-- Tool registry 注册和重复 name 拒绝。
-- Tool definition schema 包含 description 和 parameters。
+- Edge registry 注册和重复 name 拒绝。
+- Edge definition schema 包含 description 和 parameters。
 - Agent model selection GET/PUT 权限、mode 校验和 capability 校验。
 - ProducerGraph 使用 workspace model selection 创建 model responder。
 - 已禁用或不支持文本/对话的模型会阻断 `producer_turn`，并返回 `agent_model_unavailable`。
@@ -1034,7 +1034,7 @@ docker compose -f deploy/docker-compose.yml exec -T postgres \
 
 M6.5 Storyboard / PSS：
 
-- 在本阶段 Tool Registry 上新增 `update_storyboard`、`get_production_state`。
+- 在本阶段 Edge Registry 上新增 `update_storyboard`、`get_production_state`。
 - 新增 `shot` / `shot_dependency`。
 - `read_workspace_context` 升级为 PSS builder 的输入之一。
 

@@ -140,6 +140,7 @@ func ensureDependencyEdge(ctx context.Context, store inputRefStore, workspaceID 
 		WorkspaceID: workspaceID,
 		FromNodeID:  fromNodeID,
 		ToNodeID:    toNodeID,
+		Metadata:    []byte(`{}`),
 	})
 	return err
 }

@@ -45,7 +45,7 @@ agent_thread
 - 前端 Agent 对话界面。
 - Eino Graph 执行。
 - HITL 决策卡片。
-- Tool registry。
+- Edge registry。
 - Storyboard / shot / shot_dependency。
 - PSS builder。
 - Craftsman / Worker / Reviewer / Composer。

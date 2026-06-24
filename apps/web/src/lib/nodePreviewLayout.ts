@@ -7,6 +7,11 @@ export interface AdaptiveNodeSize {
   sizeMode: "auto" | "persisted";
 }
 
+export interface MediaDimensions {
+  width: number;
+  height: number;
+}
+
 interface NodePreviewLimit {
   minW: number;
   minH: number;
@@ -15,8 +20,6 @@ interface NodePreviewLimit {
   maxW: number;
   maxH: number;
 }
-
-export const mediaNodeHeaderHeight = 42;
 
 export const mediaNodePreviewLimits: Record<MediaType, NodePreviewLimit> = {
   text: {
@@ -28,20 +31,20 @@ export const mediaNodePreviewLimits: Record<MediaType, NodePreviewLimit> = {
     maxH: 300,
   },
   image: {
-    minW: 220,
-    minH: 180,
-    defaultW: 320,
-    defaultH: 260,
-    maxW: 380,
-    maxH: 420,
+    minW: 190,
+    minH: 190,
+    defaultW: 360,
+    defaultH: 280,
+    maxW: 440,
+    maxH: 380,
   },
   video: {
     minW: 280,
-    minH: 190,
-    defaultW: 360,
-    defaultH: 245,
-    maxW: 420,
-    maxH: 300,
+    minH: 188,
+    defaultW: 400,
+    defaultH: 260,
+    maxW: 480,
+    maxH: 330,
   },
   audio: {
     minW: 320,
@@ -71,7 +74,10 @@ type SizableNode = Pick<
   | "reference_pack_preview"
 >;
 
-export function adaptiveMediaNodeSize(node: SizableNode): AdaptiveNodeSize {
+export function adaptiveMediaNodeSize(
+  node: SizableNode,
+  measuredMediaDimensions?: MediaDimensions | null,
+): AdaptiveNodeSize {
   const limits = mediaNodePreviewLimits[node.node_type];
   if (hasPersistedDisplaySize(node.canvas_w, node.canvas_h, limits)) {
     return {
@@ -86,8 +92,8 @@ export function adaptiveMediaNodeSize(node: SizableNode): AdaptiveNodeSize {
   }
   if (node.node_type === "image") {
     return mediaRatioSize(
-      node.production_preview?.width,
-      node.production_preview?.height,
+      node.production_preview?.width ?? measuredMediaDimensions?.width,
+      node.production_preview?.height ?? measuredMediaDimensions?.height,
       limits,
       4 / 3,
     );
@@ -139,12 +145,10 @@ function mediaRatioSize(
 ): AdaptiveNodeSize {
   const ratio = width && height && width > 0 && height > 0 ? width / height : fallbackRatio;
   let w = limits.maxW;
-  let mediaH = Math.round(w / ratio);
-  let h = mediaH + mediaNodeHeaderHeight;
+  let h = Math.round(w / ratio);
   if (h > limits.maxH) {
     h = limits.maxH;
-    mediaH = Math.max(1, h - mediaNodeHeaderHeight);
-    w = Math.round(mediaH * ratio);
+    w = Math.round(h * ratio);
   }
   return {
     w: clamp(w, limits.minW, limits.maxW),

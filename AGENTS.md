@@ -4,10 +4,10 @@
 
 ## Repo Snapshot
 
-- 前端：`apps/web`，Vite 8 + React 19 + TypeScript 6 + tldraw 5 + TailwindCSS 4。
+- 前端：`apps/web`，Vite 8 + React 19 + TypeScript 6 + `@xyflow/react` 12 + TailwindCSS 4。
 - 后端：`apps/server`，Go module `github.com/sinmaystar/clip-anvil`，Go 1.26 + Hertz + pgx v5 + sqlc + viper + slog。
 - 中间件：PostgreSQL 16 / Redis 7 / MinIO，通过 Docker Compose 共享运行。
-- 共享包：`packages/shared-types`、`packages/canvas-schema`、`packages/eslint-config`。
+- 共享包：`packages/shared-types`、`packages/eslint-config`。
 - 部署配置：`deploy/`，本地 NGINX 只适合默认单实例入口。
 - 当前文档入口：`docs/README.md`；现行工程文档在 `docs/engineering/`，设计文档在 `docs/design/`，历史执行 spec/plan 在 `docs/archive/`。
 

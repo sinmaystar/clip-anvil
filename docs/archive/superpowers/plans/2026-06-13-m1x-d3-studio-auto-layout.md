@@ -6,7 +6,7 @@
 
 **Architecture:** Layout is computed entirely in the web app from the canvas payload. The backend remains a coordinate store through the existing `PATCH /api/nodes/batch-position`; group containers are recomputed from member node bounds after node positions change.
 
-**Tech Stack:** React 19, TypeScript 6, tldraw 5, `@dagrejs/dagre`, TanStack Query.
+**Tech Stack:** React 19, TypeScript 6, React Flow, `@dagrejs/dagre`, TanStack Query.
 
 ---
 
@@ -241,7 +241,7 @@ const runAutoLayout = useCallback(() => {
 
   const editor = editorRef.current;
   editor.store.mergeRemoteChanges(() => {
-    editor.updateShapes(
+    editor.updateNodes(
       result.positions.map((position) => ({
         id: shapeIdForNode(position.id),
         type: "media",
@@ -249,7 +249,7 @@ const runAutoLayout = useCallback(() => {
         y: position.canvas_y,
       })),
     );
-    editor.updateShapes(
+    editor.updateNodes(
       result.groupBounds.map((bounds) => ({
         id: shapeIdForGroup(bounds.groupId),
         type: "group-container",

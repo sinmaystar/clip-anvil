@@ -26,7 +26,7 @@ Out of scope:
 - Agent tool calling against the uploaded materials.
 - Audio input and microphone recording.
 - Drag and drop attachment upload.
-- Full Studio-grade tldraw rendering inside Agent mode.
+- Full Studio-grade React Flow rendering inside Agent mode.
 
 ## Product Decisions
 

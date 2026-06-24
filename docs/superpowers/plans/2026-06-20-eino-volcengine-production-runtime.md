@@ -6,7 +6,7 @@
 
 **Architecture:** Studio calls ClipAnvil backend only. Backend converts node state into `GenerationIntent`, creates `generation_job`, enqueues work into `ProductionRunner`, executes Eino runtime components, persists `media_asset` and `artifact_version`, and streams job events to the workspace. `ProviderBridge` remains only for mock and historical compatibility; real Volcengine execution uses `EinoProductionRuntime`.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, PostgreSQL, MinIO storage, Eino, EinoExt Ark, Volcengine official APIs, React 19, tldraw, WebSocket workspace events, shell smoke scripts.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, PostgreSQL, MinIO storage, Eino, EinoExt Ark, Volcengine official APIs, React 19, React Flow, WebSocket workspace events, shell smoke scripts.
 
 ---
 
@@ -170,7 +170,7 @@ go test ./internal/config -count=1
 
 Expected: FAIL because the new config fields do not exist.
 
-- [ ] **Step 3: Implement config fields and env bindings**
+- [ ] **Step 3: Implement config fields and env edges**
 
 Add fields:
 
@@ -196,7 +196,7 @@ type VolcengineConfig struct {
 }
 ```
 
-Bind the matching env keys in the existing config binding list.
+Bind the matching env keys in the existing config edge list.
 
 - [ ] **Step 4: Add `.env.example` and YAML defaults**
 
@@ -447,7 +447,7 @@ Add tests:
 - `TestRunNodeFailureReturnsPersistedJob`
 - `TestWorkspaceWebSocketBroadcastsProductionJobEvent`
 
-Expected response shape:
+Expected response node:
 
 ```json
 {

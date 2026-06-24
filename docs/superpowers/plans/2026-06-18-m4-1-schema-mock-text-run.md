@@ -4,7 +4,7 @@
 
 **Goal:** Build the first M4 production loop: schema convergence plus a mock text-node run that creates `generation_job`, text asset, `artifact_version`, and updates the node current winner.
 
-**Architecture:** Add a destructive-but-repeatable M4.1 migration as `007`, generate sqlc models/queries, then introduce a small `internal/production` service that runs text nodes through a mock provider inside a transaction. Expose a minimal authenticated Studio-only `POST /api/nodes/:id/run` endpoint while preserving the existing Studio canvas API shape, especially the frontend-facing `prompt` field.
+**Architecture:** Add a destructive-but-repeatable M4.1 migration as `007`, generate sqlc models/queries, then introduce a small `internal/production` service that runs text nodes through a mock provider inside a transaction. Expose a minimal authenticated Studio-only `POST /api/nodes/:id/run` endpoint while preserving the existing Studio canvas API node, especially the frontend-facing `prompt` field.
 
 **Tech Stack:** Go 1.26, Hertz, pgx v5, sqlc v1.31, goose migrations, PostgreSQL 16, Vite/React TypeScript frontend compatibility checks.
 
@@ -54,7 +54,7 @@ M4.1 acceptance to satisfy:
 
 - [ ] **Step 1: Write the migration**
 
-Create `apps/server/migrations/007_m4_1_production_foundation.sql` with this shape:
+Create `apps/server/migrations/007_m4_1_production_foundation.sql` with this node:
 
 ```sql
 -- +goose Up
@@ -966,7 +966,7 @@ Expected: JSON output includes different `firstVersion` and `secondVersion`, and
 
 **Files:**
 - Modify only if required: `apps/web/src/lib/api.ts`
-- Modify only if required: `packages/canvas-schema/src/index.ts`
+- Modify only if required: `apps/web/src/components/canvas-flow/flowTypes.ts`
 
 - [ ] **Step 1: Try build without frontend changes**
 
@@ -1077,7 +1077,7 @@ Run:
 
 ```bash
 git status --short
-git add apps/server/migrations/007_m4_1_production_foundation.sql apps/server/sqlc/queries apps/server/internal/store/db apps/server/internal/production apps/server/internal/api apps/server/cmd/server/main.go apps/web/src/lib/api.ts packages/canvas-schema/src/index.ts scripts/smoke-m4-1.sh docs/milestones/m4-shared-production-foundation.md
+git add apps/server/migrations/007_m4_1_production_foundation.sql apps/server/sqlc/queries apps/server/internal/store/db apps/server/internal/production apps/server/internal/api apps/server/cmd/server/main.go apps/web/src/lib/api.ts apps/web/src/components/canvas-flow/flowTypes.ts scripts/smoke-m4-1.sh docs/milestones/m4-shared-production-foundation.md
 git diff --cached --stat
 git commit -m "feat: add m4.1 production foundation"
 ```

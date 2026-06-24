@@ -2,7 +2,7 @@
 
 **状态**：待实施
 **前置**：M1.x-A 多类型节点完成
-**目标**：在现有业务 DB 事实源模式下新增 MediaEdge，支持 dependency 连线、后端 DAG 环检测和前端 ArrowShape 投影。
+**目标**：在现有业务 DB 事实源模式下新增 MediaEdge，支持 dependency 连线、后端 DAG 环检测和前端 custom dependency edge 投影。
 
 ## 1. 当前事实基准
 
@@ -10,7 +10,7 @@ M1.x-A 完成后应具备：
 
 - `media_node` 支持 text/image/video/audio 四种节点。
 - `GET /api/workspaces/:id/canvas` 仍只返回 `camera` 和 `nodes`。
-- 前端只注册 `MediaShapeUtil`，尚未注册或持久化 ArrowShape。
+- 前端只注册 `MediaFlowNode`，尚未注册或持久化 custom dependency edge。
 - 当前没有 `media_edge` 表，没有 edge API，也没有 WebSocket。
 
 本阶段只做 dependency 连线。`reference` 和 `sequence` 的视觉与 API 开放留到后续生成和编排阶段。
@@ -23,7 +23,7 @@ M1.x-A 完成后应具备：
 - 新增 `POST /api/edges` 和 `DELETE /api/edges/:id`。
 - `GET /api/workspaces/:id/canvas` 返回 `edges`。
 - 后端创建 dependency edge 前做归属校验、重复校验、自连接校验和 DAG 环检测。
-- 前端把 edge 投影为 tldraw ArrowShape + binding。
+- 前端把 edge 投影为 React Flow custom dependency edge + edge。
 - 前端支持从节点输出端口到输入端口建立 dependency 连线。
 - 前端支持选中连线后删除并同步后端。
 
@@ -153,34 +153,34 @@ BFS 和 INSERT 必须在同一个事务中执行。建议使用 `pgx.BeginTx` �
 }
 ```
 
-前端 DTO 可以继续使用 snake_case API 字段，必要时在 `lib/canvas.ts` 中转换为 shape props。
+前端 DTO 可以继续使用 snake_case API 字段，必要时在 `lib/canvas.ts` 中转换为 node data。
 
 ## 6. 前端设计
 
 ### 6.1 技术验证门槛
 
-正式实现前先在当前 `WorkspaceDetailPage` 中验证 tldraw v5 的 ArrowShape 和 binding API：
+正式实现前先在当前 `WorkspaceDetailPage` 中验证 React Flow 的 custom dependency edge 和 edge API：
 
-- 能创建一条从 media shape A 到 media shape B 的 ArrowShape。
-- 能把后端 edge id 存在 arrow shape `meta.edgeId` 或等价字段。
-- 删除 ArrowShape 时能识别对应 edge id。
+- 能创建一条从 media node A 到 media node B 的 custom dependency edge。
+- 能把后端 edge id 存在 custom dependency edge `meta.edgeId` 或等价字段。
+- 删除 custom dependency edge 时能识别对应 edge id。
 
-如果 tldraw v5 内置 arrow tool 的 handle/binding API 与预期不符，则允许退化为自定义端口拖拽层：拖拽完成后创建后端 edge，再用 tldraw ArrowShape 展示结果。
+如果 React Flow 内置 drag-to-connect interaction 的 handle/edge API 与预期不符，则允许退化为自定义端口拖拽层：拖拽完成后创建后端 edge，再用 React Flow custom dependency edge 展示结果。
 
-### 6.2 shape 映射
+### 6.2 node 映射
 
 在 `apps/web/src/lib/canvas.ts` 新增：
 
-- `edgeShapeIdForEdge(edgeId)`。
-- `edgeToArrow(edge, nodes)`。
-- `isEdgeArrowShape(shape)`。
+- `edgeNodeIdForEdge(edgeId)`。
+- `edgeToFlowEdge(edge, nodes)`。
+- `isEdgecustom dependency edge(node)`。
 
-ArrowShape 需要保存：
+custom dependency edge 需要保存：
 
 - `meta.edgeId`：后端 edge id。
 - `meta.edgeType`：本阶段为 `dependency`。
-- `from` binding：from node shape。
-- `to` binding：to node shape。
+- `from` edge：from node node。
+- `to` edge：to node node。
 
 ### 6.3 端口交互
 
@@ -195,25 +195,25 @@ ArrowShape 需要保存：
 
 1. 用户从 A 输出端口拖到 B 输入端口。
 2. 前端调用 `POST /api/edges`。
-3. 成功后创建 ArrowShape。
+3. 成功后创建 custom dependency edge。
 4. `409` 显示“连线已存在”。
 5. `422` 显示“不能形成循环依赖”。
 6. 失败时不保留本地临时线。
 
 删除流程：
 
-1. 用户选中 ArrowShape。
+1. 用户选中 custom dependency edge。
 2. 按 Delete/Backspace。
 3. 前端调用 `DELETE /api/edges/:id`。
-4. 成功后删除 ArrowShape。
+4. 成功后删除 custom dependency edge。
 5. 失败时 refetch canvas 并恢复事实源状态。
 
 ### 6.4 初始加载
 
 画布加载顺序：
 
-1. 创建所有 MediaShape。
-2. 创建所有 ArrowShape 和 bindings。
+1. 创建所有 MediaFlowNode。
+2. 创建所有 custom dependency edge 和 edges。
 3. 设置 camera。
 
 若 edge 引用的 node 不在响应 nodes 中，前端跳过该 edge 并记录控制台 warning。正常情况下数据库 FK 和 workspace 查询不会产生这种数据。

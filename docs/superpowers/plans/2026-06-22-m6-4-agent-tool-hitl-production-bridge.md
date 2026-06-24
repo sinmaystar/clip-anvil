@@ -1,8 +1,8 @@
-# M6.4 Agent Tool HITL Production Bridge Implementation Plan
+# M6.4 Agent Edge HITL Production Bridge Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the M6.4 Agent execution foundation: configurable Agent model selection, Tool Registry, first Producer tools, Eino CheckPointStore-backed HITL interrupt/resume, decision cards, and strict end-to-end verification.
+**Goal:** Build the M6.4 Agent execution foundation: configurable Agent model selection, Edge Registry, first Producer tools, Eino CheckPointStore-backed HITL interrupt/resume, decision cards, and strict end-to-end verification.
 
 **Architecture:** Keep Eino Graph as the top-level Producer orchestration layer. Persist every model choice, tool call, tool result, HITL card, event, task, and checkpoint through existing Agent runtime tables; use `workspace.settings` for Agent model selection and reuse existing M4/M5 canvas/asset/production primitives through internal tool services.
 
@@ -20,8 +20,8 @@
 
 Backend configuration and settings:
 
-- Modify `apps/server/internal/config/config.go`: add `AgentConfig` with `ProducerMaxToolCalls` and `ToolTimeoutSeconds`.
-- Modify `apps/server/internal/config/config_test.go`: env binding and defaults tests.
+- Modify `apps/server/internal/config/config.go`: add `AgentConfig` with `ProducerMaxEdgeCalls` and `EdgeTimeoutSeconds`.
+- Modify `apps/server/internal/config/config_test.go`: env edge and defaults tests.
 - Modify `apps/server/config.yaml`: add local defaults for Agent execution limits.
 - Modify `apps/server/sqlc/queries/workspace.sql`: add `UpdateWorkspaceSettings`.
 - Regenerate `apps/server/internal/store/db/workspace.sql.go`.
@@ -102,11 +102,11 @@ func TestLoadBindsAgentExecutionConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Agent.ProducerMaxToolCalls != 77 {
-		t.Fatalf("ProducerMaxToolCalls = %d, want 77", cfg.Agent.ProducerMaxToolCalls)
+	if cfg.Agent.ProducerMaxEdgeCalls != 77 {
+		t.Fatalf("ProducerMaxEdgeCalls = %d, want 77", cfg.Agent.ProducerMaxEdgeCalls)
 	}
-	if cfg.Agent.ToolTimeoutSeconds != 321 {
-		t.Fatalf("ToolTimeoutSeconds = %d, want 321", cfg.Agent.ToolTimeoutSeconds)
+	if cfg.Agent.EdgeTimeoutSeconds != 321 {
+		t.Fatalf("EdgeTimeoutSeconds = %d, want 321", cfg.Agent.EdgeTimeoutSeconds)
 	}
 }
 
@@ -118,11 +118,11 @@ func TestLoadDefaultsAgentExecutionConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Agent.ProducerMaxToolCalls != 50 {
-		t.Fatalf("ProducerMaxToolCalls = %d, want 50", cfg.Agent.ProducerMaxToolCalls)
+	if cfg.Agent.ProducerMaxEdgeCalls != 50 {
+		t.Fatalf("ProducerMaxEdgeCalls = %d, want 50", cfg.Agent.ProducerMaxEdgeCalls)
 	}
-	if cfg.Agent.ToolTimeoutSeconds != 300 {
-		t.Fatalf("ToolTimeoutSeconds = %d, want 300", cfg.Agent.ToolTimeoutSeconds)
+	if cfg.Agent.EdgeTimeoutSeconds != 300 {
+		t.Fatalf("EdgeTimeoutSeconds = %d, want 300", cfg.Agent.EdgeTimeoutSeconds)
 	}
 }
 ```
@@ -150,8 +150,8 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	ProducerMaxToolCalls int `mapstructure:"producer_max_tool_calls"`
-	ToolTimeoutSeconds   int `mapstructure:"tool_timeout_seconds"`
+	ProducerMaxEdgeCalls int `mapstructure:"producer_max_tool_calls"`
+	EdgeTimeoutSeconds   int `mapstructure:"tool_timeout_seconds"`
 }
 ```
 
@@ -165,11 +165,11 @@ Update `bindEnv`:
 After `v.Unmarshal(&cfg)`, normalize:
 
 ```go
-if cfg.Agent.ProducerMaxToolCalls <= 0 {
-	cfg.Agent.ProducerMaxToolCalls = 50
+if cfg.Agent.ProducerMaxEdgeCalls <= 0 {
+	cfg.Agent.ProducerMaxEdgeCalls = 50
 }
-if cfg.Agent.ToolTimeoutSeconds <= 0 {
-	cfg.Agent.ToolTimeoutSeconds = 300
+if cfg.Agent.EdgeTimeoutSeconds <= 0 {
+	cfg.Agent.EdgeTimeoutSeconds = 300
 }
 ```
 
@@ -431,8 +431,8 @@ type ProducerTurnInput struct {
 	TaskID           pgtype.UUID
 	TriggerMessageID pgtype.UUID
 	EmitDelta        ProducerDeltaHandler
-	MaxToolCalls     int
-	ToolTimeout      time.Duration
+	MaxEdgeCalls     int
+	EdgeTimeout      time.Duration
 }
 
 type ProducerContext struct {
@@ -472,8 +472,8 @@ If selected provider is not `volcengine`, return `agent_model_unavailable` until
 
 ```go
 ProducerTurnInput{
-	MaxToolCalls: config.ProducerMaxToolCalls,
-	ToolTimeout:  time.Duration(config.ToolTimeoutSeconds) * time.Second,
+	MaxEdgeCalls: config.ProducerMaxEdgeCalls,
+	EdgeTimeout:  time.Duration(config.EdgeTimeoutSeconds) * time.Second,
 }
 ```
 
@@ -502,7 +502,7 @@ Expected: PASS.
 
 ---
 
-## Task 4: Tool Registry And Required Producer Tools
+## Task 4: Edge Registry And Required Producer Edges
 
 **Files:**
 
@@ -519,9 +519,9 @@ Expected: PASS.
 - [ ] Write failing registry tests:
 
 ```go
-func TestRegistryRejectsDuplicateToolNames(t *testing.T)
+func TestRegistryRejectsDuplicateEdgeNames(t *testing.T)
 func TestRegistryDefinitionIncludesSchemaAndDescription(t *testing.T)
-func TestRegistryFindsRequiredM6Tools(t *testing.T)
+func TestRegistryFindsRequiredM6Edges(t *testing.T)
 ```
 
 Expected required names:
@@ -599,7 +599,7 @@ Expected:
 
 - Studio mode returns forbidden-style tool error.
 - Agent mode creates text asset and `source='agent'` text node through existing `CreateAgentMediaNode`.
-- Tool result returns `node_id` and `asset_id`.
+- Edge result returns `node_id` and `asset_id`.
 
 - [ ] Implement `text_node.go` using existing query/service boundaries:
 
@@ -652,7 +652,7 @@ Expected: PASS.
 - [ ] Before starting, record the concrete blocker in the implementation notes:
 
 ```text
-list_canvas_nodes required because: read_workspace_context source_material_refs did not include current version state needed by TestProducerGraphExecutesCreateAgentTextNodeTool.
+list_canvas_nodes required because: read_workspace_context source_material_refs did not include current version state needed by TestProducerGraphExecutesCreateAgentTextNodeEdge.
 ```
 
 The accepted reasons are:
@@ -809,7 +809,7 @@ Expected: PASS.
 
 ---
 
-## Task 7: ProducerGraph Tool Loop, HITL Interrupt, And Resume
+## Task 7: ProducerGraph Edge Loop, HITL Interrupt, And Resume
 
 **Files:**
 
@@ -825,12 +825,12 @@ Expected: PASS.
 - [ ] Add failing tool parser tests:
 
 ```go
-func TestParseToolCallFromJSONFence(t *testing.T)
-func TestParseToolCallReturnsTextWhenNoToolCall(t *testing.T)
-func TestParseToolCallRejectsUnknownShape(t *testing.T)
+func TestParseEdgeCallFromJSONFence(t *testing.T)
+func TestParseEdgeCallReturnsTextWhenNoEdgeCall(t *testing.T)
+func TestParseEdgeCallRejectsUnknownNode(t *testing.T)
 ```
 
-Supported deterministic test shape:
+Supported deterministic test node:
 
 ```json
 {
@@ -854,9 +854,9 @@ Supported deterministic test shape:
 - [ ] Add failing graph tests:
 
 ```go
-func TestProducerGraphExecutesCreateAgentTextNodeTool(t *testing.T)
+func TestProducerGraphExecutesCreateAgentTextNodeEdge(t *testing.T)
 func TestProducerGraphStopsAtRequestUserDecision(t *testing.T)
-func TestProducerGraphStopsAtMaxToolCalls(t *testing.T)
+func TestProducerGraphStopsAtMaxEdgeCalls(t *testing.T)
 func TestProducerGraphResumeContinuesAfterDecision(t *testing.T)
 ```
 
@@ -888,7 +888,7 @@ Behavior:
 - If output is text, finalize assistant message.
 - If output is `create_agent_text_node`, execute tool and continue model loop.
 - If output is `request_user_decision`, call HITL service and return interrupted output.
-- Stop with `agent_tool_loop_exhausted` after `MaxToolCalls`.
+- Stop with `agent_tool_loop_exhausted` after `MaxEdgeCalls`.
 
 - [ ] Add `ResumeDecision` to executor:
 
@@ -907,7 +907,7 @@ Behavior:
 - [ ] Run focused verification:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestParseToolCall|TestProducerGraph|TestExecutor' -count=1
+GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'TestParseEdgeCall|TestProducerGraph|TestExecutor' -count=1
 git diff --check
 ```
 
@@ -1008,7 +1008,7 @@ Expected: PASS.
 
 ---
 
-## Task 9: Frontend Model Selector, Decision Cards, Tool Messages
+## Task 9: Frontend Model Selector, Decision Cards, Edge Messages
 
 **Files:**
 

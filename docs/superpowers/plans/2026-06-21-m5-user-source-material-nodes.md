@@ -6,7 +6,7 @@
 
 **Architecture:** Reuse existing `text/image/video/audio` node types and distinguish source material by `operation_type = "upload"`, `operation_type = "manual"`, or `asset_id`. Add shared frontend helpers for source-material UX, backend guards so source nodes cannot be run, and production input resolution so uploaded/manual source nodes resolve exactly like generated current-version artifacts for downstream provider calls.
 
-**Tech Stack:** Go 1.26 + Hertz + pgx/sqlc, React 19 + TypeScript, tldraw 5, Vite 8, node:test helpers, existing MinIO/storage/upload APIs.
+**Tech Stack:** Go 1.26 + Hertz + pgx/sqlc, React 19 + TypeScript, React Flow, Vite 8, node:test helpers, existing MinIO/storage/upload APIs.
 
 ---
 
@@ -19,8 +19,8 @@
 - Modify: `apps/web/src/lib/productionPanel.ts`
   - Route run-disable logic through source material helpers.
 - Modify: `apps/web/src/lib/canvas.ts`
-  - Put source material labels and previews into tldraw shape props.
-- Modify: `apps/web/src/shapes/MediaShapeUtil.tsx`
+  - Put source material labels and previews into React Flow node data.
+- Modify: `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
   - Render source material labels/status without Prompt metadata.
 - Modify: `apps/web/src/components/FileDropZone.tsx`
   - Create uploaded media as `operation_type = "upload"` and `status = "succeeded"`.
@@ -63,7 +63,7 @@
 
 ## Delivery Standards
 
-- Uploading image/video/audio creates a ClipAnvil media node, not a native tldraw media shape.
+- Uploading image/video/audio creates a ClipAnvil media node, not a native React Flow media node.
 - Source material nodes show `图片素材` / `视频素材` / `音频素材` / `文本素材` and a usable preview.
 - Source material Inspector omits Prompt/Operation/Model/Params/Run/Versions.
 - Manual text material Inspector uses `内容`, not `Prompt`.
@@ -282,16 +282,16 @@ In `apps/web/src/lib/productionPanel.test.mjs`, add:
 
 - [ ] **Step 6: Add layering contract test**
 
-In `apps/web/src/lib/canvasLayering.test.mjs`, add assertions that `MediaShapeUtil.tsx` imports `materialKindLabel` and that source material labels are not footer metadata:
+In `apps/web/src/lib/canvasLayering.test.mjs`, add assertions that `MediaFlowNode.tsx` imports `materialKindLabel` and that source material labels are not footer metadata:
 
 ```js
   it("declares source material labels as first-class node identity", () => {
     assert.ok(
-      mediaShapeUtil.includes("materialKindLabel"),
-      "media shape should use source material labels",
+      mediaFlowNode.includes("materialKindLabel"),
+      "media node should use source material labels",
     );
     assert.ok(
-      !mediaShapeUtil.includes("图片 PROMPT"),
+      !mediaFlowNode.includes("图片 PROMPT"),
       "source media nodes must not render prompt footer labels",
     );
   });
@@ -576,7 +576,7 @@ Expected: PASS.
 
 **Files:**
 - Modify: `apps/web/src/lib/canvas.ts`
-- Modify: `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify: `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
 - Modify: `apps/web/src/components/PropertyPanel.tsx`
 - Modify: `apps/web/src/main.css`
 - Modify: `apps/web/src/lib/canvasLayering.test.mjs`
@@ -627,23 +627,23 @@ In `apps/web/src/lib/canvas.ts`, import:
 import { materialKindLabel, materialStatusLabel } from "./sourceMaterial.js";
 ```
 
-When building media shape props, set:
+When building media node data, set:
 
 ```ts
 nodeTypeLabel: materialKindLabel(node),
 sourceMaterialStatusLabel: materialStatusLabel(node),
 ```
 
-If `MediaShapeProps` lacks these fields, add optional fields in `packages/canvas-schema/src/index.ts`:
+If `MediaFlowNodeProps` lacks these fields, add optional fields in `apps/web/src/components/canvas-flow/flowTypes.ts`:
 
 ```ts
 nodeTypeLabel: T.optional(T.string),
 sourceMaterialStatusLabel: T.optional(T.string),
 ```
 
-- [ ] **Step 3: Render source material identity in media shape**
+- [ ] **Step 3: Render source material identity in media node**
 
-In `apps/web/src/shapes/MediaShapeUtil.tsx`, import helper:
+In `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`, import helper:
 
 ```ts
 import { materialKindLabel, materialStatusLabel } from "../lib/sourceMaterial";
@@ -652,16 +652,16 @@ import { materialKindLabel, materialStatusLabel } from "../lib/sourceMaterial";
 Build labels:
 
 ```ts
-const typeLabel = shape.props.nodeTypeLabel ?? materialKindLabel({
-  asset_id: shape.props.assetId,
+const typeLabel = node.props.nodeTypeLabel ?? materialKindLabel({
+  asset_id: node.props.assetId,
   node_type: nodeType,
-  operation_type: shape.props.operationType,
+  operation_type: node.props.operationType,
   status,
 });
-const sourceStatus = shape.props.sourceMaterialStatusLabel || materialStatusLabel({
-  asset_id: shape.props.assetId,
+const sourceStatus = node.props.sourceMaterialStatusLabel || materialStatusLabel({
+  asset_id: node.props.assetId,
   node_type: nodeType,
-  operation_type: shape.props.operationType,
+  operation_type: node.props.operationType,
   status,
 });
 ```

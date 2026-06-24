@@ -83,7 +83,7 @@ Agent 感知上像是在操作一台项目 VM；平台边界仍然收口在 Go �
 
 ```text
 workspace.id
-  |-- database binding: workspace_sandbox
+  |-- database edge: workspace_sandbox
   |-- workspace volume: sandbox-ws-{workspaceID}
   `-- current OpenSandbox sandbox_id
 ```
@@ -547,7 +547,7 @@ POST /api/workspaces/:id/sandbox/reset
 
 验收方式：
 
-- 连续调用两次 `PrepareWorkspaceFiles`，目录结构和 manifest shape 保持稳定。
+- 连续调用两次 `PrepareWorkspaceFiles`，目录结构和 manifest node 保持稳定。
 - 给定一个已上传的 `media_asset`，sandbox 中能看到 `/workspace/assets` 下的对应文件。
 - `manifest.json` 包含 workspace ID、asset metadata 和 sandbox-local path。
 - `manifest.json` 不包含 MinIO 凭证、presigned URL 或其他平台 secret。

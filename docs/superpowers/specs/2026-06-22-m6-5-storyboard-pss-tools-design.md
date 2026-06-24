@@ -1,4 +1,4 @@
-# M6.5 Storyboard / PSS / Production State Tools Design
+# M6.5 Storyboard / PSS / Production State Edges Design
 
 **Status**: Draft for review
 **Date**: 2026-06-22
@@ -19,7 +19,7 @@ The current M6 worktree already has:
 - right-floating ClipAnvil chat panel;
 - versioned `clipanvil.agent.message.v1` blocks;
 - real streaming Producer model calls with model/thinking selection;
-- Tool Registry and tool call persistence;
+- Edge Registry and tool call persistence;
 - first tools: `read_workspace_context`, `create_agent_text_node`, `request_user_decision`;
 - HITL checkpoint, card, and resume infrastructure;
 - Agent attachment upload that creates Agent-owned source material nodes;
@@ -60,7 +60,7 @@ M6.5 does not implement the full `memory_document` / `memory_revision` system fr
 
 ### Storyboard is production semantics, not Studio DAG
 
-`shot` is the stable Agent production anchor. It is not a tldraw shape and not a Studio-only node.
+`shot` is the stable Agent production anchor. It is not a React Flow node and not a Studio-only node.
 
 `media_node.shot_id` is an optional projection link:
 
@@ -79,12 +79,12 @@ In scope:
 - `shot_dependency` table.
 - optional nullable `media_node.shot_id`.
 - sqlc queries for shots and shot dependencies.
-- extending existing Tool Registry with:
+- extending existing Edge Registry with:
   - `get_production_state`;
   - `update_storyboard`.
 - Producer PSS builder package.
 - Producer context loader injecting PSS into model context.
-- Tool call/result messages for storyboard tools using existing UI message blocks.
+- Edge call/result messages for storyboard tools using existing UI message blocks.
 - Agent read-only canvas/detail can display shot association when available.
 - Unit tests, integration tests, browser E2E smoke, and DB spot checks.
 
@@ -295,7 +295,7 @@ Responsibilities:
 
 The PSS builder should be deterministic enough for unit tests. Avoid nondeterministic ordering; sort shots by `sort_order`, nodes by creation time/title, tasks/events by created time.
 
-## Tools
+## Edges
 
 M6.5 extends the existing registry in `apps/server/internal/agent/tools`.
 
@@ -440,7 +440,7 @@ Validation:
 - unknown `dependency_type` or `blocking_phase` is rejected with structured tool error;
 - `replace` with empty shots is allowed only when `summary` explains intentional storyboard clearing.
 
-Tool result:
+Edge result:
 
 ```json
 {
@@ -465,13 +465,13 @@ Tool result:
 
 ## ProducerGraph Integration
 
-Current graph shape:
+Current graph node:
 
 ```text
 load_context -> draft_response -> finalize_response
 ```
 
-M6.5 keeps this shape but upgrades `load_context`:
+M6.5 keeps this node but upgrades `load_context`:
 
 ```text
 load_context
@@ -559,7 +559,7 @@ Do not build a full storyboard editor in M6.5. User changes should go through Cl
 
 ## Error Handling
 
-Tool failures must be visible and diagnosable:
+Edge failures must be visible and diagnosable:
 
 - validation failures return `agent_storyboard_validation_failed`;
 - unresolved shot references return `agent_shot_not_found`;
@@ -580,7 +580,7 @@ M6.5 is complete only when:
 - `update_storyboard` is registered and persists shots/dependencies through a transaction.
 - Producer context includes PSS before model calls.
 - ProducerGraph can call `update_storyboard` through the existing tool loop.
-- Tool call/result messages appear in the ClipAnvil chat.
+- Edge call/result messages appear in the ClipAnvil chat.
 - Refreshing the Agent workspace preserves storyboard facts.
 - PSS describes shots and dependencies deterministically.
 - Agent read-only node detail displays shot association when present.
@@ -674,4 +674,4 @@ M6.6 can then add CraftsmanGraph, shot-scoped threads, `generate_shot_preview`, 
 - The phase does not include preview/video/review/composer work.
 - PSS is explicitly DB-derived and not persisted as truth.
 - `read_workspace_context` and `get_production_state` have separate roles.
-- The design extends existing Tool Registry, UI message blocks, Agent runtime, and ProducerGraph instead of creating a parallel Agent execution path.
+- The design extends existing Edge Registry, UI message blocks, Agent runtime, and ProducerGraph instead of creating a parallel Agent execution path.

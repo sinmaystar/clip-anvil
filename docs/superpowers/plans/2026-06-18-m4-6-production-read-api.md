@@ -40,7 +40,7 @@ M4.6 does not include:
 - Create: `apps/server/internal/api/model_handler.go`
   - Add model capability listing handler.
 - Create: `apps/server/internal/api/model_handler_test.go`
-  - Unit tests for capability response shape.
+  - Unit tests for capability response node.
 - Modify: `apps/server/internal/api/run_handler_test.go`
   - Unit tests for version/job/sandbox response mapping.
 - Modify: `apps/server/cmd/server/main.go`
@@ -50,7 +50,7 @@ M4.6 does not include:
 - Modify: `docs/milestones/m4-shared-production-foundation.md`
   - Add M4.6 phase, acceptance, smoke evidence slot.
 
-## API Shape
+## API Node
 
 Add these authenticated endpoints:
 
@@ -148,7 +148,7 @@ ORDER BY created_at;
 
 - [ ] **Step 2: Reuse existing version queries**
 
-Do not add an artifact-version join query in M4.6. Use the existing `ListArtifactVersionsByNode`, `GetCurrentArtifactVersionForNode`, and `GetMediaAssetByID` queries. This keeps the phase narrow and avoids generated row types that duplicate the existing asset mapper.
+Do not add an artifact-version join query in M4.6. Use the existing `ListArtifactVersionsByNode`, `GetCurrentArtifactVersionForNode`, and `GetMediaAssetByID` queries. This keeps the phase ncustom edge and avoids generated row types that duplicate the existing asset mapper.
 
 - [ ] **Step 3: Generate sqlc**
 

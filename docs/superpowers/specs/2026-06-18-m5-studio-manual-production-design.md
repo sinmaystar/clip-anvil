@@ -39,7 +39,7 @@ M5 完成后，Studio Workspace 应能独立完成：
 
 - 前端 `MediaType` 仍只有 `text/image/video/audio`，缺少 `reference_pack`。
 - 前端 `MediaNode` 类型尚未显式建模 production fields。
-- `canvas-schema` 和 `MediaShapeUtil` 还不能渲染 `reference_pack`。
+- `canvas-schema` 和 `MediaFlowNode` 还不能渲染 `reference_pack`。
 - 属性面板主要展示分组、依赖和 prompt，不是生产控制台。
 - 前端还没有 run node、retry job、production state、model capability、reference pack item 的 API wrapper 和 UI。
 - Prompt 仍是普通文本编辑，没有 `@` 引用、`prompt_refs`、隐式输入提示和删除依赖后的失效提示。

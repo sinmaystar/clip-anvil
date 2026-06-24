@@ -27,7 +27,7 @@ It intentionally does not modify generation providers, Eino graph topology, Stud
 - Modify `apps/server/sqlc/queries/agent_event.sql`
   - Add `ListAgentEventsByWorkspace`.
 - Modify `apps/server/sqlc/queries/production.sql`
-  - Add workspace-level job/version list queries if existing node-scoped queries are too narrow.
+  - Add workspace-level job/version list queries if existing node-scoped queries are too ncustom edge.
 - Modify `apps/server/sqlc/queries/sandbox_job.sql`
   - Add `ListSandboxJobsByWorkspace`.
 - Run `make sqlc-generate`.
@@ -40,7 +40,7 @@ It intentionally does not modify generation providers, Eino graph topology, Stud
 - Modify `apps/server/internal/api/agent_handler.go`
   - Add `GetProductionOverview`.
 - Modify `apps/server/internal/api/agent_handler_test.go`
-  - Route-level tests for Agent/Studio authorization and response shape.
+  - Route-level tests for Agent/Studio authorization and response node.
 
 ### Frontend Data
 

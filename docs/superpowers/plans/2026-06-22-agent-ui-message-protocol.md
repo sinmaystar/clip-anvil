@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the temporary Agent chat rendering shape with the versioned `clipanvil.agent.message.v1` block protocol, then rebuild message rendering and the composer around that protocol.
+**Goal:** Replace the temporary Agent chat rendering node with the versioned `clipanvil.agent.message.v1` block protocol, then rebuild message rendering and the composer around that protocol.
 
 **Architecture:** Backend builders become the only supported way to create new Agent message content: `schema + blocks` is the UI source of truth, while `raw_message` remains diagnostics-only. WebSocket streaming emits block deltas, Producer prompt construction extracts model context from blocks, and the frontend renders blocks through a registry with a redesigned multi-line composer.
 
@@ -41,8 +41,8 @@ Backend runtime/API integration:
 
 - Modify `apps/server/internal/api/agent_handler.go`: create user messages with blocks; attachment metadata becomes an attachment block.
 - Modify `apps/server/internal/api/agent_response.go`: ensure DTO exposes block content without flattening.
-- Modify `apps/server/internal/api/agent_broadcaster.go`: broadcast block delta payload shape.
-- Modify `apps/server/internal/api/agent_handler_test.go`: assert new persisted content shape and response shape.
+- Modify `apps/server/internal/api/agent_broadcaster.go`: broadcast block delta payload node.
+- Modify `apps/server/internal/api/agent_handler_test.go`: assert new persisted content node and response node.
 - Modify `apps/server/internal/agent/runtime/service.go`: keep append semantics but tests must assert content schema.
 - Modify `apps/server/internal/agent/runtime/service_test.go`: update expected content.
 - Modify `apps/server/internal/agent/producer/model_responder.go`: emit block deltas, write assistant blocks, suppress visible thinking for non-thinking models.
@@ -70,7 +70,7 @@ Frontend renderers:
 - Create `apps/web/src/components/agent/AgentMarkdownBlock.tsx`: markdown renderer with GFM and `skipHtml`.
 - Create `apps/web/src/components/agent/AgentThinkingBlock.tsx`: collapsible thinking renderer.
 - Create `apps/web/src/components/agent/AgentDecisionCardBlock.tsx`: HITL card renderer.
-- Create `apps/web/src/components/agent/AgentToolStatusBlock.tsx`: tool call/result renderer.
+- Create `apps/web/src/components/agent/AgentEdgeStatusBlock.tsx`: tool call/result renderer.
 - Create `apps/web/src/components/agent/AgentAttachmentBlock.tsx`: attachment chips.
 - Create `apps/web/src/components/agent/AgentMediaBlock.tsx`: media preview shells.
 - Create `apps/web/src/components/agent/AgentErrorBlock.tsx`: error renderer.
@@ -137,7 +137,7 @@ func TestEnvelopeSchemaAndBlocks(t *testing.T) {
 	}
 }
 
-func TestExtractMarkdownTextSkipsThinkingAndToolStatus(t *testing.T) {
+func TestExtractMarkdownTextSkipsThinkingAndEdgeStatus(t *testing.T) {
 	raw := []byte(`{
 	  "schema":"clipanvil.agent.message.v1",
 	  "blocks":[
@@ -247,17 +247,17 @@ type DecisionCardBlock struct {
 
 func (DecisionCardBlock) UIBlockType() string { return "decision_card" }
 
-type ToolStatusBlock struct {
+type EdgeStatusBlock struct {
 	BaseBlock
-	ToolCallID   string `json:"tool_call_id"`
-	ToolName     string `json:"tool_name"`
+	EdgeCallID   string `json:"tool_call_id"`
+	EdgeName     string `json:"tool_name"`
 	Label        string `json:"label"`
 	Status       string `json:"status"`
 	Summary      string `json:"summary,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
 }
 
-func (ToolStatusBlock) UIBlockType() string { return "tool_status" }
+func (EdgeStatusBlock) UIBlockType() string { return "tool_status" }
 
 type Attachment struct {
 	AssetID   string `json:"asset_id"`
@@ -463,15 +463,15 @@ func TestBuildAssistantMessageContentIncludesVisibleThinking(t *testing.T) {
 	}
 }
 
-func TestBuildToolStatusAndDecisionCardContent(t *testing.T) {
-	toolRaw, err := BuildToolStatusMessageContent(ToolStatusInput{
-		ToolCallID: "call-1",
-		ToolName:   "read_workspace_context",
+func TestBuildEdgeStatusAndDecisionCardContent(t *testing.T) {
+	toolRaw, err := BuildEdgeStatusMessageContent(EdgeStatusInput{
+		EdgeCallID: "call-1",
+		EdgeName:   "read_workspace_context",
 		Label:      "工具执行完成",
 		Status:     "succeeded",
 	})
 	if err != nil {
-		t.Fatalf("BuildToolStatusMessageContent() error = %v", err)
+		t.Fatalf("BuildEdgeStatusMessageContent() error = %v", err)
 	}
 	if !containsBlockType(t, toolRaw, "tool_status") {
 		t.Fatalf("tool content missing tool_status: %s", toolRaw)
@@ -545,9 +545,9 @@ type AssistantMessageInput struct {
 	DefaultCollapsed bool
 }
 
-type ToolStatusInput struct {
-	ToolCallID   string
-	ToolName     string
+type EdgeStatusInput struct {
+	EdgeCallID   string
+	EdgeName     string
 	Label        string
 	Status       string
 	Summary      string
@@ -604,12 +604,12 @@ func BuildAssistantMessageContent(input AssistantMessageInput) ([]byte, error) {
 	return marshalEnvelope(blocks, nil)
 }
 
-func BuildToolStatusMessageContent(input ToolStatusInput) ([]byte, error) {
+func BuildEdgeStatusMessageContent(input EdgeStatusInput) ([]byte, error) {
 	return marshalEnvelope([]Block{
-		ToolStatusBlock{
+		EdgeStatusBlock{
 			BaseBlock:    NewBaseBlock("blk_tool_status", "tool_status"),
-			ToolCallID:  strings.TrimSpace(input.ToolCallID),
-			ToolName:    strings.TrimSpace(input.ToolName),
+			EdgeCallID:  strings.TrimSpace(input.EdgeCallID),
+			EdgeName:    strings.TrimSpace(input.EdgeName),
 			Label:       strings.TrimSpace(input.Label),
 			Status:      strings.TrimSpace(input.Status),
 			Summary:     strings.TrimSpace(input.Summary),
@@ -711,7 +711,7 @@ func TestPostAgentMessagePersistsUIMessageBlocks(t *testing.T) {
 }
 ```
 
-Use the existing handler test harness names if they differ; keep the assertion shape exactly.
+Use the existing handler test harness names if they differ; keep the assertion node exactly.
 
 - [ ] **Step 2: Run failing API test**
 
@@ -836,7 +836,7 @@ func TestShouldShowThinkingRequiresSupportAndNonMinimalEffort(t *testing.T) {
 	}
 }
 
-func TestStreamDeltaPayloadUsesBlockShape(t *testing.T) {
+func TestStreamDeltaPayloadUsesBlockNode(t *testing.T) {
 	payload := NewStreamDelta(StreamDeltaInput{
 		WorkspaceID: "workspace-1",
 		ThreadID:    "thread-1",
@@ -942,7 +942,7 @@ content, err := uimessage.BuildAssistantMessageContent(uimessage.AssistantMessag
 
 - Keep `reasoning_content` in `raw_message` diagnostics metadata for debugging even when no visible thinking block is emitted.
 
-- [ ] **Step 5: Update backend broadcaster event shape**
+- [ ] **Step 5: Update backend broadcaster event node**
 
 In `apps/server/internal/api/agent_broadcaster.go`, update `BroadcastAgentMessageDelta` to emit:
 
@@ -1131,7 +1131,7 @@ Expected: PASS.
 
 ---
 
-## Task 6: Tool Status And Decision Card Blocks
+## Task 6: Edge Status And Decision Card Blocks
 
 **Files:**
 
@@ -1147,10 +1147,10 @@ Expected: PASS.
 In the existing tool executor test file, add:
 
 ```go
-func TestToolExecutorPersistsToolStatusBlocks(t *testing.T) {
-	out := runFakeToolExecution(t, fakeToolResult{
-		ToolCallID: "call-1",
-		ToolName:   "read_workspace_context",
+func TestEdgeExecutorPersistsEdgeStatusBlocks(t *testing.T) {
+	out := runFakeEdgeExecution(t, fakeEdgeResult{
+		EdgeCallID: "call-1",
+		EdgeName:   "read_workspace_context",
 		Label:      "工具执行完成",
 		Status:     "succeeded",
 	})
@@ -1158,12 +1158,12 @@ func TestToolExecutorPersistsToolStatusBlocks(t *testing.T) {
 		Schema string `json:"schema"`
 		Blocks []struct {
 			Type       string `json:"type"`
-			ToolName   string `json:"tool_name"`
-			ToolCallID string `json:"tool_call_id"`
+			EdgeName   string `json:"tool_name"`
+			EdgeCallID string `json:"tool_call_id"`
 			Status     string `json:"status"`
 		} `json:"blocks"`
 	}
-	if err := json.Unmarshal(out.ToolResultMessage.Content, &content); err != nil {
+	if err := json.Unmarshal(out.EdgeResultMessage.Content, &content); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 	if content.Schema != uimessage.SchemaV1 {
@@ -1172,7 +1172,7 @@ func TestToolExecutorPersistsToolStatusBlocks(t *testing.T) {
 	if len(content.Blocks) != 1 || content.Blocks[0].Type != "tool_status" {
 		t.Fatalf("blocks = %#v", content.Blocks)
 	}
-	if content.Blocks[0].ToolName != "read_workspace_context" || content.Blocks[0].Status != "succeeded" {
+	if content.Blocks[0].EdgeName != "read_workspace_context" || content.Blocks[0].Status != "succeeded" {
 		t.Fatalf("tool block = %#v", content.Blocks[0])
 	}
 }
@@ -1231,9 +1231,9 @@ Expected: FAIL where old `content.card_type` or old tool text is still written.
 In tool execution code, replace old content payloads:
 
 ```go
-content, err := uimessage.BuildToolStatusMessageContent(uimessage.ToolStatusInput{
-	ToolCallID:   result.ToolCallID,
-	ToolName:     result.ToolName,
+content, err := uimessage.BuildEdgeStatusMessageContent(uimessage.EdgeStatusInput{
+	EdgeCallID:   result.EdgeCallID,
+	EdgeName:     result.EdgeName,
 	Label:        result.Label,
 	Status:       result.Status,
 	Summary:      result.Summary,
@@ -1420,7 +1420,7 @@ export type AgentMessageBlock =
   | AgentMarkdownBlock
   | AgentThinkingBlock
   | AgentDecisionCardBlock
-  | AgentToolStatusBlock
+  | AgentEdgeStatusBlock
   | AgentAttachmentBlock
   | AgentMediaBlock
   | AgentErrorBlock
@@ -1456,7 +1456,7 @@ export interface AgentDecisionCardBlock extends AgentBaseBlock {
   free_text?: string;
 }
 
-export interface AgentToolStatusBlock extends AgentBaseBlock {
+export interface AgentEdgeStatusBlock extends AgentBaseBlock {
   type: "tool_status";
   tool_call_id: string;
   tool_name: string;
@@ -1668,7 +1668,7 @@ Expected: PASS.
 - Create: `apps/web/src/components/agent/AgentMarkdownBlock.tsx`
 - Create: `apps/web/src/components/agent/AgentThinkingBlock.tsx`
 - Create: `apps/web/src/components/agent/AgentDecisionCardBlock.tsx`
-- Create: `apps/web/src/components/agent/AgentToolStatusBlock.tsx`
+- Create: `apps/web/src/components/agent/AgentEdgeStatusBlock.tsx`
 - Create: `apps/web/src/components/agent/AgentAttachmentBlock.tsx`
 - Create: `apps/web/src/components/agent/AgentMediaBlock.tsx`
 - Create: `apps/web/src/components/agent/AgentErrorBlock.tsx`
@@ -1789,12 +1789,12 @@ export function AgentDecisionCardBlockView({
 
 - [ ] **Step 4: Create tool, attachment, media, and error renderers**
 
-Create `AgentToolStatusBlock.tsx`:
+Create `AgentEdgeStatusBlock.tsx`:
 
 ```tsx
-import type { AgentToolStatusBlock } from "../../lib/agentMessageBlocks";
+import type { AgentEdgeStatusBlock } from "../../lib/agentMessageBlocks";
 
-export function AgentToolStatusBlockView({ block }: { block: AgentToolStatusBlock }) {
+export function AgentEdgeStatusBlockView({ block }: { block: AgentEdgeStatusBlock }) {
   return (
     <div className={`agent-tool-status agent-tool-status-${block.status}`}>
       <span className="agent-tool-status-dot" />
@@ -1877,7 +1877,7 @@ import { AgentErrorBlockView } from "./AgentErrorBlock";
 import { AgentMarkdownBlockView } from "./AgentMarkdownBlock";
 import { AgentMediaBlockView } from "./AgentMediaBlock";
 import { AgentThinkingBlockView } from "./AgentThinkingBlock";
-import { AgentToolStatusBlockView } from "./AgentToolStatusBlock";
+import { AgentEdgeStatusBlockView } from "./AgentEdgeStatusBlock";
 
 export interface AgentMessageActions extends AgentDecisionCardActions {}
 
@@ -1912,7 +1912,7 @@ function AgentBlockRenderer({ block, actions }: { block: AgentMessageBlock; acti
     case "decision_card":
       return <AgentDecisionCardBlockView block={block} actions={actions} />;
     case "tool_status":
-      return <AgentToolStatusBlockView block={block} />;
+      return <AgentEdgeStatusBlockView block={block} />;
     case "attachment":
       return <AgentAttachmentBlockView block={block} />;
     case "media":
@@ -2519,7 +2519,7 @@ Expected:
 - New messages show `schema = clipanvil.agent.message.v1`.
 - User messages include `markdown` and optional `attachment`.
 - Assistant messages include `markdown` and optional `thinking`.
-- Tool messages include `tool_status`.
+- Edge messages include `tool_status`.
 - HITL messages include `decision_card`.
 
 Check server logs:
@@ -2575,7 +2575,7 @@ Browser E2E must verify:
 - Pro shows thinking control.
 - Multi-line prompt sends correctly.
 - Markdown renders as Markdown.
-- Tool status block renders.
+- Edge status block renders.
 - Decision card block renders and survives refresh.
 - Attachment block renders.
 - Mini-to-Pro history context works through markdown blocks.

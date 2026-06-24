@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   adaptiveMediaNodeSize,
-  mediaNodeHeaderHeight,
   mediaNodePreviewLimits,
 } from "../../dist-test/lib/nodePreviewLayout.js";
 
@@ -44,8 +43,8 @@ describe("adaptive media node layout", () => {
 
     assert.ok(size.w <= mediaNodePreviewLimits.image.maxW);
     assert.ok(size.h <= mediaNodePreviewLimits.image.maxH);
-    assert.ok(size.w <= 380, `width ${size.w} should stay compact`);
-    assert.ok(Math.abs(size.w / mediaContentHeight(size.h) - 16 / 9) < 0.05);
+    assert.ok(size.w <= 440, `width ${size.w} should stay inspectable`);
+    assert.ok(Math.abs(size.w / size.h - 16 / 9) < 0.05);
   });
 
   it("fits vertical images without cropping by height", () => {
@@ -60,8 +59,34 @@ describe("adaptive media node layout", () => {
     });
 
     assert.ok(size.h <= mediaNodePreviewLimits.image.maxH);
-    assert.ok(size.h <= 420, `height ${size.h} should stay compact`);
-    assert.ok(Math.abs(size.w / mediaContentHeight(size.h) - 9 / 16) < 0.05);
+    assert.ok(size.h <= 380, `height ${size.h} should stay inspectable`);
+    assert.ok(Math.abs(size.w / size.h - 9 / 16) < 0.05);
+  });
+
+  it("uses measured image dimensions when preview metadata is absent", () => {
+    const horizontal = adaptiveMediaNodeSize(
+      {
+        ...baseNode,
+        node_type: "image",
+      },
+      { width: 1800, height: 900 },
+    );
+    const vertical = adaptiveMediaNodeSize(
+      {
+        ...baseNode,
+        node_type: "image",
+      },
+      { width: 900, height: 1800 },
+    );
+
+    assert.ok(
+      horizontal.w > horizontal.h,
+      `horizontal image should stay wide, got ${horizontal.w}x${horizontal.h}`,
+    );
+    assert.ok(
+      vertical.h > vertical.w,
+      `vertical image should stay tall, got ${vertical.w}x${vertical.h}`,
+    );
   });
 
   it("keeps obviously persisted larger sizes", () => {
@@ -87,11 +112,7 @@ describe("adaptive media node layout", () => {
       },
     });
 
-    assert.ok(size.w <= 420, `width ${size.w} should stay compact`);
-    assert.ok(Math.abs(size.w / mediaContentHeight(size.h) - 16 / 9) < 0.05);
+    assert.ok(size.w <= 480, `width ${size.w} should stay inspectable`);
+    assert.ok(Math.abs(size.w / size.h - 16 / 9) < 0.05);
   });
 });
-
-function mediaContentHeight(nodeHeight) {
-  return nodeHeight - mediaNodeHeaderHeight;
-}

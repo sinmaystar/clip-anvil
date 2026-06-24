@@ -295,14 +295,7 @@ func main() {
 			ModelSelection: agentModelSelection,
 			PSSBuilder:     producerPSSBuilder,
 		},
-		Responder: agentproducer.NewVolcengineModelResponder(agentproducer.VolcengineModelResponderConfig{
-			APIKey:      cfg.Production.Volcengine.APIKey,
-			BaseURL:     cfg.Production.Volcengine.BaseURL,
-			Region:      cfg.Production.Volcengine.Region,
-			Model:       cfg.Production.Volcengine.TextModel,
-			MaxTokens:   1200,
-			Temperature: 0.3,
-		}),
+		Responder:        producerResponderForConfig(cfg),
 		ToolExecutor:     agentToolExecutor,
 		ToolRegistry:     agentToolRegistry,
 		CheckPointStore:  agentEinoCheckpointStore,
@@ -647,6 +640,27 @@ func recoverQueuedReviewerTasks(executor *agentreviewer.Executor, runtime *agent
 			slog.Warn("failed to recover queued reviewer task", "task_id", task.ID, "error", err)
 		}
 	}
+}
+
+func producerResponderForConfig(cfg *config.Config) agentproducer.Responder {
+	if cfg.Production.ProviderMode != "real" ||
+		strings.TrimSpace(cfg.Production.Volcengine.APIKey) == "" {
+		slog.Warn(
+			"using deterministic producer responder",
+			"provider_mode", cfg.Production.ProviderMode,
+			"has_volcengine_api_key",
+			strings.TrimSpace(cfg.Production.Volcengine.APIKey) != "",
+		)
+		return agentproducer.DeterministicResponder{}
+	}
+	return agentproducer.NewVolcengineModelResponder(agentproducer.VolcengineModelResponderConfig{
+		APIKey:      cfg.Production.Volcengine.APIKey,
+		BaseURL:     cfg.Production.Volcengine.BaseURL,
+		Region:      cfg.Production.Volcengine.Region,
+		Model:       cfg.Production.Volcengine.TextModel,
+		MaxTokens:   1200,
+		Temperature: 0.3,
+	})
 }
 
 func checkSandboxServerHealth(ctx context.Context, client *http.Client, endpoint string) error {

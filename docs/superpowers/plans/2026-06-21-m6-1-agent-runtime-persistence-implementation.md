@@ -4,7 +4,7 @@
 
 **Goal:** Build the generic Agent runtime persistence foundation for Producer, Craftsman, Reviewer, Composer, Worker, and future Eino Graph resume state.
 
-**Architecture:** Add a narrow database-backed runtime layer below future Agent APIs and Graph orchestration. The layer owns thread/message/task/event/checkpoint persistence and exposes service methods that future M6 phases can call without touching HTTP, WebSocket, production generation, or UI code.
+**Architecture:** Add a ncustom edge database-backed runtime layer below future Agent APIs and Graph orchestration. The layer owns thread/message/task/event/checkpoint persistence and exposes service methods that future M6 phases can call without touching HTTP, WebSocket, production generation, or UI code.
 
 **Tech Stack:** PostgreSQL 16 migrations with goose, sqlc v1.31.1, pgx v5, Go 1.26, package `internal/agent/runtime`, existing `internal/store/db` generated package.
 
@@ -187,7 +187,7 @@ Expected: both commands succeed.
 
 ## Self-Review Checklist
 
-- [x] The implementation does not add HTTP APIs, WebSocket handlers, frontend UI, Eino Graph execution, HITL UI cards, Tool registry, Storyboard/PSS, or production generation calls.
+- [x] The implementation does not add HTTP APIs, WebSocket handlers, frontend UI, Eino Graph execution, HITL UI cards, Edge registry, Storyboard/PSS, or production generation calls.
 - [x] `thread` and `message` persistence is generic Agent runtime infrastructure, not Producer-only storage.
 - [x] Producer uniqueness is limited to one active workspace-scoped Producer thread per workspace.
 - [x] Message `seq` is allocated inside a transaction.

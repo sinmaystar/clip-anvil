@@ -6,21 +6,21 @@
 
 **Architecture:** Keep M5.1 as a frontend foundation slice. Extend shared canvas schema and web API contracts first, then update existing Studio renderers and selectors to accept `reference_pack` without changing the M4 backend or building the M5.2 production panel. Use TypeScript build plus focused Node tests to guard type coverage and resource filtering.
 
-**Tech Stack:** Vite 8, React 19, TypeScript 6, tldraw 5, TanStack Query, Node test runner.
+**Tech Stack:** Vite 8, React 19, TypeScript 6, React Flow, TanStack Query, Node test runner.
 
 ---
 
 ## File Structure
 
-- Modify `packages/canvas-schema/src/index.ts`
-  - Add `reference_pack` to `MediaType` and tldraw shape prop validation types.
+- Modify `apps/web/src/components/canvas-flow/flowTypes.ts`
+  - Add `reference_pack` to `MediaType` and React Flow node prop validation types.
 - Modify `apps/web/src/lib/api.ts`
   - Add production-facing frontend types and API helpers for M4 endpoints.
   - Extend `MediaNode` to include production fields already returned by the backend.
   - Split `AssetType` from `MediaType`.
 - Modify `apps/web/src/lib/canvas.ts`
-  - Keep `reference_pack` nodes convertible to tldraw media shapes and give them a fallback title label.
-- Modify `apps/web/src/shapes/MediaShapeUtil.tsx`
+  - Keep `reference_pack` nodes convertible to React Flow media nodes and give them a fallback title label.
+- Modify `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
   - Allow `reference_pack` in `T.literalEnum`.
   - Render a stable Reference Pack placeholder card.
 - Modify `apps/web/src/components/ResourceTree.tsx`
@@ -33,7 +33,7 @@
 - Modify `apps/web/src/lib/canvasSelectors.test.mjs`
   - Add a selector test for `reference_pack` filtering.
 - Modify `apps/web/src/lib/canvasLayering.test.mjs`
-  - Add a source-level guard that `MediaShapeUtil` supports `reference_pack`.
+  - Add a source-level guard that `MediaFlowNode` supports `reference_pack`.
 - Modify `apps/web/tsconfig.test.json`
   - No change expected. Existing `canvasSelectors.ts` inclusion type-checks `MediaType` through type-only imports.
 
@@ -70,20 +70,20 @@ Append this test inside the existing `describe("canvas selectors", () => { ... }
   });
 ```
 
-- [ ] **Step 2: Add a failing MediaShapeUtil support test**
+- [ ] **Step 2: Add a failing MediaFlowNode support test**
 
 Append this test inside the existing `describe("canvas layering", () => { ... })` block in `apps/web/src/lib/canvasLayering.test.mjs`:
 
 ```js
   it("declares reference pack as a supported media node type", () => {
     assert.ok(
-      mediaShapeUtil.includes(
+      mediaFlowNode.includes(
         'nodeType: T.literalEnum("text", "image", "video", "audio", "reference_pack")',
       ),
-      "reference_pack must be accepted by the tldraw media shape validator",
+      "reference_pack must be accepted by the React Flow media node validator",
     );
     assert.ok(
-      mediaShapeUtil.includes("reference_pack:"),
+      mediaFlowNode.includes("reference_pack:"),
       "reference_pack must have node display metadata",
     );
   });
@@ -97,7 +97,7 @@ Run:
 pnpm --filter @clip-anvil/web test:connections
 ```
 
-Expected: FAIL. TypeScript should reject `"reference_pack"` as not assignable to the current `MediaType`, or the source-level MediaShapeUtil assertion should fail.
+Expected: FAIL. TypeScript should reject `"reference_pack"` as not assignable to the current `MediaType`, or the source-level MediaFlowNode assertion should fail.
 
 - [ ] **Step 4: Commit tests**
 
@@ -106,24 +106,24 @@ git add apps/web/src/lib/canvasSelectors.test.mjs apps/web/src/lib/canvasLayerin
 git commit -m "test: cover reference pack frontend type support"
 ```
 
-## Task 2: Extend Shared Canvas Schema And Shape Rendering
+## Task 2: Extend Shared Canvas Schema And Node Rendering
 
 **Files:**
-- Modify: `packages/canvas-schema/src/index.ts`
-- Modify: `apps/web/src/shapes/MediaShapeUtil.tsx`
+- Modify: `apps/web/src/components/canvas-flow/flowTypes.ts`
+- Modify: `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`
 - Modify: `apps/web/src/lib/canvas.ts`
 
 - [ ] **Step 1: Add `reference_pack` to shared schema**
 
-In `packages/canvas-schema/src/index.ts`, replace the `MediaType` declaration with:
+In `apps/web/src/components/canvas-flow/flowTypes.ts`, replace the `MediaType` declaration with:
 
 ```ts
 export type MediaType = "text" | "image" | "video" | "audio" | "reference_pack";
 ```
 
-- [ ] **Step 2: Update tldraw media shape validator**
+- [ ] **Step 2: Update React Flow media node validator**
 
-In `apps/web/src/shapes/MediaShapeUtil.tsx`, replace:
+In `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`, replace:
 
 ```ts
     nodeType: T.literalEnum("text", "image", "video", "audio"),
@@ -137,11 +137,11 @@ with:
 
 - [ ] **Step 3: Add Reference Pack display metadata**
 
-In `apps/web/src/shapes/MediaShapeUtil.tsx`, update `nodeTypeMeta` to:
+In `apps/web/src/components/canvas-flow/MediaFlowNode.tsx`, update `nodeTypeMeta` to:
 
 ```ts
 const nodeTypeMeta: Record<
-  MediaShape["props"]["nodeType"],
+  MediaFlowNode["props"]["nodeType"],
   { icon: string; label: string; emptyTitle: string }
 > = {
   text: { icon: "文案", label: "文本", emptyTitle: "未命名文本" },
@@ -158,7 +158,7 @@ const nodeTypeMeta: Record<
 
 - [ ] **Step 4: Render Reference Pack placeholder content**
 
-In `MediaNodeShape`, replace the final audio-only fallback:
+In `MediaNodeNode`, replace the final audio-only fallback:
 
 ```tsx
             ) : (
@@ -185,7 +185,7 @@ with:
             )}
 ```
 
-- [ ] **Step 5: Add Reference Pack fallback label in canvas shape conversion**
+- [ ] **Step 5: Add Reference Pack fallback label in canvas view-model projection**
 
 In `apps/web/src/lib/canvas.ts`, update `nodeTypeLabel`:
 
@@ -217,11 +217,11 @@ pnpm --filter @clip-anvil/web test:connections
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit schema and shape support**
+- [ ] **Step 7: Commit schema and node support**
 
 ```bash
-git add packages/canvas-schema/src/index.ts apps/web/src/shapes/MediaShapeUtil.tsx apps/web/src/lib/canvas.ts
-git commit -m "feat: support reference pack canvas shapes"
+git add apps/web/src/components/canvas-flow/flowTypes.ts apps/web/src/components/canvas-flow/MediaFlowNode.tsx apps/web/src/lib/canvas.ts
+git commit -m "feat: support reference pack canvas nodes"
 ```
 
 ## Task 3: Add Production API Types And Helpers
@@ -520,7 +520,7 @@ In `apps/web/src/pages/WorkspaceDetailPage.tsx`, append this entry to `nodeCreat
 
 - [ ] **Step 2: Add Reference Pack inline editor metadata**
 
-In `nodeEditorTypeMeta`, add:
+In `nodeReact FlowTypeMeta`, add:
 
 ```ts
   reference_pack: { label: "参考包", emptyTitle: "未命名参考包" },
@@ -660,7 +660,7 @@ Expected: this worktree's frontend/backend processes stop; shared Docker middlew
 If smoke testing required small fixes, commit them:
 
 ```bash
-git add apps/web packages/canvas-schema
+git add apps/web apps/web/src/components/canvas-flow
 git commit -m "fix: complete m5 1 studio production type wiring"
 ```
 
@@ -679,6 +679,6 @@ If no fixes were needed, do not create an empty commit.
 - Out of scope:
   - Run panel UI, version UI, stale UI, Reference Pack membership UI, and Prompt `@` remain for later M5 phases.
 - Type consistency:
-  - `MediaType` includes `reference_pack` in `packages/canvas-schema` and `apps/web/src/lib/api.ts`.
-  - `nodeTypeLabel` / `nodeTypeMeta` / `nodeEditorTypeMeta` all include `reference_pack`.
+  - `MediaType` includes `reference_pack` in `apps/web/src/components/canvas-flow` and `apps/web/src/lib/api.ts`.
+  - `nodeTypeLabel` / `nodeTypeMeta` / `nodeReact FlowTypeMeta` all include `reference_pack`.
   - `fetchReferencePackItems` and `replaceReferencePackItems` use `member_node_ids`, matching the current backend request body.

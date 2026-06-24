@@ -5,6 +5,9 @@ import (
 	"io"
 	"net/http"
 	"testing"
+
+	agentproducer "github.com/sinmaystar/clip-anvil/internal/agent/producer"
+	"github.com/sinmaystar/clip-anvil/internal/config"
 )
 
 func TestSandboxHealthURLUsesServerHealthEndpoint(t *testing.T) {
@@ -30,6 +33,48 @@ func TestCheckSandboxServerHealthRequiresOK(t *testing.T) {
 
 	if err := checkSandboxServerHealth(context.Background(), client, "http://localhost:8080/v1"); err == nil {
 		t.Fatal("expected non-OK sandbox health response to fail")
+	}
+}
+
+func TestProducerResponderForConfigUsesDeterministicOutsideRealMode(t *testing.T) {
+	responder := producerResponderForConfig(&config.Config{
+		Production: config.ProductionConfig{
+			ProviderMode: "mock",
+		},
+	})
+	if _, ok := responder.(agentproducer.DeterministicResponder); !ok {
+		t.Fatalf("expected deterministic responder, got %T", responder)
+	}
+}
+
+func TestProducerResponderForConfigUsesDeterministicWhenRealModeHasNoKey(t *testing.T) {
+	responder := producerResponderForConfig(&config.Config{
+		Production: config.ProductionConfig{
+			ProviderMode: "real",
+			Volcengine: config.VolcengineConfig{
+				APIKey: "   ",
+			},
+		},
+	})
+	if _, ok := responder.(agentproducer.DeterministicResponder); !ok {
+		t.Fatalf("expected deterministic responder, got %T", responder)
+	}
+}
+
+func TestProducerResponderForConfigUsesVolcengineWhenRealModeHasKey(t *testing.T) {
+	responder := producerResponderForConfig(&config.Config{
+		Production: config.ProductionConfig{
+			ProviderMode: "real",
+			Volcengine: config.VolcengineConfig{
+				APIKey:    "test-key",
+				BaseURL:   "https://example.com",
+				Region:    "cn-beijing",
+				TextModel: "test-model",
+			},
+		},
+	})
+	if _, ok := responder.(agentproducer.VolcengineModelResponder); !ok {
+		t.Fatalf("expected Volcengine responder, got %T", responder)
 	}
 }
 

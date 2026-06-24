@@ -4,9 +4,9 @@
 
 **Goal:** Render Agent image attachments as thumbnails and replace the Agent text-only canvas with a Studio-derived read-only canvas plus read-only node detail.
 
-**Architecture:** Keep persisted Agent message content stable by storing asset/node IDs only, and hydrate transient preview URLs in API responses. Extract a focused read-only canvas viewport that reuses Studio shape conversion and `MediaShapeUtil`. Add a dedicated Agent node detail drawer that reads existing canvas and production-state data but exposes no mutation handlers.
+**Architecture:** Keep persisted Agent message content stable by storing asset/node IDs only, and hydrate transient preview URLs in API responses. Extract a focused read-only canvas viewport that reuses Studio view-model projection and `MediaFlowNode`. Add a dedicated Agent node detail drawer that reads existing canvas and production-state data but exposes no mutation handlers.
 
-**Tech Stack:** Go 1.26 + Hertz + pgx/sqlc backend, React 19 + TypeScript 6 + TanStack Query + tldraw 5 frontend, existing `agent_message` UI protocol and Studio canvas helpers.
+**Tech Stack:** Go 1.26 + Hertz + pgx/sqlc backend, React 19 + TypeScript 6 + TanStack Query + React Flow frontend, existing `agent_message` UI protocol and Studio canvas helpers.
 
 ---
 
@@ -19,7 +19,7 @@
 - Modify `apps/web/src/lib/agentApi.ts`: add optional `url` and `thumbnail_url` to `AgentAttachment`.
 - Modify `apps/web/src/lib/agentMessageBlocks.ts` and tests: accept hydrated attachment URL fields while keeping stable ID validation.
 - Modify `apps/web/src/components/agent/AgentAttachmentBlock.tsx`: render image thumbnail tiles when URL is available.
-- Create `apps/web/src/components/agent/AgentReadonlyCanvas.tsx`: tldraw read-only viewport that reuses Studio node/group/edge conversion.
+- Create `apps/web/src/components/agent/AgentReadonlyCanvas.tsx`: React Flow read-only viewport that reuses Studio node/group/edge conversion.
 - Create `apps/web/src/components/agent/AgentNodeDetailDrawer.tsx`: read-only detail surface for selected node.
 - Modify `apps/web/src/pages/AgentWorkspacePage.tsx`: replace text node list with read-only canvas and wire selected-node detail.
 - Modify `apps/web/src/main.css`: thumbnail, read-only canvas, and detail drawer styles.
@@ -227,16 +227,16 @@ Expected: PASS.
 Add assertions to an existing frontend source test or a new `agentReadonlyCanvas.test.mjs`:
 
 ```js
-test("agent readonly canvas reuses studio shape conversion", async () => {
+test("agent readonly canvas reuses studio view-model projection", async () => {
   const source = await readFile(
     new URL("../components/agent/AgentReadonlyCanvas.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /nodeToShape/);
-  assert.match(source, /groupToShape/);
-  assert.match(source, /edgeToArrow/);
-  assert.match(source, /MediaShapeUtil/);
-  assert.match(source, /Tldraw/);
+  assert.match(source, /nodeToFlowNode/);
+  assert.match(source, /groupToFlowNode/);
+  assert.match(source, /edgeToFlowEdge/);
+  assert.match(source, /MediaFlowNode/);
+  assert.match(source, /React Flow/);
 });
 
 test("agent workspace no longer renders text-only node cards", async () => {
@@ -267,13 +267,13 @@ Create `AgentReadonlyCanvas` that:
 
 - accepts `canvas: CanvasPayload`;
 - accepts `selectedNodeId` and `onSelectNode`;
-- renders `Tldraw` with `[GroupContainerShapeUtil, MediaShapeUtil]`;
-- uses `nodeToShape`, `groupToShape`, and `edgeToArrow`;
-- syncs canvas data into tldraw using `editor.store.mergeRemoteChanges`;
-- dispatches active node change event for existing media shape active styling;
-- listens for `clip-anvil:select-node` events from `MediaShapeUtil`;
+- renders `React Flow` with `[GroupFlowNode, MediaFlowNode]`;
+- uses `nodeToFlowNode`, `groupToFlowNode`, and `edgeToFlowEdge`;
+- syncs canvas data into React Flow using `editor.store.mergeRemoteChanges`;
+- dispatches active node change event for existing media node active styling;
+- listens for `clip-anvil:select-node` events from `MediaFlowNode`;
 - allows pan/zoom/select;
-- disables toolbar keyboard shortcuts and hides tldraw UI components.
+- disables toolbar keyboard shortcuts and hides React Flow UI components.
 
 Replace the Agent page's `.agent-node-list` block with:
 

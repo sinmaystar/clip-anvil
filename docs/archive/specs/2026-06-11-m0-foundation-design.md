@@ -9,7 +9,7 @@ ClipAnvil 影砧项目的第一个里程碑。搭建 monorepo 骨架、拉起全
 1. `docker compose up -d` 成功拉起 postgres、redis、minio、nginx 四个容器
 2. `make server-dev` 启动后端，实际连接 postgres/redis/minio，连接成功打日志
 3. `curl http://localhost/api/health` 通过 nginx 代理返回 `{"status":"ok","services":{"postgres":"connected","redis":"connected","minio":"connected"}}`
-4. `open http://localhost` 通过 nginx 代理在浏览器看到 tldraw 空画布
+4. `open http://localhost` 通过 nginx 代理在浏览器看到 React Flow 空画布
 5. git commit 时 pre-commit hook 自动跑 gofmt/golangci-lint/eslint/prettier
 6. commit message 不符合 conventional commits 格式时被 commitlint 拒绝
 7. Claude Code 编辑 .go 文件后自动 gofmt，编辑 .ts/.tsx 后自动 eslint --fix
@@ -28,7 +28,7 @@ clip-anvil/
 │   │   ├── index.html
 │   │   ├── src/
 │   │   │   ├── main.tsx
-│   │   │   └── App.tsx               # 全屏 tldraw 空画布
+│   │   │   └── App.tsx               # 全屏 React Flow 空画布
 │   │   └── .eslintrc.cjs
 │   └── server/
 │       ├── go.mod                    # module github.com/sinmaystar/clip-anvil
@@ -252,7 +252,7 @@ migrate:          # goose/golang-migrate（M0 占位，后续实现）
 
 ### 页面
 
-`App.tsx` 渲染一个全屏 tldraw Editor，使用 tldraw 默认工具集，无自定义 Shape。
+`App.tsx` 渲染一个全屏 React Flow React Flow，使用 React Flow 默认工具集，无自定义 Node。
 
 ### 依赖
 
@@ -261,7 +261,7 @@ migrate:          # goose/golang-migrate（M0 占位，后续实现）
   "dependencies": {
     "react": "^18",
     "react-dom": "^18",
-    "tldraw": "^5"
+    "/react": "^12"
   },
   "devDependencies": {
     "@types/react": "^18",
@@ -352,13 +352,13 @@ module.exports = { extends: ['@commitlint/config-conventional'] };
 3. Hooks 配置（lefthook + commitlint + Claude Code settings.json）
 4. deploy/（compose + nginx）→ `docker compose up -d` 验证中间件健康
 5. apps/server（Hertz + /api/health + 连接中间件）→ `make server-dev` + `curl` 验证
-6. apps/web（Vite + tldraw 空画布）→ `pnpm --filter web dev` + 浏览器验证
+6. apps/web（Vite + React Flow 空画布）→ `pnpm --filter web dev` + 浏览器验证
 7. packages/*（三个空壳包）
 
 ## 不在 M0 范围内
 
 - 登录/注册/JWT（M1+）
-- 自定义 tldraw Shape/Tool（M1）
+- 自定义 React Flow Node/Edge（M1）
 - DashScope 接入（M2）
 - OpenSandbox 沙箱（M3）
 - 路由、状态管理、UI 组件库（按需引入）

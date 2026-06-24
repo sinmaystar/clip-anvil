@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the first version intentionally lightweight: textarea remains the prompt source, `@` opens a simple candidate menu, and selected refs are persisted in `media_node.prompt_refs` plus lightweight `prompt_rich`. Add shared pure helpers on both backend and frontend so explicit, implicit, and invalid input state is computed consistently. Keep dependency edges as the actual graph contract; `@` refs annotate and can auto-create missing dependency edges.
 
-**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, TanStack Query, tldraw 5, Vite 8, Node test runner, in-app browser smoke.
+**Tech Stack:** Go 1.26, Hertz, pgx/sqlc, React 19, TypeScript 6, TanStack Query, React Flow, Vite 8, Node test runner, in-app browser smoke.
 
 ---
 
@@ -16,7 +16,7 @@
 - `media_node.prompt_template`, `prompt_rich`, and `prompt_refs` already exist in migration `007_m4_1_production_foundation.sql`.
 - `apps/server/sqlc/queries/node.sql` currently updates `prompt` and `prompt_template`, but not `prompt_refs` or `prompt_rich`.
 - `apps/web/src/lib/api.ts` currently types `prompt_refs` and `prompt_rich` as `unknown`.
-- `NodeEditorOverlay` in `apps/web/src/pages/WorkspaceDetailPage.tsx` is a plain textarea with a static "暂无引用" row.
+- `NodeReact FlowOverlay` in `apps/web/src/pages/WorkspaceDetailPage.tsx` is a plain textarea with a static "暂无引用" row.
 - `PropertyPanel.tsx` has another plain Prompt textarea for non-pack nodes.
 - `loadInputContext` in `apps/server/internal/production/service.go` currently treats every direct upstream dependency as `kind = dependency`.
 - M5.4 Reference Pack input kinds already use `reference_pack` and `reference_pack_member`; M5.5 must preserve those kinds.
@@ -26,7 +26,7 @@
 
 M5.5 includes:
 
-- Stable prompt ref JSON shape shared by frontend and backend.
+- Stable prompt ref JSON node shared by frontend and backend.
 - Node update API support for `prompt_refs` and `prompt_rich`.
 - Prompt `@` menu in the inline node editor and property panel prompt editor.
 - Candidate ordering: connected upstream nodes first, then other non-target workspace nodes.
@@ -48,7 +48,7 @@ M5.5 does not include:
 
 ## Data Contracts
 
-Use this first-version `prompt_refs` JSON shape:
+Use this first-version `prompt_refs` JSON node:
 
 ```json
 {
@@ -63,7 +63,7 @@ Use this first-version `prompt_refs` JSON shape:
 }
 ```
 
-Use this lightweight `prompt_rich` JSON shape:
+Use this lightweight `prompt_rich` JSON node:
 
 ```json
 {
@@ -86,7 +86,7 @@ Behavioral rules:
 
 - Create `apps/server/internal/promptrefs/prompt_refs.go`
   - Parse and normalize `prompt_refs`.
-  - Validate UUID shape, duplicate refs, and lightweight `prompt_rich`.
+  - Validate UUID node, duplicate refs, and lightweight `prompt_rich`.
 - Create `apps/server/internal/promptrefs/prompt_refs_test.go`
   - Unit tests for parsing, empty docs, duplicates, and invalid JSON.
 - Modify `apps/server/sqlc/queries/node.sql`
@@ -918,7 +918,7 @@ const commitPromptRefSelection = useCallback(
 );
 ```
 
-- [ ] **Step 3: Pass prompt ref props into `NodeEditorOverlay`**
+- [ ] **Step 3: Pass prompt ref props into `NodeReact FlowOverlay`**
 
 Add props:
 
@@ -944,9 +944,9 @@ onPromptRefRemove={(refNodeId) => {
 onPromptRefSelect={(refNode) => commitPromptRefSelection(selectedNode, refNode)}
 ```
 
-- [ ] **Step 4: Implement `@` menu in `NodeEditorOverlay`**
+- [ ] **Step 4: Implement `@` menu in `NodeReact FlowOverlay`**
 
-Inside `NodeEditorOverlay`, add state:
+Inside `NodeReact FlowOverlay`, add state:
 
 ```ts
 const [isRefMenuOpen, setIsRefMenuOpen] = useState(false);
@@ -1002,7 +1002,7 @@ Render above footer:
 
 - [ ] **Step 5: Add prompt ref summary component**
 
-Add local component near `NodeEditorOverlay`:
+Add local component near `NodeReact FlowOverlay`:
 
 ```tsx
 function PromptReferenceSummary({

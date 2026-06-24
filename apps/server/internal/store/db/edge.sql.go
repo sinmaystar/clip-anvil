@@ -15,11 +15,13 @@ const createMediaEdge = `-- name: CreateMediaEdge :one
 INSERT INTO media_edge (
     workspace_id,
     from_node_id,
-    to_node_id
+    to_node_id,
+    metadata
 ) VALUES (
     $1,
     $2,
-    $3
+    $3,
+    $4
 ) RETURNING id, workspace_id, from_node_id, to_node_id, source, metadata, created_at
 `
 
@@ -27,10 +29,16 @@ type CreateMediaEdgeParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	FromNodeID  pgtype.UUID `json:"from_node_id"`
 	ToNodeID    pgtype.UUID `json:"to_node_id"`
+	Metadata    []byte      `json:"metadata"`
 }
 
 func (q *Queries) CreateMediaEdge(ctx context.Context, arg CreateMediaEdgeParams) (MediaEdge, error) {
-	row := q.db.QueryRow(ctx, createMediaEdge, arg.WorkspaceID, arg.FromNodeID, arg.ToNodeID)
+	row := q.db.QueryRow(ctx, createMediaEdge,
+		arg.WorkspaceID,
+		arg.FromNodeID,
+		arg.ToNodeID,
+		arg.Metadata,
+	)
 	var i MediaEdge
 	err := row.Scan(
 		&i.ID,

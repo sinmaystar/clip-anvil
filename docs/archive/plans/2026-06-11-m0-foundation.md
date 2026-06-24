@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Scaffold the ClipAnvil monorepo, bring up all middleware via docker Compose, deliver a Go+Hertz health endpoint and a React+tldraw empty canvas page, with full lint/format/commit hooks.
+**Goal:** Scaffold the ClipAnvil monorepo, bring up all middleware via docker Compose, deliver a Go+Hertz health endpoint and a React+React Flow empty canvas page, with full lint/format/commit hooks.
 
-**Architecture:** Monorepo with `apps/web` (Vite+React+tldraw), `apps/server` (Go+Hertz), `packages/*` (TS shared libs), `deploy/` (compose+nginx). Self-bottom-up: skeleton → CLAUDE.md → hooks → infra → backend → frontend → packages.
+**Architecture:** Monorepo with `apps/web` (Vite+React+React Flow), `apps/server` (Go+Hertz), `packages/*` (TS shared libs), `deploy/` (compose+nginx). Self-bottom-up: skeleton → CLAUDE.md → hooks → infra → backend → frontend → packages.
 
-**Tech Stack:** Go 1.26, Hertz 0.10, pgx v5, go-redis v9, minio-go v7, viper, slog | React 19, tldraw 5, Vite 8, TailwindCSS 4, TypeScript 6, ESLint 10 | docker Compose, Nginx, PostgreSQL 16, Redis 7, MinIO
+**Tech Stack:** Go 1.26, Hertz 0.10, pgx v5, go-redis v9, minio-go v7, viper, slog | React 19, React Flow, Vite 8, TailwindCSS 4, TypeScript 6, ESLint 10 | docker Compose, Nginx, PostgreSQL 16, Redis 7, MinIO
 
-**Version note:** The spec referenced tldraw v3 / React 18 / Vite 5, but tldraw has no v3 release (went v2→v4→v5). This plan uses current stable versions: tldraw 5.1, React 19, Vite 8. The architecture doc should be updated after M0 lands.
+**Version note:** The spec referenced React Flow / React 18 / Vite 5, but React Flow has no v3 release (went v2→v4→v5). This plan uses current stable versions: React Flow, React 19, Vite 8. The architecture doc should be updated after M0 lands.
 
 ---
 
@@ -168,7 +168,7 @@ git commit -m "chore: add Makefile with server build targets"
 
 ## 技术栈
 
-- 前端：Vite 8 + React 19 + TypeScript 6 + tldraw 5 + TailwindCSS 4
+- 前端：Vite 8 + React 19 + TypeScript 6 + React Flow + TailwindCSS 4
 - 后端：Go 1.26 + Hertz + pgx v5 + sqlc + viper + slog
 - 中间件：PostgreSQL 16 / Redis 7 / MinIO
 - 容器：Docker Compose
@@ -178,7 +178,7 @@ git commit -m "chore: add Makefile with server build targets"
 - `apps/web/` — 前端
 - `apps/server/` — 后端（Go module: github.com/sinmaystar/clip-anvil）
 - `packages/shared-types/` — TS 类型定义
-- `packages/canvas-schema/` — 画布 Shape/Tool 契约
+- `apps/web/src/components/canvas-flow/` — 画布 Node/Edge 契约
 - `packages/eslint-config/` — 共享 ESLint 配置
 - `deploy/` — compose + nginx 配置
 - `docs/` — 架构方案 + 各阶段 spec
@@ -719,7 +719,7 @@ git commit -m "feat(server): add Hertz server with health endpoint and middlewar
 
 ---
 
-### Task 8: Frontend — Vite + React + tldraw
+### Task 8: Frontend — Vite + React + React Flow
 
 **Files:**
 - Create: `apps/web/package.json`
@@ -747,7 +747,7 @@ git commit -m "feat(server): add Hertz server with health endpoint and middlewar
   "dependencies": {
     "react": "^19",
     "react-dom": "^19",
-    "tldraw": "^5"
+    "/react": "^12"
   },
   "devDependencies": {
     "@types/react": "^19",
@@ -831,13 +831,13 @@ createRoot(document.getElementById("root")!).render(
 - [ ] **Step 6: Create apps/web/src/App.tsx**
 
 ```tsx
-import { Tldraw } from "tldraw";
-import "tldraw/tldraw.css";
+import { ReactFlow } from "/react";
+import "/react/dist/style.css";
 
 export default function App() {
   return (
     <div style={{ position: "fixed", inset: 0 }}>
-      <Tldraw />
+      <React Flow />
     </div>
   );
 }
@@ -869,13 +869,13 @@ Expected: 200
 Run: `curl -s -o /dev/null -w "%{http_code}" http://localhost`
 Expected: 200 (through nginx proxy)
 
-Open `http://localhost` in browser — should see a full-screen tldraw canvas with default tools (select, draw, shapes, etc.)
+Open `http://localhost` in browser — should see a full-screen React Flow canvas with default tools (select, draw, nodes, etc.)
 
 - [ ] **Step 11: Stop dev server and commit**
 
 ```bash
 git add apps/web/
-git commit -m "feat(web): add Vite + React + tldraw empty canvas"
+git commit -m "feat(web): add Vite + React + React Flow empty canvas"
 ```
 
 ---
@@ -885,8 +885,8 @@ git commit -m "feat(web): add Vite + React + tldraw empty canvas"
 **Files:**
 - Create: `packages/shared-types/package.json`
 - Create: `packages/shared-types/src/index.ts`
-- Create: `packages/canvas-schema/package.json`
-- Create: `packages/canvas-schema/src/index.ts`
+- Create: `apps/web/src/components/canvas-flow/package.json`
+- Create: `apps/web/src/components/canvas-flow/flowTypes.ts`
 - Create: `packages/eslint-config/package.json`
 - Create: `packages/eslint-config/index.cjs`
 
@@ -909,7 +909,7 @@ git commit -m "feat(web): add Vite + React + tldraw empty canvas"
 export {};
 ```
 
-- [ ] **Step 3: Create packages/canvas-schema/package.json**
+- [ ] **Step 3: Create apps/web/src/components/canvas-flow/package.json**
 
 ```json
 {
@@ -922,7 +922,7 @@ export {};
 }
 ```
 
-- [ ] **Step 4: Create packages/canvas-schema/src/index.ts**
+- [ ] **Step 4: Create apps/web/src/components/canvas-flow/flowTypes.ts**
 
 ```ts
 export {};
@@ -995,10 +995,10 @@ Expected:
 Run: `pnpm --filter @clip-anvil/web dev` (background or separate terminal)
 Expected: Vite dev server starts on :5173
 
-- [ ] **Step 5: Verify tldraw canvas through nginx**
+- [ ] **Step 5: Verify React Flow canvas through nginx**
 
 Open `http://localhost` in browser.
-Expected: Full-screen tldraw canvas with default tools visible.
+Expected: Full-screen React Flow canvas with default tools visible.
 
 - [ ] **Step 6: Verify pre-commit hook**
 
