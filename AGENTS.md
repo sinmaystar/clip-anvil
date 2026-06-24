@@ -1,177 +1,90 @@
-# ClipAnvil Agent Instructions
+# ClipAnvil Codex 指令
 
-执行任务时优先遵守本文件，再参考 `docs/README.md` 指向的详细文档。
+本文件是给 Codex 读取的执行契约。保持简短、准确、可执行；面向人的长说明放到 `docs/`。
 
-## Repo Snapshot
+## 先读这里
 
-- 前端：`apps/web`，Vite 8 + React 19 + TypeScript 6 + `@xyflow/react` 12 + TailwindCSS 4。
-- 后端：`apps/server`，Go module `github.com/sinmaystar/clip-anvil`，Go 1.26 + Hertz + pgx v5 + sqlc + viper + slog。
-- 中间件：PostgreSQL 16 / Redis 7 / MinIO，通过 Docker Compose 共享运行。
+- 文档入口：`docs/README.md`。
+- 当前工程文档：`docs/engineering/`。
+- 当前设计文档：`docs/design/`。
+- 里程碑状态：`docs/milestones/`。
+- 历史 spec/plan：`docs/archive/`；不要把 archive 当作当前实现口径。
+- 当前事实优先级：代码和迁移 > `docs/engineering/` > `docs/design/` > `docs/milestones/` > `docs/archive/`。
+
+## 仓库地图
+
+- 前端：`apps/web` — Vite 8、React 19、TypeScript 6、`@xyflow/react` 12、TailwindCSS 4。
+- 后端：`apps/server` — Go 1.26、Hertz、pgx v5、sqlc、viper、slog。
 - 共享包：`packages/shared-types`、`packages/eslint-config`。
-- 部署配置：`deploy/`，本地 NGINX 只适合默认单实例入口。
-- 当前文档入口：`docs/README.md`；现行工程文档在 `docs/engineering/`，设计文档在 `docs/design/`，历史执行 spec/plan 在 `docs/archive/`。
+- 本地中间件：PostgreSQL 16、Redis 7、MinIO、NGINX、OpenSandbox，由 `deploy/docker-compose.yml` 管理。
+- 运行脚本：`scripts/dev-start.sh`、`scripts/dev-stop.sh`。
 
-## Local Runtime Rules
+## 任务路由
 
-需要本地运行应用时，优先使用：
+- 做 roadmap、milestone、架构或 docs 现状整理前，先对照代码、迁移、脚本和 smoke 面。
+- 做 Studio/Agent 相关行为时，保持模式边界清晰。Studio 用户运行 API 不是 Agent 执行 API；Agent 应复用共享 production service/tool。
+- 改数据库或 sqlc 时，同时看迁移和 `apps/server/sqlc/queries/`。
+- 改前端画布时，记住 React Flow 是投影层；业务 DB/API 状态才是事实源。
+- 只改文档时，不要新增长期执行计划文档，除非用户明确要求。
+
+## 本地运行
+
+默认使用仓库脚本：
 
 ```bash
 ./scripts/dev-start.sh
-```
-
-不要手动拼 `go run` + `pnpm dev` 作为默认启动方式。`dev-start.sh` 会：
-
-1. 拉起共享 Docker Compose 中间件和 NGINX。
-2. 编译后端：`go build -o bin/server ./cmd/server`。
-3. 运行当前 worktree 刚编译出的 `bin/server`。
-4. 启动 Vite dev server。
-5. 检查当前后端端口的 `/api/health`。
-
-前端 dev 模式由 Vite 按需编译。需要生产构建验证时运行 `pnpm --filter @clip-anvil/web... build`。
-
-首次初始化数据库或新增迁移后，先确认中间件已启动，再执行：
-
-```bash
-make migrate-up
-```
-
-停止脚本启动的前后端：
-
-```bash
 ./scripts/dev-stop.sh
 ```
 
-`dev-stop.sh` 不会停止 PostgreSQL / Redis / MinIO / NGINX 容器。
+不要默认手动拼 `go run` + `pnpm dev`。只有拆分排查问题时才使用手动命令。
 
-## Multi-Worktree Ports
-
-多个 worktree / 多个 AI Coding Agent 并行时，共享中间件，只给每个 worktree 分配不同前后端端口。不要依赖 `http://localhost` 的 NGINX 固定入口；使用脚本输出的 Vite 地址。
-
-默认情况下 agent 不需要手动猜端口：
-
-- `dev-start.sh` 根据当前目录、git 分支和路径 hash 自动生成 profile 名。
-- 后端端口从 `8888-8999` 查找可用端口。
-- 前端端口从 `5173-5299` 查找可用端口。
-
-只查看当前 worktree 会使用什么环境，不启动进程：
+多个 worktree 并行时，不要猜端口，也不要依赖固定 NGINX 入口 `http://localhost`。使用脚本输出的 Vite URL；只查看当前环境时运行：
 
 ```bash
 CLIPANVIL_PRINT_DEV_ENV=1 ./scripts/dev-start.sh
 ```
 
-输出是可 `eval` 的 `export` 行。需要固定端口时再显式传：
+脚本会从 `8888-8999` 自动选择后端端口，从 `5173-5299` 自动选择前端端口。如果显式指定端口且端口被占用，启动必须失败，不要静默切换端口。
 
-```bash
-CLIPANVIL_DEV_NAME=wt-a CLIPANVIL_SERVER_PORT=8888 CLIPANVIL_WEB_PORT=5173 ./scripts/dev-start.sh
-CLIPANVIL_DEV_NAME=wt-b CLIPANVIL_SERVER_PORT=8889 CLIPANVIL_WEB_PORT=5174 ./scripts/dev-start.sh
-```
+## 验证
 
-如果显式指定的端口已被占用，脚本必须失败，不会静默换端口。
-
-停止某个显式 profile：
-
-```bash
-CLIPANVIL_DEV_NAME=wt-b ./scripts/dev-stop.sh
-```
-
-如果没有手动设置 `CLIPANVIL_DEV_NAME`，在同一个 worktree 中直接运行 `./scripts/dev-stop.sh`，脚本会推导同一个默认 profile。
-
-## Manual Commands
-
-仅在需要拆分排查时使用手动命令：
-
-```bash
-docker compose -f deploy/docker-compose.yml up -d
-make migrate-up
-make server-dev
-pnpm --filter @clip-anvil/web dev
-```
-
-注意：
-
-- 默认后端端口是 `8888`，但多 worktree 模式下可能自动变为其他端口。
-- 默认 Vite 端口是 `5173`，但多 worktree 模式下可能自动变为其他端口。
-- 不要假设 `5178` 可用，除非当前会话显式启动了这个端口。
-- Vite 读取 `CLIPANVIL_SERVER_PORT`，把 `/api` 和 `/ws` 代理到对应后端。
-- 后端配置可被 `CLIPANVIL_SERVER_PORT` 等环境变量覆盖。
-
-## Verification Commands
-
-按改动范围选择验证，不能声称完成而未运行相关检查。
+按改动范围选择能证明结果的最小检查集：
 
 ```bash
 make server-build
 make server-test
 make server-lint
+make sqlc-generate
 pnpm --filter @clip-anvil/web... build
 pnpm --filter @clip-anvil/web lint
-make sqlc-generate
 git diff --check
 ```
 
-修改 `apps/server/sqlc/queries/` 或迁移后，运行：
+- 改 Go：运行 `gofmt`，再跑相关 server build/test/lint。
+- 改迁移或 sqlc query：运行 `make sqlc-generate` 和 `make server-test`。
+- 改前端：运行 web build 和 lint，除非明确只是文档改动。
+- 改运行脚本：运行 `bash -n scripts/dev-start.sh`、`bash -n scripts/dev-stop.sh`、`CLIPANVIL_PRINT_DEV_ENV=1 ./scripts/dev-start.sh` 和 `git diff --check`。
+- 只改文档：运行 `git diff --check`；如果改了链接或移动文件，再跑 Markdown 相对链接检查。
 
-```bash
-make sqlc-generate
-make server-test
-```
+没有新鲜验证输出，不要声称完成。
 
-修改启动脚本后，至少运行：
+## 编码规则
 
-```bash
-bash -n scripts/dev-start.sh
-bash -n scripts/dev-stop.sh
-CLIPANVIL_PRINT_DEV_ENV=1 ./scripts/dev-start.sh
-git diff --check
-```
+- 沿用现有模块边界和命名。
+- Go：标准风格，显式处理 error，日志用 `slog`。
+- TypeScript：严格模式，React 函数组件和 hooks。
+- 有结构化 parser/API 时优先使用，不要写脆弱字符串拼接。
+- 不要提前抽象；只有能消除真实重复或复杂度时才抽象。
+- 不写注释，除非解释 why。
 
-修改文档后，至少运行 `git diff --check`；如果改了相对链接，检查 Markdown 链接是否仍指向存在文件。
+## 安全规则
 
-## Hooks And Formatting
-
-- 编辑 `.go` 文件后确保 `gofmt`。
-- 编辑 `.ts` / `.tsx` 文件后遵循 ESLint + Prettier。
-- git commit 时 pre-commit 跑 lint/format，commit-msg 跑 commitlint。
-- 提交信息遵循 Conventional Commits：`feat:` / `fix:` / `docs:` / `chore:` / `refactor:` / `test:`。
-
-## Coding Rules
-
-- Go：标准 Go 风格，`slog` 日志，error 显式处理。
-- TypeScript：严格模式，React 函数组件 + hooks。
-- 不写注释除非解释 why。
-- 不提前抽象；优先沿用现有模块边界和命名。
-- 不要把历史归档文档当作当前实现口径。
-- 当前事实优先级：代码和迁移 > `docs/engineering/` > `docs/design/` > `docs/archive/`。
-
-## Safety Rules
-
-- 不要改动用户未要求的无关文件。
+- 不要改无关文件。
 - 不要回滚用户已有改动。
 - 不要使用破坏性 git 命令，除非用户明确要求。
-- 并行 worktree 下，报告访问地址时必须使用脚本输出的 Vite URL，不要默认写 `http://localhost`。
-- 启动失败时先查对应 profile 的日志路径，日志路径由 `dev-start.sh` 输出。
+- 本地浏览器/runtime 产物视为临时产物；不要把 smoke 生成物提交，除非用户要求。
+- 如果命令被 sandbox、权限、认证或网络状态阻塞，报告阻塞原因和失败命令，不要编造替代状态。
 
-## GitHub PR Flow
+## 发布和 PR
 
-用户要求“提 PR”时，走这条最短路线：
-
-1. 查清范围：`git status --short --branch`、`git diff --stat`、`git ls-files --others --exclude-standard`。有无关改动就先问用户，不要直接 `git add -A`。
-2. 建分支并提交：detached HEAD 或默认分支上先建 `codex/<short-topic>`；显式 `git add <files>`，确认 `git diff --cached --stat`，再 commit。
-3. 推送分支：
-
-   ```bash
-   git push -u origin <branch>
-   ```
-
-4. 创建 draft PR：优先用 GitHub App；如果返回 `403 Resource not accessible by integration`，改用 `gh pr create`：
-
-   ```bash
-   gh pr create \
-     --draft \
-     --base main \
-     --head <branch> \
-     --title "[codex] <summary>" \
-     --body-file /tmp/<repo>-pr-body.md
-   ```
-
-注意：如果写 `.git` 或访问 GitHub 被 sandbox 拒绝，提权重跑同一条命令。`gh auth status` 在 sandbox 中可能显示 token invalid；实际 `gh pr create` 提权后仍可能成功。完成后只汇报 PR URL、分支、commit、验证结果和本地状态。
+用户要求发布、提交或提 PR 时，先读 `docs/engineering/github-pr-flow.md`，按其中流程执行。

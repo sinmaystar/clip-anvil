@@ -7,7 +7,7 @@
    浏览器  ───▶ │  nginx   │ ── 静态前端（prod）/ 代理 Vite dev server（dev）
                 │  :80     │ ── /api       ──▶ server :8888
                 │          │ ── /ws/canvas ──▶ server :8888 (Canvas WebSocket)
-                │          │ ── /ws/chat   ──▶ server :8888 (Agent WebSocket，目标态)
+                │          │ ── /ws/agent  ──▶ server :8888 (Agent WebSocket)
                 └──────────┘
 
                   server (Go, 宿主机运行)
@@ -23,7 +23,7 @@ postgres:16       redis:7         minio:latest      opensandbox-server
 | 服务 | 端口 | 说明 |
 |---|---|---|
 | Nginx | 80 | 统一入口，反代所有请求 |
-| Go Server | 8888 | 后端 REST API + `/ws/canvas` |
+| Go Server | 8888 | 后端 REST API + `/ws/canvas` + `/ws/agent` |
 | Vite Dev | 5173 | 前端开发服务器（宿主机运行，仅 dev） |
 | PostgreSQL | 5432 | 数据库 |
 | Redis | 6379 | 缓存 |

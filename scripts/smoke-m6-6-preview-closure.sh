@@ -38,4 +38,4 @@ curl -fsS -X POST "$API_URL/api/agent/workspaces/$workspace_id/messages" -H "aut
 echo "workspace_id=$workspace_id"
 echo "agent_url=$BASE_URL/workspaces/$workspace_id/agent"
 echo "message_response=/tmp/m66-message.json"
-echo "Wait for Agent tasks to finish, then run the M6.6 DB spot checks from docs/superpowers/plans/2026-06-23-m6-6-closure-preview-generation.md."
+echo "Wait for Agent tasks to finish, then run the M6.6 DB spot checks from docs/archive/superpowers/plans/2026-06-23-m6-6-closure-preview-generation.md."

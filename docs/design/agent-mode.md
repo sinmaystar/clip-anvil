@@ -6,6 +6,8 @@ Agent 模式是"默认由 Agent 主导生产，用户在关键节点确认、随
 
 画布只读——用户看到 Agent 的工作成果在画布上实时呈现，所有修改通过对话驱动。
 
+当前 M6 已完成阶段性闭环：Agent Workspace 已有 `/ws/agent` 对话通道、消息/事件/任务持久化、Eino checkpoint/resume、Producer 工具调用、HITL 决策卡、Storyboard/PSS、Craftsman/Worker 预览生成、Reviewer 重试调度、Composer 成片合成和只读 React Flow 画布。本文仍保留部分目标态交互说明；判断当前事实时以代码、迁移和 `docs/engineering/` 为准。
+
 ## 2. 界面布局
 
 ```
@@ -159,7 +161,7 @@ Agent 无需主动刷新，除非上下文窗口被压缩。
 
 ### 5.5 Sub-Agent 的状态可见性
 
-- Producer 将 PSS 的相关子集传给 Sub-Agent（如 Director 只需当前分镜 + 可用素材列表）
+- Producer 将 PSS 的相关子集传给 Sub-Agent（如 Craftsman 只需当前分镜 + 可用素材列表）
 - Sub-Agent 执行完毕后，Producer 通过工具返回值的增量更新感知变化
 - 需要全局视图时 Producer 调用 `get_production_state` 刷新
 
@@ -167,18 +169,18 @@ Agent 无需主动刷新，除非上下文窗口被压缩。
 
 ### 6.1 设计原则
 
-Agent 的工具不是画布操作（create_node、create_edge），而是**生产操作**（create_storyboard、generate_shot）。每个生产工具在内部自动翻译为多个业务命令，Agent 完全不感知底层操作。
+Agent 的工具不是画布操作（create_node、create_edge），而是**生产操作**（update_storyboard、dispatch_craftsman、review_shot、compose_final）。每个生产工具在内部自动翻译为多个业务命令，Agent 完全不感知底层操作。
 
 典型调用：
 
 ```
-generate_shot("镜头01", {
+dispatch_craftsman({
+  shot_id: "shot-01",
+  mode: "preview_image",
   prompt: "...",
-  model: "qwen-vl-max",
-  reference_inputs: [{id: "产品主图ID", role: "product"}, {id: "LogoID", role: "brand"}]
+  references: [{id: "产品主图ID", role: "product"}, {id: "LogoID", role: "brand"}]
 })
 → 系统自动: 更新节点 prompt + 建依赖连线 + 提交生成 + 完成后更新状态/缩略图
-```
 ```
 
 ### 6.2 工具列表
@@ -187,17 +189,17 @@ generate_shot("镜头01", {
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `create_storyboard` | shots[]{title, duration, description, narrative_purpose}, transitions[]{from_index, to_index, type, duration} | 一次性创建完整分镜表。系统自动：创建节点 + 顺序连线 + 分组 + 布局。返回 shotIds |
-| `modify_storyboard` | changes{add_shots?[], remove_shot_ids?[], update_shots?[], update_transitions?[]} | 修改分镜。系统自动：增删节点/连线 + 标记下游 Stale + 重新布局 |
-| `import_asset` | type, title, source(url\|upload_id\|content) | 导入用户素材。系统自动：创建资产节点 + 上传存储 + 画布显示 |
+| `read_workspace_context` | 无 | 读取 workspace、源素材、画布摘要和任务摘要 |
+| `update_storyboard` | shots[], dependencies[] | 创建或修改 Agent storyboard，只写 shot / shot_dependency 事实 |
+| `create_agent_text_node` | title, text | 创建 Agent 拥有的文本源素材节点，用于 brief、脚本、notes |
 
 **生成类**：
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `generate_shot` | shot_id, prompt, model, reference_inputs[]{asset_id, role}?, params? | 为分镜生成视频。系统自动：写 prompt + 建依赖连线 + 提交生成 |
-| `generate_asset` | type, title, prompt, model, reference_inputs?[], params? | 生成辅助素材。系统自动：创建素材节点 + 提交生成 |
-| `stitch_final` | shot_ids_in_order, bgm_asset_id?, subtitle_config? | 拼接成片。系统自动：创建成片节点 + 连接源分镜 + 提交拼接 |
+| `dispatch_craftsman` | shot_id, mode, instruction? | 调度分镜级预览生成，持久化 Craftsman/Worker 任务并复用生产链路 |
+| `generate_shot_video` | shot_id | 基于当前预览 winner 生成分镜视频 |
+| `compose_final` | shot_ids_in_order, bgm_asset_id? | 拼接成片，创建 ComposerGraph 任务并走 `internal_ffmpeg` provider |
 
 **评审与版本**：
 
@@ -207,14 +209,14 @@ generate_shot("镜头01", {
 | `select_version` | shot_id, version_id | 设为 winner。系统自动：更新缩略图 + 标记下游 Stale |
 | `retry_generation` | shot_id, revised_prompt, reason | 改写 Prompt 重新生成。系统自动：创建新版本 |
 
-**状态查询**：`get_production_state`、`get_shot_detail`、`get_asset_detail`（见 §5.4）
+**状态查询**：`get_production_state`（见 §5.4）
 
-**流程控制**：`request_gate(gate_type, summary)` — 请求用户确认，Agent 暂停直到用户响应。
+**流程控制**：`request_user_decision(summary, options)` — 请求用户确认，Agent 写入决策事件并暂停，用户响应后 resume。
 
 ### 6.3 工具执行流程
 
 ```
-Agent 调用生产工具（如 generate_shot）
+Agent 调用生产工具（如 dispatch_craftsman）
   │
   ▼
 生产翻译层
@@ -222,10 +224,10 @@ Agent 调用生产工具（如 generate_shot）
   ├── 生成初始画布坐标
   │
   ├── 调用业务命令（自动，Agent 不感知）:
-  │     ├── update_media_node(nodeId, {prompt, model})
-  │     ├── create_media_edge(ref → node, "dependency")  × N
-  │     ├── submit_generation_job(nodeId, ...)
-  │     └── 审计日志（agent_step 表）
+  │     ├── 创建或更新 shot 相关节点
+  │     ├── 提交 generation_job / artifact_version
+  │     ├── 更新 agent_task / agent_event
+  │     └── 广播 canvas 与 agent 事件
   │
   ├── 广播 WebSocket 事件
   │     └── 前端收到 → 刷新/合并 React Flow nodes 和 edges → 画布刷新
@@ -241,8 +243,8 @@ Agent 不创建连线。所有连线从两个来源自动派生：
 
 | 连线类型 | 派生来源 | 时机 |
 |---|---|---|
-| **dependency** | `generate_shot`/`generate_asset` 的 `reference_inputs` | 提交生成时自动创建 |
-| **sequence** | `create_storyboard` 的 `transitions` | 创建分镜表时自动创建 |
+| **dependency** | `dispatch_craftsman` / `generate_shot_video` 使用的生产输入 | 提交生成时自动创建或复用 |
+| **storyboard dependency** | `update_storyboard` 的 shot dependencies | 写入 `shot_dependency`，不污染 Studio dependency |
 | **reference** | 用户在 Studio 模式手动拖拽 | 仅 Studio 模式 |
 
 好处：
@@ -265,44 +267,38 @@ Producer Agent（顶层编排）
   ├── 管理 Gate（用户确认）
   ├── 处理用户对话修改
   │
-  ├── 调度 → Screenwriter Sub-Agent
-  │           └── 调用：create_storyboard
+  ├── 规划 storyboard
+  │           └── 调用：update_storyboard
   │
-  ├── 调度 → Director Sub-Agent（每个镜头一个，可并行）
-  │           └── 调用：generate_shot
-  │
-  ├── 调度 → Art Asset Sub-Agent
-  │           └── 调用：generate_asset, import_asset
+  ├── 调度 → Craftsman / Worker（每个镜头一个，可并行）
+  │           └── 调用：dispatch_craftsman / generate_shot_video
   │
   ├── 调度 → Review Sub-Agent
   │           └── 调用：review_shot, select_version, retry_generation
   │
-  └── 调度 → Stitch Sub-Agent
-              └── 调用：stitch_final
+  └── 调度 → Composer
+              └── 调用：compose_final
 ```
 
 ### 7.2 角色分工
 
 | 角色 | 职责 | 工具权限 |
 |---|---|---|
-| **Producer** | 解析需求、加载 Skill、编排流程、管理 Gate、处理用户修改 | 全部生产工具 + 调度 Sub-Agent |
-| **Screenwriter** | 生成剧本和分镜表 | `create_storyboard`, `modify_storyboard` |
-| **Director** | 为单个镜头生成 Prompt 并提交生成 | `generate_shot` |
-| **Art Asset** | 生成参考素材 | `generate_asset`, `import_asset` |
+| **Producer** | 解析需求、加载 Skill、生成分镜、编排任务、管理决策卡、处理用户修改 | 全部生产工具 + 调度 Craftsman/Reviewer/Composer |
+| **Craftsman / Worker** | 为单个镜头生成 Prompt 并提交生成 | 由 `dispatch_craftsman` / `generate_shot_video` 调度 |
 | **Prompt Rewrite** | 评审不通过时改写 Prompt | `retry_generation` |
 | **Review** | 评审生成结果 | `review_shot`, `select_version` |
-| **Stitch** | 拼接成片 | `stitch_final` |
+| **Composer** | 拼接成片 | `compose_final` |
 
 ### 7.3 模型选择策略
 
 | 角色 | 推荐模型能力 | 理由 |
 |---|---|---|
 | Producer | 强推理 | 理解复杂需求、全局规划 |
-| Screenwriter | 强创意 + 结构化输出 | 有创意且格式规范的分镜 |
-| Director | 领域知识 | 各生成模型的 Prompt 最佳实践 |
+| Craftsman | 领域知识 + 创意 | 为单个分镜制定 Prompt 和生成策略 |
 | Prompt Rewrite | 领域知识 + 推理 | 分析失败原因并改写 |
-| Review | 多模态理解 | 需要"看"生成的图片/视频 |
-| Stitch | 工具调用 | 主要编排 FFmpeg，逻辑简单 |
+| Reviewer | 多模态理解 | 需要"看"生成的图片/视频并给出 critique |
+| Composer | 工具调用 | 主要编排 FFmpeg，逻辑简单 |
 
 ## 8. Skill 体系
 
@@ -428,7 +424,7 @@ Producer Agent:
   2. assets.required → 检查用户是否提供了产品主图
   3. phases → 构建执行计划
   4. review_rubric → 传递给 Review Sub-Agent
-  5. style_constraints → 传递给 Director Sub-Agent
+  5. style_constraints → 传递给 Craftsman
   6. gates → 在对应阶段设置 Gate
   7. 按 phases 顺序调度 Sub-Agent
 ```
@@ -461,7 +457,7 @@ Producer Agent:
 **不借鉴的部分**：
 - 文件系统存储模式（cast/folder）→ 用 DB 建模
 - CLI 交互 → Web 画布交互
-- VFX Review 独立 Gate → Preflight 检查集成在 Director 提交前校验中
+- VFX Review 独立 Gate → Preflight 检查集成在 Craftsman 提交前校验中
 
 ## 10. 完整工作流示例
 
@@ -483,9 +479,9 @@ Producer:
 ### 阶段 2: 分镜规划
 
 ```
-Producer → Screenwriter Sub-Agent:
+Producer:
 
-  create_storyboard({
+  update_storyboard({
     shots: [
       {title: "01-产品特写", duration: 3, narrative_purpose: "抓注意力",
        description: "微距拍摄燕麦拿铁表面拉花"},
@@ -501,19 +497,19 @@ Producer → Screenwriter Sub-Agent:
   })
 
   → 系统自动（Agent 不感知）:
-    创建 5 个 media_node + 4 条 sequence edge
-    + 创建分组 + 计算布局 + 广播 WebSocket → 画布出现 5 个分镜卡片
+    写入 5 个 shot + 必要的 shot_dependency
+    + 后续生成任务创建/更新画布投影 + 广播 WebSocket → 画布出现分镜产物
 ```
 
 ### Gate 1: 分镜确认
 
 ```
-request_gate("storyboard_review", "共5个镜头，总时长30s，预估¥3-5")
+request_user_decision("共5个镜头，总时长30s，预估¥3-5")
 
   对话面板显示确认卡片，画布上可见分镜排列。
 
   ├── 用户"开始生成" → 进入阶段3
-  ├── 用户"第三个改成倒咖啡" → modify_storyboard → 重新展示 Gate
+  ├── 用户"第三个改成倒咖啡" → update_storyboard → 重新展示 Gate
   └── 用户点击画布卡片 → 查看详情 → 在对话中修改
 ```
 
@@ -522,14 +518,15 @@ request_gate("storyboard_review", "共5个镜头，总时长30s，预估¥3-5")
 ```
 Producer 并行调度:
 
-  Art Asset Sub-Agent:
-    generate_asset("image", "产品参考图", {prompt: "...", model: "flux-schnell"})
+  Producer:
+    create_agent_text_node({title: "产品 brief", text: "低糖燕麦拿铁..."})
 
-  Director Sub-Agent × 5（无帧依赖的可并行）:
-    generate_shot(shot_id, {
+  Craftsman / Worker × 5（无阻塞依赖的可并行）:
+    dispatch_craftsman({
+      shot_id,
+      mode: "preview_image",
       prompt: "微距拍摄燕麦拿铁拉花...",
-      model: "qwen-vl-max",
-      reference_inputs: [{asset_id: "产品主图ID", role: "product"}]
+      references: [{asset_id: "产品主图ID", role: "product"}]
     })
 
   画布实时更新:
@@ -551,8 +548,8 @@ Review Sub-Agent:
 ### 阶段 5: 拼接成片
 
 ```
-Stitch Sub-Agent:
-  stitch_final({shot_ids_in_order: [s1,s2,s3,s4,s5], bgm_asset_id: "BGM_ID"})
+Composer:
+  compose_final({shot_ids_in_order: [s1,s2,s3,s4,s5], bgm_asset_id: "BGM_ID"})
 ```
 
 ### Gate 2: 成片预览
