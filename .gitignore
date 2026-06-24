@@ -7,6 +7,10 @@ node_modules/
 .env.local
 .env.*.local
 deploy/.env
+deploy/cozeloop/.env
+deploy/cozeloop/conf/*.yaml
+deploy/cozeloop/conf/locales/
+deploy/cozeloop/data/
 
 # Build output and caches
 bin/
