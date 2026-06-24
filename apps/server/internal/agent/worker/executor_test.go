@@ -8,6 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/production"
@@ -146,6 +149,54 @@ func TestWorkerCreatesShotVideoNodeAndSubmitsImageToVideoIntent(t *testing.T) {
 	if runtime.succeededOutput.OperationType != "image_to_video" {
 		t.Fatalf("output = %#v", runtime.succeededOutput)
 	}
+}
+
+func TestWorkerTracesGenerationSubmit(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	tracer := tracerProvider.Tracer("clipanvil-test")
+	store := &fakeWorkerStore{}
+	productionService := &fakeProductionSubmitter{
+		result: production.RunResult{
+			Node:    db.MediaNode{ID: uuidWithByte(20), WorkspaceID: uuidWithByte(1)},
+			Job:     db.GenerationJob{ID: uuidWithByte(30), TargetNodeID: uuidWithByte(20), OperationType: "text_to_image", Status: db.JobStatusQueued},
+			Version: db.ArtifactVersion{ID: uuidWithByte(40), NodeID: uuidWithByte(20), JobID: uuidWithByte(30), Status: db.JobStatusQueued},
+		},
+	}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:    &fakeWorkerRuntime{},
+		Store:      store,
+		Production: productionService,
+		Tracer:     tracer,
+	})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:          "preview_image",
+		ShotID:        uuidString(uuidWithByte(2)),
+		ShotClientKey: "shot-01",
+		Prompt:        "prompt",
+		MaxAttempts:   3,
+	})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !productionService.submitSpanContext.IsValid() {
+		t.Fatal("submit context did not carry a valid trace span")
+	}
+	for _, span := range recorder.Ended() {
+		if span.Name() != "worker_generation" {
+			continue
+		}
+		if got := spanAttribute(span, "clipanvil.agent.role"); got != "worker" {
+			t.Fatalf("worker role attr = %q, want worker", got)
+		}
+		if got := spanAttribute(span, "clipanvil.production.operation_type"); got != "text_to_image" {
+			t.Fatalf("operation attr = %q, want text_to_image", got)
+		}
+		return
+	}
+	t.Fatalf("worker_generation span not found; spans=%v", recorder.Ended())
 }
 
 func TestWorkerBroadcastsCreatedPreviewNode(t *testing.T) {
@@ -522,14 +573,25 @@ type fakeProductionSubmitter struct {
 	result                production.RunResult
 	calls                 int
 	failuresBeforeSuccess int
+	submitSpanContext     trace.SpanContext
 }
 
-func (f *fakeProductionSubmitter) SubmitGenerationIntent(_ context.Context, intent production.GenerationIntent, options production.RunOptions) (production.RunResult, error) {
+func (f *fakeProductionSubmitter) SubmitGenerationIntent(ctx context.Context, intent production.GenerationIntent, options production.RunOptions) (production.RunResult, error) {
 	f.calls++
 	f.intent = intent
 	f.options = options
+	f.submitSpanContext = trace.SpanContextFromContext(ctx)
 	if f.calls <= f.failuresBeforeSuccess {
 		return production.RunResult{}, errors.New("temporary submit failure")
 	}
 	return f.result, nil
+}
+
+func spanAttribute(span sdktrace.ReadOnlySpan, key string) string {
+	for _, attr := range span.Attributes() {
+		if string(attr.Key) == key {
+			return attr.Value.AsString()
+		}
+	}
+	return ""
 }

@@ -111,14 +111,15 @@ func TestImageRuntimeSendsReferenceImagesToArk(t *testing.T) {
 	if len(model.messages) != 1 {
 		t.Fatalf("messages = %#v", model.messages)
 	}
-	parts := model.messages[0].MultiContent
+	parts := model.messages[0].UserInputMultiContent
 	if len(parts) != 2 {
-		t.Fatalf("multi content = %#v", parts)
+		t.Fatalf("user input multi content = %#v", parts)
 	}
 	if parts[0].Type != schema.ChatMessagePartTypeText || parts[0].Text != "A simple studio desk with one lamp." {
 		t.Fatalf("text part = %#v", parts[0])
 	}
-	if parts[1].Type != schema.ChatMessagePartTypeImageURL || parts[1].ImageURL.URL != "https://assets.example/reference.png" {
+	if parts[1].Type != schema.ChatMessagePartTypeImageURL || parts[1].Image == nil ||
+		parts[1].Image.URL == nil || *parts[1].Image.URL != "https://assets.example/reference.png" {
 		t.Fatalf("image part = %#v", parts[1])
 	}
 	inputImages, ok := output.RequestSummary["input_images"].([]map[string]any)

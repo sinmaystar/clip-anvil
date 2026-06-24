@@ -9,10 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/compose"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
@@ -42,21 +45,23 @@ type Broadcaster interface {
 }
 
 type ExecutorConfig struct {
-	Runtime      Runtime
-	Graph        Runner
-	Broadcaster  Broadcaster
-	MaxToolCalls int
-	ToolTimeout  time.Duration
-	Logger       *slog.Logger
+	Runtime        Runtime
+	Graph          Runner
+	Broadcaster    Broadcaster
+	MaxToolCalls   int
+	ToolTimeout    time.Duration
+	Logger         *slog.Logger
+	TraceCallbacks []callbacks.Handler
 }
 
 type Executor struct {
-	runtime      Runtime
-	graph        Runner
-	broadcaster  Broadcaster
-	maxToolCalls int
-	toolTimeout  time.Duration
-	logger       *slog.Logger
+	runtime        Runtime
+	graph          Runner
+	broadcaster    Broadcaster
+	maxToolCalls   int
+	toolTimeout    time.Duration
+	logger         *slog.Logger
+	traceCallbacks []callbacks.Handler
 }
 
 type RunTaskInput struct {
@@ -79,12 +84,13 @@ func NewExecutor(config ExecutorConfig) *Executor {
 		toolTimeout = 300 * time.Second
 	}
 	return &Executor{
-		runtime:      config.Runtime,
-		graph:        config.Graph,
-		broadcaster:  config.Broadcaster,
-		maxToolCalls: maxToolCalls,
-		toolTimeout:  toolTimeout,
-		logger:       config.Logger,
+		runtime:        config.Runtime,
+		graph:          config.Graph,
+		broadcaster:    config.Broadcaster,
+		maxToolCalls:   maxToolCalls,
+		toolTimeout:    toolTimeout,
+		logger:         config.Logger,
+		traceCallbacks: config.TraceCallbacks,
 	}
 }
 
@@ -139,7 +145,18 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if strings.TrimSpace(input.ResumeCheckpointID) != "" {
 		checkpointKey = strings.TrimSpace(input.ResumeCheckpointID)
 	}
-	output, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{CheckPointID: checkpointKey, ResumeData: input.ResumeData})
+	ctx = cozelooptrace.ContextWithAttributes(ctx,
+		attribute.String("clipanvil.workspace_id", uuidString(input.WorkspaceID)),
+		attribute.String("clipanvil.agent.thread_id", uuidString(input.ThreadID)),
+		attribute.String("clipanvil.agent.task_id", uuidString(input.TaskID)),
+		attribute.String("clipanvil.agent.role", "producer"),
+		attribute.String("clipanvil.agent.task_type", "producer_turn"),
+	)
+	output, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{
+		CheckPointID: checkpointKey,
+		ResumeData:   input.ResumeData,
+		Callbacks:    e.traceCallbacks,
+	})
 	if err != nil {
 		if interruptInfo, ok := compose.ExtractInterruptInfo(err); ok {
 			return e.interruptTask(ctx, input, checkpointKey, interruptInfo)

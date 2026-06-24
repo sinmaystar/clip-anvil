@@ -141,7 +141,7 @@ func (s *Service) SubmitNodeRun(ctx context.Context, nodeID pgtype.UUID, request
 		return RunResult{}, err
 	}
 	if s.runner != nil {
-		s.runner.Enqueue(job)
+		s.runner.Enqueue(ctx, job)
 	}
 	return RunResult{Node: node, Job: job, Version: version}, nil
 }
@@ -183,7 +183,7 @@ func (s *Service) SubmitGenerationIntent(ctx context.Context, intent GenerationI
 		return RunResult{}, err
 	}
 	if s.runner != nil {
-		s.runner.Enqueue(job)
+		s.runner.Enqueue(ctx, job)
 	}
 	return RunResult{Node: node, Job: job, Version: version}, nil
 }

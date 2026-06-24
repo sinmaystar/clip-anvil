@@ -1,10 +1,14 @@
 package production
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -33,5 +37,22 @@ func TestQueuedJobFailureEventIncludesCanvasRoutingFields(t *testing.T) {
 	}
 	if event.Payload["error"] != runErr.Error() {
 		t.Fatalf("payload error = %#v, want %q", event.Payload["error"], runErr.Error())
+	}
+}
+
+func TestProductionRunnerEnqueuePreservesTraceContext(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	ctx, span := tracerProvider.Tracer("clipanvil-test").Start(context.Background(), "worker_generation")
+	defer span.End()
+	runner := NewProductionRunner(nil, nil, 1, nil)
+	job := db.GenerationJob{ID: pgtype.UUID{Bytes: [16]byte{0x01}, Valid: true}}
+
+	runner.Enqueue(ctx, job)
+	request := <-runner.jobs
+
+	got := trace.SpanContextFromContext(request.ctx)
+	if !got.IsValid() || got.TraceID() != span.SpanContext().TraceID() {
+		t.Fatalf("queued trace context = %v, want trace id %v", got, span.SpanContext().TraceID())
 	}
 }

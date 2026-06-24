@@ -6,9 +6,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/production"
@@ -84,6 +86,29 @@ func TestComposerExecutorPassesDeterministicCheckpointID(t *testing.T) {
 	}
 }
 
+func TestComposerExecutorPassesTraceCallbacksToGraph(t *testing.T) {
+	runtime := &fakeComposerRuntime{}
+	graph := &fakeComposerRunner{output: GraphOutput{Output: CompositionOutput{Status: "submitted"}}}
+	traceCallback := callbacks.NewHandlerBuilder().Build()
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:        runtime,
+		Graph:          graph,
+		TraceCallbacks: []callbacks.Handler{traceCallback},
+	})
+	task := composerTaskWithInput(t, CompositionInput{VideoNodeRefs: []string{"shot-01 shot video"}})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(graph.runOptions.Callbacks) != 1 {
+		t.Fatalf("callbacks len = %d, want 1", len(graph.runOptions.Callbacks))
+	}
+	if got := traceAttribute(graph.ctx, "clipanvil.agent.role"); got != "composer" {
+		t.Fatalf("trace role = %q, want composer", got)
+	}
+}
+
 func composerTaskWithInput(t *testing.T, input CompositionInput) db.AgentTask {
 	t.Helper()
 	raw, err := json.Marshal(input)
@@ -105,6 +130,7 @@ type fakeComposerRunner struct {
 	input      GraphInput
 	output     GraphOutput
 	runOptions agenteino.RunOptions
+	ctx        context.Context
 }
 
 type fakeEinoCheckpointStore struct{}
@@ -117,12 +143,22 @@ func (fakeEinoCheckpointStore) Set(context.Context, string, []byte) error {
 	return nil
 }
 
-func (f *fakeComposerRunner) Run(_ context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
+func (f *fakeComposerRunner) Run(ctx context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
+	f.ctx = ctx
 	f.input = input
 	if len(options) > 0 {
 		f.runOptions = options[0]
 	}
 	return f.output, nil
+}
+
+func traceAttribute(ctx context.Context, key string) string {
+	for _, attr := range cozelooptrace.AttributesFromContext(ctx) {
+		if string(attr.Key) == key {
+			return attr.Value.AsString()
+		}
+	}
+	return ""
 }
 
 func (f *fakeComposerRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {

@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/production"
@@ -45,17 +48,23 @@ type Runner interface {
 }
 
 type ExecutorConfig struct {
-	Runtime Runtime
-	Graph   Runner
+	Runtime        Runtime
+	Graph          Runner
+	TraceCallbacks []callbacks.Handler
 }
 
 type Executor struct {
-	runtime Runtime
-	graph   Runner
+	runtime        Runtime
+	graph          Runner
+	traceCallbacks []callbacks.Handler
 }
 
 func NewExecutor(config ExecutorConfig) *Executor {
-	return &Executor{runtime: config.Runtime, graph: config.Graph}
+	return &Executor{
+		runtime:        config.Runtime,
+		graph:          config.Graph,
+		traceCallbacks: config.TraceCallbacks,
+	}
 }
 
 func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
@@ -80,7 +89,19 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		Input:       compositionInput,
 	}
 	checkpointKey := agenteino.CheckpointKey("composer_final", task.WorkspaceID, task.ThreadID, task.ID)
-	out, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{CheckPointID: checkpointKey})
+	ctx = cozelooptrace.ContextWithAttributes(ctx,
+		attribute.String("clipanvil.workspace_id", uuidString(task.WorkspaceID)),
+		attribute.String("clipanvil.agent.thread_id", uuidString(task.ThreadID)),
+		attribute.String("clipanvil.agent.task_id", uuidString(task.ID)),
+		attribute.String("clipanvil.agent.role", "composer"),
+		attribute.String("clipanvil.agent.task_type", task.TaskType),
+		attribute.String("clipanvil.agent.scope_type", task.ScopeType),
+		attribute.String("clipanvil.agent.scope_id", uuidString(task.ScopeID)),
+	)
+	out, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{
+		CheckPointID: checkpointKey,
+		Callbacks:    e.traceCallbacks,
+	})
 	if err != nil {
 		return e.fail(ctx, task, "composer_failed", err)
 	}

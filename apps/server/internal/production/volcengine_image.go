@@ -139,22 +139,27 @@ func imageGenerationMessages(rendered string, intent GenerationIntent) []*schema
 	if len(imageRefs) == 0 {
 		return []*schema.Message{schema.UserMessage(rendered)}
 	}
-	parts := []schema.ChatMessagePart{{
+	parts := []schema.MessageInputPart{{
 		Type: schema.ChatMessagePartTypeText,
 		Text: rendered,
 	}}
 	for _, ref := range imageRefs {
-		parts = append(parts, schema.ChatMessagePart{
+		url := strings.TrimSpace(ref.StorageURL)
+		parts = append(parts, schema.MessageInputPart{
 			Type: schema.ChatMessagePartTypeImageURL,
-			ImageURL: &schema.ChatMessageImageURL{
-				URL: strings.TrimSpace(ref.StorageURL),
+			Image: &schema.MessageInputImage{
+				MessagePartCommon: schema.MessagePartCommon{
+					URL:      &url,
+					MIMEType: strings.TrimSpace(ref.Mime),
+				},
+				Detail: schema.ImageURLDetailAuto,
 			},
 		})
 	}
 	return []*schema.Message{{
-		Role:         schema.User,
-		Content:      rendered,
-		MultiContent: parts,
+		Role:                  schema.User,
+		Content:               rendered,
+		UserInputMultiContent: parts,
 	}}
 }
 

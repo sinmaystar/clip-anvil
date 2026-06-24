@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -13,8 +17,14 @@ type ProductionRunner struct {
 	service     *Service
 	runtime     EinoProductionRuntime
 	publisher   ProductionEventPublisher
-	jobs        chan db.GenerationJob
+	jobs        chan queuedProductionJob
 	concurrency int
+	tracer      trace.Tracer
+}
+
+type queuedProductionJob struct {
+	ctx context.Context
+	job db.GenerationJob
 }
 
 func NewProductionRunner(service *Service, runtime EinoProductionRuntime, concurrency int, publisher ProductionEventPublisher) *ProductionRunner {
@@ -25,8 +35,14 @@ func NewProductionRunner(service *Service, runtime EinoProductionRuntime, concur
 		service:     service,
 		runtime:     runtime,
 		publisher:   publisher,
-		jobs:        make(chan db.GenerationJob, concurrency*16),
+		jobs:        make(chan queuedProductionJob, concurrency*16),
 		concurrency: concurrency,
+	}
+}
+
+func (r *ProductionRunner) SetTracer(tracer trace.Tracer) {
+	if r != nil {
+		r.tracer = tracer
 	}
 }
 
@@ -36,11 +52,11 @@ func (r *ProductionRunner) Start(ctx context.Context) {
 	}
 }
 
-func (r *ProductionRunner) Enqueue(job db.GenerationJob) {
+func (r *ProductionRunner) Enqueue(ctx context.Context, job db.GenerationJob) {
 	if r == nil {
 		return
 	}
-	r.jobs <- job
+	r.jobs <- queuedProductionJob{ctx: context.WithoutCancel(ctx), job: job}
 }
 
 func (r *ProductionRunner) worker(ctx context.Context) {
@@ -48,21 +64,37 @@ func (r *ProductionRunner) worker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case job := <-r.jobs:
-			if err := r.runJob(ctx, job); err != nil {
-				slog.Warn("production job failed", "job_id", uuidToString(job.ID), "error", err)
+		case request := <-r.jobs:
+			runCtx := request.ctx
+			if runCtx == nil {
+				runCtx = ctx
+			}
+			if err := r.runJob(runCtx, request.job); err != nil {
+				slog.Warn("production job failed", "job_id", uuidToString(request.job.ID), "error", err)
 			}
 		}
 	}
 }
 
-func (r *ProductionRunner) runJob(ctx context.Context, job db.GenerationJob) error {
+func (r *ProductionRunner) runJob(ctx context.Context, job db.GenerationJob) (runErr error) {
 	if r == nil || r.service == nil || r.runtime == nil {
 		return fmt.Errorf("%w: production runner is not configured", ErrProviderConfig)
 	}
 	var intent GenerationIntent
 	if err := json.Unmarshal(job.Intent, &intent); err != nil {
 		return r.failQueuedJob(ctx, job, fmt.Errorf("%w: invalid generation intent", ErrProviderExecution))
+	}
+	ctx, span := r.startJobSpan(ctx, job, intent)
+	if span != nil {
+		defer func() {
+			if runErr != nil {
+				span.RecordError(runErr)
+				span.SetStatus(codes.Error, runErr.Error())
+			} else {
+				span.SetStatus(codes.Ok, "")
+			}
+			span.End()
+		}()
 	}
 	started, err := r.service.markQueuedJobRunning(ctx, job, 1, map[string]any{"event": ProductionEventJobStarted})
 	if err != nil {
@@ -113,6 +145,21 @@ func (r *ProductionRunner) runJob(ctx context.Context, job db.GenerationJob) err
 		}
 	}
 	return r.failQueuedJob(ctx, job, fmt.Errorf("%w: runtime completed without output", ErrProviderExecution))
+}
+
+func (r *ProductionRunner) startJobSpan(ctx context.Context, job db.GenerationJob, intent GenerationIntent) (context.Context, trace.Span) {
+	if r == nil || r.tracer == nil {
+		return ctx, nil
+	}
+	return r.tracer.Start(ctx, "production_job", trace.WithAttributes(
+		attribute.String("clipanvil.workspace_id", uuidToString(job.WorkspaceID)),
+		attribute.String("clipanvil.production.job_id", uuidToString(job.ID)),
+		attribute.String("clipanvil.production.target_node_id", uuidToString(job.TargetNodeID)),
+		attribute.String("clipanvil.production.provider", intent.Model.Provider),
+		attribute.String("clipanvil.production.model_id", intent.Model.ModelID),
+		attribute.String("clipanvil.production.output_type", intent.OutputType),
+		attribute.String("clipanvil.production.operation_type", intent.OperationType),
+	))
 }
 
 func (r *ProductionRunner) publish(event ProductionEvent) {

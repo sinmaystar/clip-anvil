@@ -70,10 +70,10 @@ cd apps/server
 GOCACHE=/private/tmp/clipanvil-go-build go run ./cmd/cozeloop-trace-smoke
 ```
 
-The command runs a small Eino graph and reports spans to:
+The command runs a small Eino graph through the official Eino CozeLoop callback handler and reports spans to:
 
 ```text
-http://localhost:19098/v1/loop/opentelemetry/v1/traces
+http://localhost:19098
 ```
 
 It prints the `trace_id` that you can search in Coze Loop.
