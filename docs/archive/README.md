@@ -14,4 +14,4 @@
 - `docs/design/studio-mode.md`
 - `docs/milestones/`
 
-旧的 `docs/superpowers/specs/` 和 `docs/superpowers/plans/` 已归档到 `docs/archive/superpowers/`。
+旧的 `docs/superpowers/specs/`、`docs/superpowers/plans/` 和 `docs/superpowers/graphs/` 已归档到 `docs/archive/superpowers/`。

@@ -1,7 +1,7 @@
 # M3-M6 Studio / Agent 生产体系路线图
 
-**状态**：M3-M5 已完成，M6 待实施
-**日期**：2026-06-18；M5 状态更新于 2026-06-21
+**状态**：M3-M6 阶段性闭环已完成
+**日期**：2026-06-18；M6 状态更新于 2026-06-24
 **目标**：自底向上建设 Studio / Agent 双模式：先明确 Workspace 入口和权限边界，再建设共享生产底座，随后分别完成专业手动 Studio 和自动化 Agent 模式。
 
 参考设计见本文末尾附录。本文只保留里程碑拆分、目标、工作项、可验收标准和 E2E 测试，不重复展开完整设计细节。
@@ -22,7 +22,7 @@
 | M3 | 已完成 | Workspace 模式入口 | 从创建入口、路由和权限上区分 Studio / Agent | `workspace.mode`、创建入口、路由分流、Agent 只读画布 |
 | M4 | 已完成 | 共享生产底座 | 建立 Studio / Agent 共用的生产数据和执行链路 | 节点目标态、GenerationIntent、Provider Bridge、Sandbox Job Service、版本、Stale、失败重试、Production Read API |
 | M5 | 已完成 | Studio 专业手动模式 | 让专业用户可手动创建、引用、运行和重跑节点 | 浮层 Inspector、Prompt `@`、Reference Pack、手动运行、版本/调用记录、真实 Volcengine、源素材节点、级联 Stale |
-| M6 | 待实施 | Agent 自动生产模式 | Producer/Craftsman/Worker 复用共享底座完成分镜到成片 | Eino runtime、PSS、shot、HITL、Craftsman、评审重试、Composer |
+| M6 | 阶段性完成 | Agent 自动生产模式 | Producer/Craftsman/Worker/Reviewer/Composer 复用共享底座完成分镜到成片 | Eino runtime、PSS、shot、HITL、Craftsman、评审重试、Composer、`/ws/agent` |
 
 ---
 
@@ -295,7 +295,7 @@ E2E / smoke 结果：
 
 **状态**：已完成（2026-06-21）
 
-分阶段设计与工作项见：[M5 Studio Manual Production](../superpowers/specs/2026-06-18-m5-studio-manual-production-design.md)。
+分阶段设计与工作项见：[M5 Studio Manual Production](../archive/superpowers/specs/2026-06-18-m5-studio-manual-production-design.md)。
 
 ## 目标
 
@@ -425,6 +425,8 @@ git diff --check
 ---
 
 # M6 Agent 自动生产模式
+
+**状态**：阶段性完成（2026-06-24）
 
 ## 目标
 
@@ -571,8 +573,22 @@ make sqlc-generate
 make server-test
 pnpm --filter @clip-anvil/web... build
 pnpm --filter @clip-anvil/web lint
+scripts/smoke-m6-6-preview-closure.sh
+scripts/smoke-m6-7-review-retry-scheduler.sh
+scripts/smoke-m6-8-video-composer.sh
+scripts/smoke-m6-9-ux-completion.sh
 git diff --check
 ```
+
+## 完成记录
+
+- 数据库已新增 `agent_thread`、`agent_message`、`agent_task`、`agent_event`、`eino_checkpoint`、`shot`、`shot_dependency`、`review_record`，并把迁移推进到 `022_add_doubao_seed_thinking_text_models.sql`。
+- 后端已注册 `/api/agent/workspaces/:workspaceID/...` 系列 API 和 `/ws/agent`，支持对话消息、附件、模型选择、生产概览、HITL 决策响应和 Agent 事件推送。
+- Agent runtime 已使用 Eino native checkpoint/resume，Producer、Craftsman、Reviewer、Composer 图都通过共享 checkpoint store 编译运行。
+- Producer 工具 registry 已包含读取 workspace 上下文、获取生产状态、更新 storyboard、创建 Agent 文本节点、dispatch Craftsman、生成分镜视频、评审分镜、选择版本、重试生成、成片合成和 `request_user_decision`。
+- Craftsman/Worker 已复用 M4 生产底座生成预览和视频，Reviewer 可写入评审记录并触发重试调度，Composer 通过 sandbox-backed internal ffmpeg 合成成片。
+- 前端 Agent Workspace 已有只读 React Flow 画布、浮动对话面板、流式消息、附件上传、模型选择、决策卡、Storyboard 面板、任务时间线、生产状态条和 Composer 入口。
+- 仍未收口：Studio/Agent 复制导入、长期 Memory/Skill 配置化、生产级并发/成本策略、完整音频生成链路和更多真实 provider 的端到端回归。
 
 ---
 
@@ -596,12 +612,12 @@ flowchart TD
 - M3 是入口和权限基础，必须先做。
 - M4 是 M5/M6 的共同底座，已完成；M5/M6 后续应复用 M4 的生产链路和 Sandbox Job Service。
 - M5 可以先于 M6 完成，因为 Studio 是验证共享生产底座最直接的手动界面。
-- M6 复用 M4 的生产链路，也会借鉴 M5 的节点、版本和 Reference Pack 交互。
+- M6 复用 M4 的生产链路，也借鉴 M5 的节点、版本和 Reference Pack 交互；后续工作应继续围绕复制导入、长期记忆、Skill 配置化和生产级稳定性展开。
 
 # 附录：设计文档
 
 以下设计稿是本路线图的详细背景材料。实现时以 milestone 和当前工程文档为入口，再回看这些设计稿补充细节。
 
-- [MultiAgent Agent Mode 设计方案](../superpowers/specs/2026-06-18-multiagent-agent-mode-design.md)
-- [Studio / Agent 共享生产设计](../superpowers/specs/2026-06-18-studio-agent-shared-production-design.md)
-- [Studio / Agent 生产底层数据库技术方案](../superpowers/specs/2026-06-18-production-database-technical-design.md)
+- [MultiAgent Agent Mode 设计方案](../archive/superpowers/specs/2026-06-18-multiagent-agent-mode-design.md)
+- [Studio / Agent 共享生产设计](../archive/superpowers/specs/2026-06-18-studio-agent-shared-production-design.md)
+- [Studio / Agent 生产底层数据库技术方案](../archive/superpowers/specs/2026-06-18-production-database-technical-design.md)

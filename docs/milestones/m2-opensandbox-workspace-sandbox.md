@@ -5,8 +5,8 @@
 
 参考文档：
 
-- [设计规格](../superpowers/specs/2026-06-17-opensandbox-workspace-sandbox-design.md)
-- [实施计划](../superpowers/plans/2026-06-17-opensandbox-workspace-sandbox.md)
+- [设计规格](../archive/superpowers/specs/2026-06-17-opensandbox-workspace-sandbox-design.md)
+- [实施计划](../archive/superpowers/plans/2026-06-17-opensandbox-workspace-sandbox.md)
 
 ## Codex Goal 建议
 

@@ -29,17 +29,18 @@
 
 ### 2.0 当前迁移快照
 
-当前 goose 迁移包含 `001_init_schema.sql` 到 `014_m5_version_lifecycle.sql`，已覆盖 M3-M5 的 Studio 生产链路：
+当前 goose 迁移包含 `001_init_schema.sql` 到 `022_add_doubao_seed_thinking_text_models.sql`，已覆盖 M3-M6 的 Studio / Agent 生产链路：
 
 - 枚举：`workspace_mode`、`node_type`、`asset_type`、`node_status`、`job_status`
 - 核心表：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`
 - 沙箱表：`workspace_sandbox`、`sandbox_job`
 - 生产表：`generation_job`、`artifact_version`、`model_provider`、`model_capability`、`node_stale_reason`、`reference_pack_item`
+- Agent 表：`agent_thread`、`agent_message`、`agent_task`、`agent_event`、`eino_checkpoint`、`shot`、`shot_dependency`、`review_record`
 - 已收敛：`media_edge` 当前只表达 dependency，不再存 `edge_type` / transition 字段。
 - 已扩展：`media_node` 当前包含 `operation_type`、`prompt_template`、`prompt_rich`、`prompt_refs`、`model_provider`、`model_id`、`model_params`、`current_version_id`、`metadata`。
 - 已扩展：`artifact_version` 当前支持 queued/running/succeeded/failed/cancelled 生命周期，并通过 `job_id` 与 `generation_job` 一一绑定。
 
-下面的 schema 记录当前已落地对象；Agent runtime、shot、review 等 M6 目标态对象在第 6 节单独列出。真实可执行结构以 `apps/server/migrations/` 和 sqlc 生成代码为准。
+下面的 schema 记录当前已落地对象。真实可执行结构以 `apps/server/migrations/` 和 sqlc 生成代码为准。
 
 ### 2.1 枚举类型
 
@@ -590,7 +591,7 @@ GET /api/workspaces/:id/canvas
 
 ### 4.4 通路 ③：后端事件 → WebSocket 推送
 
-当前 `/ws/canvas` 已用于节点、连线、分组和节点状态/预览更新。M6 Agent 操作、Gate 和更细粒度任务进度也会走事件流，但还没有完整落地：
+当前 `/ws/canvas` 已用于节点、连线、分组和节点状态/预览更新。Agent 对话、工具调用、HITL 决策和任务进度通过 `/ws/agent` 推送：
 
 ```
 WebSocket /ws/canvas?workspaceId=xxx
@@ -602,7 +603,14 @@ WebSocket /ws/canvas?workspaceId=xxx
 { type: "EdgeCreated",   payload: { edge: {...} } }
 { type: "EdgeDeleted",   payload: { edgeId } }
 { type: "NodeUpdated",   payload: { nodeId, changes: { status, productionPreview, ... } } }
-{ type: "GateRequested", payload: { gateType, message, options } } // M6 目标态
+WebSocket /ws/agent?workspaceId=xxx
+
+事件包括：
+{ type: "message_created", payload: { message: {...} } }
+{ type: "message_delta",   payload: { messageId, delta } }
+{ type: "task_updated",    payload: { task: {...} } }
+{ type: "event_created",   payload: { event: {...} } }
+{ type: "decision_updated", payload: { eventId, status } }
 ```
 
 前端按事件类型重新合并或局部更新 canvas payload：
@@ -614,13 +622,13 @@ WebSocket /ws/canvas?workspaceId=xxx
 | NodeDeleted | 移除 media node |
 | EdgeCreated | 添加 dependency edge |
 | EdgeDeleted | 移除 dependency edge |
-| GateRequested | 对话面板展示确认卡片（M6 目标态） |
+| Agent message/event/task | 对话面板合并消息、流式增量、任务时间线和决策卡状态 |
 
 ### 4.5 冲突处理
 
-当前 M3 的选择是 Studio / Agent mode 分离：Studio Workspace 可手工编辑，Agent Workspace 普通画布写接口会被拒绝。因此 M5 不处理“同一 workspace 内用户和 Agent 同时编辑同一节点”的冲突。
+当前选择是 Studio / Agent mode 分离：Studio Workspace 可手工编辑，Agent Workspace 普通画布写接口会被拒绝。Agent 通过后端生产工具写业务事实，用户通过对话、附件和决策卡干预。
 
-M6 如果引入 Agent 内部工具写画布，同时允许用户通过对话干预，应按以下目标态处理：
+如果后续引入同一 workspace 内的更强手工编辑能力，应按以下策略处理：
 
 1. 用户点击节点编辑 → 节点状态变为 `user_editing` → 后端广播 `NodeUpdated { status: 'user_editing' }`
 2. Agent 收到状态变更 → 暂停该节点的分支，转而处理其他节点
@@ -639,7 +647,7 @@ M6 如果引入 Agent 内部工具写画布，同时允许用户通过对话干�
 apps/server/migrations/
 ├── 001_init_schema.sql
 ├── ...
-└── 014_m5_version_lifecycle.sql
+└── 022_add_doubao_seed_thinking_text_models.sql
 ```
 
 goose 的 SQL-first 方式与 sqlc 配合最自然——sqlc 直接读迁移文件作为 schema 源，无需维护两份 schema 定义。
@@ -678,9 +686,9 @@ sqlc 从迁移文件读取 schema，从 `sqlc/queries/*.sql` 读取查询，生�
 make sqlc-generate    # 生成 Go 代码
 ```
 
-## 6. v2 业务交互设计增补
+## 6. Agent / M6 表结构
 
-以下表和字段在 [业务交互设计 v2](../design/overview.md) 中引入，作为 Agent 模式和 Skill 体系的数据支撑。
+以下对象已经通过 M6 迁移落地，作为 Agent 模式、Eino runtime、Storyboard、评审和 Composer 的数据支撑。
 
 ### 6.1 workspace 表 mode 字段
 
@@ -691,20 +699,159 @@ ALTER TABLE workspace ADD COLUMN mode workspace_mode NOT NULL DEFAULT 'studio';
 
 `workspace.mode` 已在 M3 落地，用于 Studio / Agent 路由分流和普通画布写接口权限校验。
 
-### 6.2 media_node 表增加分镜相关字段
+### 6.2 agent_thread / agent_task / agent_event / agent_message / eino_checkpoint
 
 ```sql
-ALTER TABLE media_node ADD COLUMN duration_sec REAL;
--- 视频节点的目标时长（秒），分镜规划时设置
+CREATE TABLE agent_thread (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    scope_type TEXT NOT NULL DEFAULT 'workspace',
+    scope_id UUID,
+    runtime_provider TEXT NOT NULL DEFAULT 'eino',
+    runtime_agent_name TEXT NOT NULL DEFAULT '',
+    current_checkpoint_key TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    summary TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
-ALTER TABLE media_node ADD COLUMN narrative_purpose TEXT NOT NULL DEFAULT '';
--- 叙事目的（借鉴 spark-video），分镜节点必填
+CREATE TABLE agent_task (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
+    role TEXT NOT NULL,
+    scope_type TEXT NOT NULL DEFAULT 'workspace',
+    scope_id UUID,
+    task_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempt INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 1,
+    input JSONB NOT NULL DEFAULT '{}',
+    output JSONB NOT NULL DEFAULT '{}',
+    error_code TEXT,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ
+);
 
-ALTER TABLE media_node ADD COLUMN use_prev_last_frame BOOLEAN NOT NULL DEFAULT false;
--- 是否使用前一个镜头的最后一帧作为本镜头的首帧（帧连续性）
+CREATE TABLE agent_event (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
+    task_id UUID REFERENCES agent_task(id) ON DELETE SET NULL,
+    event_type TEXT NOT NULL,
+    source_role TEXT NOT NULL DEFAULT 'system',
+    target_role TEXT,
+    scope JSONB NOT NULL DEFAULT '{}',
+    payload JSONB NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    handled_at TIMESTAMPTZ
+);
+
+CREATE TABLE agent_message (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    thread_id UUID NOT NULL REFERENCES agent_thread(id) ON DELETE CASCADE,
+    seq BIGINT NOT NULL,
+    role TEXT NOT NULL,
+    message_type TEXT NOT NULL DEFAULT 'text',
+    content JSONB NOT NULL DEFAULT '{}',
+    raw_message JSONB NOT NULL DEFAULT '{}',
+    task_id UUID REFERENCES agent_task(id) ON DELETE SET NULL,
+    event_id UUID REFERENCES agent_event(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE eino_checkpoint (
+    key TEXT PRIMARY KEY,
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
+    task_id UUID REFERENCES agent_task(id) ON DELETE SET NULL,
+    value BYTEA NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 ```
 
-### 6.3 skill 表（MVP 后期）
+`agent_thread` 表示 Producer/Craftsman/Reviewer/Composer 的持久运行上下文；`agent_task` 记录 Producer turn、tool call、Craftsman/Worker/Reviewer/Composer 等任务；`agent_event` 支撑 HITL 决策、工具事件和任务事件；`agent_message` 是对话历史；`eino_checkpoint` 是 Eino native checkpoint/resume 的 DB 存储。
+
+### 6.3 shot / shot_dependency
+
+```sql
+CREATE TABLE shot (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    client_key TEXT NOT NULL DEFAULT '',
+    sort_order INT NOT NULL,
+    title TEXT NOT NULL,
+    brief JSONB NOT NULL DEFAULT '{}',
+    duration_sec DOUBLE PRECISION,
+    narrative_purpose TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'planned',
+    craftsman_thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
+    archived_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE shot_dependency (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    from_shot_id UUID NOT NULL REFERENCES shot(id) ON DELETE CASCADE,
+    to_shot_id UUID NOT NULL REFERENCES shot(id) ON DELETE CASCADE,
+    dependency_type TEXT NOT NULL,
+    required_artifact TEXT NOT NULL DEFAULT '',
+    injection_role TEXT NOT NULL DEFAULT '',
+    blocking_phase TEXT NOT NULL DEFAULT '',
+    stale_policy TEXT NOT NULL DEFAULT 'mark_downstream_stale',
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE media_node
+    ADD COLUMN shot_id UUID REFERENCES shot(id) ON DELETE SET NULL;
+```
+
+`shot` 是 Agent 模式的分镜语义表，不把 sequence/transition 塞回 Studio 的 `media_edge`。`media_node.shot_id` 把画布产物节点挂回分镜，`shot_dependency` 支撑跨分镜连续性、资源复用和调度阻塞。
+
+### 6.4 review_record
+
+```sql
+CREATE TABLE review_record (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    shot_id UUID REFERENCES shot(id) ON DELETE SET NULL,
+    node_id UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
+    artifact_version_id UUID NOT NULL REFERENCES artifact_version(id) ON DELETE CASCADE,
+    generation_job_id UUID REFERENCES generation_job(id) ON DELETE SET NULL,
+    reviewer_thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
+    reviewer_task_id UUID REFERENCES agent_task(id) ON DELETE SET NULL,
+    parent_review_record_id UUID REFERENCES review_record(id) ON DELETE SET NULL,
+    target_phase TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempt_no INT NOT NULL DEFAULT 1,
+    max_attempts INT NOT NULL DEFAULT 3,
+    overall_score REAL,
+    rubric JSONB NOT NULL DEFAULT '{}',
+    critique TEXT NOT NULL DEFAULT '',
+    retry_recommendation JSONB NOT NULL DEFAULT '{}',
+    model_provider TEXT NOT NULL DEFAULT '',
+    model_id TEXT NOT NULL DEFAULT '',
+    error_code TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ
+);
+```
+
+`review_record` 记录预览图、分镜视频和成片的评审结果，并通过 `parent_review_record_id` 串起重试链路。Reviewer 可以根据 critique 触发 retry generation，最终仍复用 `generation_job` / `artifact_version` 的版本事实。
+
+### 6.5 skill 表（后续）
 
 ```sql
 CREATE TABLE skill (
@@ -721,23 +868,9 @@ CREATE TABLE skill (
 
 内置 Skill 在系统初始化时写入。`config` 存储完整定义（phases、review_rubric、gates、style_constraints 等）。
 
-### 6.4 agent_session 表
+### 6.6 旧 agent_session 方案
 
-```sql
-CREATE TABLE agent_session (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id  UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
-    skill_name    TEXT,
-    brief         JSONB NOT NULL DEFAULT '{}',
-    status        TEXT NOT NULL DEFAULT 'running',
-    -- 值: 'running' | 'paused' | 'waiting_gate' | 'completed' | 'failed'
-    current_phase TEXT,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-记录 Agent 模式下的一次完整工作会话。一个 workspace 同时只能有一个 running 的 agent_session。
+早期设计曾提过 `agent_session`，当前实现没有采用这张表。实际运行态由 `agent_thread`、`agent_task`、`agent_event`、`agent_message` 和 `eino_checkpoint` 组合表达。
 
 ## 相关文档
 

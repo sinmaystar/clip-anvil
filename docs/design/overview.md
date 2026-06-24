@@ -2,7 +2,7 @@
 
 ## 1. 产品定位
 
-一张以 React Flow 为交互底座的多媒体生产画布，一套以业务 DAG 为事实源的生成系统，以及一个以 Skill 为角色分工的可视化 Agent。
+一张以 React Flow 为交互底座的多媒体生产画布，一套以业务 DAG 为事实源的生成系统，以及一个以 Eino Agent 为角色分工的可视化生产系统。
 
 用户看到分镜板，Agent 看到工作流。复杂度藏在后端，简洁感留给用户。
 
@@ -10,7 +10,7 @@
 
 1. **业务 DB 为唯一事实源，React Flow 只做投影** — Workspace、媒体资源、依赖关系、生成任务、版本、评审结果存储在业务数据库。React Flow node data 只保存渲染所需的业务字段映射（nodeId、缩略图、状态），画布坐标直接存在业务表的 `canvas_x/y/w/h` 字段中。Agent 后台执行时画布可以不打开；画布损坏不丢失业务数据。
 
-2. **Agent 不知道画布的存在** — Agent 调用生产级工具（create_storyboard、generate_shot），生产翻译层自动将其翻译为画布状态（创建节点、建连线、计算布局）。Agent 眼中只有分镜、素材、进度，没有节点、连线、分组。
+2. **Agent 不知道画布的存在** — Agent 调用生产级工具（如 `update_storyboard`、`dispatch_craftsman`、`compose_final`），生产翻译层自动将其翻译为业务状态和画布投影。Agent 眼中只有分镜、素材、进度，没有节点、连线、分组。
 
 3. **不弹框，不打断画布流** — 节点详情和编辑在画布附近的节点浮层完成，不使用常驻右侧 Inspector，也不把用户带回传统管理系统布局。
 
@@ -34,13 +34,13 @@
 ┌───────────────────┴──────────────────────────────────┐
 │                 生产翻译层（系统自动）                   │
 │                                                      │
-│  Agent 调用: create_storyboard(shots)                 │
+│  Agent 调用: update_storyboard(shots)                 │
 │  系统翻译: batch_create_nodes + batch_create_edges     │
 │           + create_group + auto_layout                │
 │                                                      │
-│  Agent 调用: generate_shot(prompt, reference_inputs)   │
-│  系统翻译: update_node(prompt) + create_edges(refs)    │
-│           + submit_generation                         │
+│  Agent 调用: dispatch_craftsman(shot_id, mode)         │
+│  系统翻译: load shot context + submit generation       │
+│           + update tasks / versions                   │
 │                                                      │
 │  生成完成（回调）:                                     │
 │  系统自动: create_asset + create_version               │
@@ -49,8 +49,8 @@
                     ▲ 生产级工具（Agent 调用）
                     │ get_production_state（Agent 读取）
 ┌───────────────────┴──────────────────────────────────┐
-│              Agent 层（MultiAgent）                    │
-│   Producer → Sub-Agents（Screenwriter/Director/...）  │
+│              Agent 层（Eino Agents）                   │
+│   Producer → Craftsman / Reviewer / Composer          │
 │   读取 Skill + Production State                       │
 │   调用生产级工具                                       │
 │   不知道画布、节点、连线、布局的存在                      │
@@ -66,7 +66,7 @@
 | 生产翻译层 | 生产操作 ↔ 业务命令的映射规则 | React Flow、Agent 提示词 |
 | Agent 层 | 分镜、素材、生成、评审、拼接 | 节点、连线、分组、画布坐标、布局 |
 
-**为什么需要生产翻译层**：一个生产操作 = 多个业务命令。例如 `create_storyboard(5个分镜)` 在业务层需要：创建 5 个 media_node + 4 条 sequence edge + 1 个 group + 计算布局坐标 + 写入 canvas_x/y。如果让 Agent 逐一调用这些命令，Agent 就变成了画布操作员，认知负荷高且容易出错。
+**为什么需要生产翻译层**：一个生产操作 = 多个业务命令。例如 `update_storyboard(5个分镜)` 在业务层需要：写入 5 个 shot、必要的 shot_dependency、关联后续生成任务和画布投影。如果让 Agent 逐一调用底层命令，Agent 就变成了画布操作员，认知负荷高且容易出错。
 
 ## 4. 双模式概要
 
@@ -298,29 +298,29 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 - TOS provider 输入暂存、sandbox-backed 远程图片/视频下载入 MinIO。
 - 用户源素材节点：手动文本、上传图片/视频/音频，不提供模型运行入口，可作为依赖或参考包成员。
 
-### M6: Agent 自动生产模式（待实施）
+### M6: Agent 自动生产模式（阶段性闭环已完成）
 
 目标：Producer / Craftsman / Worker / Composer 复用 M4 生产底座完成分镜到成片。
 
 交付：
-- Agent runtime 存储、Eino checkpoint、PSS 和 Memory
-- Producer 对话面板与 HITL 决策卡片
-- Storyboard / shot / shot dependency
-- Craftsman + Worker 生成与评审重试
+- Agent runtime 存储、Eino checkpoint/resume、Agent message/event/task 持久化
+- `/ws/agent` 对话通道、Producer 对话面板、附件上传、模型选择和 HITL 决策卡片
+- Storyboard / shot / shot dependency、PSS 和生产状态读取工具
+- Craftsman + Worker 预览生成、Reviewer 评审重试、依赖调度
 - Composer sandbox-backed 成片合成
-- Studio / Agent 复制导入，而不是原地无缝切换
+- Studio / Agent 复制导入仍是后续，当前继续保持 workspace mode 分离
 
 ## 8. 开放问题
 
-1. **生产翻译层的实现位置**：生产级工具是在 Go 后端实现（Agent 通过 HTTP 调用），还是在 Agent 运行时中作为工具包装层？建议后端实现——Agent 可以是任何 LLM，工具就是 REST API。
+1. **Studio / Agent 复制导入**：当前仍保持 workspace mode 分离，后续需要定义 Agent -> Studio 和 Studio -> Agent 的复制范围、上下文摘要和产物版本保留策略。
 
-2. **Agent 框架选型**：MultiAgent 的 Producer ↔ Sub-Agent 通信协议。如果要支持不同 Sub-Agent 用不同模型（如 Review 用多模态模型），需要灵活的调度机制。
+2. **Skill 和长期记忆配置化**：当前 Agent runtime、PSS、工具和模型选择已落地，后续需要决定 Skill 是代码/配置初始化，还是进入用户可编辑的 DB 管理。
 
-3. **长对话上下文管理**：Agent 运行过程中的 PSS 增量更新和对话消息。需要设计上下文窗口策略——哪些保留、哪些压缩、何时刷新全量 PSS。
+3. **长对话上下文管理**：Agent 运行过程中的 PSS 增量更新、对话消息和 checkpoint 已有持久化基础；仍需设计上下文窗口策略——哪些保留、哪些压缩、何时刷新全量 PSS。
 
 4. **Studio 模式的 AI 辅助**：Studio 模式是否也有轻量 AI 能力（如 Prompt 建议、自动参考图搜索），而不需要启动完整 Agent？
 
-5. **并发渲染限制**：多个 Director Sub-Agent 并行提交生成时，如何控制并发量？是否需要 workspace 级别的并发配额？
+5. **并发渲染限制**：多个 Craftsman / Worker 并行提交生成时，如何控制并发量？是否需要 workspace 级别的并发配额？
 
 ## 相关文档
 
