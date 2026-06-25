@@ -13,15 +13,16 @@ import (
 
 func TestParseReviewResult(t *testing.T) {
 	result, err := ParseReviewResult(`{
+		"review_task": "preview_image_review",
+		"verdict": "accepted",
 		"overall_score": 0.82,
 		"rubric": {
-			"proportion": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"physics": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"style": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"visual_quality": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
+			"faithfulness": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
+			"subject_consistency": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
 			"product_visibility": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"selling_power": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"platform_fit": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""}
+			"brand_style_consistency": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
+			"composition_proportion": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
+			"visual_quality": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""}
 		},
 		"critique": "画面可用",
 		"retry_recommendation": {"should_retry": false}
@@ -36,7 +37,7 @@ func TestParseReviewResult(t *testing.T) {
 
 func TestVolcengineReviewResponderParsesStreamedResult(t *testing.T) {
 	streamer := &fakeReviewArkStreamer{chunks: []*schema.Message{{
-		Content: `{"overall_score":0.82,"rubric":{"proportion":{"score":0.8,"pass":true,"reason":"ok"},"physics":{"score":0.8,"pass":true,"reason":"ok"},"style":{"score":0.8,"pass":true,"reason":"ok"},"visual_quality":{"score":0.8,"pass":true,"reason":"ok"},"product_visibility":{"score":0.8,"pass":true,"reason":"ok"},"selling_power":{"score":0.8,"pass":true,"reason":"ok"},"platform_fit":{"score":0.8,"pass":true,"reason":"ok"}},"critique":"画面可用","retry_recommendation":{"should_retry":false}}`,
+		Content: `{"review_task":"preview_image_review","verdict":"accepted","overall_score":0.82,"rubric":{"faithfulness":{"score":0.8,"pass":true,"reason":"ok"},"subject_consistency":{"score":0.8,"pass":true,"reason":"ok"},"product_visibility":{"score":0.8,"pass":true,"reason":"ok"},"brand_style_consistency":{"score":0.8,"pass":true,"reason":"ok"},"composition_proportion":{"score":0.8,"pass":true,"reason":"ok"},"visual_quality":{"score":0.8,"pass":true,"reason":"ok"}},"critique":"画面可用","retry_recommendation":{"should_retry":false}}`,
 	}}}
 	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
 		APIKey: "test-key",

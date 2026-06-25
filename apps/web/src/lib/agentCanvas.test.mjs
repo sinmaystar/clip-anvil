@@ -56,6 +56,8 @@ describe("agent React Flow canvas", () => {
     assert.match(pageSource, /readOnly/);
     assert.match(pageSource, /agent-node-production-popover/);
     assert.match(pageSource, /selectedNodeProductionStateQuery/);
+    assert.match(pageSource, /enabled:\s*Boolean\(selectedNode\)/);
+    assert.doesNotMatch(pageSource, /enabled:\s*Boolean\(selectedNodeId\)/);
     assert.match(pageSource, /fetchModelCapabilities/);
     assert.match(pageSource, /fetchReferencePackItems/);
     assert.match(pageSource, /preserveCanvasAssetUrls/);

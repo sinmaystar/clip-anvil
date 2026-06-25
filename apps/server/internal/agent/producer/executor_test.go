@@ -60,6 +60,56 @@ func TestExecutorPersistsAssistantMessageOnSuccess(t *testing.T) {
 	}
 }
 
+func TestExecutorPersistsNativeToolTraceBeforeFinalAssistantMessage(t *testing.T) {
+	runtime := &fakeRuntime{}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime: runtime,
+		Graph: &fakeGraph{output: ProducerTurnOutput{
+			AssistantText: "已保存 brief。",
+			SameTurnMessages: []ProducerSameTurnMessage{
+				{
+					Role:          "assistant",
+					MessageType:   "tool_call",
+					Content:       "调用 create_agent_text_node",
+					ToolCallID:    "call-text",
+					ToolName:      "create_agent_text_node",
+					ToolArguments: map[string]any{"title": "brief", "text": "hello"},
+				},
+				{
+					Role:        "tool",
+					MessageType: "tool_result",
+					Content:     "工具返回：已保存。",
+					ToolCallID:  "call-text",
+					ToolName:    "create_agent_text_node",
+				},
+			},
+		}},
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID:      uuidWithByte(1),
+		ThreadID:         uuidWithByte(2),
+		TaskID:           uuidWithByte(3),
+		TriggerMessageID: uuidWithByte(4),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := runtime.appendedMessageTypes()
+	want := []string{"tool_call", "tool_result", "text"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("message types = %#v, want %#v", got, want)
+	}
+	if runtime.appended[0].Role != "assistant" || runtime.appended[1].Role != "tool" {
+		t.Fatalf("persisted roles = %#v", runtime.appended)
+	}
+	if !bytes.Contains(runtime.appended[0].RawMessage, []byte(`"tool_call_id":"call-text"`)) ||
+		!bytes.Contains(runtime.appended[1].RawMessage, []byte(`"tool_call_id":"call-text"`)) {
+		t.Fatalf("raw tool messages = %s / %s", runtime.appended[0].RawMessage, runtime.appended[1].RawMessage)
+	}
+}
+
 func TestExecutorBroadcastsStreamDeltasBeforeFinalMessage(t *testing.T) {
 	runtime := &fakeRuntime{}
 	broadcaster := &fakeBroadcaster{}
@@ -153,15 +203,15 @@ func TestExecutorPersistsSelectedModelMetadata(t *testing.T) {
 
 func TestExecutorMarksTaskWaitingForNativeInterrupt(t *testing.T) {
 	runtime := &fakeRuntime{}
-	registry := mustTestToolRegistry(t, "request_user_decision")
+	registry := mustTestNativeToolRegistryWithTools(t, &testNativeTool{name: "request_user_decision", interrupt: true})
 	graph, err := NewGraph(GraphConfig{
+		Mode:   ProducerGraphModeExplicitToolLoop,
 		Loader: fakeContextLoader{context: ProducerContext{LatestUserText: "需要决策"}},
 		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
 			nativeToolCallOutput("call-decision", "request_user_decision", `{"title":"确认","message":"继续吗"}`),
 		}},
-		ToolExecutor:    interruptingToolExecutor{},
-		ToolRegistry:    registry,
-		CheckPointStore: fakeEinoCheckpointStore{},
+		NativeToolRegistry: registry,
+		CheckPointStore:    fakeEinoCheckpointStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -348,6 +398,8 @@ type fakeRuntime struct {
 	assistantRawMessage  []byte
 	threadCheckpoint     string
 	eventTypes           []string
+	appendMessageSeq     int64
+	appended             []db.AgentMessage
 }
 
 func (f *fakeRuntime) MarkTaskRunning(_ context.Context, taskID pgtype.UUID) (db.AgentTask, error) {
@@ -382,16 +434,28 @@ func (f *fakeRuntime) AppendMessage(_ context.Context, params agentruntime.Appen
 		f.assistantText = strings.Join(texts, "\n\n")
 	}
 	f.assistantRawMessage = params.RawMessage
-	return db.AgentMessage{
+	f.appendMessageSeq++
+	msg := db.AgentMessage{
 		ID:          uuidWithByte(9),
 		WorkspaceID: params.WorkspaceID,
 		ThreadID:    params.ThreadID,
+		Seq:         f.appendMessageSeq,
 		Role:        params.Role,
 		MessageType: params.MessageType,
 		Content:     params.Content,
 		RawMessage:  params.RawMessage,
 		TaskID:      params.TaskID,
-	}, nil
+	}
+	f.appended = append(f.appended, msg)
+	return msg, nil
+}
+
+func (f *fakeRuntime) appendedMessageTypes() []string {
+	out := make([]string, 0, len(f.appended))
+	for _, msg := range f.appended {
+		out = append(out, msg.MessageType)
+	}
+	return out
 }
 
 func (f *fakeRuntime) CreateEvent(_ context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
@@ -403,18 +467,6 @@ func (f *fakeRuntime) CreateEvent(_ context.Context, params agentruntime.CreateE
 		TaskID:      params.TaskID,
 		EventType:   params.EventType,
 		SourceRole:  params.SourceRole,
-	}, nil
-}
-
-type interruptingToolExecutor struct{}
-
-func (interruptingToolExecutor) ExecuteProducerTool(_ context.Context, _ ProducerContext, call ToolCall) (ToolExecutionResult, error) {
-	return ToolExecutionResult{
-		Result:      map[string]any{"status": "waiting_for_user"},
-		Summary:     "等待用户决策",
-		Interrupted: true,
-		ToolCallID:  call.ID,
-		ToolName:    call.Name,
 	}, nil
 }
 

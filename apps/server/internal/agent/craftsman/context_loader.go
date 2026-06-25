@@ -29,6 +29,8 @@ type ContextLoader struct {
 	Runtime MessageRuntime
 }
 
+const craftsmanContextMessageLimit int32 = 1000
+
 func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, error) {
 	if l.Store == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid || !input.ShotID.Valid {
 		return Context{}, ErrInvalidInput
@@ -42,7 +44,7 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 	}
 	messages := []db.AgentMessage{}
 	if l.Runtime != nil {
-		messages, err = l.Runtime.ListMessages(ctx, input.ThreadID, 0, 50)
+		messages, err = l.Runtime.ListMessages(ctx, input.ThreadID, 0, craftsmanContextMessageLimit)
 		if err != nil {
 			return Context{}, err
 		}

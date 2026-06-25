@@ -30,7 +30,7 @@ sandbox:
     memory: "4Gi"
 
 agent:
-  producer_max_tool_calls: 50
+  producer_max_tool_calls: 1000
   tool_timeout_seconds: 300
 
 production:

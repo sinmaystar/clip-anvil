@@ -222,6 +222,7 @@ func (fakeDBTX) QueryRow(_ context.Context, query string, args ...interface{}) p
 			pgtype.Timestamptz{Time: time.Unix(1, 0), Valid: true},
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},
+			pgtype.UUID{},
 		}}
 	}
 	return fakeRow{}

@@ -18,11 +18,12 @@ SET status = $2,
     rubric = $4,
     critique = $5,
     retry_recommendation = $6,
+    escalation = $7,
     error_code = '',
     error_message = '',
     completed_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at
+RETURNING id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
 `
 
 type CompleteReviewRecordParams struct {
@@ -32,6 +33,7 @@ type CompleteReviewRecordParams struct {
 	Rubric              []byte        `json:"rubric"`
 	Critique            string        `json:"critique"`
 	RetryRecommendation []byte        `json:"retry_recommendation"`
+	Escalation          []byte        `json:"escalation"`
 }
 
 func (q *Queries) CompleteReviewRecord(ctx context.Context, arg CompleteReviewRecordParams) (ReviewRecord, error) {
@@ -42,6 +44,7 @@ func (q *Queries) CompleteReviewRecord(ctx context.Context, arg CompleteReviewRe
 		arg.Rubric,
 		arg.Critique,
 		arg.RetryRecommendation,
+		arg.Escalation,
 	)
 	var i ReviewRecord
 	err := row.Scan(
@@ -68,6 +71,12 @@ func (q *Queries) CompleteReviewRecord(ctx context.Context, arg CompleteReviewRe
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.ReviewTask,
+		&i.TargetObjectType,
+		&i.TargetObjectID,
+		&i.RenderPlanID,
+		&i.RequiredAxes,
+		&i.Escalation,
 	)
 	return i, err
 }
@@ -105,16 +114,22 @@ INSERT INTO review_record (
     reviewer_task_id,
     parent_review_record_id,
     target_phase,
+    review_task,
+    target_object_type,
+    target_object_id,
+    render_plan_id,
     status,
     attempt_no,
     max_attempts,
     model_provider,
-    model_id
+    model_id,
+    required_axes
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8,
-    $9, 'running', $10, $11, $12, $13
-) RETURNING id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at
+    $9, $10, $11, $12, $13,
+    'running', $14, $15, $16, $17, $18
+) RETURNING id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
 `
 
 type CreateReviewRecordParams struct {
@@ -127,10 +142,15 @@ type CreateReviewRecordParams struct {
 	ReviewerTaskID       pgtype.UUID `json:"reviewer_task_id"`
 	ParentReviewRecordID pgtype.UUID `json:"parent_review_record_id"`
 	TargetPhase          string      `json:"target_phase"`
+	ReviewTask           string      `json:"review_task"`
+	TargetObjectType     string      `json:"target_object_type"`
+	TargetObjectID       pgtype.UUID `json:"target_object_id"`
+	RenderPlanID         pgtype.UUID `json:"render_plan_id"`
 	AttemptNo            int32       `json:"attempt_no"`
 	MaxAttempts          int32       `json:"max_attempts"`
 	ModelProvider        string      `json:"model_provider"`
 	ModelID              string      `json:"model_id"`
+	RequiredAxes         []byte      `json:"required_axes"`
 }
 
 func (q *Queries) CreateReviewRecord(ctx context.Context, arg CreateReviewRecordParams) (ReviewRecord, error) {
@@ -144,10 +164,15 @@ func (q *Queries) CreateReviewRecord(ctx context.Context, arg CreateReviewRecord
 		arg.ReviewerTaskID,
 		arg.ParentReviewRecordID,
 		arg.TargetPhase,
+		arg.ReviewTask,
+		arg.TargetObjectType,
+		arg.TargetObjectID,
+		arg.RenderPlanID,
 		arg.AttemptNo,
 		arg.MaxAttempts,
 		arg.ModelProvider,
 		arg.ModelID,
+		arg.RequiredAxes,
 	)
 	var i ReviewRecord
 	err := row.Scan(
@@ -174,6 +199,12 @@ func (q *Queries) CreateReviewRecord(ctx context.Context, arg CreateReviewRecord
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.ReviewTask,
+		&i.TargetObjectType,
+		&i.TargetObjectID,
+		&i.RenderPlanID,
+		&i.RequiredAxes,
+		&i.Escalation,
 	)
 	return i, err
 }
@@ -185,7 +216,7 @@ SET status = 'failed',
     error_message = $3,
     completed_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at
+RETURNING id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
 `
 
 type FailReviewRecordParams struct {
@@ -221,12 +252,18 @@ func (q *Queries) FailReviewRecord(ctx context.Context, arg FailReviewRecordPara
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.ReviewTask,
+		&i.TargetObjectType,
+		&i.TargetObjectID,
+		&i.RenderPlanID,
+		&i.RequiredAxes,
+		&i.Escalation,
 	)
 	return i, err
 }
 
 const getReviewRecordByID = `-- name: GetReviewRecordByID :one
-SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at
+SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
 FROM review_record
 WHERE id = $1
 `
@@ -258,12 +295,18 @@ func (q *Queries) GetReviewRecordByID(ctx context.Context, id pgtype.UUID) (Revi
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.ReviewTask,
+		&i.TargetObjectType,
+		&i.TargetObjectID,
+		&i.RenderPlanID,
+		&i.RequiredAxes,
+		&i.Escalation,
 	)
 	return i, err
 }
 
 const listReviewRecordsByArtifactVersion = `-- name: ListReviewRecordsByArtifactVersion :many
-SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at
+SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
 FROM review_record
 WHERE artifact_version_id = $1
 ORDER BY created_at DESC
@@ -302,6 +345,12 @@ func (q *Queries) ListReviewRecordsByArtifactVersion(ctx context.Context, artifa
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.ReviewTask,
+			&i.TargetObjectType,
+			&i.TargetObjectID,
+			&i.RenderPlanID,
+			&i.RequiredAxes,
+			&i.Escalation,
 		); err != nil {
 			return nil, err
 		}
@@ -314,7 +363,7 @@ func (q *Queries) ListReviewRecordsByArtifactVersion(ctx context.Context, artifa
 }
 
 const listReviewRecordsByNode = `-- name: ListReviewRecordsByNode :many
-SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at
+SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
 FROM review_record
 WHERE node_id = $1
 ORDER BY created_at DESC
@@ -353,6 +402,69 @@ func (q *Queries) ListReviewRecordsByNode(ctx context.Context, nodeID pgtype.UUI
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.ReviewTask,
+			&i.TargetObjectType,
+			&i.TargetObjectID,
+			&i.RenderPlanID,
+			&i.RequiredAxes,
+			&i.Escalation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewRecordsByRenderPlan = `-- name: ListReviewRecordsByRenderPlan :many
+SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
+FROM review_record
+WHERE render_plan_id = $1
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListReviewRecordsByRenderPlan(ctx context.Context, renderPlanID pgtype.UUID) ([]ReviewRecord, error) {
+	rows, err := q.db.Query(ctx, listReviewRecordsByRenderPlan, renderPlanID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReviewRecord{}
+	for rows.Next() {
+		var i ReviewRecord
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ShotID,
+			&i.NodeID,
+			&i.ArtifactVersionID,
+			&i.GenerationJobID,
+			&i.ReviewerThreadID,
+			&i.ReviewerTaskID,
+			&i.ParentReviewRecordID,
+			&i.TargetPhase,
+			&i.Status,
+			&i.AttemptNo,
+			&i.MaxAttempts,
+			&i.OverallScore,
+			&i.Rubric,
+			&i.Critique,
+			&i.RetryRecommendation,
+			&i.ModelProvider,
+			&i.ModelID,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.CompletedAt,
+			&i.ReviewTask,
+			&i.TargetObjectType,
+			&i.TargetObjectID,
+			&i.RenderPlanID,
+			&i.RequiredAxes,
+			&i.Escalation,
 		); err != nil {
 			return nil, err
 		}
@@ -365,7 +477,7 @@ func (q *Queries) ListReviewRecordsByNode(ctx context.Context, nodeID pgtype.UUI
 }
 
 const listReviewRecordsByShotPhase = `-- name: ListReviewRecordsByShotPhase :many
-SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at
+SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
 FROM review_record
 WHERE workspace_id = $1
   AND shot_id = $2
@@ -412,6 +524,84 @@ func (q *Queries) ListReviewRecordsByShotPhase(ctx context.Context, arg ListRevi
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.ReviewTask,
+			&i.TargetObjectType,
+			&i.TargetObjectID,
+			&i.RenderPlanID,
+			&i.RequiredAxes,
+			&i.Escalation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewRecordsByTarget = `-- name: ListReviewRecordsByTarget :many
+SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
+FROM review_record
+WHERE workspace_id = $1
+  AND target_object_type = $2
+  AND target_object_id = $3
+ORDER BY created_at DESC
+LIMIT $4
+`
+
+type ListReviewRecordsByTargetParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	TargetObjectType string      `json:"target_object_type"`
+	TargetObjectID   pgtype.UUID `json:"target_object_id"`
+	Limit            int32       `json:"limit"`
+}
+
+func (q *Queries) ListReviewRecordsByTarget(ctx context.Context, arg ListReviewRecordsByTargetParams) ([]ReviewRecord, error) {
+	rows, err := q.db.Query(ctx, listReviewRecordsByTarget,
+		arg.WorkspaceID,
+		arg.TargetObjectType,
+		arg.TargetObjectID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReviewRecord{}
+	for rows.Next() {
+		var i ReviewRecord
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ShotID,
+			&i.NodeID,
+			&i.ArtifactVersionID,
+			&i.GenerationJobID,
+			&i.ReviewerThreadID,
+			&i.ReviewerTaskID,
+			&i.ParentReviewRecordID,
+			&i.TargetPhase,
+			&i.Status,
+			&i.AttemptNo,
+			&i.MaxAttempts,
+			&i.OverallScore,
+			&i.Rubric,
+			&i.Critique,
+			&i.RetryRecommendation,
+			&i.ModelProvider,
+			&i.ModelID,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.CompletedAt,
+			&i.ReviewTask,
+			&i.TargetObjectType,
+			&i.TargetObjectID,
+			&i.RenderPlanID,
+			&i.RequiredAxes,
+			&i.Escalation,
 		); err != nil {
 			return nil, err
 		}
@@ -424,7 +614,7 @@ func (q *Queries) ListReviewRecordsByShotPhase(ctx context.Context, arg ListRevi
 }
 
 const listReviewRecordsByWorkspace = `-- name: ListReviewRecordsByWorkspace :many
-SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at
+SELECT id, workspace_id, shot_id, node_id, artifact_version_id, generation_job_id, reviewer_thread_id, reviewer_task_id, parent_review_record_id, target_phase, status, attempt_no, max_attempts, overall_score, rubric, critique, retry_recommendation, model_provider, model_id, error_code, error_message, created_at, completed_at, review_task, target_object_type, target_object_id, render_plan_id, required_axes, escalation
 FROM review_record
 WHERE workspace_id = $1
 ORDER BY created_at DESC
@@ -469,6 +659,12 @@ func (q *Queries) ListReviewRecordsByWorkspace(ctx context.Context, arg ListRevi
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.ReviewTask,
+			&i.TargetObjectType,
+			&i.TargetObjectID,
+			&i.RenderPlanID,
+			&i.RequiredAxes,
+			&i.Escalation,
 		); err != nil {
 			return nil, err
 		}

@@ -11,17 +11,27 @@ export function canvasToFlowNodes(canvas: CanvasPayload): CanvasFlowNode[] {
   return [
     ...canvas.groups.map((group) => groupToFlowNode(group, canvas.nodes)),
     ...canvas.nodes.map(nodeToFlowNode),
+    ...(canvas.domain_projection?.nodes ?? []).map(domainNodeToFlowNode),
   ];
 }
 
 export function canvasToFlowEdges(canvas: CanvasPayload): CanvasFlowEdge[] {
-  return canvas.edges.map((edge) => ({
-    id: edge.id,
-    type: "dependency",
-    source: edge.from_node_id,
-    target: edge.to_node_id,
-    data: { edge },
-  }));
+  return [
+    ...canvas.edges.map((edge) => ({
+      id: edge.id,
+      type: "dependency" as const,
+      source: edge.from_node_id,
+      target: edge.to_node_id,
+      data: { edge },
+    })),
+    ...(canvas.domain_projection?.edges ?? []).map((edge) => ({
+      id: edge.id,
+      type: "domain" as const,
+      source: edge.source,
+      target: edge.target,
+      data: { edge },
+    })),
+  ];
 }
 
 export function nodeToFlowNode(node: MediaNode): CanvasFlowNode {
@@ -35,6 +45,23 @@ export function nodeToFlowNode(node: MediaNode): CanvasFlowNode {
     width: size.w,
     height: size.h,
     data: { kind: "media", node },
+  };
+}
+
+export function domainNodeToFlowNode(
+  node: NonNullable<CanvasPayload["domain_projection"]>["nodes"][number],
+): CanvasFlowNode {
+  return {
+    id: node.id,
+    type: "domain",
+    position: { x: node.x, y: node.y },
+    measured: { width: node.w, height: node.h },
+    style: { width: node.w, height: node.h },
+    width: node.w,
+    height: node.h,
+    data: { kind: "domain", node },
+    draggable: false,
+    selectable: false,
   };
 }
 

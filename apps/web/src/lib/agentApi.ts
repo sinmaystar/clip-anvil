@@ -241,7 +241,7 @@ export function fetchAgentThread(workspaceId: string) {
 export function fetchAgentMessages(
   workspaceId: string,
   afterSeq = 0,
-  limit = 50,
+  limit = 1000,
 ) {
   const params = new URLSearchParams({
     after_seq: String(afterSeq),

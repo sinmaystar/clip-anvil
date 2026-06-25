@@ -81,6 +81,31 @@ func TestParseCraftsmanStrategyIgnoresLooseModelAlias(t *testing.T) {
 	}
 }
 
+func TestCraftsmanSystemPromptIncludesReviewerRepairRules(t *testing.T) {
+	prompt := SystemPrompt()
+	for _, required := range []string{
+		"Reviewer",
+		"artifact_issue",
+		"retry_recommendation",
+		"mode=fork_from",
+		"不要直接问用户",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("craftsman prompt missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"M1 阶段",
+		"M2 阶段",
+		"TODO",
+		"TBD",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("craftsman prompt contains stale placeholder wording %q", forbidden)
+		}
+	}
+}
+
 func TestVolcengineCraftsmanResponderParsesStreamedStrategy(t *testing.T) {
 	streamer := &fakeCraftsmanArkStreamer{chunks: []*schema.Message{{
 		Content: `{"strategy":"明亮商品特写","preview_prompt":"A bright product close-up"}`,

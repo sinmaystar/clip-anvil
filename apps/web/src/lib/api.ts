@@ -115,6 +115,40 @@ export interface CanvasPayload {
   nodes: MediaNode[];
   edges: MediaEdge[];
   groups: MediaGroup[];
+  domain_projection?: DomainCanvasProjection;
+}
+
+export interface DomainCanvasProjection {
+  nodes: DomainCanvasNode[];
+  edges: DomainCanvasEdge[];
+}
+
+export interface DomainCanvasNode {
+  id: string;
+  kind:
+    | "creative_brief"
+    | "project_memory"
+    | "key_element"
+    | "key_element_state"
+    | "scene"
+    | "shot"
+    | string;
+  title: string;
+  subtitle?: string;
+  status?: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  meta?: Record<string, string>;
+}
+
+export interface DomainCanvasEdge {
+  id: string;
+  kind: string;
+  source: string;
+  target: string;
+  label?: string;
 }
 
 export interface MediaEdge {
@@ -600,9 +634,25 @@ export function replaceMediaGroupNodes(id: string, node_ids: string[]) {
 }
 
 function normalizeCanvasPayload(payload: CanvasPayload): CanvasPayload {
+  const domainProjection = payload.domain_projection
+    ? {
+        ...payload.domain_projection,
+        nodes: Array.isArray(payload.domain_projection.nodes)
+          ? payload.domain_projection.nodes
+          : [],
+        edges: Array.isArray(payload.domain_projection.edges)
+          ? payload.domain_projection.edges
+          : [],
+      }
+    : undefined;
   return {
     ...payload,
-    groups: payload.groups.map(normalizeMediaGroup),
+    nodes: Array.isArray(payload.nodes) ? payload.nodes : [],
+    edges: Array.isArray(payload.edges) ? payload.edges : [],
+    groups: Array.isArray(payload.groups)
+      ? payload.groups.map(normalizeMediaGroup)
+      : [],
+    domain_projection: domainProjection,
   };
 }
 

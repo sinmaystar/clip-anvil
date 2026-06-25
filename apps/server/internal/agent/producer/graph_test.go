@@ -2,9 +2,11 @@ package producer
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
@@ -75,19 +77,61 @@ func TestProducerGraphCompileCapturesGraphInfo(t *testing.T) {
 	}
 }
 
-func TestProducerGraphExecutesCreateAgentTextNodeTool(t *testing.T) {
-	toolExecutor := &fakeToolExecutor{}
-	registry := mustTestToolRegistry(t, "create_agent_text_node")
+func TestProducerGraphExplicitToolLoopCapturesGraphInfo(t *testing.T) {
+	registry := agenteino.NewGraphInfoRegistry()
+	_, err := NewGraph(GraphConfig{
+		Mode:               ProducerGraphModeExplicitToolLoop,
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "brief"}},
+		Responder:          DeterministicResponder{},
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "create_agent_text_node"),
+		CompileCallbacks:   []compose.GraphCompileCallback{registry.CompileCallback()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, ok := registry.Get("producer_turn")
+	if !ok {
+		t.Fatal("producer graph info was not captured")
+	}
+	for _, node := range []string{"load_context", "prepare_turn_state", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "finalize_response"} {
+		if _, ok := info.Nodes[node]; !ok {
+			t.Fatalf("node %q missing from graph info", node)
+		}
+	}
+	for _, node := range []string{"execute_legacy_tool", "append_legacy_tool_result"} {
+		if _, ok := info.Nodes[node]; ok {
+			t.Fatalf("legacy node %q must not exist in producer graph info", node)
+		}
+	}
+	if !graphInfoHasBranchTarget(info.Branches, "call_model", "prepare_tool_message") {
+		t.Fatalf("branch call_model -> prepare_tool_message missing from graph info: %#v", info.Branches)
+	}
+	if graphInfoHasBranchTarget(info.Branches, "call_model", "execute_legacy_tool") {
+		t.Fatalf("legacy branch call_model -> execute_legacy_tool must not exist: %#v", info.Branches)
+	}
+	if !graphInfoHasEdge(info.Edges, "prepare_tool_message", "execute_tools") {
+		t.Fatalf("edge prepare_tool_message -> execute_tools missing from graph info: %#v", info.Edges)
+	}
+	if !graphInfoHasEdge(info.Edges, "execute_tools", "append_tool_results") {
+		t.Fatalf("edge execute_tools -> append_tool_results missing from graph info: %#v", info.Edges)
+	}
+	if !graphInfoHasEdge(info.Edges, "append_tool_results", "call_model") {
+		t.Fatalf("edge append_tool_results -> call_model missing from graph info: %#v", info.Edges)
+	}
+}
+
+func TestProducerGraphExplicitToolLoopExecutesToolWithEinoToolNode(t *testing.T) {
+	registry := mustTestNativeToolRegistry(t, "create_agent_text_node")
+	responder := &recordingResponder{outputs: []ProducerTurnOutput{
+		nativeToolCallOutput("call-text", "create_agent_text_node", `{"title":"brief","text":"hello"}`),
+		{AssistantText: "已保存 brief。"},
+	}}
 	graph, err := NewGraph(GraphConfig{
-		Loader: fakeContextLoader{
-			context: ProducerContext{LatestUserText: "保存 brief"},
-		},
-		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
-			nativeToolCallOutput("call-text", "create_agent_text_node", `{"title":"brief","text":"hello"}`),
-			{AssistantText: "已保存 brief。"},
-		}},
-		ToolExecutor: toolExecutor,
-		ToolRegistry: registry,
+		Mode:               ProducerGraphModeExplicitToolLoop,
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "保存 brief"}},
+		Responder:          responder,
+		NativeToolRegistry: registry,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,15 +145,158 @@ func TestProducerGraphExecutesCreateAgentTextNodeTool(t *testing.T) {
 	if out.AssistantText != "已保存 brief。" {
 		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
-	if toolExecutor.calledName != "create_agent_text_node" {
-		t.Fatalf("called tool = %q", toolExecutor.calledName)
+	if len(responder.contexts) != 2 {
+		t.Fatalf("contexts len = %d, want 2", len(responder.contexts))
+	}
+	sameTurn := responder.contexts[1].SameTurnMessages
+	if len(sameTurn) != 2 {
+		t.Fatalf("same-turn messages = %#v", sameTurn)
+	}
+	if sameTurn[0].Role != "assistant" || sameTurn[0].ToolName != "create_agent_text_node" || sameTurn[0].ToolCallID == "" {
+		t.Fatalf("same-turn assistant = %#v", sameTurn[0])
+	}
+	if sameTurn[1].Role != "tool" || sameTurn[1].ToolCallID != sameTurn[0].ToolCallID || !strings.Contains(sameTurn[1].Content, `"ok":true`) {
+		t.Fatalf("same-turn tool result = %#v", sameTurn[1])
+	}
+}
+
+func TestProducerGraphExplicitToolLoopReturnsSameTurnToolTrace(t *testing.T) {
+	registry := mustTestNativeToolRegistry(t, "create_agent_text_node")
+	graph, err := NewGraph(GraphConfig{
+		Mode:   ProducerGraphModeExplicitToolLoop,
+		Loader: fakeContextLoader{context: ProducerContext{LatestUserText: "保存 brief"}},
+		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
+			nativeToolCallOutput("call-text", "create_agent_text_node", `{"title":"brief","text":"hello"}`),
+			{AssistantText: "已保存 brief。"},
+		}},
+		NativeToolRegistry: registry,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{MaxToolCalls: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(out.SameTurnMessages) != 2 {
+		t.Fatalf("same-turn trace = %#v", out.SameTurnMessages)
+	}
+	if out.SameTurnMessages[0].MessageType != "tool_call" || out.SameTurnMessages[0].ToolName != "create_agent_text_node" {
+		t.Fatalf("tool call trace = %#v", out.SameTurnMessages[0])
+	}
+	if out.SameTurnMessages[1].MessageType != "tool_result" || out.SameTurnMessages[1].ToolCallID != out.SameTurnMessages[0].ToolCallID {
+		t.Fatalf("tool result trace = %#v", out.SameTurnMessages[1])
+	}
+}
+
+func TestProducerGraphExplicitToolLoopAllowsMultipleToolIterations(t *testing.T) {
+	registry := mustTestNativeToolRegistry(t, "create_agent_text_node")
+	responder := &sequenceResponder{outputs: []ProducerTurnOutput{
+		nativeToolCallOutput("call-a", "create_agent_text_node", `{"title":"a","text":"a"}`),
+		nativeToolCallOutput("call-b", "create_agent_text_node", `{"title":"b","text":"b"}`),
+		nativeToolCallOutput("call-c", "create_agent_text_node", `{"title":"c","text":"c"}`),
+		nativeToolCallOutput("call-d", "create_agent_text_node", `{"title":"d","text":"d"}`),
+		{AssistantText: "四个工具调用已完成。"},
+	}}
+	graph, err := NewGraph(GraphConfig{
+		Mode:               ProducerGraphModeExplicitToolLoop,
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "多步写入"}},
+		Responder:          responder,
+		NativeToolRegistry: registry,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{MaxToolCalls: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.AssistantText != "四个工具调用已完成。" {
+		t.Fatalf("assistant text = %q", out.AssistantText)
+	}
+}
+
+func TestProducerGraphExplicitToolLoopNativeDecisionInterruptResumes(t *testing.T) {
+	registry := mustTestNativeToolRegistryWithTools(t, &testNativeTool{name: "request_user_decision", interrupt: true})
+	responder := &sequenceResponder{outputs: []ProducerTurnOutput{
+		nativeToolCallOutput("call-decision", "request_user_decision", `{"title":"确认","message":"继续吗"}`),
+		{AssistantText: "已根据你的选择继续。"},
+	}}
+	graph, err := NewGraph(GraphConfig{
+		Mode:               ProducerGraphModeExplicitToolLoop,
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "需要决策"}},
+		Responder:          responder,
+		NativeToolRegistry: registry,
+		CheckPointStore:    newMemoryCheckpointStore(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointKey := agenteino.CheckpointKey("producer_turn", uuidWithByte(1), uuidWithByte(2), uuidWithByte(3))
+	input := ProducerTurnInput{WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3), MaxToolCalls: 50}
+
+	_, err = graph.Run(context.Background(), input, agenteino.RunOptions{CheckPointID: checkpointKey})
+	if err == nil {
+		t.Fatal("expected graph interrupt")
+	}
+	interruptInfo, ok := compose.ExtractInterruptInfo(err)
+	if !ok || len(interruptInfo.InterruptContexts) == 0 {
+		t.Fatalf("interrupt info = %#v err=%v", interruptInfo, err)
+	}
+
+	out, err := graph.Run(context.Background(), input, agenteino.RunOptions{
+		CheckPointID: checkpointKey,
+		ResumeData: map[string]any{
+			interruptInfo.InterruptContexts[0].ID: map[string]any{"selected_option_id": "continue"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.AssistantText != "已根据你的选择继续。" {
+		t.Fatalf("assistant text = %q", out.AssistantText)
+	}
+}
+
+func TestProducerGraphExecutesCreateAgentTextNodeTool(t *testing.T) {
+	tool := &testNativeTool{name: "create_agent_text_node"}
+	registry := mustTestNativeToolRegistryWithTools(t, tool)
+	graph, err := NewGraph(GraphConfig{
+		Mode: ProducerGraphModeExplicitToolLoop,
+		Loader: fakeContextLoader{
+			context: ProducerContext{LatestUserText: "保存 brief"},
+		},
+		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
+			nativeToolCallOutput("call-text", "create_agent_text_node", `{"title":"brief","text":"hello"}`),
+			{AssistantText: "已保存 brief。"},
+		}},
+		NativeToolRegistry: registry,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{MaxToolCalls: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if out.AssistantText != "已保存 brief。" {
+		t.Fatalf("assistant text = %q", out.AssistantText)
+	}
+	if tool.calledName != "create_agent_text_node" {
+		t.Fatalf("called tool = %q", tool.calledName)
 	}
 }
 
 func TestProducerGraphExecutesUpdateStoryboardTool(t *testing.T) {
-	toolExecutor := &fakeToolExecutor{}
-	registry := mustTestToolRegistry(t, "update_storyboard")
+	tool := &testNativeTool{name: "update_storyboard"}
+	registry := mustTestNativeToolRegistryWithTools(t, tool)
 	graph, err := NewGraph(GraphConfig{
+		Mode: ProducerGraphModeExplicitToolLoop,
 		Loader: fakeContextLoader{
 			context: ProducerContext{LatestUserText: "拆成两个分镜"},
 		},
@@ -117,8 +304,7 @@ func TestProducerGraphExecutesUpdateStoryboardTool(t *testing.T) {
 			nativeToolCallOutput("call-storyboard", "update_storyboard", `{"intent":"replace","shots":[{"client_key":"shot-01","sort_order":1,"title":"开场钩子"},{"client_key":"shot-02","sort_order":2,"title":"卖点证明"}],"dependencies":[{"from":"shot-01","to":"shot-02","dependency_type":"story_order"}]}`),
 			{AssistantText: "已更新 storyboard。"},
 		}},
-		ToolExecutor: toolExecutor,
-		ToolRegistry: registry,
+		NativeToolRegistry: registry,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -132,23 +318,23 @@ func TestProducerGraphExecutesUpdateStoryboardTool(t *testing.T) {
 	if out.AssistantText != "已更新 storyboard。" {
 		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
-	if toolExecutor.calledName != "update_storyboard" {
-		t.Fatalf("called tool = %q", toolExecutor.calledName)
+	if tool.calledName != "update_storyboard" {
+		t.Fatalf("called tool = %q", tool.calledName)
 	}
 }
 
 func TestProducerGraphNativeDecisionInterruptResumes(t *testing.T) {
-	registry := mustTestToolRegistry(t, "request_user_decision")
+	registry := mustTestNativeToolRegistryWithTools(t, &testNativeTool{name: "request_user_decision", interrupt: true})
 	responder := &sequenceResponder{outputs: []ProducerTurnOutput{
 		nativeToolCallOutput("call-decision", "request_user_decision", `{"title":"确认","message":"继续吗"}`),
 		{AssistantText: "已根据你的选择继续。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
-		Loader:          fakeContextLoader{context: ProducerContext{LatestUserText: "需要决策"}},
-		Responder:       responder,
-		ToolExecutor:    interruptingToolExecutor{},
-		ToolRegistry:    registry,
-		CheckPointStore: newMemoryCheckpointStore(),
+		Mode:               ProducerGraphModeExplicitToolLoop,
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "需要决策"}},
+		Responder:          responder,
+		NativeToolRegistry: registry,
+		CheckPointStore:    newMemoryCheckpointStore(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +366,7 @@ func TestProducerGraphNativeDecisionInterruptResumes(t *testing.T) {
 }
 
 func TestProducerGraphCarriesSameTurnReasoningIntoToolResume(t *testing.T) {
-	registry := mustTestToolRegistry(t, "create_agent_text_node")
+	registry := mustTestNativeToolRegistry(t, "create_agent_text_node")
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
 		{
 			ModelMessage: nativeToolCallMessage("call-text", "create_agent_text_node", `{"title":"brief","text":"hello"}`),
@@ -191,10 +377,10 @@ func TestProducerGraphCarriesSameTurnReasoningIntoToolResume(t *testing.T) {
 		{AssistantText: "已保存 brief。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
-		Loader:       fakeContextLoader{context: ProducerContext{LatestUserText: "保存 brief"}},
-		Responder:    responder,
-		ToolExecutor: &echoToolExecutor{},
-		ToolRegistry: registry,
+		Mode:               ProducerGraphModeExplicitToolLoop,
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "保存 brief"}},
+		Responder:          responder,
+		NativeToolRegistry: registry,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -221,15 +407,15 @@ func TestProducerGraphCarriesSameTurnReasoningIntoToolResume(t *testing.T) {
 }
 
 func TestProducerGraphStopsAtMaxToolCalls(t *testing.T) {
-	registry := mustTestToolRegistry(t, "create_agent_text_node")
+	registry := mustTestNativeToolRegistry(t, "create_agent_text_node")
 	graph, err := NewGraph(GraphConfig{
 		Loader: fakeContextLoader{context: ProducerContext{LatestUserText: "loop"}},
 		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
 			nativeToolCallOutput("call-a", "create_agent_text_node", `{"title":"a","text":"b"}`),
 			nativeToolCallOutput("call-b", "create_agent_text_node", `{"title":"c","text":"d"}`),
 		}},
-		ToolExecutor: &fakeToolExecutor{},
-		ToolRegistry: registry,
+		Mode:               ProducerGraphModeExplicitToolLoop,
+		NativeToolRegistry: registry,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -241,33 +427,9 @@ func TestProducerGraphStopsAtMaxToolCalls(t *testing.T) {
 	}
 }
 
-func TestProducerGraphUsesLegacyToolParserOnlyWhenEnabled(t *testing.T) {
-	toolExecutor := &fakeToolExecutor{}
-	graph, err := NewGraph(GraphConfig{
-		Loader: fakeContextLoader{context: ProducerContext{LatestUserText: "保存 brief"}},
-		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
-			{AssistantText: `{"tool_call":{"name":"create_agent_text_node","arguments":{"title":"brief","text":"hello"}}}`},
-			{AssistantText: "已保存 brief。"},
-		}},
-		ToolExecutor:                   toolExecutor,
-		EnableLegacyToolParserFallback: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := graph.Run(context.Background(), ProducerTurnInput{MaxToolCalls: 50})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.AssistantText != "已保存 brief。" {
-		t.Fatalf("assistant text = %q", out.AssistantText)
-	}
-	if !out.UsedLegacyToolParser {
-		t.Fatal("UsedLegacyToolParser = false, want true")
-	}
-	if toolExecutor.calledName != "create_agent_text_node" {
-		t.Fatalf("called tool = %q", toolExecutor.calledName)
+func TestProducerDefaultMaxToolCallsIsLargeDuringArchitectureIteration(t *testing.T) {
+	if got := maxProducerToolCalls(0); got != 1000 {
+		t.Fatalf("maxProducerToolCalls(0) = %d, want 1000", got)
 	}
 }
 
@@ -296,6 +458,40 @@ func TestProducerGraphExplainsReasoningOnlyResponse(t *testing.T) {
 		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
 	if out.Metadata["empty_content_fallback"] != true {
+		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+}
+
+func TestProducerGraphExplicitToolLoopUsesFallbackForEmptyFinalResponse(t *testing.T) {
+	graph, err := NewGraph(GraphConfig{
+		Mode: ProducerGraphModeExplicitToolLoop,
+		Loader: fakeContextLoader{context: ProducerContext{
+			LatestUserText: "现在什么进展了",
+		}},
+		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
+			{
+				AssistantText: "",
+				Metadata: map[string]any{
+					"provider":               "volcengine",
+					"finish_reason":          "stop",
+					"native_tool_call_count": 0,
+				},
+			},
+		}},
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "read_project_context"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{MaxToolCalls: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.AssistantText, "没有收到可展示") {
+		t.Fatalf("assistant text = %q", out.AssistantText)
+	}
+	if out.Metadata["empty_content_fallback"] != true || out.Metadata["empty_content_without_reasoning"] != true {
 		t.Fatalf("metadata = %#v", out.Metadata)
 	}
 }
@@ -356,13 +552,18 @@ func nativeToolCallMessage(id string, name string, arguments string) *schema.Mes
 	}
 }
 
-func mustTestToolRegistry(t *testing.T, names ...string) *agenttools.Registry {
+func mustTestNativeToolRegistry(t *testing.T, names ...string) *agenttools.NativeRegistry {
 	t.Helper()
-	tools := make([]agenttools.Executor, 0, len(names))
+	tools := make([]agenttools.NativeTool, 0, len(names))
 	for _, name := range names {
-		tools = append(tools, adapterDefinitionTool{name: name})
+		tools = append(tools, &testNativeTool{name: name})
 	}
-	registry, err := agenttools.NewRegistry(tools...)
+	return mustTestNativeToolRegistryWithTools(t, tools...)
+}
+
+func mustTestNativeToolRegistryWithTools(t *testing.T, tools ...agenttools.NativeTool) *agenttools.NativeRegistry {
+	t.Helper()
+	registry, err := agenttools.NewNativeRegistry(tools...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,23 +606,45 @@ func (r *recordingResponder) Respond(_ context.Context, context ProducerContext)
 	return out, nil
 }
 
-type fakeToolExecutor struct {
+type testNativeTool struct {
+	name       string
+	interrupt  bool
 	calledName string
+	calledID   string
 }
 
-func (f *fakeToolExecutor) ExecuteProducerTool(_ context.Context, _ ProducerContext, call ToolCall) (ToolExecutionResult, error) {
-	f.calledName = call.Name
-	return ToolExecutionResult{Result: map[string]any{"ok": true}}, nil
-}
-
-type echoToolExecutor struct{}
-
-func (e *echoToolExecutor) ExecuteProducerTool(_ context.Context, _ ProducerContext, call ToolCall) (ToolExecutionResult, error) {
-	return ToolExecutionResult{
-		Result:     map[string]any{"ok": true},
-		ToolCallID: call.ID,
-		ToolName:   call.Name,
+func (t *testNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{
+		Name: t.name,
+		Desc: "Native test tool.",
 	}, nil
+}
+
+func (t *testNativeTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...einotool.Option) (string, error) {
+	if wasInterrupted, _, state := einotool.GetInterruptState[map[string]any](ctx); wasInterrupted {
+		if isResumeTarget, hasData, data := einotool.GetResumeContext[map[string]any](ctx); isResumeTarget {
+			if hasData {
+				raw, _ := json.Marshal(data)
+				return "已收到用户决策：" + string(raw), nil
+			}
+			return "已收到用户决策。", nil
+		}
+		return "", einotool.StatefulInterrupt(ctx, map[string]any{"tool_name": t.name}, state)
+	}
+	runtime, _ := agenttools.NativeRuntimeFromContext(ctx)
+	t.calledName = t.name
+	t.calledID = runtime.ToolCallID
+	if t.interrupt {
+		return "", einotool.StatefulInterrupt(ctx, map[string]any{
+			"tool_name":    t.name,
+			"tool_call_id": runtime.ToolCallID,
+		}, map[string]any{
+			"tool_name":    t.name,
+			"tool_call_id": runtime.ToolCallID,
+			"arguments":    argumentsInJSON,
+		})
+	}
+	return `{"ok":true}`, nil
 }
 
 type memoryCheckpointStore struct {
@@ -440,4 +663,22 @@ func (s *memoryCheckpointStore) Get(_ context.Context, key string) ([]byte, bool
 func (s *memoryCheckpointStore) Set(_ context.Context, key string, value []byte) error {
 	s.values[key] = append([]byte(nil), value...)
 	return nil
+}
+
+func graphInfoHasEdge(edges map[string][]string, from string, to string) bool {
+	for _, value := range edges[from] {
+		if value == to {
+			return true
+		}
+	}
+	return false
+}
+
+func graphInfoHasBranchTarget(branches map[string][]compose.GraphBranch, from string, to string) bool {
+	for _, branch := range branches[from] {
+		if branch.GetEndNode()[to] {
+			return true
+		}
+	}
+	return false
 }

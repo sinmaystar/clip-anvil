@@ -35,10 +35,11 @@ type cameraResponse struct {
 }
 
 type canvasResponse struct {
-	Camera cameraResponse        `json:"camera"`
-	Nodes  []canvasNodeResponse  `json:"nodes"`
-	Edges  []mediaEdgeResponse   `json:"edges"`
-	Groups []canvasGroupResponse `json:"groups"`
+	Camera           cameraResponse                 `json:"camera"`
+	Nodes            []canvasNodeResponse           `json:"nodes"`
+	Edges            []mediaEdgeResponse            `json:"edges"`
+	Groups           []canvasGroupResponse          `json:"groups"`
+	DomainProjection domainCanvasProjectionResponse `json:"domain_projection"`
 }
 
 type canvasNodeResponse struct {
@@ -160,12 +161,18 @@ func (h *CanvasHandler) GetCanvas(ctx context.Context, c *app.RequestContext) {
 		writeError(c, consts.StatusInternalServerError, "failed to sign production preview")
 		return
 	}
+	domainProjection, err := buildDomainCanvasProjection(ctx, h.queries, workspaceID)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to load domain projection")
+		return
+	}
 
 	c.JSON(consts.StatusOK, canvasResponse{
-		Camera: toCameraResponse(canvas),
-		Nodes:  nodeResponses,
-		Edges:  toMediaEdgeResponses(edges),
-		Groups: toCanvasGroupResponses(groups, nodes),
+		Camera:           toCameraResponse(canvas),
+		Nodes:            nodeResponses,
+		Edges:            toMediaEdgeResponses(edges),
+		Groups:           toCanvasGroupResponses(groups, nodes),
+		DomainProjection: domainProjection,
 	})
 }
 

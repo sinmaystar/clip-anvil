@@ -63,6 +63,52 @@ func TestVolcengineModelResponderStreamsDeltasAndReturnsFinalText(t *testing.T) 
 	}
 }
 
+func TestProducerSystemPromptContainsDomainConcepts(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{ProductionStateText: "已有 2 个分镜。"})
+	for _, want := range []string{
+		"ClipAnvil 领域概念",
+		"ProjectMemory 是项目创作宪法",
+		"KeyElement 是视频中需要保持一致或复用的关键元素",
+		"Storyboard 不是一段纯文本脚本",
+		"不要在 Producer 字段中写 Seedance",
+		"当前 Project Context",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q", want)
+		}
+	}
+}
+
+func TestProducerSystemPromptEnablesCurrentGenerationAndReviewerGate(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{})
+	for _, forbidden := range []string{
+		"M1 阶段只记录需求",
+		"M1 可用工具",
+		"M1 阶段不要调度 Craftsman",
+		"在 M2 调度",
+		"然后在 M2 调用",
+		"M2 可用生成调度工具",
+		"## M2 生成调度能力",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt still contains milestone-only wording %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"当前生成调度能力",
+		"dispatch_craftsman",
+		"dispatch_reviewer",
+		"Reviewer 是质量 gate",
+		"Reviewer 不直接重跑生成",
+		"select_artifact_version",
+		"不要寻找或虚构 compile_render_plan",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("prompt missing current capability wording %q", required)
+		}
+	}
+}
+
 func TestVolcengineModelResponderUsesSelectedModel(t *testing.T) {
 	streamer := &fakeArkStreamer{chunks: []*schema.Message{{Content: "ok"}}}
 	var gotModel string
@@ -387,7 +433,7 @@ func TestProducerPromptMessagesUseMarkdownBlocks(t *testing.T) {
 	}
 }
 
-func TestProducerPromptMessagesIncludesProductionStateSummary(t *testing.T) {
+func TestProducerPromptMessagesIncludesProjectContext(t *testing.T) {
 	messages := producerPromptMessages(ProducerContext{
 		LatestUserText:      "创建分镜",
 		ProductionStateText: "Storyboard\n- 当前还没有 storyboard。",
@@ -395,9 +441,9 @@ func TestProducerPromptMessagesIncludesProductionStateSummary(t *testing.T) {
 	if len(messages) != 2 {
 		t.Fatalf("messages len = %d, want 2", len(messages))
 	}
-	if !strings.Contains(messages[0].Content, "Production State Summary") ||
+	if !strings.Contains(messages[0].Content, "当前 Project Context") ||
 		!strings.Contains(messages[0].Content, "当前还没有 storyboard") ||
-		!strings.Contains(messages[0].Content, "update_storyboard") {
+		!strings.Contains(messages[0].Content, "upsert_storyboard") {
 		t.Fatalf("system prompt = %q", messages[0].Content)
 	}
 }
@@ -435,7 +481,7 @@ func TestProducerPromptMessagesIncludesSameTurnToolReasoningPassback(t *testing.
 			{
 				Role:             "assistant",
 				MessageType:      "tool_call",
-				Content:          `{"tool_call":{"name":"read_workspace_context","arguments":{}}}`,
+				Content:          "调用 read_workspace_context",
 				ReasoningContent: "需要先读取上下文",
 			},
 			{
@@ -458,6 +504,45 @@ func TestProducerPromptMessagesIncludesSameTurnToolReasoningPassback(t *testing.
 	tool := messages[3]
 	if tool.Role != schema.Tool || tool.ToolCallID != "call-1" || tool.ToolName != "read_workspace_context" {
 		t.Fatalf("tool result = %#v", tool)
+	}
+}
+
+func TestProducerPromptMessagesRebuildsHistoricalToolCallAndResult(t *testing.T) {
+	userContent := mustUserContent(t, uimessage.UserMessageInput{Text: "继续检查状态"})
+	messages := producerPromptMessages(ProducerContext{
+		Messages: []db.AgentMessage{
+			{Role: "user", MessageType: "text", Content: userContent},
+			{
+				Role:        "assistant",
+				MessageType: "tool_call",
+				Content:     []byte(`{"text":"调用 read_project_context"}`),
+				RawMessage:  []byte(`{"tool_call_id":"call-read","tool_name":"read_project_context","arguments":{"include":["memory"]}}`),
+			},
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				Content:     []byte(`{"text":"项目上下文：机场场景 needs_reference"}`),
+				RawMessage:  []byte(`{"tool_call_id":"call-read","tool_name":"read_project_context","result_text":"项目上下文：机场场景 needs_reference"}`),
+			},
+		},
+	})
+
+	if len(messages) != 4 {
+		t.Fatalf("messages len = %d, want 4", len(messages))
+	}
+	assistant := messages[2]
+	if assistant.Role != schema.Assistant || len(assistant.ToolCalls) != 1 {
+		t.Fatalf("historical tool call = %#v", assistant)
+	}
+	if assistant.ToolCalls[0].ID != "call-read" || assistant.ToolCalls[0].Function.Name != "read_project_context" {
+		t.Fatalf("historical tool call function = %#v", assistant.ToolCalls[0])
+	}
+	tool := messages[3]
+	if tool.Role != schema.Tool || tool.ToolCallID != "call-read" || tool.ToolName != "read_project_context" {
+		t.Fatalf("historical tool result = %#v", tool)
+	}
+	if !strings.Contains(tool.Content, "needs_reference") {
+		t.Fatalf("historical tool result content = %q", tool.Content)
 	}
 }
 
@@ -539,7 +624,7 @@ func TestVolcengineModelResponderDiagnosticsTrackReasoningPassback(t *testing.T)
 			{Role: "user", MessageType: "text", Content: mustUserContent(t, uimessage.UserMessageInput{Text: "读取画布"})},
 		},
 		SameTurnMessages: []ProducerSameTurnMessage{
-			{Role: "assistant", MessageType: "tool_call", Content: `{"tool_call":{"name":"read_workspace_context","arguments":{}}}`, ReasoningContent: "需要先读取上下文"},
+			{Role: "assistant", MessageType: "tool_call", Content: "调用 read_workspace_context", ReasoningContent: "需要先读取上下文"},
 			{Role: "tool", MessageType: "tool_result", ToolCallID: "call-1", ToolName: "read_workspace_context", Content: `{"ok":true}`},
 		},
 	})

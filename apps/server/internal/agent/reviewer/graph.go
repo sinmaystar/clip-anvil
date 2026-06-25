@@ -11,6 +11,7 @@ import (
 
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -34,16 +35,18 @@ type VersionSelector interface {
 }
 
 type GraphConfig struct {
-	Loader           Loader
-	Responder        ModelResponder
-	Runtime          Runtime
-	Store            ReviewStore
-	Selector         VersionSelector
-	RetryDispatcher  RetryDispatcher
-	Dependency       DependencyNotifier
-	Policy           ReviewPolicy
-	CheckPointStore  compose.CheckPointStore
-	CompileCallbacks []compose.GraphCompileCallback
+	Loader             Loader
+	Responder          ModelResponder
+	ToolResponder      ToolResponder
+	NativeToolRegistry *agenttools.NativeRegistry
+	Runtime            Runtime
+	Store              ReviewStore
+	Selector           VersionSelector
+	RetryDispatcher    RetryDispatcher
+	Dependency         DependencyNotifier
+	Policy             ReviewPolicy
+	CheckPointStore    compose.CheckPointStore
+	CompileCallbacks   []compose.GraphCompileCallback
 }
 
 type Graph struct {
@@ -51,6 +54,12 @@ type Graph struct {
 }
 
 func NewGraph(config GraphConfig) (*Graph, error) {
+	if config.NativeToolRegistry != nil || config.ToolResponder != nil {
+		if config.Loader == nil || config.ToolResponder == nil || config.NativeToolRegistry == nil {
+			return nil, ErrInvalidConfig
+		}
+		return newNativeToolLoopGraph(config)
+	}
 	if config.Loader == nil || config.Responder == nil || config.Runtime == nil || config.Store == nil {
 		return nil, ErrInvalidConfig
 	}
@@ -121,6 +130,10 @@ func runReview(ctx context.Context, config GraphConfig, reviewContext Context) (
 	}
 	provider, _ := metadata["provider"].(string)
 	modelID, _ := metadata["model_id"].(string)
+	policy := config.Policy
+	if policy.OverallThreshold <= 0 {
+		policy = DefaultReviewPolicyForTask(reviewTaskForTargetPhase(taskInput.TargetPhase))
+	}
 
 	_, _ = config.Runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: input.WorkspaceID,
@@ -140,17 +153,18 @@ func runReview(ctx context.Context, config GraphConfig, reviewContext Context) (
 		ReviewerTaskID:       input.TaskID,
 		ParentReviewRecordID: parentReviewID(taskInput.ParentReviewRecordID),
 		TargetPhase:          taskInput.TargetPhase,
+		ReviewTask:           reviewTaskForTargetPhase(taskInput.TargetPhase),
+		TargetObjectType:     "artifact_version",
+		TargetObjectID:       reviewContext.Version.ID,
+		RenderPlanID:         pgtype.UUID{},
 		AttemptNo:            attemptNo,
 		MaxAttempts:          maxAttempts,
 		ModelProvider:        strings.TrimSpace(provider),
 		ModelID:              strings.TrimSpace(modelID),
+		RequiredAxes:         mustJSON(policy.RequiredAxes),
 	})
 	if err != nil {
 		return GraphOutput{}, err
-	}
-	policy := config.Policy
-	if policy.OverallThreshold <= 0 {
-		policy = DefaultReviewPolicy()
 	}
 	decision, err := ValidateRubric(result, policy)
 	if err != nil {
@@ -170,6 +184,7 @@ func runReview(ctx context.Context, config GraphConfig, reviewContext Context) (
 		Rubric:              rubricJSON,
 		Critique:            strings.TrimSpace(result.Critique),
 		RetryRecommendation: retryJSON,
+		Escalation:          mustJSON(map[string]any{}),
 	})
 	if err != nil {
 		return GraphOutput{}, err
@@ -295,6 +310,19 @@ func parentReviewID(value string) pgtype.UUID {
 
 func CheckpointKey(workspaceID, threadID, taskID pgtype.UUID) string {
 	return fmt.Sprintf("reviewer:%s:%s:%s", uuidString(workspaceID), uuidString(threadID), uuidString(taskID))
+}
+
+func reviewTaskForTargetPhase(phase string) string {
+	switch phase {
+	case TargetPhaseShotVideo:
+		return ReviewTaskShotVideo
+	case TargetPhaseFinalVideo:
+		return ReviewTaskFinalVideo
+	case TargetPhasePreRenderPlan:
+		return ReviewTaskPreRenderPlan
+	default:
+		return ReviewTaskPreviewImage
+	}
 }
 
 func mustJSON(value any) []byte {

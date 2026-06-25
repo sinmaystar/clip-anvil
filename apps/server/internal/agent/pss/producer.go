@@ -3,11 +3,13 @@ package pss
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -16,6 +18,11 @@ import (
 type Store interface {
 	GetWorkspaceByID(ctx context.Context, id pgtype.UUID) (db.Workspace, error)
 	ListMediaNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error)
+	GetActiveCreativeBriefByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (db.CreativeBrief, error)
+	GetActiveProjectMemoryByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (db.ProjectMemory, error)
+	ListActiveKeyElementsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.KeyElement, error)
+	ListActiveKeyElementStatesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.KeyElementState, error)
+	ListActiveScenesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.Scene, error)
 	ListActiveShotsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.Shot, error)
 	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
 	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
@@ -23,6 +30,7 @@ type Store interface {
 	ListGenerationJobsByNode(ctx context.Context, nodeID pgtype.UUID) ([]db.GenerationJob, error)
 	ListArtifactVersionsByNode(ctx context.Context, nodeID pgtype.UUID) ([]db.ArtifactVersion, error)
 	ListReviewRecordsByWorkspace(ctx context.Context, params db.ListReviewRecordsByWorkspaceParams) ([]db.ReviewRecord, error)
+	ListOpenArtifactIssuesByWorkspace(ctx context.Context, params db.ListOpenArtifactIssuesByWorkspaceParams) ([]db.ArtifactIssue, error)
 }
 
 type Builder struct {
@@ -47,6 +55,26 @@ func (b *Builder) BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID)
 		return ProducerPSS{}, err
 	}
 	nodes, err := b.store.ListMediaNodesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return ProducerPSS{}, err
+	}
+	brief, hasBrief, err := b.activeBrief(ctx, workspaceID)
+	if err != nil {
+		return ProducerPSS{}, err
+	}
+	memory, hasMemory, err := b.activeMemory(ctx, workspaceID)
+	if err != nil {
+		return ProducerPSS{}, err
+	}
+	elements, err := b.store.ListActiveKeyElementsByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return ProducerPSS{}, err
+	}
+	elementStates, err := b.store.ListActiveKeyElementStatesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return ProducerPSS{}, err
+	}
+	scenes, err := b.store.ListActiveScenesByWorkspace(ctx, workspaceID)
 	if err != nil {
 		return ProducerPSS{}, err
 	}
@@ -88,28 +116,58 @@ func (b *Builder) BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID)
 	if err != nil {
 		return ProducerPSS{}, err
 	}
+	issues, err := b.store.ListOpenArtifactIssuesByWorkspace(ctx, db.ListOpenArtifactIssuesByWorkspaceParams{
+		WorkspaceID: workspaceID,
+		Limit:       100,
+	})
+	if err != nil {
+		return ProducerPSS{}, err
+	}
 
 	sort.Slice(shots, func(i, j int) bool { return shots[i].SortOrder < shots[j].SortOrder })
+	sort.Slice(scenes, func(i, j int) bool { return scenes[i].SortOrder < scenes[j].SortOrder })
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Title < nodes[j].Title })
 
 	dependencyStatus := dependencyStatusSummaries(events, shots)
-	text := renderPSS(workspace, nodes, shots, deps, tasks, events, previewByShot, shotVideoByShot, finalOutputs, reviews, dependencyStatus)
+	text := renderPSS(workspace, nodes, briefPointer(brief, hasBrief), memoryPointer(memory, hasMemory), elements, elementStates, scenes, shots, deps, tasks, events, previewByShot, shotVideoByShot, finalOutputs, reviews, issues, dependencyStatus)
+	structured := map[string]any{
+		"workspace":         workspaceSummary(workspace),
+		"creative_brief":    creativeBriefSummary(brief, hasBrief),
+		"project_memory":    projectMemorySummary(memory, hasMemory),
+		"key_elements":      keyElementSummaries(elements, elementStates),
+		"scenes":            sceneSummaries(scenes),
+		"source_materials":  nodeSummaries(nodes),
+		"nodes":             nodeSummaries(nodes),
+		"shots":             shotSummaries(shots, previewByShot),
+		"shot_videos":       shotVideoSummaries(shotVideoByShot, shots),
+		"final_outputs":     finalOutputSummaries(finalOutputs),
+		"shot_dependencies": dependencySummaries(deps, shots),
+		"dependency_status": dependencyStatus,
+		"reviews":           reviewSummaries(reviews, shots),
+		"open_issues":       issueSummaries(issues),
+		"pending_decisions": eventSummaries(events),
+		"running_tasks":     taskSummaries(tasks),
+	}
 	return ProducerPSS{
-		Text: text,
-		Structured: map[string]any{
-			"workspace":         workspaceSummary(workspace),
-			"source_materials":  nodeSummaries(nodes),
-			"nodes":             nodeSummaries(nodes),
-			"shots":             shotSummaries(shots, previewByShot),
-			"shot_videos":       shotVideoSummaries(shotVideoByShot, shots),
-			"final_outputs":     finalOutputSummaries(finalOutputs),
-			"shot_dependencies": dependencySummaries(deps, shots),
-			"dependency_status": dependencyStatus,
-			"reviews":           reviewSummaries(reviews, shots),
-			"pending_decisions": eventSummaries(events),
-			"running_tasks":     taskSummaries(tasks),
-		},
+		Text:       text,
+		Structured: structured,
 	}, nil
+}
+
+func (b *Builder) activeBrief(ctx context.Context, workspaceID pgtype.UUID) (db.CreativeBrief, bool, error) {
+	brief, err := b.store.GetActiveCreativeBriefByWorkspace(ctx, workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.CreativeBrief{}, false, nil
+	}
+	return brief, err == nil, err
+}
+
+func (b *Builder) activeMemory(ctx context.Context, workspaceID pgtype.UUID) (db.ProjectMemory, bool, error) {
+	memory, err := b.store.GetActiveProjectMemoryByWorkspace(ctx, workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.ProjectMemory{}, false, nil
+	}
+	return memory, err == nil, err
 }
 
 type previewNodeState struct {
@@ -188,11 +246,64 @@ func (b *Builder) finalOutputNodes(ctx context.Context, nodes []db.MediaNode) ([
 	return out, nil
 }
 
-func renderPSS(workspace db.Workspace, nodes []db.MediaNode, shots []db.Shot, deps []db.ShotDependency, tasks []db.AgentTask, events []db.AgentEvent, previewByShot map[pgtype.UUID][]previewNodeState, shotVideoByShot map[pgtype.UUID][]previewNodeState, finalOutputs []previewNodeState, reviews []db.ReviewRecord, dependencyStatus []map[string]any) string {
+func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeBrief, memory *db.ProjectMemory, elements []db.KeyElement, elementStates []db.KeyElementState, scenes []db.Scene, shots []db.Shot, deps []db.ShotDependency, tasks []db.AgentTask, events []db.AgentEvent, previewByShot map[pgtype.UUID][]previewNodeState, shotVideoByShot map[pgtype.UUID][]previewNodeState, finalOutputs []previewNodeState, reviews []db.ReviewRecord, issues []db.ArtifactIssue, dependencyStatus []map[string]any) string {
 	var b strings.Builder
 	b.WriteString("当前项目\n")
 	b.WriteString("- Workspace: " + workspace.Name + "\n")
 	b.WriteString("- Mode: " + string(workspace.Mode) + "\n\n")
+
+	b.WriteString("CreativeBrief\n")
+	if brief == nil {
+		b.WriteString("- 无 active brief\n")
+	} else {
+		fmt.Fprintf(&b, "- %s, status=%s\n", brief.Title, brief.Status)
+		if strings.TrimSpace(brief.Concept) != "" {
+			b.WriteString("  Concept: " + strings.TrimSpace(brief.Concept) + "\n")
+		}
+		if strings.TrimSpace(brief.VisualStyle) != "" {
+			b.WriteString("  VisualStyle: " + strings.TrimSpace(brief.VisualStyle) + "\n")
+		}
+	}
+	b.WriteString("\nProjectMemory\n")
+	if memory == nil {
+		b.WriteString("- 无 active memory\n")
+	} else {
+		fmt.Fprintf(&b, "- v%d, status=%s\n", memory.Version, memory.Status)
+		if strings.TrimSpace(memory.CoreIntent) != "" {
+			b.WriteString("  CoreIntent: " + strings.TrimSpace(memory.CoreIntent) + "\n")
+		}
+		if strings.TrimSpace(memory.Soul) != "" {
+			b.WriteString("  Soul: " + strings.TrimSpace(memory.Soul) + "\n")
+		}
+	}
+	b.WriteString("\n关键元素\n")
+	if len(elements) == 0 {
+		b.WriteString("- 无\n")
+	} else {
+		statesByElement := map[pgtype.UUID][]db.KeyElementState{}
+		for _, state := range elementStates {
+			statesByElement[state.KeyElementID] = append(statesByElement[state.KeyElementID], state)
+		}
+		for _, element := range elements {
+			fmt.Fprintf(&b, "- [%s] %s, type=%s, status=%s\n", element.ClientKey, element.Name, element.ElementType, element.Status)
+			for _, state := range statesByElement[element.ID] {
+				defaultFlag := ""
+				if state.IsDefault {
+					defaultFlag = ", default"
+				}
+				fmt.Fprintf(&b, "  State: [%s] %s, reference=%s%s\n", state.ClientKey, state.Label, state.ReferenceStatus, defaultFlag)
+			}
+		}
+	}
+	b.WriteString("\n场景\n")
+	if len(scenes) == 0 {
+		b.WriteString("- 无\n")
+	} else {
+		for _, scene := range scenes {
+			fmt.Fprintf(&b, "- [%s] %s, location=%s, mood=%s\n", scene.ClientKey, scene.Title, scene.Location, scene.Mood)
+		}
+	}
+	b.WriteString("\n")
 
 	b.WriteString("用户素材\n")
 	if len(nodes) == 0 {
@@ -339,6 +450,17 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, shots []db.Shot, de
 			}
 		}
 	}
+	b.WriteString("\n开放问题\n")
+	if len(issues) == 0 {
+		b.WriteString("- 无\n")
+	} else {
+		for _, issue := range issues {
+			fmt.Fprintf(&b, "- Issue: %s %s %s -> %s\n", issue.Dimension, issue.Severity, issue.Title, issue.SuggestedFix)
+			if strings.TrimSpace(issue.FixHint) != "" {
+				b.WriteString("  FixHint: " + strings.TrimSpace(issue.FixHint) + "\n")
+			}
+		}
+	}
 	b.WriteString("\n待处理决策\n")
 	if len(events) == 0 {
 		b.WriteString("- 无\n")
@@ -360,6 +482,94 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, shots []db.Shot, de
 
 func workspaceSummary(workspace db.Workspace) map[string]any {
 	return map[string]any{"id": uuidString(workspace.ID), "name": workspace.Name, "mode": string(workspace.Mode)}
+}
+
+func briefPointer(brief db.CreativeBrief, ok bool) *db.CreativeBrief {
+	if !ok {
+		return nil
+	}
+	return &brief
+}
+
+func memoryPointer(memory db.ProjectMemory, ok bool) *db.ProjectMemory {
+	if !ok {
+		return nil
+	}
+	return &memory
+}
+
+func creativeBriefSummary(brief db.CreativeBrief, ok bool) map[string]any {
+	if !ok {
+		return nil
+	}
+	return map[string]any{
+		"id":              uuidString(brief.ID),
+		"title":           brief.Title,
+		"status":          brief.Status,
+		"video_type":      brief.VideoType,
+		"target_audience": brief.TargetAudience,
+		"tone":            brief.Tone,
+		"visual_style":    brief.VisualStyle,
+		"aspect_ratio":    brief.AspectRatio,
+		"language":        brief.Language,
+		"objective":       brief.Objective,
+		"concept":         brief.Concept,
+	}
+}
+
+func projectMemorySummary(memory db.ProjectMemory, ok bool) map[string]any {
+	if !ok {
+		return nil
+	}
+	return map[string]any{
+		"id":          uuidString(memory.ID),
+		"version":     memory.Version,
+		"status":      memory.Status,
+		"core_intent": memory.CoreIntent,
+		"soul":        memory.Soul,
+	}
+}
+
+func keyElementSummaries(elements []db.KeyElement, states []db.KeyElementState) []map[string]any {
+	statesByElement := map[pgtype.UUID][]map[string]any{}
+	for _, state := range states {
+		statesByElement[state.KeyElementID] = append(statesByElement[state.KeyElementID], map[string]any{
+			"id":               uuidString(state.ID),
+			"client_key":       state.ClientKey,
+			"label":            state.Label,
+			"reference_status": state.ReferenceStatus,
+			"is_default":       state.IsDefault,
+		})
+	}
+	out := make([]map[string]any, 0, len(elements))
+	for _, element := range elements {
+		out = append(out, map[string]any{
+			"id":           uuidString(element.ID),
+			"client_key":   element.ClientKey,
+			"element_type": element.ElementType,
+			"name":         element.Name,
+			"status":       element.Status,
+			"states":       statesByElement[element.ID],
+		})
+	}
+	return out
+}
+
+func sceneSummaries(scenes []db.Scene) []map[string]any {
+	out := make([]map[string]any, 0, len(scenes))
+	for _, scene := range scenes {
+		out = append(out, map[string]any{
+			"id":          uuidString(scene.ID),
+			"client_key":  scene.ClientKey,
+			"sort_order":  scene.SortOrder,
+			"title":       scene.Title,
+			"description": scene.Description,
+			"location":    scene.Location,
+			"mood":        scene.Mood,
+			"status":      scene.Status,
+		})
+	}
+	return out
 }
 
 func nodeSummaries(nodes []db.MediaNode) []map[string]any {
@@ -532,6 +742,26 @@ func reviewSummaries(reviews []db.ReviewRecord, shots []db.Shot) []map[string]an
 			summary["overall_score"] = review.OverallScore.Float32
 		}
 		out = append(out, summary)
+	}
+	return out
+}
+
+func issueSummaries(issues []db.ArtifactIssue) []map[string]any {
+	out := make([]map[string]any, 0, len(issues))
+	for _, issue := range issues {
+		out = append(out, map[string]any{
+			"id":                         uuidString(issue.ID),
+			"review_record_id":           uuidString(issue.ReviewRecordID),
+			"dimension":                  issue.Dimension,
+			"severity":                   issue.Severity,
+			"status":                     issue.Status,
+			"target_object_type":         issue.TargetObjectType,
+			"target_object_id":           uuidString(issue.TargetObjectID),
+			"title":                      issue.Title,
+			"suggested_fix":              issue.SuggestedFix,
+			"fix_hint":                   issue.FixHint,
+			"requires_user_confirmation": issue.RequiresUserConfirmation,
+		})
 	}
 	return out
 }

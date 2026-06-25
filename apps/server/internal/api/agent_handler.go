@@ -143,7 +143,7 @@ func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) 
 		return
 	}
 
-	messages, err := h.runtime.ListMessages(ctx, thread.ID, queryInt64(c, "after_seq", 0), queryInt32(c, "limit", 50))
+	messages, err := h.runtime.ListMessages(ctx, thread.ID, queryInt64(c, "after_seq", 0), queryInt32(c, "limit", 1000))
 	if err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to list agent messages")
 		return
@@ -327,10 +327,11 @@ func (h *AgentHandler) PostMessage(ctx context.Context, c *app.RequestContext) {
 	if h.producerRunner != nil {
 		go func() {
 			_ = h.producerRunner.RunTask(context.Background(), agentproducer.RunTaskInput{
-				WorkspaceID:      workspace.ID,
-				ThreadID:         thread.ID,
-				TaskID:           task.ID,
-				TriggerMessageID: msg.ID,
+				WorkspaceID:       workspace.ID,
+				ThreadID:          thread.ID,
+				TaskID:            task.ID,
+				TriggerMessageID:  msg.ID,
+				TriggerMessageSeq: msg.Seq,
 			})
 		}()
 	}

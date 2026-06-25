@@ -224,14 +224,19 @@ export function AgentWorkspacePage() {
   const canvas = canvasQuery.data;
   const selectedNode =
     canvas?.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const agentCanvasNodeCount = canvas
+    ? canvas.groups.length +
+      canvas.nodes.length +
+      (canvas.domain_projection?.nodes.length ?? 0)
+    : 0;
   const modelCapabilitiesQuery = useQuery({
     queryKey: ["model-capabilities"],
     queryFn: fetchModelCapabilities,
   });
   const selectedNodeProductionStateQuery = useQuery({
-    queryKey: ["node", selectedNodeId, "production-state"],
-    queryFn: () => fetchNodeProductionState(selectedNodeId ?? ""),
-    enabled: Boolean(selectedNodeId),
+    queryKey: ["node", selectedNode?.id ?? null, "production-state"],
+    queryFn: () => fetchNodeProductionState(selectedNode?.id ?? ""),
+    enabled: Boolean(selectedNode),
   });
   const selectedReferencePackItemsQuery = useQuery({
     queryKey: ["reference-pack", selectedNodeId, "items"],
@@ -421,13 +426,18 @@ export function AgentWorkspacePage() {
       return;
     }
 
-    const fetchMissingMessages = () => {
-      void fetchAgentMessages(id, lastSeqRef.current, 200).then((response) => {
-        setMessages((current) =>
-          mergeAgentMessages(current, response.messages),
-        );
-      });
-    };
+	const fetchMissingMessages = () => {
+		void fetchAgentMessages(id, lastSeqRef.current, 1000).then((response) => {
+			setMessages((current) =>
+				mergeAgentMessages(current, response.messages),
+			);
+		});
+	};
+	const refetchAgentCanvas = () => {
+		void queryClient.refetchQueries({
+			queryKey: ["workspace", id, "canvas"],
+		});
+	};
 
     return connectAgentSocket({
       workspaceId: id,
@@ -446,12 +456,13 @@ export function AgentWorkspacePage() {
           setMessages((current) =>
             mergeAgentMessages(current, [event.payload.message]),
           );
-          if (event.type === "agent.message.created") {
-            setStreams((current) =>
-              clearAgentStream(current, event.payload.message.task_id),
-            );
-          }
-        }
+			if (event.type === "agent.message.created") {
+				setStreams((current) =>
+					clearAgentStream(current, event.payload.message.task_id),
+				);
+			}
+			refetchAgentCanvas();
+		}
         if (
           event.type === "agent.message.delta" &&
           event.payload.workspace_id === id
@@ -469,14 +480,16 @@ export function AgentWorkspacePage() {
         if (
           event.type === "agent.task.updated" &&
           event.payload.workspace_id === id
-        ) {
-          setTasks((current) => mergeAgentTasks(current, [event.payload.task]));
-        }
-        if (
-          event.type === "agent.event.created" &&
-          event.payload.workspace_id === id
-        ) {
-          const agentEvent = event.payload.event;
+		) {
+			setTasks((current) => mergeAgentTasks(current, [event.payload.task]));
+			refetchAgentCanvas();
+		}
+		if (
+			event.type === "agent.event.created" &&
+			event.payload.workspace_id === id
+		) {
+			refetchAgentCanvas();
+			const agentEvent = event.payload.event;
           if (
             agentEvent.event_type === "decision_requested" &&
             agentEvent.status === "handled"
@@ -936,12 +949,12 @@ export function AgentWorkspacePage() {
               <p className="workspace-kicker">Agent Canvas</p>
               <h2>Agent 画布</h2>
             </div>
-            <span>{canvas?.nodes.length ?? 0} 个节点</span>
+            <span>{agentCanvasNodeCount} 个节点</span>
           </div>
           <div className="agent-canvas-surface" ref={agentCanvasSurfaceRef}>
             {canvasQuery.isLoading ? (
               <p className="agent-empty-text">正在加载画布</p>
-            ) : canvas && canvas.nodes.length > 0 && id ? (
+            ) : canvas && agentCanvasNodeCount > 0 && id ? (
               <>
                 <AgentFlowCanvas
                   canvas={canvas}
@@ -1365,24 +1378,17 @@ function stopCanvasEvent(event: SyntheticEvent) {
   event.stopPropagation();
 }
 
-function noopStringCallback(_id: string) {}
+function noopStringCallback() {}
 
-function noopRunNode(_nodeId: string, _patch?: unknown) {}
+function noopRunNode() {}
 
-function noopUpdateNode(_nodeId: string, _patch: unknown) {}
+function noopUpdateNode() {}
 
-function noopReplaceReferencePackItems(
-  _packNodeId: string,
-  _memberNodeIds: string[],
-) {}
+function noopReplaceReferencePackItems() {}
 
-function noopPromptRefSelect(
-  _targetNode: MediaNode,
-  _refNode: MediaNode,
-  _prompt: string,
-) {}
+function noopPromptRefSelect() {}
 
-function noopSelectVersion(_nodeId: string, _versionId: string) {}
+function noopSelectVersion() {}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);

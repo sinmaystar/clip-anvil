@@ -146,15 +146,23 @@ func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, s
 }
 
 func (s *Service) GetOrCreateReviewerThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
-	if !workspaceID.Valid || !shotID.Valid {
+	return s.GetOrCreateReviewerThreadForScope(ctx, workspaceID, "shot", shotID)
+}
+
+func (s *Service) GetOrCreateReviewerThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {
+	if !workspaceID.Valid {
+		return db.AgentThread{}, ErrInvalidRequest
+	}
+	scopeType = defaultString(scopeType, "shot")
+	if !validThreadScope(scopeType) || !scopeID.Valid {
 		return db.AgentThread{}, ErrInvalidRequest
 	}
 
 	params := db.GetActiveAgentThreadByScopeParams{
 		WorkspaceID: workspaceID,
 		Role:        "reviewer",
-		ScopeType:   "shot",
-		ScopeID:     shotID,
+		ScopeType:   scopeType,
+		ScopeID:     scopeID,
 	}
 	thread, err := s.queries.GetActiveAgentThreadByScope(ctx, params)
 	if err == nil {
@@ -167,10 +175,10 @@ func (s *Service) GetOrCreateReviewerThread(ctx context.Context, workspaceID, sh
 	thread, err = s.CreateThread(ctx, CreateThreadParams{
 		WorkspaceID:      workspaceID,
 		Role:             "reviewer",
-		ScopeType:        "shot",
-		ScopeID:          shotID,
+		ScopeType:        scopeType,
+		ScopeID:          scopeID,
 		RuntimeProvider:  "eino",
-		RuntimeAgentName: "ReviewerGraph",
+		RuntimeAgentName: "ReviewerGate",
 	})
 	if err == nil {
 		return thread, nil
@@ -308,10 +316,10 @@ func (s *Service) ListMessages(ctx context.Context, threadID pgtype.UUID, afterS
 		return nil, ErrInvalidRequest
 	}
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListAgentMessagesByThread(ctx, db.ListAgentMessagesByThreadParams{
 		ThreadID: threadID,
@@ -356,10 +364,10 @@ func (s *Service) ListQueuedProducerTasks(ctx context.Context, workspaceID pgtyp
 		return nil, ErrInvalidRequest
 	}
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedProducerTasks(ctx, db.ListQueuedProducerTasksParams{
 		WorkspaceID: workspaceID,
@@ -369,50 +377,50 @@ func (s *Service) ListQueuedProducerTasks(ctx context.Context, workspaceID pgtyp
 
 func (s *Service) ListQueuedProducerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedProducerTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListQueuedCraftsmanTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedCraftsmanTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListQueuedWorkerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedWorkerTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListQueuedReviewerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedReviewerTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListQueuedComposerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedComposerTasksAcrossWorkspaces(ctx, limit)
 }
@@ -608,7 +616,7 @@ func validThreadRole(value string) bool {
 
 func validThreadScope(value string) bool {
 	switch value {
-	case "workspace", "shot", "final_output":
+	case "workspace", "shot", "final_output", "render_plan":
 		return true
 	default:
 		return false
@@ -653,7 +661,7 @@ func validTaskRole(value string) bool {
 
 func validTaskScope(value string) bool {
 	switch value {
-	case "workspace", "shot", "node", "job", "final_output":
+	case "workspace", "shot", "node", "job", "final_output", "render_plan":
 		return true
 	default:
 		return false

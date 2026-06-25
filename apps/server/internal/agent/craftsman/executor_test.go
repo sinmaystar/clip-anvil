@@ -111,6 +111,53 @@ func TestCraftsmanExecutorPassesTraceCallbacksToGraph(t *testing.T) {
 	}
 }
 
+func TestCraftsmanExecutorPersistsNativeToolTrace(t *testing.T) {
+	runtime := &fakeCraftsmanExecutorRuntime{}
+	graph := fakeCraftsmanRunner{output: GraphOutput{
+		Strategy: Strategy{Strategy: "方向", PreviewPrompt: "prompt"},
+		Metadata: map[string]any{"checkpoint_key": "craftsman:key"},
+		SameTurnMessages: []CraftsmanSameTurnMessage{
+			{
+				Role:          "assistant",
+				MessageType:   "tool_call",
+				Content:       "需要先提交 render plan。",
+				ToolCallID:    "call-render-plan",
+				ToolName:      "upsert_render_plan",
+				ToolArguments: map[string]any{"mode": "create", "shot_id": "shot-01"},
+			},
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				Content:     "已创建 RenderPlan，等待 Producer 审批。",
+				ToolCallID:  "call-render-plan",
+				ToolName:    "upsert_render_plan",
+			},
+		},
+	}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: &graph})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(3),
+		TaskID:      uuidWithByte(4),
+		ShotID:      uuidWithByte(2),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"tool_call", "tool_result"}
+	if got := runtime.appendedMessageTypes(); !equalStringSlices(got, want) {
+		t.Fatalf("appended message types = %#v, want %#v", got, want)
+	}
+	if string(runtime.appended[0].RawMessage) == "" || string(runtime.appended[1].RawMessage) == "" {
+		t.Fatalf("raw messages were not persisted: %#v", runtime.appended)
+	}
+	if runtime.appended[0].Role != "assistant" || runtime.appended[1].Role != "tool" {
+		t.Fatalf("roles = %q/%q", runtime.appended[0].Role, runtime.appended[1].Role)
+	}
+}
+
 type fakeCraftsmanRunner struct {
 	output     GraphOutput
 	err        error
@@ -142,6 +189,8 @@ type fakeCraftsmanExecutorRuntime struct {
 	succeeded        bool
 	output           []byte
 	threadCheckpoint string
+	appendSeq        int64
+	appended         []db.AgentMessage
 }
 
 func (f *fakeCraftsmanExecutorRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
@@ -159,8 +208,21 @@ func (f *fakeCraftsmanExecutorRuntime) MarkTaskFailed(context.Context, pgtype.UU
 	return db.AgentTask{}, nil
 }
 
-func (f *fakeCraftsmanExecutorRuntime) AppendMessage(context.Context, agentruntime.AppendMessageParams) (db.AgentMessage, error) {
-	return db.AgentMessage{}, nil
+func (f *fakeCraftsmanExecutorRuntime) AppendMessage(_ context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error) {
+	f.appendSeq++
+	msg := db.AgentMessage{
+		ID:          uuidWithByte(byte(40 + f.appendSeq)),
+		WorkspaceID: params.WorkspaceID,
+		ThreadID:    params.ThreadID,
+		Role:        params.Role,
+		MessageType: params.MessageType,
+		Content:     params.Content,
+		RawMessage:  params.RawMessage,
+		TaskID:      params.TaskID,
+		Seq:         f.appendSeq,
+	}
+	f.appended = append(f.appended, msg)
+	return msg, nil
 }
 
 func (f *fakeCraftsmanExecutorRuntime) CreateEvent(context.Context, agentruntime.CreateEventParams) (db.AgentEvent, error) {
@@ -170,4 +232,24 @@ func (f *fakeCraftsmanExecutorRuntime) CreateEvent(context.Context, agentruntime
 func (f *fakeCraftsmanExecutorRuntime) SetThreadCheckpoint(_ context.Context, _ pgtype.UUID, checkpointKey string) (db.AgentThread, error) {
 	f.threadCheckpoint = checkpointKey
 	return db.AgentThread{CurrentCheckpointKey: pgtype.Text{String: checkpointKey, Valid: checkpointKey != ""}}, nil
+}
+
+func (f *fakeCraftsmanExecutorRuntime) appendedMessageTypes() []string {
+	out := make([]string, 0, len(f.appended))
+	for _, msg := range f.appended {
+		out = append(out, msg.MessageType)
+	}
+	return out
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

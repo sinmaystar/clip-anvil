@@ -11,6 +11,7 @@ import (
 
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -32,12 +33,14 @@ type WorkerTaskEnqueuer interface {
 }
 
 type GraphConfig struct {
-	Loader           Loader
-	Responder        ModelResponder
-	Runtime          Runtime
-	WorkerEnqueuer   WorkerTaskEnqueuer
-	CheckPointStore  compose.CheckPointStore
-	CompileCallbacks []compose.GraphCompileCallback
+	Loader             Loader
+	Responder          ModelResponder
+	ToolResponder      ToolCallingResponder
+	NativeToolRegistry *agenttools.NativeRegistry
+	Runtime            Runtime
+	WorkerEnqueuer     WorkerTaskEnqueuer
+	CheckPointStore    compose.CheckPointStore
+	CompileCallbacks   []compose.GraphCompileCallback
 }
 
 type Graph struct {
@@ -45,7 +48,16 @@ type Graph struct {
 }
 
 func NewGraph(config GraphConfig) (*Graph, error) {
-	if config.Loader == nil || config.Responder == nil || config.Runtime == nil {
+	if config.Loader == nil || config.Runtime == nil {
+		return nil, ErrInvalidConfig
+	}
+	if config.NativeToolRegistry != nil || config.ToolResponder != nil {
+		if config.NativeToolRegistry == nil || config.ToolResponder == nil {
+			return nil, ErrInvalidConfig
+		}
+		return newNativeToolLoopGraph(config)
+	}
+	if config.Responder == nil {
 		return nil, ErrInvalidConfig
 	}
 	g := compose.NewGraph[GraphInput, GraphOutput]()

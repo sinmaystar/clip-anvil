@@ -7,9 +7,19 @@ INSERT INTO shot (
     brief,
     duration_sec,
     narrative_purpose,
-    status
+    status,
+    scene_id,
+    shot_kind,
+    creative_text,
+    visual_intent,
+    action_text,
+    camera_intent,
+    dialogue,
+    narration,
+    audio_plan
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, $8,
+    $9, $10, $11, $12, $13, $14, $15, $16, $17
 ) RETURNING *;
 
 -- name: GetShotByID :one
@@ -40,9 +50,18 @@ SET client_key = $2,
     duration_sec = $6,
     narrative_purpose = $7,
     status = $8,
+    scene_id = $9,
+    shot_kind = $10,
+    creative_text = $11,
+    visual_intent = $12,
+    action_text = $13,
+    camera_intent = $14,
+    dialogue = $15,
+    narration = $16,
+    audio_plan = $17,
     updated_at = now()
 WHERE id = $1
-  AND workspace_id = $9
+  AND workspace_id = $18
   AND archived_at IS NULL
 RETURNING *;
 

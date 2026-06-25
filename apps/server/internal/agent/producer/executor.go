@@ -69,6 +69,7 @@ type RunTaskInput struct {
 	ThreadID           pgtype.UUID
 	TaskID             pgtype.UUID
 	TriggerMessageID   pgtype.UUID
+	TriggerMessageSeq  int64
 	ResumeCheckpointID string
 	ResumeData         map[string]any
 	OriginalTaskID     pgtype.UUID
@@ -77,7 +78,7 @@ type RunTaskInput struct {
 func NewExecutor(config ExecutorConfig) *Executor {
 	maxToolCalls := config.MaxToolCalls
 	if maxToolCalls <= 0 {
-		maxToolCalls = 50
+		maxToolCalls = defaultProducerMaxToolCalls
 	}
 	toolTimeout := config.ToolTimeout
 	if toolTimeout <= 0 {
@@ -102,6 +103,7 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if err != nil {
 		return err
 	}
+	applyProducerTaskTriggerInput(&input, runningTask.Input)
 	e.broadcastTask(input.WorkspaceID, runningTask)
 
 	started, err := e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
@@ -118,12 +120,13 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	}
 
 	graphInput := ProducerTurnInput{
-		WorkspaceID:      input.WorkspaceID,
-		ThreadID:         input.ThreadID,
-		TaskID:           input.TaskID,
-		TriggerMessageID: input.TriggerMessageID,
-		MaxToolCalls:     e.maxToolCalls,
-		ToolTimeout:      e.toolTimeout,
+		WorkspaceID:       input.WorkspaceID,
+		ThreadID:          input.ThreadID,
+		TaskID:            input.TaskID,
+		TriggerMessageID:  input.TriggerMessageID,
+		TriggerMessageSeq: input.TriggerMessageSeq,
+		MaxToolCalls:      e.maxToolCalls,
+		ToolTimeout:       e.toolTimeout,
 	}
 	graphInput.EmitDelta = func(ctx context.Context, delta ProducerStreamDelta) error {
 		if delta.Kind == "" {
@@ -162,6 +165,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 			return e.interruptTask(ctx, input, checkpointKey, interruptInfo)
 		}
 		return e.failTask(ctx, input, errorCode(err, "producer_turn_failed"), err.Error())
+	}
+	if err := e.persistNativeToolTrace(ctx, input, output.SameTurnMessages); err != nil {
+		return e.failTask(ctx, input, "producer_tool_trace_persist_failed", err.Error())
 	}
 
 	content, err := uimessage.BuildAssistantMessageContent(uimessage.AssistantMessageInput{
@@ -219,6 +225,95 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	e.broadcastEvent(input.WorkspaceID, completed)
 	e.broadcastTask(input.WorkspaceID, succeededTask)
 	return nil
+}
+
+func (e *Executor) persistNativeToolTrace(ctx context.Context, input RunTaskInput, messages []ProducerSameTurnMessage) error {
+	for _, trace := range messages {
+		role := strings.TrimSpace(trace.Role)
+		messageType := strings.TrimSpace(trace.MessageType)
+		if messageType != "tool_call" && messageType != "tool_result" {
+			continue
+		}
+		if role == "" {
+			if messageType == "tool_result" {
+				role = "tool"
+			} else {
+				role = "assistant"
+			}
+		}
+		content := nativeToolTraceContent(trace)
+		raw := nativeToolTraceRaw(trace)
+		msg, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+			WorkspaceID: input.WorkspaceID,
+			ThreadID:    input.ThreadID,
+			Role:        role,
+			MessageType: messageType,
+			Content:     content,
+			RawMessage:  raw,
+			TaskID:      input.TaskID,
+		})
+		if err != nil {
+			return err
+		}
+		e.broadcastMessage(input.WorkspaceID, msg, db.AgentEvent{})
+	}
+	return nil
+}
+
+func nativeToolTraceContent(trace ProducerSameTurnMessage) []byte {
+	if trace.MessageType == "tool_call" {
+		return toolStatusContent(trace.ToolCallID, trace.ToolName, trace.ToolName, "running", strings.TrimSpace(trace.Content), "", trace.ToolArguments, nil)
+	}
+	return mustJSON(map[string]any{
+		"schema":       "clipanvil.agent.tool_trace.v1",
+		"message_type": "tool_result",
+		"tool_call_id": trace.ToolCallID,
+		"tool_name":    trace.ToolName,
+		"text":         strings.TrimSpace(trace.Content),
+	})
+}
+
+func nativeToolTraceRaw(trace ProducerSameTurnMessage) []byte {
+	raw := map[string]any{
+		"schema":       "clipanvil.agent.tool_trace.v1",
+		"role":         trace.Role,
+		"message_type": trace.MessageType,
+		"tool_call_id": trace.ToolCallID,
+		"tool_name":    trace.ToolName,
+	}
+	if len(trace.ToolArguments) > 0 {
+		raw["arguments"] = trace.ToolArguments
+	}
+	if text := strings.TrimSpace(trace.Content); text != "" {
+		raw["result_text"] = text
+	}
+	if reasoning := strings.TrimSpace(trace.ReasoningContent); reasoning != "" {
+		raw["reasoning_content"] = reasoning
+	}
+	return mustJSON(raw)
+}
+
+func toolStatusContent(toolCallID string, toolName string, label string, status string, summary string, errorMessage string, arguments map[string]any, result map[string]any) []byte {
+	content, err := uimessage.BuildToolStatusMessageContent(uimessage.ToolStatusInput{
+		ToolCallID:   toolCallID,
+		ToolName:     toolName,
+		Label:        label,
+		Status:       status,
+		Summary:      summary,
+		ErrorMessage: errorMessage,
+		Arguments:    arguments,
+		Result:       result,
+	})
+	if err != nil {
+		return mustJSON(map[string]any{
+			"schema":       "clipanvil.agent.tool_trace.v1",
+			"message_type": "tool_call",
+			"tool_call_id": toolCallID,
+			"tool_name":    toolName,
+			"text":         summary,
+		})
+	}
+	return content
 }
 
 func (e *Executor) interruptTask(ctx context.Context, input RunTaskInput, checkpointKey string, interruptInfo *compose.InterruptInfo) error {
@@ -333,6 +428,24 @@ func (e *Executor) broadcastEvent(workspaceID pgtype.UUID, event db.AgentEvent) 
 func (e *Executor) broadcastMessageDelta(workspaceID pgtype.UUID, delta ProducerStreamDelta) {
 	if e.broadcaster != nil {
 		e.broadcaster.BroadcastAgentMessageDelta(workspaceID, delta)
+	}
+}
+
+func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) {
+	var payload struct {
+		TriggerMessageID  string `json:"trigger_message_id"`
+		TriggerMessageSeq int64  `json:"trigger_message_seq"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return
+	}
+	if !input.TriggerMessageID.Valid {
+		if id, ok := pgUUIDFromString(payload.TriggerMessageID); ok {
+			input.TriggerMessageID = id
+		}
+	}
+	if input.TriggerMessageSeq <= 0 {
+		input.TriggerMessageSeq = payload.TriggerMessageSeq
 	}
 }
 

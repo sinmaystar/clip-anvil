@@ -15,7 +15,6 @@ import (
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
 	agentpss "github.com/sinmaystar/clip-anvil/internal/agent/pss"
-	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -23,13 +22,18 @@ import (
 
 const maxAgentVisionImageBytes = 10 << 20
 const minAgentVisionImageDimension = 14
+const producerContextMessageLimit int32 = 1000
 
 type ImageObjectReader interface {
 	ReadObject(ctx context.Context, workspaceID pgtype.UUID, key string, maxBytes int64) ([]byte, storage.ObjectRef, error)
 }
 
+type ProducerMessageRuntime interface {
+	ListMessages(ctx context.Context, threadID pgtype.UUID, afterSeq int64, limit int32) ([]db.AgentMessage, error)
+}
+
 type RuntimeContextLoader struct {
-	Runtime        *agentruntime.Service
+	Runtime        ProducerMessageRuntime
 	Queries        *db.Queries
 	ImageReader    ImageObjectReader
 	ModelSelection interface {
@@ -41,7 +45,7 @@ type RuntimeContextLoader struct {
 }
 
 func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input ProducerTurnInput) (ProducerContext, error) {
-	messages, err := l.Runtime.ListMessages(ctx, input.ThreadID, 0, 20)
+	messages, err := l.Runtime.ListMessages(ctx, input.ThreadID, producerMessageWindowAfterSeq(input.TriggerMessageSeq, int64(producerContextMessageLimit)), producerContextMessageLimit)
 	if err != nil {
 		return ProducerContext{}, err
 	}
@@ -64,6 +68,17 @@ func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input Pro
 		ProductionState:     structuredState,
 		EmitDelta:           input.EmitDelta,
 	}, nil
+}
+
+func producerMessageWindowAfterSeq(triggerSeq int64, limit int64) int64 {
+	if triggerSeq <= 0 || limit <= 0 {
+		return 0
+	}
+	afterSeq := triggerSeq - limit
+	if afterSeq < 0 {
+		return 0
+	}
+	return afterSeq
 }
 
 func (l RuntimeContextLoader) loadProductionState(ctx context.Context, workspaceID pgtype.UUID) (string, map[string]any, error) {

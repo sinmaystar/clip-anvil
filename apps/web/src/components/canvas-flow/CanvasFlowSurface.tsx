@@ -33,6 +33,8 @@ import {
 import { cameraToViewport, viewportToCamera } from "./canvasViewport";
 import { ConnectionLinePreview } from "./ConnectionLinePreview";
 import { DependencyFlowEdge } from "./DependencyFlowEdge";
+import { DomainFlowEdge } from "./DomainFlowEdge";
+import { DomainFlowNode } from "./DomainFlowNode";
 import { GroupFlowNode } from "./GroupFlowNode";
 import { MediaFlowNode } from "./MediaFlowNode";
 import { NodeInspectorPopover } from "./NodeInspectorPopover";
@@ -48,10 +50,12 @@ type CanvasGroupFlowNode = Extract<CanvasFlowNode, { type: "group" }>;
 const nodeTypes: NodeTypes = {
   media: MediaFlowNode,
   group: GroupFlowNode,
+  domain: DomainFlowNode,
 };
 
 const edgeTypes: EdgeTypes = {
   dependency: DependencyFlowEdge,
+  domain: DomainFlowEdge,
 };
 
 export interface CanvasFlowSurfaceProps {
@@ -154,6 +158,9 @@ function CanvasFlowSurfaceContent({
             },
             selected: node.id === selectedNodeId,
           };
+        }
+        if (node.type === "domain") {
+          return node;
         }
         return {
           ...node,

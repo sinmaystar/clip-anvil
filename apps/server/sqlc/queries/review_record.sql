@@ -9,15 +9,21 @@ INSERT INTO review_record (
     reviewer_task_id,
     parent_review_record_id,
     target_phase,
+    review_task,
+    target_object_type,
+    target_object_id,
+    render_plan_id,
     status,
     attempt_no,
     max_attempts,
     model_provider,
-    model_id
+    model_id,
+    required_axes
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8,
-    $9, 'running', $10, $11, $12, $13
+    $9, $10, $11, $12, $13,
+    'running', $14, $15, $16, $17, $18
 ) RETURNING *;
 
 -- name: CompleteReviewRecord :one
@@ -27,6 +33,7 @@ SET status = $2,
     rubric = $4,
     critique = $5,
     retry_recommendation = $6,
+    escalation = $7,
     error_code = '',
     error_message = '',
     completed_at = now()
@@ -72,6 +79,21 @@ ORDER BY created_at DESC;
 SELECT *
 FROM review_record
 WHERE artifact_version_id = $1
+ORDER BY created_at DESC;
+
+-- name: ListReviewRecordsByTarget :many
+SELECT *
+FROM review_record
+WHERE workspace_id = $1
+  AND target_object_type = $2
+  AND target_object_id = $3
+ORDER BY created_at DESC
+LIMIT $4;
+
+-- name: ListReviewRecordsByRenderPlan :many
+SELECT *
+FROM review_record
+WHERE render_plan_id = $1
 ORDER BY created_at DESC;
 
 -- name: CountReviewAttemptsByShotPhase :one

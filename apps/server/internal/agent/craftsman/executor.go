@@ -97,13 +97,25 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if err != nil {
 		return e.fail(ctx, input, "craftsman_failed", err)
 	}
-	rawOutput, _ := json.Marshal(map[string]any{
-		"strategy":         out.Strategy.Strategy,
-		"preview_prompt":   out.Strategy.PreviewPrompt,
-		"worker_task_id":   uuidString(out.WorkerTask.ID),
-		"checkpoint_key":   out.Metadata["checkpoint_key"],
-		"worker_task_type": out.WorkerTask.TaskType,
-	})
+	if err := e.persistNativeToolTrace(ctx, input, out.SameTurnMessages); err != nil {
+		return e.fail(ctx, input, "craftsman_tool_trace_persist_failed", err)
+	}
+	outputPayload := map[string]any{
+		"assistant_text": out.AssistantText,
+		"metadata":       out.Metadata,
+	}
+	if strings.TrimSpace(out.Strategy.Strategy) != "" {
+		outputPayload["strategy"] = out.Strategy.Strategy
+		outputPayload["preview_prompt"] = out.Strategy.PreviewPrompt
+	}
+	if out.WorkerTask.ID.Valid {
+		outputPayload["worker_task_id"] = uuidString(out.WorkerTask.ID)
+		outputPayload["worker_task_type"] = out.WorkerTask.TaskType
+	}
+	if out.Metadata != nil {
+		outputPayload["checkpoint_key"] = out.Metadata["checkpoint_key"]
+	}
+	rawOutput, _ := json.Marshal(outputPayload)
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, input.TaskID, rawOutput); err != nil {
 		return err
 	}
@@ -223,6 +235,74 @@ func (e *Executor) fail(ctx context.Context, input RunTaskInput, code string, er
 	})
 	_, _ = e.runtime.MarkTaskFailed(ctx, input.TaskID, code, message)
 	return fmt.Errorf("%s: %w", code, err)
+}
+
+func (e *Executor) persistNativeToolTrace(ctx context.Context, input RunTaskInput, messages []CraftsmanSameTurnMessage) error {
+	for _, trace := range messages {
+		messageType := strings.TrimSpace(trace.MessageType)
+		if messageType != "tool_call" && messageType != "tool_result" {
+			continue
+		}
+		role := strings.TrimSpace(trace.Role)
+		if role == "" {
+			role = "assistant"
+			if messageType == "tool_result" {
+				role = "tool"
+			}
+		}
+		if _, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+			WorkspaceID: input.WorkspaceID,
+			ThreadID:    input.ThreadID,
+			Role:        role,
+			MessageType: messageType,
+			Content:     craftsmanToolTraceContent(trace),
+			RawMessage:  craftsmanToolTraceRaw(trace),
+			TaskID:      input.TaskID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func craftsmanToolTraceContent(trace CraftsmanSameTurnMessage) []byte {
+	if trace.MessageType == "tool_call" {
+		return mustJSON(map[string]any{
+			"schema":       "clipanvil.agent.tool_trace.v1",
+			"message_type": "tool_call",
+			"tool_call_id": trace.ToolCallID,
+			"tool_name":    trace.ToolName,
+			"text":         strings.TrimSpace(trace.Content),
+		})
+	}
+	return mustJSON(map[string]any{
+		"schema":       "clipanvil.agent.tool_trace.v1",
+		"message_type": "tool_result",
+		"tool_call_id": trace.ToolCallID,
+		"tool_name":    trace.ToolName,
+		"text":         strings.TrimSpace(trace.Content),
+	})
+}
+
+func craftsmanToolTraceRaw(trace CraftsmanSameTurnMessage) []byte {
+	payload := map[string]any{
+		"schema":       "clipanvil.agent.tool_trace.v1",
+		"role":         trace.Role,
+		"message_type": trace.MessageType,
+		"tool_call_id": trace.ToolCallID,
+		"tool_name":    trace.ToolName,
+	}
+	if len(trace.ToolArguments) > 0 {
+		payload["arguments"] = trace.ToolArguments
+	}
+	if strings.TrimSpace(trace.Content) != "" {
+		if trace.MessageType == "tool_result" {
+			payload["result_text"] = strings.TrimSpace(trace.Content)
+		} else {
+			payload["text"] = strings.TrimSpace(trace.Content)
+		}
+	}
+	return mustJSON(payload)
 }
 
 func (e *Executor) loggerOrDefault() *slog.Logger {

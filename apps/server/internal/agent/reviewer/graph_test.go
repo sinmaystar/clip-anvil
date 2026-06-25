@@ -280,9 +280,20 @@ func (f *fakeReviewerRuntime) CreateEvent(_ context.Context, params agentruntime
 
 func failingReviewResult() ReviewResult {
 	result := passingReviewResult()
+	result.Verdict = ReviewStatusRejected
 	result.OverallScore = 0.42
 	result.Critique = "主体不清晰，需要重新生成。"
-	result.Rubric["composition"] = RubricAxis{Score: 0.35, Pass: false, Reason: "构图偏离", FixHint: "拉近产品特写"}
+	result.Rubric[AxisCompositionProportion] = RubricAxis{Score: 0.35, Pass: false, Reason: "构图偏离", FixHint: "拉近产品特写"}
+	result.Issues = []ReviewIssue{{
+		Dimension:        AxisCompositionProportion,
+		Severity:         IssueSeverityBlocking,
+		Title:            "构图偏离",
+		Description:      "商品主体不清晰，不能进入下一阶段。",
+		TargetObjectType: "artifact_version",
+		TargetObjectID:   uuidString(uuidWithByte(4)),
+		SuggestedFix:     "regenerate",
+		FixHint:          "拉近产品特写",
+	}}
 	result.RetryRecommendation = RetryRecommendation{ShouldRetry: true, FixHints: []string{"拉近产品特写"}}
 	return result
 }

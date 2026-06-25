@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -34,20 +35,33 @@ type GraphInput struct {
 }
 
 type GraphOutput struct {
-	Strategy   Strategy
-	WorkerTask db.AgentTask
-	Metadata   map[string]any
+	AssistantText    string
+	Strategy         Strategy
+	WorkerTask       db.AgentTask
+	Metadata         map[string]any
+	SameTurnMessages []CraftsmanSameTurnMessage
 }
 
 type Context struct {
-	Input           GraphInput
-	Shot            db.Shot
-	Messages        []db.AgentMessage
-	Nodes           []NodeState
-	Dependencies    []db.ShotDependency
-	SourceMaterials []NodeState
-	Text            string
-	Structured      map[string]any
+	Input            GraphInput
+	Shot             db.Shot
+	Messages         []db.AgentMessage
+	Nodes            []NodeState
+	Dependencies     []db.ShotDependency
+	SourceMaterials  []NodeState
+	Text             string
+	Structured       map[string]any
+	ToolInfos        []*schema.ToolInfo
+	SameTurnMessages []CraftsmanSameTurnMessage
+}
+
+type CraftsmanSameTurnMessage struct {
+	Role          string
+	MessageType   string
+	Content       string
+	ToolCallID    string
+	ToolName      string
+	ToolArguments map[string]any
 }
 
 type NodeState struct {
@@ -76,4 +90,14 @@ type ModelSpec struct {
 
 type ModelResponder interface {
 	DraftPreviewStrategy(ctx context.Context, context Context) (Strategy, map[string]any, error)
+}
+
+type ToolCallingResponder interface {
+	Respond(ctx context.Context, context Context) (CraftsmanTurnOutput, error)
+}
+
+type CraftsmanTurnOutput struct {
+	AssistantText string
+	Metadata      map[string]any
+	ModelMessage  *schema.Message
 }
