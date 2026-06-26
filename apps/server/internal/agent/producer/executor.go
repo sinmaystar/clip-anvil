@@ -18,6 +18,7 @@ import (
 	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -29,6 +30,7 @@ type Runtime interface {
 	MarkTaskWaitingForUser(ctx context.Context, taskID pgtype.UUID) (db.AgentTask, error)
 	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
+	UpdateMessage(ctx context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
 }
 
@@ -155,6 +157,8 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		attribute.String("clipanvil.agent.role", "producer"),
 		attribute.String("clipanvil.agent.task_type", "producer_turn"),
 	)
+	liveToolTrace := newProducerLiveToolTrace(e, input)
+	ctx = agenttools.WithNativeToolTraceSink(ctx, liveToolTrace)
 	output, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{
 		CheckPointID: checkpointKey,
 		ResumeData:   input.ResumeData,
@@ -166,8 +170,10 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		}
 		return e.failTask(ctx, input, errorCode(err, "producer_turn_failed"), err.Error())
 	}
-	if err := e.persistNativeToolTrace(ctx, input, output.SameTurnMessages); err != nil {
-		return e.failTask(ctx, input, "producer_tool_trace_persist_failed", err.Error())
+	if liveToolTrace.count() == 0 {
+		if err := e.persistNativeToolTrace(ctx, input, output.SameTurnMessages); err != nil {
+			return e.failTask(ctx, input, "producer_tool_trace_persist_failed", err.Error())
+		}
 	}
 
 	content, err := uimessage.BuildAssistantMessageContent(uimessage.AssistantMessageInput{
@@ -228,6 +234,7 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 }
 
 func (e *Executor) persistNativeToolTrace(ctx context.Context, input RunTaskInput, messages []ProducerSameTurnMessage) error {
+	callMessages := map[string]db.AgentMessage{}
 	for _, trace := range messages {
 		role := strings.TrimSpace(trace.Role)
 		messageType := strings.TrimSpace(trace.MessageType)
@@ -256,13 +263,129 @@ func (e *Executor) persistNativeToolTrace(ctx context.Context, input RunTaskInpu
 			return err
 		}
 		e.broadcastMessage(input.WorkspaceID, msg, db.AgentEvent{})
+		if messageType == "tool_call" {
+			callMessages[trace.ToolCallID] = msg
+		}
+		if messageType == "tool_result" {
+			if callMsg, ok := callMessages[trace.ToolCallID]; ok {
+				updated, err := e.runtime.UpdateMessage(ctx, agentruntime.UpdateMessageParams{
+					ID:         callMsg.ID,
+					Content:    completedToolTraceContent(trace, callMsg.RawMessage, "succeeded"),
+					RawMessage: completedToolTraceRaw(trace, callMsg.RawMessage),
+				})
+				if err != nil {
+					return err
+				}
+				e.broadcastMessageUpdated(input.WorkspaceID, updated, db.AgentEvent{})
+			}
+		}
+	}
+	return nil
+}
+
+type producerLiveToolTrace struct {
+	executor     *Executor
+	input        RunTaskInput
+	callMessages map[string]db.AgentMessage
+	startedCount int
+}
+
+func newProducerLiveToolTrace(executor *Executor, input RunTaskInput) *producerLiveToolTrace {
+	return &producerLiveToolTrace{
+		executor:     executor,
+		input:        input,
+		callMessages: map[string]db.AgentMessage{},
+	}
+}
+
+func (t *producerLiveToolTrace) count() int {
+	if t == nil {
+		return 0
+	}
+	return t.startedCount
+}
+
+func (t *producerLiveToolTrace) NativeToolCallStarted(ctx context.Context, runtime agenttools.NativeRuntimeContext, trace agenttools.NativeToolTrace) error {
+	if t == nil || t.executor == nil || t.executor.runtime == nil {
+		return nil
+	}
+	toolCallID := strings.TrimSpace(runtime.ToolCallID)
+	if toolCallID == "" {
+		toolCallID = strings.TrimSpace(trace.ToolName)
+	}
+	sameTurn := ProducerSameTurnMessage{
+		Role:          "assistant",
+		MessageType:   "tool_call",
+		ToolCallID:    toolCallID,
+		ToolName:      trace.ToolName,
+		ToolArguments: trace.Arguments,
+	}
+	msg, err := t.executor.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: t.input.WorkspaceID,
+		ThreadID:    t.input.ThreadID,
+		Role:        "assistant",
+		MessageType: "tool_call",
+		Content:     nativeToolTraceContent(sameTurn),
+		RawMessage:  nativeToolTraceRaw(sameTurn),
+		TaskID:      t.input.TaskID,
+	})
+	if err != nil {
+		return err
+	}
+	t.callMessages[toolCallID] = msg
+	t.startedCount++
+	t.executor.broadcastMessage(t.input.WorkspaceID, msg, db.AgentEvent{})
+	return nil
+}
+
+func (t *producerLiveToolTrace) NativeToolCallCompleted(ctx context.Context, runtime agenttools.NativeRuntimeContext, trace agenttools.NativeToolTrace) error {
+	if t == nil || t.executor == nil || t.executor.runtime == nil {
+		return nil
+	}
+	toolCallID := strings.TrimSpace(runtime.ToolCallID)
+	resultText := strings.TrimSpace(trace.Result)
+	status := "succeeded"
+	if strings.TrimSpace(trace.Error) != "" {
+		status = "failed"
+		resultText = strings.TrimSpace(trace.Error)
+	}
+	sameTurn := ProducerSameTurnMessage{
+		Role:        "tool",
+		MessageType: "tool_result",
+		Content:     resultText,
+		ToolCallID:  toolCallID,
+		ToolName:    trace.ToolName,
+	}
+	msg, err := t.executor.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: t.input.WorkspaceID,
+		ThreadID:    t.input.ThreadID,
+		Role:        "tool",
+		MessageType: "tool_result",
+		Content:     nativeToolTraceContent(sameTurn),
+		RawMessage:  nativeToolTraceRaw(sameTurn),
+		TaskID:      t.input.TaskID,
+	})
+	if err != nil {
+		return err
+	}
+	t.executor.broadcastMessage(t.input.WorkspaceID, msg, db.AgentEvent{})
+	if callMsg, ok := t.callMessages[toolCallID]; ok {
+		updated, err := t.executor.runtime.UpdateMessage(ctx, agentruntime.UpdateMessageParams{
+			ID:         callMsg.ID,
+			Content:    completedToolTraceContent(sameTurn, callMsg.RawMessage, status),
+			RawMessage: completedToolTraceRawWithStatus(sameTurn, callMsg.RawMessage, status),
+		})
+		if err != nil {
+			return err
+		}
+		t.executor.broadcastMessageUpdated(t.input.WorkspaceID, updated, db.AgentEvent{})
 	}
 	return nil
 }
 
 func nativeToolTraceContent(trace ProducerSameTurnMessage) []byte {
 	if trace.MessageType == "tool_call" {
-		return toolStatusContent(trace.ToolCallID, trace.ToolName, trace.ToolName, "running", strings.TrimSpace(trace.Content), "", trace.ToolArguments, nil)
+		return toolStatusContent(trace.ToolCallID, trace.ToolName, trace.ToolName, "running", toolTraceSummary(trace.ToolArguments, trace.Content), "", trace.ToolArguments, nil)
 	}
 	return mustJSON(map[string]any{
 		"schema":       "clipanvil.agent.tool_trace.v1",
@@ -271,6 +394,46 @@ func nativeToolTraceContent(trace ProducerSameTurnMessage) []byte {
 		"tool_name":    trace.ToolName,
 		"text":         strings.TrimSpace(trace.Content),
 	})
+}
+
+func completedToolTraceContent(trace ProducerSameTurnMessage, previousRaw []byte, status string) []byte {
+	args := toolTraceArgumentsFromRaw(previousRaw)
+	result := map[string]any{}
+	if text := strings.TrimSpace(trace.Content); text != "" {
+		result["text"] = text
+	}
+	return toolStatusContent(trace.ToolCallID, trace.ToolName, trace.ToolName, status, toolTraceSummary(args, trace.Content), "", args, result)
+}
+
+func completedToolTraceRaw(trace ProducerSameTurnMessage, previousRaw []byte) []byte {
+	return completedToolTraceRawWithStatus(trace, previousRaw, "succeeded")
+}
+
+func completedToolTraceRawWithStatus(trace ProducerSameTurnMessage, previousRaw []byte, status string) []byte {
+	raw := map[string]any{}
+	_ = json.Unmarshal(defaultJSON(previousRaw), &raw)
+	raw["result_text"] = strings.TrimSpace(trace.Content)
+	raw["message_type"] = "tool_call"
+	raw["status"] = status
+	return mustJSON(raw)
+}
+
+func toolTraceArgumentsFromRaw(raw []byte) map[string]any {
+	payload := map[string]any{}
+	_ = json.Unmarshal(defaultJSON(raw), &payload)
+	if args, ok := payload["arguments"].(map[string]any); ok {
+		return args
+	}
+	return map[string]any{}
+}
+
+func toolTraceSummary(args map[string]any, fallback string) string {
+	if args != nil {
+		if brief, _ := args["brief"].(string); strings.TrimSpace(brief) != "" {
+			return strings.TrimSpace(brief)
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func nativeToolTraceRaw(trace ProducerSameTurnMessage) []byte {
@@ -413,6 +576,12 @@ func (e *Executor) broadcastMessage(workspaceID pgtype.UUID, message db.AgentMes
 	}
 }
 
+func (e *Executor) broadcastMessageUpdated(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent) {
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastAgentMessageUpdated(workspaceID, message, event)
+	}
+}
+
 func (e *Executor) broadcastTask(workspaceID pgtype.UUID, task db.AgentTask) {
 	if e.broadcaster != nil {
 		e.broadcaster.BroadcastAgentTask(workspaceID, task)
@@ -452,6 +621,13 @@ func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) {
 func mustJSON(value any) []byte {
 	raw, err := json.Marshal(value)
 	if err != nil {
+		return []byte("{}")
+	}
+	return raw
+}
+
+func defaultJSON(raw []byte) []byte {
+	if len(raw) == 0 {
 		return []byte("{}")
 	}
 	return raw

@@ -3,6 +3,7 @@ package craftsman
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/callbacks"
@@ -28,6 +29,7 @@ func TestCraftsmanExecutorRunsGraphAndMarksTaskSucceeded(t *testing.T) {
 		ThreadID:    uuidWithByte(3),
 		TaskID:      uuidWithByte(4),
 		ShotID:      uuidWithByte(2),
+		Input:       []byte(`{"parent_tool_call_id":"producer-dispatch-call"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,13 +67,16 @@ func TestCraftsmanExecutorPassesTaskInputToGraph(t *testing.T) {
 		ThreadID:    uuidWithByte(3),
 		TaskID:      uuidWithByte(4),
 		ShotID:      uuidWithByte(2),
-		Input:       []byte(`{"mode":"shot_video","input_node_refs":["shot-01 preview image"],"requested_max_attempts":2}`),
+		Input:       []byte(`{"mode":"shot_video","parent_tool_call_id":"producer-dispatch-call","input_node_refs":["shot-01 preview image"],"requested_max_attempts":2}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if graph.input.Mode != "shot_video" || graph.input.MaxAttempts != 2 {
 		t.Fatalf("graph input = %#v", graph.input)
+	}
+	if graph.input.ParentToolCallID != "producer-dispatch-call" {
+		t.Fatalf("parent tool call = %q", graph.input.ParentToolCallID)
 	}
 	refs, _ := graph.input.WorkerParams["input_node_refs"].([]string)
 	if len(refs) != 1 || refs[0] != "shot-01 preview image" {
@@ -98,6 +103,7 @@ func TestCraftsmanExecutorPassesTraceCallbacksToGraph(t *testing.T) {
 		ThreadID:    uuidWithByte(3),
 		TaskID:      uuidWithByte(4),
 		ShotID:      uuidWithByte(2),
+		Input:       []byte(`{"parent_tool_call_id":"producer-dispatch-call"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +147,7 @@ func TestCraftsmanExecutorPersistsNativeToolTrace(t *testing.T) {
 		ThreadID:    uuidWithByte(3),
 		TaskID:      uuidWithByte(4),
 		ShotID:      uuidWithByte(2),
+		Input:       []byte(`{"parent_tool_call_id":"producer-dispatch-call"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,8 +160,14 @@ func TestCraftsmanExecutorPersistsNativeToolTrace(t *testing.T) {
 	if string(runtime.appended[0].RawMessage) == "" || string(runtime.appended[1].RawMessage) == "" {
 		t.Fatalf("raw messages were not persisted: %#v", runtime.appended)
 	}
+	if !strings.Contains(string(runtime.appended[0].RawMessage), `"parent_tool_call_id":"producer-dispatch-call"`) {
+		t.Fatalf("raw message missing parent tool call: %s", runtime.appended[0].RawMessage)
+	}
 	if runtime.appended[0].Role != "assistant" || runtime.appended[1].Role != "tool" {
 		t.Fatalf("roles = %q/%q", runtime.appended[0].Role, runtime.appended[1].Role)
+	}
+	if len(runtime.updated) != 1 || !strings.Contains(string(runtime.updated[0].Content), `"status":"succeeded"`) {
+		t.Fatalf("updated tool status = %#v", runtime.updated)
 	}
 }
 
@@ -191,6 +204,7 @@ type fakeCraftsmanExecutorRuntime struct {
 	threadCheckpoint string
 	appendSeq        int64
 	appended         []db.AgentMessage
+	updated          []db.AgentMessage
 }
 
 func (f *fakeCraftsmanExecutorRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
@@ -223,6 +237,20 @@ func (f *fakeCraftsmanExecutorRuntime) AppendMessage(_ context.Context, params a
 	}
 	f.appended = append(f.appended, msg)
 	return msg, nil
+}
+
+func (f *fakeCraftsmanExecutorRuntime) UpdateMessage(_ context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error) {
+	for index, msg := range f.appended {
+		if msg.ID == params.ID {
+			msg.Content = params.Content
+			msg.RawMessage = params.RawMessage
+			msg.EventID = params.EventID
+			f.appended[index] = msg
+			f.updated = append(f.updated, msg)
+			return msg, nil
+		}
+	}
+	return db.AgentMessage{}, ErrInvalidInput
 }
 
 func (f *fakeCraftsmanExecutorRuntime) CreateEvent(context.Context, agentruntime.CreateEventParams) (db.AgentEvent, error) {

@@ -17,7 +17,7 @@ type e2eM2RenderPlanCraftsmanResponder struct{}
 func (e2eM2RenderPlanCraftsmanResponder) Respond(_ context.Context, craftsmanContext agentcraftsman.Context) (agentcraftsman.CraftsmanTurnOutput, error) {
 	switch e2eCraftsmanToolResultCount(craftsmanContext.SameTurnMessages) {
 	case 0:
-		return e2eCraftsmanToolCallOutput("e2e-read-project-memory-"+craftsmanContext.Shot.ClientKey, "read_project_memory", `{"include_prompt_hints":true}`), nil
+		return e2eCraftsmanToolCallOutput("e2e-read-project-memory-"+craftsmanContext.Shot.ClientKey, "read_project_memory", `{"brief":"读取分镜预览图 RenderPlan 需要遵守的 ProjectMemory 约束。","include_prompt_hints":true}`), nil
 	case 1:
 		return e2eCraftsmanToolCallOutput("e2e-upsert-render-plan-"+craftsmanContext.Shot.ClientKey, "upsert_render_plan", e2eRenderPlanArgs(craftsmanContext)), nil
 	default:

@@ -97,11 +97,14 @@ func TestProducerSystemPromptEnablesCurrentGenerationAndReviewerGate(t *testing.
 	for _, required := range []string{
 		"当前生成调度能力",
 		"dispatch_craftsman",
+		"decide_render_plan",
+		"execute_immediately",
+		"wait_for_producer",
 		"dispatch_reviewer",
 		"Reviewer 是质量 gate",
 		"Reviewer 不直接重跑生成",
 		"select_artifact_version",
-		"不要寻找或虚构 compile_render_plan",
+		"不要虚构 compile_render_plan",
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("prompt missing current capability wording %q", required)

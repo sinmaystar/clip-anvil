@@ -5,6 +5,7 @@ import {
   hasActiveAgentTask,
   hasProcessingAgentTask,
   hasRunningProducerTask,
+  mergeActiveAgentTaskSnapshot,
   mergeAgentTasks,
 } from "../../dist-test/lib/agentTasks.js";
 
@@ -17,6 +18,20 @@ describe("agent tasks", () => {
 
     assert.deepEqual(tasks, [
       { id: "task-1", status: "running", task_type: "producer_turn" },
+    ]);
+  });
+
+  it("treats the active task response as a backend snapshot", () => {
+    const tasks = mergeActiveAgentTaskSnapshot(
+      [
+        { id: "task-1", status: "running", task_type: "producer_turn" },
+        { id: "task-2", status: "succeeded", task_type: "producer_turn" },
+      ],
+      [],
+    );
+
+    assert.deepEqual(tasks, [
+      { id: "task-2", status: "succeeded", task_type: "producer_turn" },
     ]);
   });
 
@@ -56,7 +71,7 @@ describe("agent tasks", () => {
     );
   });
 
-  it("does not render a separate composer disabled reason", () => {
+  it("renders composer disabled reason for processing tasks", () => {
     assert.equal(
       agentComposerDisabledReason([
         { id: "task-1", status: "waiting_for_user", task_type: "producer_turn" },
@@ -67,7 +82,7 @@ describe("agent tasks", () => {
       agentComposerDisabledReason([
         { id: "task-2", status: "running", task_type: "producer_turn" },
       ]),
-      "",
+      "ClipAnvil 正在思考",
     );
   });
 });

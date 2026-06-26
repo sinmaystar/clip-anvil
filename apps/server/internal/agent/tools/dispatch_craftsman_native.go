@@ -13,13 +13,15 @@ type DispatchCraftsmanNativeTool struct {
 }
 
 type DispatchCraftsmanToolInput struct {
-	ShotRefs      []string `json:"shot_refs" jsonschema_description:"要派发的分镜 UUID 或稳定 client_key。为空表示派发所有可生成的 active planned shots。"`
-	Mode          string   `json:"mode" jsonschema:"required,enum=preview_image,enum=shot_video" jsonschema_description:"生成阶段。preview_image 生成分镜预览图；shot_video 基于已确认预览图生成分镜视频。"`
-	Force         bool     `json:"force" jsonschema_description:"为 true 时即使已有结果也创建新尝试；默认 false。"`
-	MaxAttempts   int32    `json:"max_attempts" jsonschema_description:"Craftsman 最大尝试次数，范围 1 到 3；为空时默认 3。"`
-	Critique      string   `json:"critique" jsonschema_description:"可选的评审意见或用户修改意见，Craftsman 必须在 RenderPlan 中回应。"`
-	FixHints      []string `json:"fix_hints" jsonschema_description:"可选的具体修复建议，例如保持行李箱银灰色、改成低机位跟拍。"`
-	InputNodeRefs []string `json:"input_node_refs" jsonschema_description:"可选输入节点引用，例如上一个分镜尾帧或已确认预览图。没有明确依赖时留空。"`
+	Brief           string   `json:"brief" jsonschema:"required" jsonschema_description:"一句话描述调用该工具的意图，例如直接生成所有分镜预览图。不要超过 160 个中文字符。"`
+	ShotRefs        []string `json:"shot_refs" jsonschema_description:"要派发的分镜 UUID 或稳定 client_key。为空表示派发所有可生成的 active planned shots。"`
+	Mode            string   `json:"mode" jsonschema:"required,enum=preview_image,enum=shot_video" jsonschema_description:"生成阶段。preview_image 生成分镜预览图；shot_video 基于已确认预览图生成分镜视频。"`
+	ExecutionPolicy string   `json:"execution_policy" jsonschema:"required,enum=execute_immediately,enum=wait_for_producer" jsonschema_description:"执行策略。execute_immediately 表示 Craftsman 编译 RenderPlan 后工程自动提交 Worker；wait_for_producer 表示只编译并等待 Producer 后续 accept/reject。"`
+	Force           bool     `json:"force" jsonschema_description:"为 true 时即使已有结果也创建新尝试；默认 false。"`
+	MaxAttempts     int32    `json:"max_attempts" jsonschema_description:"Craftsman 最大尝试次数，范围 1 到 3；为空时默认 3。"`
+	Critique        string   `json:"critique" jsonschema_description:"可选的评审意见或用户修改意见，Craftsman 必须在 RenderPlan 中回应。"`
+	FixHints        []string `json:"fix_hints" jsonschema_description:"可选的具体修复建议，例如保持行李箱银灰色、改成低机位跟拍。"`
+	InputNodeRefs   []string `json:"input_node_refs" jsonschema_description:"可选输入节点引用，例如上一个分镜尾帧或已确认预览图。没有明确依赖时留空。"`
 }
 
 func NewDispatchCraftsmanNativeTool(store CraftsmanDispatcherStore, runtime CraftsmanRuntime, enqueuer CraftsmanTaskEnqueuer) DispatchCraftsmanNativeTool {
@@ -47,13 +49,16 @@ func (t DispatchCraftsmanNativeTool) InvokableRun(ctx context.Context, arguments
 		ThreadID:    runtime.ThreadID,
 		TaskID:      runtime.TaskID,
 		Arguments: map[string]any{
-			"shot_refs":       input.ShotRefs,
-			"mode":            input.Mode,
-			"force":           input.Force,
-			"max_attempts":    input.MaxAttempts,
-			"critique":        input.Critique,
-			"fix_hints":       input.FixHints,
-			"input_node_refs": input.InputNodeRefs,
+			"brief":               input.Brief,
+			"shot_refs":           input.ShotRefs,
+			"mode":                input.Mode,
+			"execution_policy":    input.ExecutionPolicy,
+			"parent_tool_call_id": runtime.ToolCallID,
+			"force":               input.Force,
+			"max_attempts":        input.MaxAttempts,
+			"critique":            input.Critique,
+			"fix_hints":           input.FixHints,
+			"input_node_refs":     input.InputNodeRefs,
 		},
 	})
 	if err != nil {
@@ -70,7 +75,13 @@ func (t DispatchCraftsmanNativeTool) InvokableRun(ctx context.Context, arguments
 }
 
 func validateDispatchCraftsmanInput(input DispatchCraftsmanToolInput) error {
+	if err := requireText(input.Brief, "brief"); err != nil {
+		return err
+	}
 	if err := requireMode(input.Mode, "preview_image", "shot_video"); err != nil {
+		return err
+	}
+	if err := requireMode(input.ExecutionPolicy, "execute_immediately", "wait_for_producer"); err != nil {
 		return err
 	}
 	if input.MaxAttempts < 0 || input.MaxAttempts > 3 {

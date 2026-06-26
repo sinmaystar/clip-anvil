@@ -11,76 +11,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestParseCraftsmanStrategy(t *testing.T) {
-	strategy, err := ParseStrategy(`{
-		"strategy": "用明亮货架背景突出商品卖点。",
-		"preview_prompt": "A clean commercial product shot, bright lighting",
-		"negative_prompt": "blur, watermark",
-		"style_notes": ["commercial", "clean"],
-		"input_node_refs": ["node-1"],
-		"model": {"provider": "", "model_id": ""},
-		"params": {"size": "1024x1024"}
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strategy.PreviewPrompt == "" {
-		t.Fatal("preview prompt is empty")
-	}
-	if strategy.Params["size"] != "1024x1024" {
-		t.Fatalf("params = %#v", strategy.Params)
-	}
-}
-
-func TestParseCraftsmanStrategyRejectsEmptyPrompt(t *testing.T) {
-	_, err := ParseStrategy(`{"strategy":"方向","preview_prompt":""}`)
-	if err == nil {
-		t.Fatal("expected invalid strategy error")
-	}
-}
-
-func TestParseCraftsmanStrategyAcceptsStringStyleNotes(t *testing.T) {
-	strategy, err := ParseStrategy(`{
-		"strategy": "方向",
-		"preview_prompt": "prompt",
-		"style_notes": "commercial, clean"
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(strategy.StyleNotes) != 1 || strategy.StyleNotes[0] != "commercial, clean" {
-		t.Fatalf("style notes = %#v", strategy.StyleNotes)
-	}
-}
-
-func TestParseCraftsmanStrategyAcceptsStringModel(t *testing.T) {
-	strategy, err := ParseStrategy(`{
-		"strategy": "方向",
-		"preview_prompt": "prompt",
-		"model": "doubao-seedream-5-0-260128"
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strategy.Model.Provider != "" || strategy.Model.ModelID != "doubao-seedream-5-0-260128" {
-		t.Fatalf("model = %#v", strategy.Model)
-	}
-}
-
-func TestParseCraftsmanStrategyIgnoresLooseModelAlias(t *testing.T) {
-	strategy, err := ParseStrategy(`{
-		"strategy": "方向",
-		"preview_prompt": "prompt",
-		"model": {"provider": "volcengine", "model": "stable-diffusion-xl"}
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strategy.Model.Provider != "volcengine" || strategy.Model.ModelID != "" {
-		t.Fatalf("model = %#v", strategy.Model)
-	}
-}
-
 func TestCraftsmanSystemPromptIncludesReviewerRepairRules(t *testing.T) {
 	prompt := SystemPrompt()
 	for _, required := range []string{
@@ -106,9 +36,9 @@ func TestCraftsmanSystemPromptIncludesReviewerRepairRules(t *testing.T) {
 	}
 }
 
-func TestVolcengineCraftsmanResponderParsesStreamedStrategy(t *testing.T) {
+func TestVolcengineCraftsmanResponderReturnsNativeToolCallingMessage(t *testing.T) {
 	streamer := &fakeCraftsmanArkStreamer{chunks: []*schema.Message{{
-		Content: `{"strategy":"明亮商品特写","preview_prompt":"A bright product close-up"}`,
+		Content: "已提交 RenderPlan。",
 	}}}
 	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
 		APIKey: "test-key",
@@ -118,15 +48,12 @@ func TestVolcengineCraftsmanResponderParsesStreamedStrategy(t *testing.T) {
 		},
 	})
 
-	strategy, metadata, err := responder.DraftPreviewStrategy(context.Background(), Context{Text: "shot-01 开场"})
+	out, err := responder.Respond(context.Background(), Context{Text: "shot-01 开场"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strategy.PreviewPrompt != "A bright product close-up" {
-		t.Fatalf("strategy = %#v", strategy)
-	}
-	if metadata["model_id"] != "doubao-test" {
-		t.Fatalf("metadata = %#v", metadata)
+	if out.AssistantText != "已提交 RenderPlan。" || out.Metadata["model_id"] != "doubao-test" || out.ModelMessage == nil {
+		t.Fatalf("output = %#v", out)
 	}
 	if len(streamer.messages) != 2 || !strings.Contains(streamer.messages[1].Content, "shot-01") {
 		t.Fatalf("messages = %#v", streamer.messages)

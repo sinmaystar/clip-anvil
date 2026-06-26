@@ -36,6 +36,7 @@ type Store interface {
 	GetDependencyEdgeByEndpoints(ctx context.Context, params db.GetDependencyEdgeByEndpointsParams) (db.MediaEdge, error)
 	CreateMediaEdge(ctx context.Context, params db.CreateMediaEdgeParams) (db.MediaEdge, error)
 	UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error)
+	MarkRenderPlanCompleted(ctx context.Context, params db.MarkRenderPlanCompletedParams) (db.RenderPlan, error)
 }
 
 type NodeBroadcaster interface {
@@ -146,6 +147,15 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr erro
 		OperationType:     result.Job.OperationType,
 	}
 	rawOutput, _ := json.Marshal(output)
+	if task.RenderPlanID.Valid {
+		_, _ = e.store.MarkRenderPlanCompleted(ctx, db.MarkRenderPlanCompletedParams{
+			ID:              task.RenderPlanID,
+			WorkspaceID:     task.WorkspaceID,
+			Status:          "succeeded",
+			OutputVersionID: result.Version.ID,
+			OutputNodeID:    result.Node.ID,
+		})
+	}
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, task.ID, rawOutput); err != nil {
 		return err
 	}
@@ -308,6 +318,15 @@ func (e *Executor) fail(ctx context.Context, task db.AgentTask, code string, err
 		message = err.Error()
 	}
 	e.markScopedShotFailed(ctx, task)
+	if e != nil && e.store != nil && task.RenderPlanID.Valid {
+		_, _ = e.store.MarkRenderPlanCompleted(ctx, db.MarkRenderPlanCompletedParams{
+			ID:              task.RenderPlanID,
+			WorkspaceID:     task.WorkspaceID,
+			Status:          "failed",
+			OutputVersionID: pgtype.UUID{},
+			OutputNodeID:    pgtype.UUID{},
+		})
+	}
 	_, _ = e.runtime.MarkTaskFailed(ctx, task.ID, code, message)
 	_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: task.WorkspaceID,
@@ -364,10 +383,18 @@ func generationSpec(input GenerationInput) generationSpecValue {
 			CanvasW:       360,
 		}
 	default:
+		operationType := strings.TrimSpace(input.OperationType)
+		if operationType == "" {
+			operationType = "text_to_image"
+		}
+		outputType := strings.TrimSpace(input.OutputType)
+		if outputType == "" {
+			outputType = "image"
+		}
 		return generationSpecValue{
 			NodeType:      db.NodeTypeImage,
-			OutputType:    "image",
-			OperationType: "text_to_image",
+			OutputType:    outputType,
+			OperationType: operationType,
 			ArtifactKind:  "preview_image",
 			CanvasW:       320,
 		}

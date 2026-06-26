@@ -85,6 +85,16 @@ WHERE id = $1
   AND archived_at IS NULL
 RETURNING *;
 
+-- name: MarkRenderPlanWaitingForApproval :one
+UPDATE render_plan
+SET status = 'waiting_for_approval',
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status = 'compiled'
+  AND archived_at IS NULL
+RETURNING *;
+
 -- name: MarkRenderPlanSubmitted :one
 UPDATE render_plan
 SET status = 'submitted',
@@ -102,11 +112,24 @@ RETURNING *;
 UPDATE render_plan
 SET status = $3,
     output_version_id = $4,
+    output_node_id = $5,
     completed_at = now(),
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
   AND status IN ('submitted', 'running')
+  AND archived_at IS NULL
+RETURNING *;
+
+-- name: MarkRenderPlanRejected :one
+UPDATE render_plan
+SET status = 'rejected',
+    blocker = $3,
+    audit_hints = $4,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status IN ('compiled', 'waiting_for_approval')
   AND archived_at IS NULL
 RETURNING *;
 

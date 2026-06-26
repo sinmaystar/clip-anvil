@@ -28,6 +28,7 @@ func (t RequestUserDecisionTool) Definition() Definition {
 		Name:        "request_user_decision",
 		Description: "Ask the user to make a decision before continuing. This creates a persisted decision card, checkpoint, and waiting_for_user task state.",
 		Parameters: objectSchema(map[string]any{
+			"brief":   map[string]any{"type": "string", "minLength": 1, "maxLength": 160, "description": "一句话描述调用该工具的意图，例如请用户确认是否立即生成机场预览图。"},
 			"title":   map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
 			"message": map[string]any{"type": "string", "minLength": 1, "maxLength": 2000},
 			"options": map[string]any{
@@ -65,6 +66,7 @@ type RequestUserDecisionNativeTool struct {
 }
 
 type RequestUserDecisionInput struct {
+	Brief         string                 `json:"brief" jsonschema:"required" jsonschema_description:"一句话描述调用该工具的意图，例如请用户确认是否立即生成机场预览图。不要超过 160 个中文字符。"`
 	Title         string                 `json:"title" jsonschema:"required" jsonschema_description:"决策卡标题，必须直接说明用户要确认什么。"`
 	Message       string                 `json:"message" jsonschema:"required" jsonschema_description:"给用户看的决策说明，包含背景、影响和需要用户选择的原因。"`
 	Options       []DecisionOptionInput  `json:"options" jsonschema_description:"可选项列表。需要用户在固定选项中选择时填写；每个选项必须有稳定 id 和清晰 label。"`
@@ -148,6 +150,9 @@ func (t *RequestUserDecisionNativeTool) InvokableRun(ctx context.Context, argume
 }
 
 func validateRequestUserDecisionInput(input RequestUserDecisionInput) error {
+	if err := requireText(input.Brief, "brief"); err != nil {
+		return err
+	}
 	if err := requireText(input.Title, "title"); err != nil {
 		return err
 	}

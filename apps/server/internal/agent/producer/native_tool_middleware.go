@@ -128,7 +128,41 @@ func nativeProducerToolRuntimeMiddleware(stateStore *producerLoopToolStateStore)
 						})
 					}
 				}
-				return next(ctx, input)
+				runtime, _ := agenttools.NativeRuntimeFromContext(ctx)
+				if strings.TrimSpace(runtime.ToolCallID) == "" {
+					runtime.ToolCallID = input.CallID
+				}
+				if sink, ok := agenttools.NativeToolTraceSinkFromContext(ctx); ok && sink != nil {
+					if err := sink.NativeToolCallStarted(ctx, runtime, agenttools.NativeToolTrace{
+						ToolName:  input.Name,
+						Arguments: args,
+					}); err != nil {
+						return nil, err
+					}
+				}
+				out, err := next(ctx, input)
+				trace := agenttools.NativeToolTrace{ToolName: input.Name}
+				if out != nil {
+					trace.Result = out.Result
+				}
+				if err != nil {
+					trace.Error = err.Error()
+				}
+				if _, interrupted := compose.IsInterruptRerunError(err); interrupted {
+					return out, err
+				}
+				if _, interrupted := compose.ExtractInterruptInfo(err); interrupted {
+					return out, err
+				}
+				if sink, ok := agenttools.NativeToolTraceSinkFromContext(ctx); ok && sink != nil {
+					if traceErr := sink.NativeToolCallCompleted(ctx, runtime, trace); traceErr != nil {
+						if err != nil {
+							return out, err
+						}
+						return out, traceErr
+					}
+				}
+				return out, err
 			}
 		},
 	}

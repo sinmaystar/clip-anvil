@@ -23,6 +23,7 @@ type Store interface {
 	UpdateRenderPlanDraft(ctx context.Context, arg db.UpdateRenderPlanDraftParams) (db.RenderPlan, error)
 	MarkRenderPlanCompiled(ctx context.Context, arg db.MarkRenderPlanCompiledParams) (db.RenderPlan, error)
 	MarkRenderPlanBlocked(ctx context.Context, arg db.MarkRenderPlanBlockedParams) (db.RenderPlan, error)
+	MarkRenderPlanWaitingForApproval(ctx context.Context, arg db.MarkRenderPlanWaitingForApprovalParams) (db.RenderPlan, error)
 	NextRenderPlanRevision(ctx context.Context, arg db.NextRenderPlanRevisionParams) (int32, error)
 }
 
@@ -113,6 +114,12 @@ func validateInput(input UpsertInput) error {
 	if input.TargetPhase != PhaseShotVideo && input.ModelPromptProfile == ProfileSeedance2Video {
 		return fmt.Errorf("%w: 图片阶段不能使用 seedance_2_video", ErrInvalidInput)
 	}
+	if input.ModelPromptProfile == ProfileSeedance2Video {
+		duration := int(input.Params.DurationSec)
+		if duration > 0 && duration != 5 && duration != 10 {
+			return fmt.Errorf("%w: duration_sec 只能是 5 或 10，当前是 %d", ErrInvalidInput, duration)
+		}
+	}
 	if input.Mode == "update_draft" && !input.RenderPlanID.Valid {
 		return fmt.Errorf("%w: update_draft 需要 render_plan_id", ErrInvalidInput)
 	}
@@ -175,7 +182,7 @@ func (s *Service) compileIfReady(ctx context.Context, input UpsertInput, plan db
 	if err != nil {
 		return db.RenderPlan{}, err
 	}
-	return s.store.MarkRenderPlanCompiled(ctx, db.MarkRenderPlanCompiledParams{
+	compiledPlan, err := s.store.MarkRenderPlanCompiled(ctx, db.MarkRenderPlanCompiledParams{
 		ID:              plan.ID,
 		WorkspaceID:     input.WorkspaceID,
 		CompiledPrompt:  compiled.CompiledPrompt,
@@ -183,6 +190,16 @@ func (s *Service) compileIfReady(ctx context.Context, input UpsertInput, plan db
 		PromptAudit:     []byte(compiled.PromptAudit),
 		CostEstimate:    []byte(compiled.CostEstimate),
 	})
+	if err != nil {
+		return db.RenderPlan{}, err
+	}
+	if input.ExecutionPolicy == ExecutionPolicyWaitForProducer {
+		return s.store.MarkRenderPlanWaitingForApproval(ctx, db.MarkRenderPlanWaitingForApprovalParams{
+			ID:          compiledPlan.ID,
+			WorkspaceID: input.WorkspaceID,
+		})
+	}
+	return compiledPlan, nil
 }
 
 func createParams(input UpsertInput, revision int32) db.CreateRenderPlanParams {

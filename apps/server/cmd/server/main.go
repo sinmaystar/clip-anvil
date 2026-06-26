@@ -29,7 +29,6 @@ import (
 	agentrenderplan "github.com/sinmaystar/clip-anvil/internal/agent/renderplan"
 	agentreviewer "github.com/sinmaystar/clip-anvil/internal/agent/reviewer"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
-	agentscheduler "github.com/sinmaystar/clip-anvil/internal/agent/scheduler"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
 	"github.com/sinmaystar/clip-anvil/internal/api"
@@ -199,6 +198,7 @@ func main() {
 		Tracer:      agentTracing.Tracer,
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
+	renderPlanSubmitter := agenttools.NewRenderPlanSubmitter(queries, agentRuntime, workerEnqueuer)
 	composerGraph, err := agentcomposer.NewGraph(agentcomposer.GraphConfig{
 		Runtime:          agentRuntime,
 		Store:            queries,
@@ -224,18 +224,8 @@ func main() {
 		ToolResponder: craftsmanResponderForConfig(cfg),
 		NativeToolRegistry: mustNativeRegistry(
 			agenttools.NewReadProjectMemoryNativeTool(creativeStateService),
-			agenttools.NewUpsertRenderPlanNativeTool(renderPlanService),
+			agenttools.NewUpsertRenderPlanNativeTool(renderPlanService, renderPlanSubmitter),
 		),
-		Responder: agentcraftsman.NewVolcengineModelResponder(agentcraftsman.VolcengineModelResponderConfig{
-			APIKey:      cfg.Production.Volcengine.APIKey,
-			BaseURL:     cfg.Production.Volcengine.BaseURL,
-			Region:      cfg.Production.Volcengine.Region,
-			Model:       cfg.Production.Volcengine.TextModel,
-			MaxTokens:   1000,
-			Temperature: 0.4,
-		}),
-		Runtime:          agentRuntime,
-		WorkerEnqueuer:   workerEnqueuer,
 		CheckPointStore:  agentEinoCheckpointStore,
 		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
@@ -246,10 +236,10 @@ func main() {
 	craftsmanExecutor := agentcraftsman.NewExecutor(agentcraftsman.ExecutorConfig{
 		Runtime:        agentRuntime,
 		Graph:          craftsmanGraph,
+		Broadcaster:    agentBroadcaster,
 		TraceCallbacks: agentTracing.Callbacks,
 	})
 	craftsmanEnqueuer := agentCraftsmanTaskEnqueuer{executor: craftsmanExecutor}
-	dependencyDispatcher := agentscheduler.NewDispatcher(agentscheduler.NewDependencyScheduler(queries), agentRuntime)
 	reviewerNativeToolRegistry, err := agenttools.NewNativeRegistry(
 		agenttools.NewReadProjectContextNativeTool(creativeStateService),
 		agenttools.NewReadProjectMemoryNativeTool(creativeStateService),
@@ -267,9 +257,6 @@ func main() {
 		},
 		ToolResponder:      reviewerResponderForConfig(cfg),
 		NativeToolRegistry: reviewerNativeToolRegistry,
-		Runtime:            agentRuntime,
-		Store:              queries,
-		Dependency:         dependencyDispatcher,
 		CheckPointStore:    agentEinoCheckpointStore,
 		CompileCallbacks:   []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
@@ -280,6 +267,7 @@ func main() {
 	reviewerExecutor := agentreviewer.NewExecutor(agentreviewer.ExecutorConfig{
 		Runtime:        agentRuntime,
 		Graph:          reviewerGraph,
+		Broadcaster:    agentBroadcaster,
 		TraceCallbacks: agentTracing.Callbacks,
 	})
 	reviewerEnqueuer := agentReviewerTaskEnqueuer{executor: reviewerExecutor}
@@ -290,6 +278,7 @@ func main() {
 		agenttools.NewUpsertKeyElementsNativeTool(creativeStateService),
 		agenttools.NewUpsertStoryboardNativeTool(creativeStateService),
 		agenttools.NewDispatchCraftsmanNativeTool(queries, agentRuntime, craftsmanEnqueuer),
+		agenttools.NewDecideRenderPlanNativeTool(queries, agentRuntime, workerEnqueuer),
 		agenttools.NewDispatchReviewerNativeTool(queries, agentRuntime, reviewerEnqueuer),
 		agenttools.NewRequestUserDecisionNativeTool(agenthitl.NewToolDecisionRequester(hitlService)),
 	)
@@ -298,7 +287,6 @@ func main() {
 		os.Exit(1)
 	}
 	producerGraph, err := agentproducer.NewGraph(agentproducer.GraphConfig{
-		Mode: agentproducer.ProducerGraphModeExplicitToolLoop,
 		Loader: agentproducer.RuntimeContextLoader{
 			Runtime:        agentRuntime,
 			Queries:        queries,
@@ -427,6 +415,7 @@ func main() {
 	h.GET("/api/model-capabilities", authMiddleware, modelHandler.ListCapabilities)
 	h.GET("/api/agent/workspaces/:workspaceID/thread", authMiddleware, agentHandler.GetThread)
 	h.GET("/api/agent/workspaces/:workspaceID/messages", authMiddleware, agentHandler.ListMessages)
+	h.GET("/api/agent/workspaces/:workspaceID/tasks", authMiddleware, agentHandler.ListActiveTasks)
 	h.GET("/api/agent/workspaces/:workspaceID/production-overview", authMiddleware, agentHandler.GetProductionOverview)
 	h.GET("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.GetModelSelection)
 	h.PUT("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.PutModelSelection)

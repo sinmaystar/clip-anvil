@@ -29,6 +29,20 @@ func TestServiceCreatesReferenceImageRenderPlanAndCompiles(t *testing.T) {
 	}
 }
 
+func TestServiceWaitForProducerMarksCompiledPlanWaiting(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validReferenceInput()
+	input.ExecutionPolicy = ExecutionPolicyWaitForProducer
+	plan, err := service.Upsert(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Status != StatusWaitingForApproval {
+		t.Fatalf("status = %q, want waiting_for_approval", plan.Status)
+	}
+}
+
 func TestServiceRejectsShotVideoWithSeedreamProfile(t *testing.T) {
 	store := newFakeStore()
 	service := NewService(store, NewPromptCompiler())
@@ -40,6 +54,27 @@ func TestServiceRejectsShotVideoWithSeedreamProfile(t *testing.T) {
 	input.PromptParts.Action = "旅客拉着行李箱穿过机场大厅。"
 	_, err := service.Upsert(context.Background(), input)
 	if err == nil || !strings.Contains(err.Error(), "shot_video 必须使用 seedance_2_video") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(store.plans) != 0 {
+		t.Fatalf("store writes = %d, want 0", len(store.plans))
+	}
+}
+
+func TestServiceRejectsUnsupportedSeedanceDurationBeforeCreatingPlan(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validReferenceInput()
+	input.Scope.Type = ScopeShot
+	input.TargetPhase = PhaseShotVideo
+	input.ModelPromptProfile = ProfileSeedance2Video
+	input.Operation = "image_to_video_first_frame"
+	input.PromptParts.Action = "行李箱在极简背景中旋转展示。"
+	input.Params.DurationSec = 4
+
+	_, err := service.Upsert(context.Background(), input)
+
+	if err == nil || !strings.Contains(err.Error(), "duration_sec 只能是 5 或 10") {
 		t.Fatalf("error = %v", err)
 	}
 	if len(store.plans) != 0 {
@@ -192,6 +227,17 @@ func (f *fakeStore) MarkRenderPlanBlocked(_ context.Context, arg db.MarkRenderPl
 			plan.Status = StatusBlocked
 			plan.Blocker = arg.Blocker
 			plan.AuditHints = arg.AuditHints
+			f.plans[i] = plan
+			return plan, nil
+		}
+	}
+	return db.RenderPlan{}, errors.New("not found")
+}
+
+func (f *fakeStore) MarkRenderPlanWaitingForApproval(_ context.Context, arg db.MarkRenderPlanWaitingForApprovalParams) (db.RenderPlan, error) {
+	for i, plan := range f.plans {
+		if plan.ID == arg.ID && plan.WorkspaceID == arg.WorkspaceID {
+			plan.Status = StatusWaitingForApproval
 			f.plans[i] = plan
 			return plan, nil
 		}

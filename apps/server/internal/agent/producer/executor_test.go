@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -107,6 +109,41 @@ func TestExecutorPersistsNativeToolTraceBeforeFinalAssistantMessage(t *testing.T
 	if !bytes.Contains(runtime.appended[0].RawMessage, []byte(`"tool_call_id":"call-text"`)) ||
 		!bytes.Contains(runtime.appended[1].RawMessage, []byte(`"tool_call_id":"call-text"`)) {
 		t.Fatalf("raw tool messages = %s / %s", runtime.appended[0].RawMessage, runtime.appended[1].RawMessage)
+	}
+	if len(runtime.updated) != 1 || !bytes.Contains(runtime.updated[0].Content, []byte(`"status":"succeeded"`)) {
+		t.Fatalf("updated tool status = %#v", runtime.updated)
+	}
+}
+
+func TestExecutorPersistsLiveNativeToolTraceFromGraphContext(t *testing.T) {
+	runtime := &fakeRuntime{}
+	broadcaster := &fakeBroadcaster{}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:     runtime,
+		Graph:       &fakeGraph{emitLiveToolTrace: true, output: ProducerTurnOutput{AssistantText: "完成。"}},
+		Broadcaster: broadcaster,
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID:      uuidWithByte(1),
+		ThreadID:         uuidWithByte(2),
+		TaskID:           uuidWithByte(3),
+		TriggerMessageID: uuidWithByte(4),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := runtime.appendedMessageTypes()
+	want := []string{"tool_call", "tool_result", "text"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("message types = %#v, want %#v", got, want)
+	}
+	if len(runtime.updated) != 1 || !bytes.Contains(runtime.updated[0].Content, []byte(`"status":"succeeded"`)) {
+		t.Fatalf("updated live tool status = %#v", runtime.updated)
+	}
+	if broadcaster.messageCount < 2 || broadcaster.messageUpdateCount < 1 {
+		t.Fatalf("broadcast counts = messages %d updates %d", broadcaster.messageCount, broadcaster.messageUpdateCount)
 	}
 }
 
@@ -205,7 +242,6 @@ func TestExecutorMarksTaskWaitingForNativeInterrupt(t *testing.T) {
 	runtime := &fakeRuntime{}
 	registry := mustTestNativeToolRegistryWithTools(t, &testNativeTool{name: "request_user_decision", interrupt: true})
 	graph, err := NewGraph(GraphConfig{
-		Mode:   ProducerGraphModeExplicitToolLoop,
 		Loader: fakeContextLoader{context: ProducerContext{LatestUserText: "需要决策"}},
 		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
 			nativeToolCallOutput("call-decision", "request_user_decision", `{"title":"确认","message":"继续吗"}`),
@@ -233,8 +269,8 @@ func TestExecutorMarksTaskWaitingForNativeInterrupt(t *testing.T) {
 	if runtime.failedTask.Valid {
 		t.Fatalf("task should not fail, failed=%v", runtime.failedTask)
 	}
-	if runtime.assistantMessageType != "" {
-		t.Fatalf("assistant message type = %q", runtime.assistantMessageType)
+	if got := runtime.appendedMessageTypes(); !slices.Equal(got, []string{"tool_call"}) {
+		t.Fatalf("appended message types = %#v, want only running tool_call", got)
 	}
 	if !containsString(runtime.eventTypes, "graph_interrupted") {
 		t.Fatalf("events = %#v", runtime.eventTypes)
@@ -328,11 +364,12 @@ func uuidWithByte(b byte) pgtype.UUID {
 }
 
 type fakeGraph struct {
-	output     ProducerTurnOutput
-	deltas     []string
-	err        error
-	runOptions agenteino.RunOptions
-	ctx        context.Context
+	output            ProducerTurnOutput
+	deltas            []string
+	err               error
+	emitLiveToolTrace bool
+	runOptions        agenteino.RunOptions
+	ctx               context.Context
 }
 
 func (f *fakeGraph) Run(ctx context.Context, input ProducerTurnInput, options ...agenteino.RunOptions) (ProducerTurnOutput, error) {
@@ -345,6 +382,30 @@ func (f *fakeGraph) Run(ctx context.Context, input ProducerTurnInput, options ..
 			if err := input.EmitDelta(ctx, ProducerStreamDelta{Delta: delta}); err != nil {
 				return ProducerTurnOutput{}, err
 			}
+		}
+	}
+	if f.emitLiveToolTrace {
+		sink, ok := agenttools.NativeToolTraceSinkFromContext(ctx)
+		if !ok {
+			return ProducerTurnOutput{}, errors.New("live native tool trace sink missing")
+		}
+		runtime := agenttools.NativeRuntimeContext{
+			WorkspaceID: uuidWithByte(1),
+			ThreadID:    uuidWithByte(2),
+			TaskID:      uuidWithByte(3),
+			ToolCallID:  "call-live",
+		}
+		if err := sink.NativeToolCallStarted(ctx, runtime, agenttools.NativeToolTrace{
+			ToolName:  "upsert_project_brief",
+			Arguments: map[string]any{"brief": "实时写入项目 brief。"},
+		}); err != nil {
+			return ProducerTurnOutput{}, err
+		}
+		if err := sink.NativeToolCallCompleted(ctx, runtime, agenttools.NativeToolTrace{
+			ToolName: "upsert_project_brief",
+			Result:   "已写入 CreativeBrief。",
+		}); err != nil {
+			return ProducerTurnOutput{}, err
 		}
 	}
 	return f.output, f.err
@@ -400,6 +461,7 @@ type fakeRuntime struct {
 	eventTypes           []string
 	appendMessageSeq     int64
 	appended             []db.AgentMessage
+	updated              []db.AgentMessage
 }
 
 func (f *fakeRuntime) MarkTaskRunning(_ context.Context, taskID pgtype.UUID) (db.AgentTask, error) {
@@ -448,6 +510,20 @@ func (f *fakeRuntime) AppendMessage(_ context.Context, params agentruntime.Appen
 	}
 	f.appended = append(f.appended, msg)
 	return msg, nil
+}
+
+func (f *fakeRuntime) UpdateMessage(_ context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error) {
+	for index, msg := range f.appended {
+		if msg.ID == params.ID {
+			msg.Content = params.Content
+			msg.RawMessage = params.RawMessage
+			msg.EventID = params.EventID
+			f.appended[index] = msg
+			f.updated = append(f.updated, msg)
+			return msg, nil
+		}
+	}
+	return db.AgentMessage{}, errors.New("message not found")
 }
 
 func (f *fakeRuntime) appendedMessageTypes() []string {

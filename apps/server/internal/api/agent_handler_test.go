@@ -86,6 +86,28 @@ func TestAgentTaskResponseMapsTask(t *testing.T) {
 	}
 }
 
+func TestAgentTasksResponseMapsActiveTasks(t *testing.T) {
+	tasks := []db.AgentTask{
+		{
+			ID:          testUUID(0x21),
+			WorkspaceID: testUUID(0x22),
+			ThreadID:    testUUID(0x23),
+			Role:        "producer",
+			ScopeType:   "workspace",
+			TaskType:    "producer_turn",
+			Status:      "running",
+			Input:       []byte(`{"trigger_message_seq":9}`),
+			Output:      []byte(`{}`),
+		},
+	}
+
+	got := toAgentTasksResponse(tasks)
+
+	if len(got.Tasks) != 1 || got.Tasks[0].Status != "running" || got.Tasks[0].TaskType != "producer_turn" {
+		t.Fatalf("tasks response = %#v", got)
+	}
+}
+
 func TestAgentModelSelectionResponseMapsResolvedSelection(t *testing.T) {
 	resolved := modelselection.Resolved{
 		Selection: modelselection.Selection{Producer: modelselection.ModelRef{ProviderID: "volcengine", ModelID: "doubao-mini", ReasoningEffort: "high"}},
@@ -417,6 +439,9 @@ func TestAgentProductionOverviewRouteContract(t *testing.T) {
 	if !strings.Contains(string(handlerSource), "func (h *AgentHandler) GetProductionOverview") {
 		t.Fatal("AgentHandler.GetProductionOverview must be implemented")
 	}
+	if !strings.Contains(string(handlerSource), "func (h *AgentHandler) ListActiveTasks") {
+		t.Fatal("AgentHandler.ListActiveTasks must be implemented")
+	}
 
 	serverSource, err := os.ReadFile("../../cmd/server/main.go")
 	if err != nil {
@@ -425,6 +450,10 @@ func TestAgentProductionOverviewRouteContract(t *testing.T) {
 	wantRoute := `GET("/api/agent/workspaces/:workspaceID/production-overview", authMiddleware, agentHandler.GetProductionOverview)`
 	if !strings.Contains(string(serverSource), wantRoute) {
 		t.Fatalf("server route %q is not registered", wantRoute)
+	}
+	wantTasksRoute := `GET("/api/agent/workspaces/:workspaceID/tasks", authMiddleware, agentHandler.ListActiveTasks)`
+	if !strings.Contains(string(serverSource), wantTasksRoute) {
+		t.Fatalf("server route %q is not registered", wantTasksRoute)
 	}
 }
 

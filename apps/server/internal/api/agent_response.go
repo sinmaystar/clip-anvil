@@ -230,6 +230,14 @@ func toAgentTaskResponse(task db.AgentTask) agentTaskResponse {
 	}
 }
 
+func toAgentTasksResponse(tasks []db.AgentTask) agentTasksResponse {
+	out := make([]agentTaskResponse, 0, len(tasks))
+	for _, task := range tasks {
+		out = append(out, toAgentTaskResponse(task))
+	}
+	return agentTasksResponse{Tasks: out}
+}
+
 func toAgentModelSelectionResponse(resolved modelselection.Resolved) getAgentModelSelectionResponse {
 	options := make([]agentModelOptionResponse, 0, len(resolved.Options))
 	for _, option := range resolved.Options {

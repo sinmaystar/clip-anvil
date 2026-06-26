@@ -25,13 +25,15 @@ type RunTaskInput struct {
 }
 
 type GraphInput struct {
-	WorkspaceID  pgtype.UUID
-	ThreadID     pgtype.UUID
-	TaskID       pgtype.UUID
-	ShotID       pgtype.UUID
-	Mode         string
-	MaxAttempts  int
-	WorkerParams map[string]any
+	WorkspaceID      pgtype.UUID
+	ThreadID         pgtype.UUID
+	TaskID           pgtype.UUID
+	ShotID           pgtype.UUID
+	Mode             string
+	ExecutionPolicy  string
+	ParentToolCallID string
+	MaxAttempts      int
+	WorkerParams     map[string]any
 }
 
 type GraphOutput struct {
@@ -86,10 +88,6 @@ type Strategy struct {
 type ModelSpec struct {
 	Provider string `json:"provider,omitempty"`
 	ModelID  string `json:"model_id,omitempty"`
-}
-
-type ModelResponder interface {
-	DraftPreviewStrategy(ctx context.Context, context Context) (Strategy, map[string]any, error)
 }
 
 type ToolCallingResponder interface {

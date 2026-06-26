@@ -17,13 +17,27 @@ type NativeTool interface {
 }
 
 type NativeRuntimeContext struct {
-	WorkspaceID pgtype.UUID
-	ThreadID    pgtype.UUID
-	TaskID      pgtype.UUID
-	ToolCallID  string
+	WorkspaceID     pgtype.UUID
+	ThreadID        pgtype.UUID
+	TaskID          pgtype.UUID
+	ToolCallID      string
+	ExecutionPolicy string
+}
+
+type NativeToolTrace struct {
+	ToolName  string
+	Arguments map[string]any
+	Result    string
+	Error     string
+}
+
+type NativeToolTraceSink interface {
+	NativeToolCallStarted(ctx context.Context, runtime NativeRuntimeContext, trace NativeToolTrace) error
+	NativeToolCallCompleted(ctx context.Context, runtime NativeRuntimeContext, trace NativeToolTrace) error
 }
 
 type nativeRuntimeContextKey struct{}
+type nativeToolTraceSinkKey struct{}
 
 func WithNativeRuntimeContext(ctx context.Context, runtime NativeRuntimeContext) context.Context {
 	return context.WithValue(ctx, nativeRuntimeContextKey{}, runtime)
@@ -32,6 +46,15 @@ func WithNativeRuntimeContext(ctx context.Context, runtime NativeRuntimeContext)
 func NativeRuntimeFromContext(ctx context.Context) (NativeRuntimeContext, bool) {
 	runtime, ok := ctx.Value(nativeRuntimeContextKey{}).(NativeRuntimeContext)
 	return runtime, ok
+}
+
+func WithNativeToolTraceSink(ctx context.Context, sink NativeToolTraceSink) context.Context {
+	return context.WithValue(ctx, nativeToolTraceSinkKey{}, sink)
+}
+
+func NativeToolTraceSinkFromContext(ctx context.Context) (NativeToolTraceSink, bool) {
+	sink, ok := ctx.Value(nativeToolTraceSinkKey{}).(NativeToolTraceSink)
+	return sink, ok
 }
 
 type NativeRegistry struct {

@@ -285,6 +285,17 @@ func TestPreviewNodeLayoutKeepsReadableGap(t *testing.T) {
 	}
 }
 
+func TestGenerationSpecUsesImageOperationFromInput(t *testing.T) {
+	spec := generationSpec(GenerationInput{
+		Mode:          "preview_image",
+		OutputType:    "image",
+		OperationType: "multi_image_to_image",
+	})
+	if spec.OutputType != "image" || spec.OperationType != "multi_image_to_image" {
+		t.Fatalf("spec = %#v", spec)
+	}
+}
+
 func TestWorkerUsesExistingTargetNodeWhenProvided(t *testing.T) {
 	store := &fakeWorkerStore{existingNode: db.MediaNode{ID: uuidWithByte(22), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeImage, OperationType: "text_to_image", ShotID: uuidWithByte(2)}}
 	runtime := &fakeWorkerRuntime{}
@@ -565,6 +576,10 @@ func (f *fakeWorkerStore) CreateMediaEdge(_ context.Context, params db.CreateMed
 func (f *fakeWorkerStore) UpdateShotStatus(_ context.Context, params db.UpdateShotStatusParams) (db.Shot, error) {
 	f.statusUpdates = append(f.statusUpdates, params)
 	return db.Shot{ID: params.ID, WorkspaceID: params.WorkspaceID, Status: params.Status}, nil
+}
+
+func (f *fakeWorkerStore) MarkRenderPlanCompleted(context.Context, db.MarkRenderPlanCompletedParams) (db.RenderPlan, error) {
+	return db.RenderPlan{}, nil
 }
 
 type fakeProductionSubmitter struct {

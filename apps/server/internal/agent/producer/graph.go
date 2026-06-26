@@ -21,7 +21,6 @@ type ContextLoader interface {
 }
 
 type GraphConfig struct {
-	Mode               ProducerGraphMode
 	Loader             ContextLoader
 	Responder          Responder
 	NativeToolRegistry *agenttools.NativeRegistry
@@ -33,13 +32,9 @@ type Graph struct {
 	runnable compose.Runnable[ProducerTurnInput, ProducerTurnOutput]
 }
 
-type ProducerGraphMode string
-
 const (
-	ProducerGraphModeInlineDraft      ProducerGraphMode = "inline_draft"
-	ProducerGraphModeExplicitToolLoop ProducerGraphMode = "explicit_tool_loop"
-	defaultProducerMaxToolCalls                         = 1000
-	producerGraphMaxRunSteps                            = 10000
+	defaultProducerMaxToolCalls = 1000
+	producerGraphMaxRunSteps    = 10000
 )
 
 type ProducerLoopState struct {
@@ -52,52 +47,13 @@ type ProducerLoopState struct {
 }
 
 func NewGraph(config GraphConfig) (*Graph, error) {
-	if config.Loader == nil || config.Responder == nil {
+	if config.Loader == nil || config.Responder == nil || config.NativeToolRegistry == nil {
 		return nil, ErrInvalidGraphConfig
 	}
-	if config.Mode == ProducerGraphModeExplicitToolLoop {
-		return newExplicitToolLoopGraph(config)
-	}
-	return newInlineDraftGraph(config)
-}
-
-func newInlineDraftGraph(config GraphConfig) (*Graph, error) {
-	g := compose.NewGraph[ProducerTurnInput, ProducerTurnOutput]()
-	if err := g.AddLambdaNode("load_context", compose.InvokableLambda(func(ctx context.Context, input ProducerTurnInput) (ProducerContext, error) {
-		return config.Loader.LoadProducerContext(ctx, input)
-	})); err != nil {
-		return nil, err
-	}
-	if err := g.AddLambdaNode("draft_response", compose.InvokableLambda(func(ctx context.Context, input ProducerContext) (ProducerTurnOutput, error) {
-		return config.Responder.Respond(ctx, input)
-	})); err != nil {
-		return nil, err
-	}
-	if err := g.AddLambdaNode("finalize_response", compose.InvokableLambda(func(_ context.Context, input ProducerTurnOutput) (ProducerTurnOutput, error) {
-		return finalizeProducerOutput(input)
-	})); err != nil {
-		return nil, err
-	}
-	if err := g.AddEdge(compose.START, "load_context"); err != nil {
-		return nil, err
-	}
-	if err := g.AddEdge("load_context", "draft_response"); err != nil {
-		return nil, err
-	}
-	if err := g.AddEdge("draft_response", "finalize_response"); err != nil {
-		return nil, err
-	}
-	if err := g.AddEdge("finalize_response", compose.END); err != nil {
-		return nil, err
-	}
-
-	return compileProducerGraph(g, config)
+	return newExplicitToolLoopGraph(config)
 }
 
 func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
-	if config.NativeToolRegistry == nil {
-		return nil, NewAgentError("agent_native_tool_registry_missing", "producer native tool registry is not configured")
-	}
 	stateStore := newProducerLoopToolStateStore()
 	toolNode, toolInfos, err := producerToolNodeForConfig(context.Background(), config, stateStore)
 	if err != nil {

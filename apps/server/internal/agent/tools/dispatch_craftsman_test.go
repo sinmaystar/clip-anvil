@@ -22,8 +22,16 @@ func TestDispatchCraftsmanDefinition(t *testing.T) {
 		t.Fatalf("mode schema missing: %#v", def.Parameters)
 	}
 	enum, ok := mode["enum"].([]string)
-	if !ok || len(enum) != 1 || enum[0] != "preview_image" {
+	if !ok || len(enum) != 2 || enum[0] != "preview_image" || enum[1] != "shot_video" {
 		t.Fatalf("mode enum = %#v", mode["enum"])
+	}
+	policy, ok := def.Parameters["properties"].(map[string]any)["execution_policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("execution_policy schema missing: %#v", def.Parameters)
+	}
+	policyEnum, ok := policy["enum"].([]string)
+	if !ok || len(policyEnum) != 2 || policyEnum[0] != "execute_immediately" || policyEnum[1] != "wait_for_producer" {
+		t.Fatalf("execution_policy enum = %#v", policy["enum"])
 	}
 	if !def.Safety.UsesProductionService || def.Safety.WritesCanvas {
 		t.Fatalf("Safety = %#v", def.Safety)
@@ -50,7 +58,7 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 		WorkspaceID: uuidWithByte(1),
 		ThreadID:    uuidWithByte(2),
 		TaskID:      uuidWithByte(3),
-		Arguments:   map[string]any{"mode": "preview_image"},
+		Arguments:   map[string]any{"mode": "preview_image", "execution_policy": "execute_immediately"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +96,51 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 		if input["mode"] != "preview_image" {
 			t.Fatalf("task input = %#v", input)
 		}
+		if input["execution_policy"] != "execute_immediately" {
+			t.Fatalf("execution_policy = %#v, want execute_immediately", input["execution_policy"])
+		}
+	}
+}
+
+func TestDispatchCraftsmanNativeCarriesParentToolCallID(t *testing.T) {
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		shots: []db.Shot{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", Title: "开场", Status: "planned"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanNativeTool(store, runtime, &fakeCraftsmanEnqueuer{})
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		ToolCallID:  "producer-dispatch-call",
+	})
+
+	got, err := tool.InvokableRun(ctx, `{
+		"brief":"直接生成所有分镜预览图。",
+		"mode":"preview_image",
+		"execution_policy":"execute_immediately"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "已派发 Craftsman 任务") {
+		t.Fatalf("result = %s", got)
+	}
+	if len(runtime.createdTasks) != 1 {
+		t.Fatalf("created tasks = %d", len(runtime.createdTasks))
+	}
+	var input map[string]any
+	if err := json.Unmarshal(runtime.createdTasks[0].Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["parent_tool_call_id"] != "producer-dispatch-call" {
+		t.Fatalf("task input = %#v", input)
+	}
+	if input["execution_policy"] != "execute_immediately" {
+		t.Fatalf("task input = %#v", input)
 	}
 }
 
@@ -108,6 +161,7 @@ func TestDispatchCraftsmanResolvesShotRefsAndCapsAttempts(t *testing.T) {
 		TaskID:      uuidWithByte(3),
 		Arguments: map[string]any{
 			"mode":             "preview_image",
+			"execution_policy": "wait_for_producer",
 			"shot_refs":        []any{"shot-02"},
 			"max_attempts":     99.0,
 			"review_record_id": "review-1",
@@ -134,6 +188,9 @@ func TestDispatchCraftsmanResolvesShotRefsAndCapsAttempts(t *testing.T) {
 	}
 	if input["review_record_id"] != "review-1" || input["review_critique"] != "商品太小" {
 		t.Fatalf("task input = %#v", input)
+	}
+	if input["execution_policy"] != "wait_for_producer" {
+		t.Fatalf("execution_policy = %#v, want wait_for_producer", input["execution_policy"])
 	}
 	hints, _ := input["review_fix_hints"].([]any)
 	if len(hints) != 1 || hints[0] != "拉近主体" {

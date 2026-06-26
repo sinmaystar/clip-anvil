@@ -328,15 +328,33 @@ func (s *Service) ListMessages(ctx context.Context, threadID pgtype.UUID, afterS
 	})
 }
 
+func (s *Service) ListWorkspaceMessages(ctx context.Context, workspaceID pgtype.UUID, afterCreatedAt pgtype.Timestamptz, limit int32) ([]db.AgentMessage, error) {
+	if !workspaceID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	return s.queries.ListAgentMessagesByWorkspace(ctx, db.ListAgentMessagesByWorkspaceParams{
+		WorkspaceID:    workspaceID,
+		AfterCreatedAt: afterCreatedAt,
+		RowLimit:       limit,
+	})
+}
+
 type CreateTaskParams struct {
-	WorkspaceID pgtype.UUID
-	ThreadID    pgtype.UUID
-	Role        string
-	ScopeType   string
-	ScopeID     pgtype.UUID
-	TaskType    string
-	MaxAttempts int32
-	Input       []byte
+	WorkspaceID  pgtype.UUID
+	ThreadID     pgtype.UUID
+	Role         string
+	ScopeType    string
+	ScopeID      pgtype.UUID
+	TaskType     string
+	MaxAttempts  int32
+	Input        []byte
+	RenderPlanID pgtype.UUID
 }
 
 func (s *Service) CreateTask(ctx context.Context, params CreateTaskParams) (db.AgentTask, error) {
@@ -348,14 +366,15 @@ func (s *Service) CreateTask(ctx context.Context, params CreateTaskParams) (db.A
 		return db.AgentTask{}, ErrInvalidRequest
 	}
 	return s.queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-		WorkspaceID: params.WorkspaceID,
-		ThreadID:    params.ThreadID,
-		Role:        params.Role,
-		ScopeType:   scopeType,
-		ScopeID:     params.ScopeID,
-		TaskType:    params.TaskType,
-		MaxAttempts: params.MaxAttempts,
-		Input:       defaultJSON(params.Input),
+		WorkspaceID:  params.WorkspaceID,
+		ThreadID:     params.ThreadID,
+		Role:         params.Role,
+		ScopeType:    scopeType,
+		ScopeID:      params.ScopeID,
+		TaskType:     params.TaskType,
+		MaxAttempts:  params.MaxAttempts,
+		Input:        defaultJSON(params.Input),
+		RenderPlanID: params.RenderPlanID,
 	})
 }
 

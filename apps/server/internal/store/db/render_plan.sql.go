@@ -504,6 +504,7 @@ const markRenderPlanCompleted = `-- name: MarkRenderPlanCompleted :one
 UPDATE render_plan
 SET status = $3,
     output_version_id = $4,
+    output_node_id = $5,
     completed_at = now(),
     updated_at = now()
 WHERE id = $1
@@ -518,6 +519,7 @@ type MarkRenderPlanCompletedParams struct {
 	WorkspaceID     pgtype.UUID `json:"workspace_id"`
 	Status          string      `json:"status"`
 	OutputVersionID pgtype.UUID `json:"output_version_id"`
+	OutputNodeID    pgtype.UUID `json:"output_node_id"`
 }
 
 func (q *Queries) MarkRenderPlanCompleted(ctx context.Context, arg MarkRenderPlanCompletedParams) (RenderPlan, error) {
@@ -526,6 +528,74 @@ func (q *Queries) MarkRenderPlanCompleted(ctx context.Context, arg MarkRenderPla
 		arg.WorkspaceID,
 		arg.Status,
 		arg.OutputVersionID,
+		arg.OutputNodeID,
+	)
+	var i RenderPlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ScopeType,
+		&i.ScopeID,
+		&i.TargetPhase,
+		&i.TaskType,
+		&i.ModelPromptProfile,
+		&i.Operation,
+		&i.Status,
+		&i.Revision,
+		&i.ForkedFromRenderPlanID,
+		&i.RenderPlanKey,
+		&i.ReferenceBindings,
+		&i.SubjectBindings,
+		&i.PromptParts,
+		&i.Params,
+		&i.AuditHints,
+		&i.Blocker,
+		&i.CompiledPrompt,
+		&i.CompiledRequest,
+		&i.PromptAudit,
+		&i.CostEstimate,
+		&i.Rationale,
+		&i.CreatedByThreadID,
+		&i.CreatedByTaskID,
+		&i.SubmittedWorkerTaskID,
+		&i.OutputNodeID,
+		&i.OutputVersionID,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompiledAt,
+		&i.SubmittedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const markRenderPlanRejected = `-- name: MarkRenderPlanRejected :one
+UPDATE render_plan
+SET status = 'rejected',
+    blocker = $3,
+    audit_hints = $4,
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status IN ('compiled', 'waiting_for_approval')
+  AND archived_at IS NULL
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+`
+
+type MarkRenderPlanRejectedParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Blocker     []byte      `json:"blocker"`
+	AuditHints  []byte      `json:"audit_hints"`
+}
+
+func (q *Queries) MarkRenderPlanRejected(ctx context.Context, arg MarkRenderPlanRejectedParams) (RenderPlan, error) {
+	row := q.db.QueryRow(ctx, markRenderPlanRejected,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.Blocker,
+		arg.AuditHints,
 	)
 	var i RenderPlan
 	err := row.Scan(
@@ -595,6 +665,64 @@ func (q *Queries) MarkRenderPlanSubmitted(ctx context.Context, arg MarkRenderPla
 		arg.SubmittedWorkerTaskID,
 		arg.OutputNodeID,
 	)
+	var i RenderPlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ScopeType,
+		&i.ScopeID,
+		&i.TargetPhase,
+		&i.TaskType,
+		&i.ModelPromptProfile,
+		&i.Operation,
+		&i.Status,
+		&i.Revision,
+		&i.ForkedFromRenderPlanID,
+		&i.RenderPlanKey,
+		&i.ReferenceBindings,
+		&i.SubjectBindings,
+		&i.PromptParts,
+		&i.Params,
+		&i.AuditHints,
+		&i.Blocker,
+		&i.CompiledPrompt,
+		&i.CompiledRequest,
+		&i.PromptAudit,
+		&i.CostEstimate,
+		&i.Rationale,
+		&i.CreatedByThreadID,
+		&i.CreatedByTaskID,
+		&i.SubmittedWorkerTaskID,
+		&i.OutputNodeID,
+		&i.OutputVersionID,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompiledAt,
+		&i.SubmittedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const markRenderPlanWaitingForApproval = `-- name: MarkRenderPlanWaitingForApproval :one
+UPDATE render_plan
+SET status = 'waiting_for_approval',
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status = 'compiled'
+  AND archived_at IS NULL
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+`
+
+type MarkRenderPlanWaitingForApprovalParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) MarkRenderPlanWaitingForApproval(ctx context.Context, arg MarkRenderPlanWaitingForApprovalParams) (RenderPlan, error) {
+	row := q.db.QueryRow(ctx, markRenderPlanWaitingForApproval, arg.ID, arg.WorkspaceID)
 	var i RenderPlan
 	err := row.Scan(
 		&i.ID,

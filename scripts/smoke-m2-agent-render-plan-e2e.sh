@@ -153,11 +153,19 @@ SELECT 'project_memory_active', count(*), 1 FROM project_memory WHERE workspace_
 UNION ALL
 SELECT 'shot_active', count(*), 2 FROM shot WHERE workspace_id = :'workspace_id'::uuid AND archived_at IS NULL
 UNION ALL
-SELECT 'render_plan_compiled', count(*), 2 FROM render_plan WHERE workspace_id = :'workspace_id'::uuid AND status = 'compiled' AND target_phase = 'preview_image' AND compiled_prompt <> ''
+SELECT 'render_plan_succeeded', count(*), 2 FROM render_plan WHERE workspace_id = :'workspace_id'::uuid AND status = 'succeeded' AND target_phase = 'preview_image' AND compiled_prompt <> '' AND output_node_id IS NOT NULL AND output_version_id IS NOT NULL
 UNION ALL
 SELECT 'craftsman_task_succeeded', count(*), 2 FROM agent_task WHERE workspace_id = :'workspace_id'::uuid AND task_type = 'craftsman_turn' AND status = 'succeeded'
 UNION ALL
+SELECT 'worker_task_succeeded', count(*), 2 FROM agent_task WHERE workspace_id = :'workspace_id'::uuid AND task_type = 'worker_generation' AND status = 'succeeded'
+UNION ALL
 SELECT 'producer_task_succeeded', count(*), 1 FROM agent_task WHERE workspace_id = :'workspace_id'::uuid AND task_type = 'producer_turn' AND status = 'succeeded'
+UNION ALL
+SELECT 'agent_tool_call_visible', count(*), 9 FROM agent_message WHERE workspace_id = :'workspace_id'::uuid AND message_type = 'tool_call' AND content::text LIKE '%tool_status%'
+UNION ALL
+SELECT 'agent_tool_result_audit', count(*), 9 FROM agent_message WHERE workspace_id = :'workspace_id'::uuid AND message_type = 'tool_result'
+UNION ALL
+SELECT 'craftsman_nested_tool_calls', count(*), 4 FROM agent_message WHERE workspace_id = :'workspace_id'::uuid AND message_type = 'tool_call' AND raw_message ? 'parent_tool_call_id'
 UNION ALL
 SELECT 'craftsman_events', count(*), 2 FROM agent_event WHERE workspace_id = :'workspace_id'::uuid AND source_role = 'craftsman'
 UNION ALL

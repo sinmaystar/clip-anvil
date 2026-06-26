@@ -120,13 +120,3 @@ func passingRequiredAxes(task string) map[string]RubricAxis {
 	}
 	return out
 }
-
-func passingReviewResult() ReviewResult {
-	return ReviewResult{
-		ReviewTask:   ReviewTaskPreviewImage,
-		Verdict:      ReviewStatusAccepted,
-		OverallScore: 0.86,
-		Rubric:       passingRequiredAxes(ReviewTaskPreviewImage),
-		Critique:     "可用",
-	}
-}

@@ -3,6 +3,7 @@ package producer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -39,7 +40,8 @@ func TestGraphRunReturnsAssistantText(t *testing.T) {
 		Loader: fakeContextLoader{
 			context: ProducerContext{LatestUserText: "一条运动鞋短片"},
 		},
-		Responder: DeterministicResponder{},
+		Responder:          DeterministicResponder{},
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "create_agent_text_node"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -55,12 +57,23 @@ func TestGraphRunReturnsAssistantText(t *testing.T) {
 	}
 }
 
+func TestProducerGraphRequiresNativeToolLoop(t *testing.T) {
+	_, err := NewGraph(GraphConfig{
+		Loader:    fakeContextLoader{context: ProducerContext{LatestUserText: "brief"}},
+		Responder: DeterministicResponder{},
+	})
+	if !errors.Is(err, ErrInvalidGraphConfig) {
+		t.Fatalf("NewGraph without native tool loop error = %v, want ErrInvalidGraphConfig", err)
+	}
+}
+
 func TestProducerGraphCompileCapturesGraphInfo(t *testing.T) {
 	registry := agenteino.NewGraphInfoRegistry()
 	_, err := NewGraph(GraphConfig{
-		Loader:           fakeContextLoader{context: ProducerContext{LatestUserText: "brief"}},
-		Responder:        DeterministicResponder{},
-		CompileCallbacks: []compose.GraphCompileCallback{registry.CompileCallback()},
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "brief"}},
+		Responder:          DeterministicResponder{},
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "create_agent_text_node"),
+		CompileCallbacks:   []compose.GraphCompileCallback{registry.CompileCallback()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +83,7 @@ func TestProducerGraphCompileCapturesGraphInfo(t *testing.T) {
 	if !ok {
 		t.Fatal("producer graph info was not captured")
 	}
-	for _, node := range []string{"load_context", "draft_response", "finalize_response"} {
+	for _, node := range []string{"load_context", "prepare_turn_state", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "finalize_response"} {
 		if _, ok := info.Nodes[node]; !ok {
 			t.Fatalf("node %q missing from graph info", node)
 		}
@@ -80,7 +93,6 @@ func TestProducerGraphCompileCapturesGraphInfo(t *testing.T) {
 func TestProducerGraphExplicitToolLoopCapturesGraphInfo(t *testing.T) {
 	registry := agenteino.NewGraphInfoRegistry()
 	_, err := NewGraph(GraphConfig{
-		Mode:               ProducerGraphModeExplicitToolLoop,
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "brief"}},
 		Responder:          DeterministicResponder{},
 		NativeToolRegistry: mustTestNativeToolRegistry(t, "create_agent_text_node"),
@@ -128,7 +140,6 @@ func TestProducerGraphExplicitToolLoopExecutesToolWithEinoToolNode(t *testing.T)
 		{AssistantText: "已保存 brief。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
-		Mode:               ProducerGraphModeExplicitToolLoop,
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "保存 brief"}},
 		Responder:          responder,
 		NativeToolRegistry: registry,
@@ -163,7 +174,6 @@ func TestProducerGraphExplicitToolLoopExecutesToolWithEinoToolNode(t *testing.T)
 func TestProducerGraphExplicitToolLoopReturnsSameTurnToolTrace(t *testing.T) {
 	registry := mustTestNativeToolRegistry(t, "create_agent_text_node")
 	graph, err := NewGraph(GraphConfig{
-		Mode:   ProducerGraphModeExplicitToolLoop,
 		Loader: fakeContextLoader{context: ProducerContext{LatestUserText: "保存 brief"}},
 		Responder: &sequenceResponder{outputs: []ProducerTurnOutput{
 			nativeToolCallOutput("call-text", "create_agent_text_node", `{"title":"brief","text":"hello"}`),
@@ -201,7 +211,6 @@ func TestProducerGraphExplicitToolLoopAllowsMultipleToolIterations(t *testing.T)
 		{AssistantText: "四个工具调用已完成。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
-		Mode:               ProducerGraphModeExplicitToolLoop,
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "多步写入"}},
 		Responder:          responder,
 		NativeToolRegistry: registry,
@@ -226,7 +235,6 @@ func TestProducerGraphExplicitToolLoopNativeDecisionInterruptResumes(t *testing.
 		{AssistantText: "已根据你的选择继续。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
-		Mode:               ProducerGraphModeExplicitToolLoop,
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "需要决策"}},
 		Responder:          responder,
 		NativeToolRegistry: registry,
@@ -265,7 +273,6 @@ func TestProducerGraphExecutesCreateAgentTextNodeTool(t *testing.T) {
 	tool := &testNativeTool{name: "create_agent_text_node"}
 	registry := mustTestNativeToolRegistryWithTools(t, tool)
 	graph, err := NewGraph(GraphConfig{
-		Mode: ProducerGraphModeExplicitToolLoop,
 		Loader: fakeContextLoader{
 			context: ProducerContext{LatestUserText: "保存 brief"},
 		},
@@ -296,7 +303,6 @@ func TestProducerGraphExecutesUpdateStoryboardTool(t *testing.T) {
 	tool := &testNativeTool{name: "update_storyboard"}
 	registry := mustTestNativeToolRegistryWithTools(t, tool)
 	graph, err := NewGraph(GraphConfig{
-		Mode: ProducerGraphModeExplicitToolLoop,
 		Loader: fakeContextLoader{
 			context: ProducerContext{LatestUserText: "拆成两个分镜"},
 		},
@@ -330,7 +336,6 @@ func TestProducerGraphNativeDecisionInterruptResumes(t *testing.T) {
 		{AssistantText: "已根据你的选择继续。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
-		Mode:               ProducerGraphModeExplicitToolLoop,
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "需要决策"}},
 		Responder:          responder,
 		NativeToolRegistry: registry,
@@ -377,7 +382,6 @@ func TestProducerGraphCarriesSameTurnReasoningIntoToolResume(t *testing.T) {
 		{AssistantText: "已保存 brief。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
-		Mode:               ProducerGraphModeExplicitToolLoop,
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "保存 brief"}},
 		Responder:          responder,
 		NativeToolRegistry: registry,
@@ -414,7 +418,6 @@ func TestProducerGraphStopsAtMaxToolCalls(t *testing.T) {
 			nativeToolCallOutput("call-a", "create_agent_text_node", `{"title":"a","text":"b"}`),
 			nativeToolCallOutput("call-b", "create_agent_text_node", `{"title":"c","text":"d"}`),
 		}},
-		Mode:               ProducerGraphModeExplicitToolLoop,
 		NativeToolRegistry: registry,
 	})
 	if err != nil {
@@ -445,6 +448,7 @@ func TestProducerGraphExplainsReasoningOnlyResponse(t *testing.T) {
 				},
 			},
 		}},
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "create_agent_text_node"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -464,7 +468,6 @@ func TestProducerGraphExplainsReasoningOnlyResponse(t *testing.T) {
 
 func TestProducerGraphExplicitToolLoopUsesFallbackForEmptyFinalResponse(t *testing.T) {
 	graph, err := NewGraph(GraphConfig{
-		Mode: ProducerGraphModeExplicitToolLoop,
 		Loader: fakeContextLoader{context: ProducerContext{
 			LatestUserText: "现在什么进展了",
 		}},

@@ -23,6 +23,7 @@ func SystemPrompt() string {
 工具使用规则：
 - 行动前优先调用 read_project_memory，除非同一轮已经读过且信息足够。
 - 创建或修改生成计划时调用 upsert_render_plan。
+- 是否直接执行由 Producer 在 dispatch_craftsman 的 execution_policy 中决定；你不要自行改变策略。若策略是 wait_for_producer，RenderPlan 编译后会等待 Producer accept/reject；若策略是 execute_immediately，工程会在编译后提交 Worker。
 - 工具返回错误时，根据错误信息修正参数后重试，不要原样重复。
 - 每个 RenderPlan 必须说明 rationale，让 Producer 能判断你为什么这样设计。
 - 不要直接问用户；需要用户决定时，在 audit_hints.needs_user_decision 写清楚交给 Producer。
@@ -34,6 +35,7 @@ Seedream 图片计划：
 
 Seedance 视频计划：
 - shot_video 使用 model_prompt_profile=seedance_2_video。
+- duration_sec 只能填写 5 或 10；不要填写 4、6、8、15 等当前模型能力不支持的时长。
 - 每个视频分镜只放一个主要动作和一个主要运镜。
 - 必须写清 sequence、action、camera、composition、audio 或 narration。
 - 如果依赖上一分镜尾帧，需要用 reference_bindings 标注 first_frame 或 last_frame。

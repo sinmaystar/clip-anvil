@@ -80,6 +80,10 @@ type listAgentMessagesResponse struct {
 	Messages []agentMessageResponse `json:"messages"`
 }
 
+type agentTasksResponse struct {
+	Tasks []agentTaskResponse `json:"tasks"`
+}
+
 type postAgentMessageResponse struct {
 	Message       agentMessageResponse `json:"message"`
 	Event         agentEventResponse   `json:"event"`
@@ -143,7 +147,7 @@ func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) 
 		return
 	}
 
-	messages, err := h.runtime.ListMessages(ctx, thread.ID, queryInt64(c, "after_seq", 0), queryInt32(c, "limit", 1000))
+	messages, err := h.runtime.ListWorkspaceMessages(ctx, workspace.ID, queryTimestamp(c, "after_created_at"), queryInt32(c, "limit", 1000))
 	if err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to list agent messages")
 		return
@@ -164,6 +168,19 @@ func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) 
 		Thread:   toAgentThreadResponse(thread),
 		Messages: out,
 	})
+}
+
+func (h *AgentHandler) ListActiveTasks(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+	tasks, err := h.runtime.ListActiveAgentTasksByWorkspace(ctx, workspace.ID)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to list active agent tasks")
+		return
+	}
+	c.JSON(consts.StatusOK, toAgentTasksResponse(tasks))
 }
 
 func (h *AgentHandler) GetModelSelection(ctx context.Context, c *app.RequestContext) {
@@ -1021,16 +1038,16 @@ func jsonBytes(value any) []byte {
 	return raw
 }
 
-func queryInt64(c *app.RequestContext, key string, fallback int64) int64 {
-	raw := string(c.Query(key))
+func queryTimestamp(c *app.RequestContext, key string) pgtype.Timestamptz {
+	raw := strings.TrimSpace(string(c.Query(key)))
 	if raw == "" {
-		return fallback
+		return pgtype.Timestamptz{}
 	}
-	value, err := strconv.ParseInt(raw, 10, 64)
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
-		return fallback
+		return pgtype.Timestamptz{}
 	}
-	return value
+	return pgtype.Timestamptz{Time: parsed, Valid: true}
 }
 
 func queryInt32(c *app.RequestContext, key string, fallback int32) int32 {

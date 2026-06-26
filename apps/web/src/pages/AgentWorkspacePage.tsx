@@ -4,6 +4,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SyntheticEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -25,6 +26,7 @@ import {
   fetchAgentModelSelection,
   fetchAgentMessages,
   fetchAgentProductionOverview,
+  fetchAgentTasks,
   fetchAgentThread,
   postAgentDecision,
   postAgentMessage,
@@ -63,7 +65,10 @@ import {
   isAgentMessageListNearBottom,
   resizeAgentPanelFromCorner,
 } from "../lib/agentLayout";
-import { mergeAgentMessages } from "../lib/agentMessages";
+import {
+  mergeAgentMessages,
+  visibleAgentMessages,
+} from "../lib/agentMessages";
 import { agentMessageSchemaV1 } from "../lib/agentMessageBlocks";
 import {
   agentModelSelectionPayload,
@@ -85,6 +90,7 @@ import {
   agentComposerDisabledReason,
   hasProcessingAgentTask,
   hasRunningProducerTask,
+  mergeActiveAgentTaskSnapshot,
   mergeAgentTasks,
 } from "../lib/agentTasks";
 import { shouldRefreshAgentProductionOverview } from "../lib/agentProductionOverview";
@@ -189,7 +195,7 @@ export function AgentWorkspacePage() {
     useState<AgentConnectionStatus>("offline");
   const [canvasConnectionStatus, setCanvasConnectionStatus] =
     useState<AgentConnectionStatus>("offline");
-  const lastSeqRef = useRef(0);
+  const lastMessageCreatedAtRef = useRef("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const agentCanvasSurfaceRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -253,6 +259,17 @@ export function AgentWorkspacePage() {
     queryKey: ["agent", id, "messages"],
     queryFn: () => fetchAgentMessages(id ?? ""),
     enabled: agentEnabled,
+  });
+  const agentTasksQuery = useQuery({
+    queryKey: ["agent", id, "tasks"],
+    queryFn: () => fetchAgentTasks(id ?? ""),
+    enabled: agentEnabled,
+    refetchInterval: (query) =>
+      query.state.data?.tasks.some(
+        (task) => task.status === "queued" || task.status === "running",
+      )
+        ? 2_000
+        : false,
   });
   const agentModelSelectionQuery = useQuery({
     queryKey: ["agent", id, "model-selection"],
@@ -364,6 +381,9 @@ export function AgentWorkspacePage() {
         card.status === "pending" && !resolvedDecisionIds.has(card.decision_id),
     )
     .map((card) => card.decision_id);
+  const visibleMessages = useMemo(() => visibleAgentMessages(messages), [
+    messages,
+  ]);
   const hasPendingDecision = pendingDecisionIds.length > 0;
   const agentBusy = hasProcessingAgentTask(tasks);
   const composerDisabledReason = agentComposerDisabledReason(tasks);
@@ -410,8 +430,16 @@ export function AgentWorkspacePage() {
   }, [agentMessagesQuery.data]);
 
   useEffect(() => {
-    lastSeqRef.current =
-      messages.length > 0 ? messages[messages.length - 1].seq : 0;
+    if (agentTasksQuery.data) {
+      setTasks((current) =>
+        mergeActiveAgentTaskSnapshot(current, agentTasksQuery.data.tasks),
+      );
+    }
+  }, [agentTasksQuery.data]);
+
+  useEffect(() => {
+    lastMessageCreatedAtRef.current =
+      messages.length > 0 ? messages[messages.length - 1].created_at : "";
   }, [messages]);
 
   useEffect(() => {
@@ -426,8 +454,8 @@ export function AgentWorkspacePage() {
       return;
     }
 
-	const fetchMissingMessages = () => {
-		void fetchAgentMessages(id, lastSeqRef.current, 1000).then((response) => {
+		const fetchMissingMessages = () => {
+			void fetchAgentMessages(id, lastMessageCreatedAtRef.current, 1000).then((response) => {
 			setMessages((current) =>
 				mergeAgentMessages(current, response.messages),
 			);
@@ -1128,9 +1156,9 @@ export function AgentWorkspacePage() {
             >
               {agentMessagesQuery.isLoading ? (
                 <p className="agent-empty-text">正在加载对话</p>
-              ) : messages.length > 0 ? (
+              ) : visibleMessages.length > 0 ? (
                 <>
-                  {messages.map((message) => {
+                  {visibleMessages.map((message) => {
                     const decisionCard = decisionCardFromMessage(message);
                     const isDecisionResolved =
                       decisionCard !== null &&
@@ -1138,7 +1166,7 @@ export function AgentWorkspacePage() {
                         resolvedDecisionIds.has(decisionCard.decision_id));
                     return (
                       <article
-                        className={`agent-message agent-message-${messageClass(message)}`}
+                        className={`agent-message agent-message-${messageClass(message)}${isNestedAgentMessage(message) ? " agent-message-nested" : ""}`}
                         key={message.id}
                       >
                         <AgentMessageRenderer
@@ -1446,6 +1474,10 @@ function messageClass(message: AgentMessage) {
     return "error";
   }
   return message.role;
+}
+
+function isNestedAgentMessage(message: AgentMessage) {
+  return typeof message.raw_message?.parent_tool_call_id === "string";
 }
 
 function streamToMessage(

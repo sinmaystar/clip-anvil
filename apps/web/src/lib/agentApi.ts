@@ -109,6 +109,10 @@ export interface AgentMessagesResponse {
   messages: AgentMessage[];
 }
 
+export interface AgentTasksResponse {
+  tasks: AgentTask[];
+}
+
 export interface PostAgentMessageResponse {
   message: AgentMessage;
   event: AgentEvent;
@@ -240,15 +244,23 @@ export function fetchAgentThread(workspaceId: string) {
 
 export function fetchAgentMessages(
   workspaceId: string,
-  afterSeq = 0,
+  afterCreatedAt = "",
   limit = 1000,
 ) {
   const params = new URLSearchParams({
-    after_seq: String(afterSeq),
     limit: String(limit),
   });
+  if (afterCreatedAt) {
+    params.set("after_created_at", afterCreatedAt);
+  }
   return apiFetch<AgentMessagesResponse>(
     `/agent/workspaces/${workspaceId}/messages?${params.toString()}`,
+  );
+}
+
+export function fetchAgentTasks(workspaceId: string) {
+  return apiFetch<AgentTasksResponse>(
+    `/agent/workspaces/${workspaceId}/tasks`,
   );
 }
 

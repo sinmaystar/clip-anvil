@@ -11,7 +11,8 @@ import (
 )
 
 type UpsertRenderPlanNativeTool struct {
-	service *renderplan.Service
+	service   *renderplan.Service
+	submitter *RenderPlanSubmitter
 }
 
 type UpsertRenderPlanToolInput struct {
@@ -81,7 +82,7 @@ type RenderPromptPartsInput struct {
 
 type RenderPlanParamsInput struct {
 	Ratio                     string  `json:"ratio" jsonschema_description:"输出比例，例如 9:16、16:9、1:1。未知时可为空并由 profile 默认。"`
-	DurationSec               float64 `json:"duration_sec" jsonschema_description:"视频时长，单位秒。Seedance 通常 4 到 15 秒；图片计划为空或 0。"`
+	DurationSec               float64 `json:"duration_sec" jsonschema_description:"视频时长，单位秒。Seedance 当前只支持 5 或 10 秒；图片计划为空或 0。不要填写 4、6、8、15 等非模型能力值。"`
 	Resolution                string  `json:"resolution" jsonschema_description:"分辨率档位，例如 1080p、2K、4K。必须符合模型能力。"`
 	Watermark                 bool    `json:"watermark" jsonschema_description:"是否添加水印。生产广告通常 false，除非配置要求。"`
 	GenerateAudio             bool    `json:"generate_audio" jsonschema_description:"Seedance 是否生成音频。没有明确音频计划时默认 false。"`
@@ -107,8 +108,12 @@ type RenderPlanBlockerInput struct {
 	Suggestions []string `json:"suggestions" jsonschema_description:"建议 Producer 下一步怎么做，例如先生成机场 KeyElementState reference image。"`
 }
 
-func NewUpsertRenderPlanNativeTool(service *renderplan.Service) *UpsertRenderPlanNativeTool {
-	return &UpsertRenderPlanNativeTool{service: service}
+func NewUpsertRenderPlanNativeTool(service *renderplan.Service, submitter ...*RenderPlanSubmitter) *UpsertRenderPlanNativeTool {
+	var configuredSubmitter *RenderPlanSubmitter
+	if len(submitter) > 0 {
+		configuredSubmitter = submitter[0]
+	}
+	return &UpsertRenderPlanNativeTool{service: service, submitter: configuredSubmitter}
 }
 
 func (t *UpsertRenderPlanNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -150,28 +155,60 @@ func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 		AuditHints:           toRenderPlanAuditHints(input.AuditHints),
 		Blocker:              toRenderPlanBlocker(input.Blocker),
 		Rationale:            input.Rationale,
-		AutoCompileAndSubmit: true,
+		ExecutionPolicy:      renderPlanExecutionPolicy(runtime.ExecutionPolicy),
 	})
 	if err != nil {
 		return naturalErrorFromErr(toolUpsertRenderPlan, err), nil
+	}
+	var workerTask dbAgentTaskSummary
+	if renderPlanExecutionPolicy(runtime.ExecutionPolicy) == renderplan.ExecutionPolicyExecuteImmediately {
+		if t.submitter == nil {
+			return NaturalToolError(toolUpsertRenderPlan, "RenderPlan 已编译，但 submitter 未配置，无法直接提交 Worker。", "请让 Producer 使用 wait_for_producer 策略，或检查服务端 wiring。"), nil
+		}
+		task, submitted, err := t.submitter.SubmitRenderPlan(ctx, runtime.WorkspaceID, out.ID, runtime.ThreadID, "execution_policy=execute_immediately")
+		if err != nil {
+			return NaturalToolError(toolUpsertRenderPlan, "RenderPlan 已编译，但提交 Worker 失败："+err.Error(), "请让 Producer 读取 RenderPlan 状态后使用 decide_render_plan 重试。"), nil
+		}
+		out = submitted
+		workerTask = dbAgentTaskSummary{ID: uuidString(task.ID), Status: task.Status}
 	}
 	title := "已写入 RenderPlan"
 	if out.Status == renderplan.StatusBlocked {
 		title = "RenderPlan 已标记为 blocked"
 	}
+	items := []NaturalResultItem{
+		{Label: "RenderPlan", Value: uuidString(out.ID)},
+		{Label: "Scope", Value: out.ScopeType + "=" + uuidString(out.ScopeID)},
+		{Label: "阶段", Value: out.TargetPhase},
+		{Label: "Profile", Value: out.ModelPromptProfile},
+		{Label: "Operation", Value: out.Operation},
+		{Label: "状态", Value: out.Status},
+		{Label: "CompiledPrompt", Value: fmt.Sprintf("%d 字符", len([]rune(out.CompiledPrompt)))},
+	}
+	next := "Producer 可读取项目上下文并决定 accept/reject 或派 Reviewer。"
+	if workerTask.ID != "" {
+		items = append(items, NaturalResultItem{Label: "WorkerTask", Value: workerTask.ID + " / " + workerTask.Status})
+		next = "已根据 execute_immediately 提交 worker_generation。Producer 后续应读取 generation_job、artifact_version 和 RenderPlan 状态，不要把提交等同于产物完成。"
+	}
 	return NaturalResult{
 		Title: title,
-		Items: []NaturalResultItem{
-			{Label: "RenderPlan", Value: uuidString(out.ID)},
-			{Label: "Scope", Value: out.ScopeType + "=" + uuidString(out.ScopeID)},
-			{Label: "阶段", Value: out.TargetPhase},
-			{Label: "Profile", Value: out.ModelPromptProfile},
-			{Label: "Operation", Value: out.Operation},
-			{Label: "状态", Value: out.Status},
-			{Label: "CompiledPrompt", Value: fmt.Sprintf("%d 字符", len([]rune(out.CompiledPrompt)))},
-		},
-		Next: "Producer 可读取项目上下文跟踪 RenderPlan、generation_job 和 artifact_version。",
+		Items: items,
+		Next:  next,
 	}.String(), nil
+}
+
+type dbAgentTaskSummary struct {
+	ID     string
+	Status string
+}
+
+func renderPlanExecutionPolicy(value string) string {
+	switch value {
+	case renderplan.ExecutionPolicyExecuteImmediately:
+		return renderplan.ExecutionPolicyExecuteImmediately
+	default:
+		return renderplan.ExecutionPolicyWaitForProducer
+	}
 }
 
 func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {

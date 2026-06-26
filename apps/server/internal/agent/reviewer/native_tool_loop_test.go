@@ -50,3 +50,11 @@ type fakeReviewerToolResponder struct{}
 func (fakeReviewerToolResponder) Respond(context.Context, Context) (ReviewerTurnOutput, error) {
 	return ReviewerTurnOutput{AssistantText: "ok"}, nil
 }
+
+type fakeReviewLoader struct {
+	context Context
+}
+
+func (f fakeReviewLoader) Load(context.Context, GraphInput) (Context, error) {
+	return f.context, nil
+}

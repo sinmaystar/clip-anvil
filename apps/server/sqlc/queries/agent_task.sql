@@ -7,9 +7,10 @@ INSERT INTO agent_task (
     scope_id,
     task_type,
     max_attempts,
-    input
+    input,
+    render_plan_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
 ) RETURNING *;
 
 -- name: GetAgentTaskByID :one

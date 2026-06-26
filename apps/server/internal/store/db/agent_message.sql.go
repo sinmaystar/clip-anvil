@@ -115,6 +115,53 @@ func (q *Queries) ListAgentMessagesByThread(ctx context.Context, arg ListAgentMe
 	return items, nil
 }
 
+const listAgentMessagesByWorkspace = `-- name: ListAgentMessagesByWorkspace :many
+SELECT id, workspace_id, thread_id, seq, role, message_type, content, raw_message, task_id, event_id, created_at
+FROM agent_message
+WHERE workspace_id = $1
+  AND ($2::timestamptz IS NULL OR created_at > $2)
+ORDER BY created_at, thread_id, seq
+LIMIT $3
+`
+
+type ListAgentMessagesByWorkspaceParams struct {
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
+	RowLimit       int32              `json:"row_limit"`
+}
+
+func (q *Queries) ListAgentMessagesByWorkspace(ctx context.Context, arg ListAgentMessagesByWorkspaceParams) ([]AgentMessage, error) {
+	rows, err := q.db.Query(ctx, listAgentMessagesByWorkspace, arg.WorkspaceID, arg.AfterCreatedAt, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentMessage{}
+	for rows.Next() {
+		var i AgentMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ThreadID,
+			&i.Seq,
+			&i.Role,
+			&i.MessageType,
+			&i.Content,
+			&i.RawMessage,
+			&i.TaskID,
+			&i.EventID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const nextAgentMessageSeq = `-- name: NextAgentMessageSeq :one
 WITH locked_thread AS (
     SELECT agent_thread.id AS thread_id

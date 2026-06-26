@@ -13,6 +13,8 @@ import (
 	"github.com/sinmaystar/clip-anvil/internal/agent/cozelooptrace"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
+	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -21,6 +23,7 @@ type ExecutorRuntime interface {
 	MarkTaskSucceeded(ctx context.Context, taskID pgtype.UUID, output []byte) (db.AgentTask, error)
 	MarkTaskFailed(ctx context.Context, taskID pgtype.UUID, code, message string) (db.AgentTask, error)
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
+	UpdateMessage(ctx context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error)
 	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
 }
 
@@ -31,12 +34,19 @@ type Runner interface {
 type ExecutorConfig struct {
 	Runtime        ExecutorRuntime
 	Graph          Runner
+	Broadcaster    Broadcaster
 	TraceCallbacks []callbacks.Handler
+}
+
+type Broadcaster interface {
+	BroadcastAgentMessage(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent)
+	BroadcastAgentMessageUpdated(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent)
 }
 
 type Executor struct {
 	runtime        ExecutorRuntime
 	graph          Runner
+	broadcaster    Broadcaster
 	traceCallbacks []callbacks.Handler
 }
 
@@ -44,6 +54,7 @@ func NewExecutor(config ExecutorConfig) *Executor {
 	return &Executor{
 		runtime:        config.Runtime,
 		graph:          config.Graph,
+		broadcaster:    config.Broadcaster,
 		traceCallbacks: config.TraceCallbacks,
 	}
 }
@@ -79,6 +90,8 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		attribute.String("clipanvil.agent.scope_type", task.ScopeType),
 		attribute.String("clipanvil.agent.scope_id", uuidString(task.ScopeID)),
 	)
+	liveToolTrace := newReviewerLiveToolTrace(e, task)
+	ctx = agenttools.WithNativeToolTraceSink(ctx, liveToolTrace)
 	out, err := e.graph.Run(ctx, graphInput, agenteino.RunOptions{
 		CheckPointID: checkpointKey,
 		Callbacks:    e.traceCallbacks,
@@ -86,8 +99,10 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if err != nil {
 		return e.fail(ctx, task.ID, "reviewer_failed", err)
 	}
-	if err := e.persistNativeToolTrace(ctx, task, out.SameTurnMessages); err != nil {
-		return e.fail(ctx, task.ID, "reviewer_tool_trace_persist_failed", err)
+	if liveToolTrace.count() == 0 {
+		if err := e.persistNativeToolTrace(ctx, task, out.SameTurnMessages); err != nil {
+			return e.fail(ctx, task.ID, "reviewer_tool_trace_persist_failed", err)
+		}
 	}
 	rawOutput := mustJSON(map[string]any{
 		"review_record_id": uuidString(out.Record.ID),
@@ -99,6 +114,106 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	}
 	if _, err := e.runtime.SetThreadCheckpoint(ctx, task.ThreadID, checkpointKey); err != nil {
 		return e.fail(ctx, task.ID, "reviewer_checkpoint_update_failed", err)
+	}
+	return nil
+}
+
+type reviewerLiveToolTrace struct {
+	executor     *Executor
+	task         db.AgentTask
+	callMessages map[string]db.AgentMessage
+	startedCount int
+}
+
+func newReviewerLiveToolTrace(executor *Executor, task db.AgentTask) *reviewerLiveToolTrace {
+	return &reviewerLiveToolTrace{
+		executor:     executor,
+		task:         task,
+		callMessages: map[string]db.AgentMessage{},
+	}
+}
+
+func (t *reviewerLiveToolTrace) count() int {
+	if t == nil {
+		return 0
+	}
+	return t.startedCount
+}
+
+func (t *reviewerLiveToolTrace) NativeToolCallStarted(ctx context.Context, runtime agenttools.NativeRuntimeContext, trace agenttools.NativeToolTrace) error {
+	if t == nil || t.executor == nil || t.executor.runtime == nil {
+		return nil
+	}
+	toolCallID := strings.TrimSpace(runtime.ToolCallID)
+	if toolCallID == "" {
+		toolCallID = strings.TrimSpace(trace.ToolName)
+	}
+	sameTurn := ReviewerSameTurnMessage{
+		Role:          "assistant",
+		MessageType:   "tool_call",
+		ToolCallID:    toolCallID,
+		ToolName:      trace.ToolName,
+		ToolArguments: trace.Arguments,
+	}
+	msg, err := t.executor.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: t.task.WorkspaceID,
+		ThreadID:    t.task.ThreadID,
+		Role:        "assistant",
+		MessageType: "tool_call",
+		Content:     reviewerToolTraceContent(sameTurn),
+		RawMessage:  reviewerToolTraceRaw(sameTurn),
+		TaskID:      t.task.ID,
+	})
+	if err != nil {
+		return err
+	}
+	t.callMessages[toolCallID] = msg
+	t.startedCount++
+	t.executor.broadcastMessage(t.task.WorkspaceID, msg, db.AgentEvent{})
+	return nil
+}
+
+func (t *reviewerLiveToolTrace) NativeToolCallCompleted(ctx context.Context, runtime agenttools.NativeRuntimeContext, trace agenttools.NativeToolTrace) error {
+	if t == nil || t.executor == nil || t.executor.runtime == nil {
+		return nil
+	}
+	toolCallID := strings.TrimSpace(runtime.ToolCallID)
+	resultText := strings.TrimSpace(trace.Result)
+	status := "succeeded"
+	if strings.TrimSpace(trace.Error) != "" {
+		status = "failed"
+		resultText = strings.TrimSpace(trace.Error)
+	}
+	sameTurn := ReviewerSameTurnMessage{
+		Role:        "tool",
+		MessageType: "tool_result",
+		Content:     resultText,
+		ToolCallID:  toolCallID,
+		ToolName:    trace.ToolName,
+	}
+	msg, err := t.executor.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: t.task.WorkspaceID,
+		ThreadID:    t.task.ThreadID,
+		Role:        "tool",
+		MessageType: "tool_result",
+		Content:     reviewerToolTraceContent(sameTurn),
+		RawMessage:  reviewerToolTraceRaw(sameTurn),
+		TaskID:      t.task.ID,
+	})
+	if err != nil {
+		return err
+	}
+	t.executor.broadcastMessage(t.task.WorkspaceID, msg, db.AgentEvent{})
+	if callMsg, ok := t.callMessages[toolCallID]; ok {
+		updated, err := t.executor.runtime.UpdateMessage(ctx, agentruntime.UpdateMessageParams{
+			ID:         callMsg.ID,
+			Content:    reviewerCompletedToolTraceContentWithStatus(sameTurn, callMsg.RawMessage, status),
+			RawMessage: reviewerCompletedToolTraceRawWithStatus(sameTurn, callMsg.RawMessage, status),
+		})
+		if err != nil {
+			return err
+		}
+		t.executor.broadcastMessageUpdated(t.task.WorkspaceID, updated, db.AgentEvent{})
 	}
 	return nil
 }
@@ -185,6 +300,7 @@ func (e *Executor) fail(ctx context.Context, taskID pgtype.UUID, code string, er
 }
 
 func (e *Executor) persistNativeToolTrace(ctx context.Context, task db.AgentTask, messages []ReviewerSameTurnMessage) error {
+	callMessages := map[string]db.AgentMessage{}
 	for _, trace := range messages {
 		messageType := strings.TrimSpace(trace.MessageType)
 		if messageType != "tool_call" && messageType != "tool_result" {
@@ -197,7 +313,7 @@ func (e *Executor) persistNativeToolTrace(ctx context.Context, task db.AgentTask
 				role = "tool"
 			}
 		}
-		if _, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		msg, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
 			WorkspaceID: task.WorkspaceID,
 			ThreadID:    task.ThreadID,
 			Role:        role,
@@ -205,21 +321,103 @@ func (e *Executor) persistNativeToolTrace(ctx context.Context, task db.AgentTask
 			Content:     reviewerToolTraceContent(trace),
 			RawMessage:  reviewerToolTraceRaw(trace),
 			TaskID:      task.ID,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
+		}
+		e.broadcastMessage(task.WorkspaceID, msg, db.AgentEvent{})
+		if messageType == "tool_call" {
+			callMessages[trace.ToolCallID] = msg
+		}
+		if messageType == "tool_result" {
+			if callMsg, ok := callMessages[trace.ToolCallID]; ok {
+				updated, err := e.runtime.UpdateMessage(ctx, agentruntime.UpdateMessageParams{
+					ID:         callMsg.ID,
+					Content:    reviewerCompletedToolTraceContent(trace, callMsg.RawMessage),
+					RawMessage: reviewerCompletedToolTraceRaw(trace, callMsg.RawMessage),
+				})
+				if err != nil {
+					return err
+				}
+				e.broadcastMessageUpdated(task.WorkspaceID, updated, db.AgentEvent{})
+			}
 		}
 	}
 	return nil
 }
 
 func reviewerToolTraceContent(trace ReviewerSameTurnMessage) []byte {
-	return mustJSON(map[string]any{
-		"schema":       "clipanvil.agent.tool_trace.v1",
-		"message_type": strings.TrimSpace(trace.MessageType),
-		"tool_call_id": trace.ToolCallID,
-		"tool_name":    trace.ToolName,
-		"text":         strings.TrimSpace(trace.Content),
+	if trace.MessageType == "tool_call" {
+		return toolStatusContent(trace.ToolCallID, trace.ToolName, trace.ToolName, "running", toolTraceSummary(trace.ToolArguments, trace.Content), "", trace.ToolArguments, nil)
+	}
+	return mustJSON(map[string]any{"schema": "clipanvil.agent.tool_trace.v1", "message_type": strings.TrimSpace(trace.MessageType), "tool_call_id": trace.ToolCallID, "tool_name": trace.ToolName, "text": strings.TrimSpace(trace.Content)})
+}
+
+func reviewerCompletedToolTraceContent(trace ReviewerSameTurnMessage, previousRaw []byte) []byte {
+	return reviewerCompletedToolTraceContentWithStatus(trace, previousRaw, "succeeded")
+}
+
+func reviewerCompletedToolTraceContentWithStatus(trace ReviewerSameTurnMessage, previousRaw []byte, status string) []byte {
+	args := toolTraceArgumentsFromRaw(previousRaw)
+	result := map[string]any{}
+	if text := strings.TrimSpace(trace.Content); text != "" {
+		result["text"] = text
+	}
+	return toolStatusContent(trace.ToolCallID, trace.ToolName, trace.ToolName, status, toolTraceSummary(args, trace.Content), "", args, result)
+}
+
+func reviewerCompletedToolTraceRaw(trace ReviewerSameTurnMessage, previousRaw []byte) []byte {
+	return reviewerCompletedToolTraceRawWithStatus(trace, previousRaw, "succeeded")
+}
+
+func reviewerCompletedToolTraceRawWithStatus(trace ReviewerSameTurnMessage, previousRaw []byte, status string) []byte {
+	raw := map[string]any{}
+	_ = json.Unmarshal(defaultJSON(previousRaw), &raw)
+	raw["result_text"] = strings.TrimSpace(trace.Content)
+	raw["message_type"] = "tool_call"
+	raw["status"] = status
+	return mustJSON(raw)
+}
+
+func toolStatusContent(toolCallID string, toolName string, label string, status string, summary string, errorMessage string, arguments map[string]any, result map[string]any) []byte {
+	content, err := uimessage.BuildToolStatusMessageContent(uimessage.ToolStatusInput{
+		ToolCallID:   toolCallID,
+		ToolName:     toolName,
+		Label:        label,
+		Status:       status,
+		Summary:      summary,
+		ErrorMessage: errorMessage,
+		Arguments:    arguments,
+		Result:       result,
 	})
+	if err != nil {
+		return mustJSON(map[string]any{
+			"schema":       "clipanvil.agent.tool_trace.v1",
+			"message_type": "tool_call",
+			"tool_call_id": toolCallID,
+			"tool_name":    toolName,
+			"text":         summary,
+		})
+	}
+	return content
+}
+
+func toolTraceArgumentsFromRaw(raw []byte) map[string]any {
+	payload := map[string]any{}
+	_ = json.Unmarshal(defaultJSON(raw), &payload)
+	if args, ok := payload["arguments"].(map[string]any); ok {
+		return args
+	}
+	return map[string]any{}
+}
+
+func toolTraceSummary(args map[string]any, fallback string) string {
+	if args != nil {
+		if brief, _ := args["brief"].(string); strings.TrimSpace(brief) != "" {
+			return strings.TrimSpace(brief)
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func reviewerToolTraceRaw(trace ReviewerSameTurnMessage) []byte {
@@ -248,4 +446,16 @@ func defaultJSON(value []byte) []byte {
 		return []byte("{}")
 	}
 	return value
+}
+
+func (e *Executor) broadcastMessage(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent) {
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastAgentMessage(workspaceID, message, event)
+	}
+}
+
+func (e *Executor) broadcastMessageUpdated(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent) {
+	if e.broadcaster != nil {
+		e.broadcaster.BroadcastAgentMessageUpdated(workspaceID, message, event)
+	}
 }

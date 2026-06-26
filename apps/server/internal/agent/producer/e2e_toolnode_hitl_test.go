@@ -99,7 +99,6 @@ func TestE2EProducerExplicitToolNodeHITLAndDatabase(t *testing.T) {
 	}}
 	graphInfo := agenteino.NewGraphInfoRegistry()
 	graph, err := NewGraph(GraphConfig{
-		Mode: ProducerGraphModeExplicitToolLoop,
 		Loader: RuntimeContextLoader{
 			Runtime: runtimeSvc,
 		},

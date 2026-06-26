@@ -3,6 +3,7 @@ package reviewer
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/callbacks"
@@ -144,6 +145,9 @@ func TestReviewerExecutorPersistsNativeToolTrace(t *testing.T) {
 	if runtime.appended[0].Role != "assistant" || runtime.appended[1].Role != "tool" {
 		t.Fatalf("roles = %q/%q", runtime.appended[0].Role, runtime.appended[1].Role)
 	}
+	if len(runtime.updated) != 1 || !strings.Contains(string(runtime.updated[0].Content), `"status":"succeeded"`) {
+		t.Fatalf("updated tool status = %#v", runtime.updated)
+	}
 }
 
 type fakeReviewerExecutorRuntime struct {
@@ -153,6 +157,7 @@ type fakeReviewerExecutorRuntime struct {
 	threadCheckpoint string
 	appendSeq        int64
 	appended         []db.AgentMessage
+	updated          []db.AgentMessage
 }
 
 func (f *fakeReviewerExecutorRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
@@ -190,6 +195,20 @@ func (f *fakeReviewerExecutorRuntime) AppendMessage(_ context.Context, params ag
 	}
 	f.appended = append(f.appended, msg)
 	return msg, nil
+}
+
+func (f *fakeReviewerExecutorRuntime) UpdateMessage(_ context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error) {
+	for index, msg := range f.appended {
+		if msg.ID == params.ID {
+			msg.Content = params.Content
+			msg.RawMessage = params.RawMessage
+			msg.EventID = params.EventID
+			f.appended[index] = msg
+			f.updated = append(f.updated, msg)
+			return msg, nil
+		}
+	}
+	return db.AgentMessage{}, ErrInvalidInput
 }
 
 func (f *fakeReviewerExecutorRuntime) appendedMessageTypes() []string {

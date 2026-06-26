@@ -201,10 +201,6 @@ type Loader interface {
 	Load(ctx context.Context, input GraphInput) (Context, error)
 }
 
-type ModelResponder interface {
-	Review(ctx context.Context, reviewContext Context) (ReviewResult, map[string]any, error)
-}
-
 type ToolResponder interface {
 	Respond(ctx context.Context, reviewContext Context) (ReviewerTurnOutput, error)
 }

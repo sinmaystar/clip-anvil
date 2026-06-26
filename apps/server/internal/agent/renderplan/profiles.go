@@ -41,7 +41,7 @@ func ProfileByID(id string) (ModelPromptProfile, bool) {
 				"video_extend":                    true,
 				"video_bridge":                    true,
 			},
-			DefaultParams:  Params{Ratio: "9:16", DurationSec: 6, Resolution: "1080p"},
+			DefaultParams:  Params{Ratio: "9:16", DurationSec: 5, Resolution: "1080p"},
 			MaxPromptChars: 5000,
 		}, true
 	default:

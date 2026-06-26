@@ -22,6 +22,7 @@ const (
 	toolUpsertStoryboard   = "upsert_storyboard"
 	toolReadProjectMemory  = "read_project_memory"
 	toolUpsertRenderPlan   = "upsert_render_plan"
+	toolDecideRenderPlan   = "decide_render_plan"
 	toolDispatchReviewer   = "dispatch_reviewer"
 	toolSubmitReviewResult = "submit_review_result"
 )

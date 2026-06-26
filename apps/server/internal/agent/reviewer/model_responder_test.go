@@ -11,33 +11,9 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestParseReviewResult(t *testing.T) {
-	result, err := ParseReviewResult(`{
-		"review_task": "preview_image_review",
-		"verdict": "accepted",
-		"overall_score": 0.82,
-		"rubric": {
-			"faithfulness": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"subject_consistency": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"product_visibility": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"brand_style_consistency": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"composition_proportion": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"visual_quality": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""}
-		},
-		"critique": "画面可用",
-		"retry_recommendation": {"should_retry": false}
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.OverallScore != 0.82 || result.Critique != "画面可用" {
-		t.Fatalf("result = %#v", result)
-	}
-}
-
-func TestVolcengineReviewResponderParsesStreamedResult(t *testing.T) {
+func TestVolcengineReviewerResponderReturnsNativeToolCallingMessage(t *testing.T) {
 	streamer := &fakeReviewArkStreamer{chunks: []*schema.Message{{
-		Content: `{"review_task":"preview_image_review","verdict":"accepted","overall_score":0.82,"rubric":{"faithfulness":{"score":0.8,"pass":true,"reason":"ok"},"subject_consistency":{"score":0.8,"pass":true,"reason":"ok"},"product_visibility":{"score":0.8,"pass":true,"reason":"ok"},"brand_style_consistency":{"score":0.8,"pass":true,"reason":"ok"},"composition_proportion":{"score":0.8,"pass":true,"reason":"ok"},"visual_quality":{"score":0.8,"pass":true,"reason":"ok"}},"critique":"画面可用","retry_recommendation":{"should_retry":false}}`,
+		Content: "已提交 Reviewer 评审结果。",
 	}}}
 	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
 		APIKey: "test-key",
@@ -47,15 +23,22 @@ func TestVolcengineReviewResponderParsesStreamedResult(t *testing.T) {
 		},
 	})
 
-	result, metadata, err := responder.Review(context.Background(), Context{
+	out, err := responder.Respond(context.Background(), Context{
 		Text:     "Review Target\n- shot: shot-01",
 		AssetURL: "data:image/png;base64,iVBORw0KGgo=",
+		ToolInfos: []*schema.ToolInfo{{
+			Name: "submit_review_result",
+			Desc: "提交 Reviewer 评审结果。",
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Critique != "画面可用" || metadata["model_id"] != "doubao-reviewer" {
-		t.Fatalf("result=%#v metadata=%#v", result, metadata)
+	if out.AssistantText != "已提交 Reviewer 评审结果。" || out.Metadata["model_id"] != "doubao-reviewer" || out.ModelMessage == nil {
+		t.Fatalf("output = %#v", out)
+	}
+	if len(streamer.boundTools) != 1 || streamer.boundTools[0].Name != "submit_review_result" {
+		t.Fatalf("bound tools = %#v", streamer.boundTools)
 	}
 	if len(streamer.messages) != 2 || !strings.Contains(streamer.messages[1].UserInputMultiContent[0].Text, "shot-01") {
 		t.Fatalf("messages = %#v", streamer.messages)
@@ -66,8 +49,9 @@ func TestVolcengineReviewResponderParsesStreamedResult(t *testing.T) {
 }
 
 type fakeReviewArkStreamer struct {
-	messages []*schema.Message
-	chunks   []*schema.Message
+	messages   []*schema.Message
+	chunks     []*schema.Message
+	boundTools []*schema.ToolInfo
 }
 
 func (f *fakeReviewArkStreamer) Stream(_ context.Context, messages []*schema.Message, _ ...einoModel.Option) (*schema.StreamReader[*schema.Message], error) {
@@ -81,4 +65,16 @@ func (f *fakeReviewArkStreamer) Stream(_ context.Context, messages []*schema.Mes
 		sw.Send(nil, io.EOF)
 	}()
 	return sr, nil
+}
+
+func (f *fakeReviewArkStreamer) WithTools(tools []*schema.ToolInfo) (einoModel.ToolCallingChatModel, error) {
+	f.boundTools = tools
+	return f, nil
+}
+
+func (f *fakeReviewArkStreamer) Generate(context.Context, []*schema.Message, ...einoModel.Option) (*schema.Message, error) {
+	if len(f.chunks) == 0 {
+		return &schema.Message{}, nil
+	}
+	return schema.ConcatMessages(f.chunks)
 }

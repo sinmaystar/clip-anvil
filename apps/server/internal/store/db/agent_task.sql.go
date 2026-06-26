@@ -20,21 +20,23 @@ INSERT INTO agent_task (
     scope_id,
     task_type,
     max_attempts,
-    input
+    input,
+    render_plan_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
 ) RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id
 `
 
 type CreateAgentTaskParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	ThreadID    pgtype.UUID `json:"thread_id"`
-	Role        string      `json:"role"`
-	ScopeType   string      `json:"scope_type"`
-	ScopeID     pgtype.UUID `json:"scope_id"`
-	TaskType    string      `json:"task_type"`
-	MaxAttempts int32       `json:"max_attempts"`
-	Input       []byte      `json:"input"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	ThreadID     pgtype.UUID `json:"thread_id"`
+	Role         string      `json:"role"`
+	ScopeType    string      `json:"scope_type"`
+	ScopeID      pgtype.UUID `json:"scope_id"`
+	TaskType     string      `json:"task_type"`
+	MaxAttempts  int32       `json:"max_attempts"`
+	Input        []byte      `json:"input"`
+	RenderPlanID pgtype.UUID `json:"render_plan_id"`
 }
 
 func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams) (AgentTask, error) {
@@ -47,6 +49,7 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 		arg.TaskType,
 		arg.MaxAttempts,
 		arg.Input,
+		arg.RenderPlanID,
 	)
 	var i AgentTask
 	err := row.Scan(

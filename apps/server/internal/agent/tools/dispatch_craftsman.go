@@ -50,6 +50,10 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 		Name:        "dispatch_craftsman",
 		Description: "Dispatch shot-scoped preview generation work. This creates persistent shot execution tasks and reuses the production generation pipeline; it does not generate images directly inside the Producer turn.",
 		Parameters: objectSchema(map[string]any{
+			"brief": map[string]any{
+				"type":        "string",
+				"description": "一句话描述调用该工具的意图，例如直接生成所有分镜预览图。",
+			},
 			"shot_refs": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
@@ -57,8 +61,13 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 			},
 			"mode": map[string]any{
 				"type":        "string",
-				"enum":        []string{"preview_image"},
-				"description": "Production phase to dispatch. M6.6 only supports preview_image.",
+				"enum":        []string{"preview_image", "shot_video"},
+				"description": "Production phase to dispatch.",
+			},
+			"execution_policy": map[string]any{
+				"type":        "string",
+				"enum":        []string{"execute_immediately", "wait_for_producer"},
+				"description": "execute_immediately submits the compiled RenderPlan to Worker automatically; wait_for_producer stops after compilation until Producer accepts or rejects the RenderPlan.",
 			},
 			"force": map[string]any{
 				"type":        "boolean",
@@ -131,12 +140,19 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		})
 		taskInput := map[string]any{
 			"mode":                   args.Mode,
+			"execution_policy":       args.ExecutionPolicy,
 			"shot_id":                uuidString(shot.ID),
 			"shot_client_key":        shot.ClientKey,
 			"producer_thread_id":     uuidString(input.ThreadID),
 			"producer_task_id":       uuidString(input.TaskID),
 			"craftsman_thread_id":    uuidString(thread.ID),
 			"requested_max_attempts": args.MaxAttempts,
+		}
+		if args.Brief != "" {
+			taskInput["brief"] = args.Brief
+		}
+		if args.ParentToolCallID != "" {
+			taskInput["parent_tool_call_id"] = args.ParentToolCallID
 		}
 		if args.ReviewRecordID != "" {
 			taskInput["review_record_id"] = args.ReviewRecordID
@@ -188,7 +204,7 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			SourceRole:  "producer",
 			TargetRole:  "craftsman",
 			Scope:       mustJSON(map[string]any{"shot_id": uuidString(shot.ID), "client_key": shot.ClientKey}),
-			Payload:     mustJSON(map[string]any{"mode": args.Mode, "max_attempts": args.MaxAttempts}),
+			Payload:     mustJSON(map[string]any{"mode": args.Mode, "execution_policy": args.ExecutionPolicy, "max_attempts": args.MaxAttempts}),
 		})
 		if t.enqueuer != nil {
 			t.enqueuer.EnqueueCraftsmanTask(ctx, task)
@@ -201,7 +217,7 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			"status":              task.Status,
 		})
 	}
-	summary := dispatchCraftsmanSummary(len(dispatched), len(skipped), args.Mode)
+	summary := dispatchCraftsmanSummary(len(dispatched), len(skipped), args.Mode, args.ExecutionPolicy)
 	return ExecuteOutput{Summary: summary, Result: map[string]any{
 		"status":     "queued",
 		"mode":       args.Mode,
@@ -211,28 +227,35 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 	}}, nil
 }
 
-func dispatchCraftsmanSummary(dispatched int, skipped int, mode string) string {
+func dispatchCraftsmanSummary(dispatched int, skipped int, mode string, executionPolicy string) string {
+	tail := "Craftsman 会先创建并编译 RenderPlan，随后等待 Producer accept/reject。"
+	if executionPolicy == "execute_immediately" {
+		tail = "Craftsman 编译 RenderPlan 后，工程会自动提交 Worker 生成任务。"
+	}
 	if mode == "shot_video" {
 		if skipped > 0 {
-			return fmt.Sprintf("已将 %d 个分镜视频生成任务加入队列，%d 个分镜被跳过。分镜视频会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示视频已经生成完成。", dispatched, skipped)
+			return fmt.Sprintf("已将 %d 个分镜视频 RenderPlan 任务加入队列，%d 个分镜被跳过。%s 当前仅表示 Craftsman 任务已排队，不表示视频已经生成完成。", dispatched, skipped, tail)
 		}
-		return fmt.Sprintf("已将 %d 个分镜视频生成任务加入队列。分镜视频会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示视频已经生成完成。", dispatched)
+		return fmt.Sprintf("已将 %d 个分镜视频 RenderPlan 任务加入队列。%s 当前仅表示 Craftsman 任务已排队，不表示视频已经生成完成。", dispatched, tail)
 	}
 	if skipped > 0 {
-		return fmt.Sprintf("已将 %d 个分镜的预览图生成任务加入队列，%d 个分镜因已有预览或状态不匹配被跳过。预览图会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示图片已经生成完成。", dispatched, skipped)
+		return fmt.Sprintf("已将 %d 个分镜的预览图 RenderPlan 任务加入队列，%d 个分镜因已有预览或状态不匹配被跳过。%s 当前仅表示 Craftsman 任务已排队，不表示图片已经生成完成。", dispatched, skipped, tail)
 	}
-	return fmt.Sprintf("已将 %d 个分镜的预览图生成任务加入队列。预览图会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示图片已经生成完成。", dispatched)
+	return fmt.Sprintf("已将 %d 个分镜的预览图 RenderPlan 任务加入队列。%s 当前仅表示 Craftsman 任务已排队，不表示图片已经生成完成。", dispatched, tail)
 }
 
 type parsedDispatchCraftsmanArgs struct {
-	Mode           string
-	ShotRefs       []string
-	Force          bool
-	MaxAttempts    int32
-	ReviewRecordID string
-	Critique       string
-	FixHints       []string
-	InputNodeRefs  []string
+	Brief            string
+	Mode             string
+	ExecutionPolicy  string
+	ParentToolCallID string
+	ShotRefs         []string
+	Force            bool
+	MaxAttempts      int32
+	ReviewRecordID   string
+	Critique         string
+	FixHints         []string
+	InputNodeRefs    []string
 }
 
 func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, error) {
@@ -243,6 +266,13 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 	if mode != "preview_image" && mode != "shot_video" {
 		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("unsupported dispatch_craftsman mode %q", mode)
 	}
+	executionPolicy := stringValue(raw, "execution_policy")
+	if executionPolicy == "" {
+		executionPolicy = "wait_for_producer"
+	}
+	if executionPolicy != "execute_immediately" && executionPolicy != "wait_for_producer" {
+		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("unsupported dispatch_craftsman execution_policy %q", executionPolicy)
+	}
 	maxAttempts := int32Value(raw, "max_attempts", 3)
 	if maxAttempts < 1 {
 		maxAttempts = 1
@@ -252,14 +282,17 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 	}
 	shotRefs := stringSliceValue(raw, "shot_refs")
 	return parsedDispatchCraftsmanArgs{
-		Mode:           mode,
-		ShotRefs:       shotRefs,
-		Force:          boolValue(raw, "force"),
-		MaxAttempts:    maxAttempts,
-		ReviewRecordID: stringValue(raw, "review_record_id"),
-		Critique:       stringValue(raw, "critique"),
-		FixHints:       stringSliceValue(raw, "fix_hints"),
-		InputNodeRefs:  stringSliceValue(raw, "input_node_refs"),
+		Brief:            stringValue(raw, "brief"),
+		Mode:             mode,
+		ExecutionPolicy:  executionPolicy,
+		ParentToolCallID: stringValue(raw, "parent_tool_call_id"),
+		ShotRefs:         shotRefs,
+		Force:            boolValue(raw, "force"),
+		MaxAttempts:      maxAttempts,
+		ReviewRecordID:   stringValue(raw, "review_record_id"),
+		Critique:         stringValue(raw, "critique"),
+		FixHints:         stringSliceValue(raw, "fix_hints"),
+		InputNodeRefs:    stringSliceValue(raw, "input_node_refs"),
 	}, nil
 }
 

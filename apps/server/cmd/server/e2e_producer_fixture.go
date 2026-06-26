@@ -201,7 +201,9 @@ func (e2eM2RenderPlanProducerResponder) Respond(ctx context.Context, producerCon
 	switch e2eToolResultCount(producerContext.SameTurnMessages) {
 	case 4:
 		return e2eToolCallOutput("e2e-dispatch-craftsman", "dispatch_craftsman", `{
+			"brief":"直接生成两条分镜的 Seedream 预览图。",
 			"mode":"preview_image",
+			"execution_policy":"execute_immediately",
 			"shot_refs":[],
 			"force":true,
 			"max_attempts":1

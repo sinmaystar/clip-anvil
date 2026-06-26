@@ -1430,6 +1430,11 @@ a:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 24%, var(--border-subtle));
 }
 
+.agent-message-nested {
+  margin-left: 18px;
+  max-width: calc(88% - 18px);
+}
+
 .agent-message-error {
   align-self: flex-start;
   border-color: color-mix(in srgb, var(--status-failed) 42%, transparent);
@@ -1502,7 +1507,6 @@ a:focus-visible {
   padding: 7px 10px;
 }
 
-.agent-tool-status,
 .agent-error-block,
 .agent-media-placeholder,
 .agent-unknown-block {
@@ -1514,46 +1518,115 @@ a:focus-visible {
   padding: 9px 10px;
 }
 
-.agent-tool-status > div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.agent-tool-status {
+  min-width: min(340px, 100%);
 }
 
-.agent-tool-status > div span {
+.agent-tool-status-toggle {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg-primary) 3%, transparent);
+  color: var(--fg-primary);
+  cursor: pointer;
+  font: inherit;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.agent-tool-status-toggle:hover {
+  background: color-mix(in srgb, var(--fg-primary) 6%, transparent);
+}
+
+.agent-tool-status-dot {
   width: 7px;
   height: 7px;
   border-radius: 999px;
   background: var(--fg-tertiary);
 }
 
-.agent-tool-status-running > div span {
+.agent-tool-status-running .agent-tool-status-dot {
   background: var(--status-running);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-running) 12%, transparent);
 }
 
-.agent-tool-status-succeeded > div span {
+.agent-tool-status-succeeded .agent-tool-status-dot {
   background: var(--status-succeeded);
 }
 
-.agent-tool-status-failed > div span {
+.agent-tool-status-failed .agent-tool-status-dot {
   background: var(--status-failed);
 }
 
-.agent-tool-status strong,
+.agent-tool-status-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.agent-tool-status-copy strong,
 .agent-error-block strong,
 .agent-media-placeholder strong,
 .agent-unknown-block strong {
   color: var(--fg-primary);
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agent-tool-status small,
+.agent-tool-status-copy small,
 .agent-error-block small,
 .agent-media-placeholder span,
 .agent-unknown-block span {
   color: var(--fg-tertiary);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool-status-state,
+.agent-tool-status-chevron {
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.agent-tool-status-running .agent-tool-status-copy strong {
+  display: inline-block;
+  background:
+    linear-gradient(
+      100deg,
+      var(--fg-tertiary) 0%,
+      var(--fg-tertiary) 34%,
+      var(--fg-primary) 48%,
+      var(--accent) 54%,
+      var(--fg-primary) 60%,
+      var(--fg-tertiary) 74%,
+      var(--fg-tertiary) 100%
+    );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: agent-thinking-shimmer 1.35s ease-in-out infinite;
+}
+
+.agent-tool-status-details {
+  display: grid;
+  gap: 6px;
+  padding: 7px 0 0 16px;
+}
+
+.agent-tool-status-details p {
+  color: var(--status-failed);
+  font-size: 12px;
 }
 
 .agent-tool-payload {

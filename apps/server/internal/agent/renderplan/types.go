@@ -22,9 +22,15 @@ const (
 	ProfileSeedream5Image = "seedream_5_image"
 	ProfileSeedance2Video = "seedance_2_video"
 
-	StatusDraft    = "draft"
-	StatusBlocked  = "blocked"
-	StatusCompiled = "compiled"
+	StatusDraft              = "draft"
+	StatusBlocked            = "blocked"
+	StatusCompiled           = "compiled"
+	StatusWaitingForApproval = "waiting_for_approval"
+	StatusSubmitted          = "submitted"
+	StatusRejected           = "rejected"
+
+	ExecutionPolicyExecuteImmediately = "execute_immediately"
+	ExecutionPolicyWaitForProducer    = "wait_for_producer"
 )
 
 type Scope struct {
@@ -53,6 +59,7 @@ type UpsertInput struct {
 	Blocker              Blocker
 	Rationale            string
 	AutoCompileAndSubmit bool
+	ExecutionPolicy      string
 }
 
 type ReferenceBinding struct {
