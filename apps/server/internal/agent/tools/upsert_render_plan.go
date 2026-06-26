@@ -3,16 +3,24 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/renderplan"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 type UpsertRenderPlanNativeTool struct {
-	service   *renderplan.Service
-	submitter *RenderPlanSubmitter
+	service        *renderplan.Service
+	submitter      *RenderPlanSubmitter
+	referenceStore RenderPlanReferenceStore
+}
+
+type RenderPlanReferenceStore interface {
+	ListMediaNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error)
 }
 
 type UpsertRenderPlanToolInput struct {
@@ -27,11 +35,11 @@ type UpsertRenderPlanToolInput struct {
 	Operation            string                    `json:"operation" jsonschema:"required,enum=text_to_image,enum=image_to_image,enum=multi_image_to_image,enum=text_to_video,enum=image_to_video_first_frame,enum=image_to_video_first_last_frame,enum=multi_modal_reference_video,enum=video_edit,enum=video_extend,enum=video_bridge" jsonschema_description:"provider-agnostic operation。不要填 provider API 私有枚举；PromptCompiler 和 provider adapter 会映射。"`
 	ReferenceBindings    []ReferenceBindingInput   `json:"reference_bindings" jsonschema_description:"本计划使用的参考资源绑定。必须说明来源对象、语义角色、prompt alias 和优先级。"`
 	SubjectBindings      []SubjectBindingInput     `json:"subject_bindings" jsonschema_description:"Seedance/Seedream prompt 中的主体绑定，例如 主体1 对应悦行行李箱。"`
-	PromptParts          RenderPromptPartsInput    `json:"prompt_parts" jsonschema:"required" jsonschema_description:"结构化 prompt parts。写模型意图和画面语言，不写 provider request JSON。"`
+	PromptParts          RenderPromptPartsInput    `json:"prompt_parts" jsonschema_description:"可选的结构化 prompt parts。优先只填写 objective、subject、setting、camera、composition 等必要字段；不要一次塞入超长 JSON。为空时工具会用 brief 作为 objective。"`
 	Params               RenderPlanParamsInput     `json:"params" jsonschema_description:"模型参数草案，例如比例、时长、分辨率、是否返回尾帧。工具和 PromptCompiler 会校验。"`
 	AuditHints           RenderPlanAuditHintsInput `json:"audit_hints" jsonschema_description:"Craftsman 对风险、自动补全和需要用户确认事项的提示。"`
 	Blocker              RenderPlanBlockerInput    `json:"blocker" jsonschema_description:"mode=mark_blocked 时填写，说明为什么不能继续生成。"`
-	Rationale            string                    `json:"rationale" jsonschema:"required" jsonschema_description:"为什么这样组织 prompt parts、参考资源和参数。必须面向 Producer 可读。"`
+	Rationale            string                    `json:"rationale" jsonschema_description:"为什么这样组织 prompt parts、参考资源和参数。保持简短，面向 Producer 可读；为空时工具会用 brief 兜底。"`
 }
 
 type RenderPlanScopeInput struct {
@@ -42,7 +50,7 @@ type RenderPlanScopeInput struct {
 type ReferenceBindingInput struct {
 	ClientKey      string `json:"client_key" jsonschema:"required" jsonschema_description:"稳定业务键，例如 ref_product_luggage_default、ref_airport_scene_morning。用于重试和审计。"`
 	SourceType     string `json:"source_type" jsonschema:"required,enum=key_element_state,enum=media_node,enum=artifact_version,enum=shot_output" jsonschema_description:"参考来源类型。优先使用 key_element_state 或 artifact_version，而不是裸素材。"`
-	SourceID       string `json:"source_id" jsonschema:"required" jsonschema_description:"参考来源 UUID。必须属于当前 workspace。"`
+	SourceID       string `json:"source_id" jsonschema:"required" jsonschema_description:"参考来源 ID。media_node 必须是真实 UUID；如果只知道素材标题，可临时填写当前 workspace 内唯一标题，工具会校验并规范化为 UUID。不要编造 UUID。"`
 	Role           string `json:"role" jsonschema:"required,enum=reference_image,enum=reference_video,enum=reference_audio,enum=first_frame,enum=last_frame,enum=source_video_to_edit,enum=source_video_to_extend,enum=style_reference,enum=product_reference,enum=scene_reference" jsonschema_description:"参考资源在模型调用中的角色。first_frame/last_frame 会影响 Seedance 首尾帧图生视频。"`
 	PromptAlias    string `json:"prompt_alias" jsonschema_description:"PromptCompiler 使用的可读别名，例如 图片1、视频1、音频1。不要手写 @图片1，交给编译器生成。"`
 	SemanticTarget string `json:"semantic_target" jsonschema_description:"该参考约束的对象，例如悦行行李箱外观、机场出发大厅空间、上一个分镜尾帧。"`
@@ -116,8 +124,13 @@ func NewUpsertRenderPlanNativeTool(service *renderplan.Service, submitter ...*Re
 	return &UpsertRenderPlanNativeTool{service: service, submitter: configuredSubmitter}
 }
 
+func (t *UpsertRenderPlanNativeTool) WithReferenceStore(store RenderPlanReferenceStore) *UpsertRenderPlanNativeTool {
+	t.referenceStore = store
+	return t
+}
+
 func (t *UpsertRenderPlanNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfoFor[UpsertRenderPlanToolInput](toolUpsertRenderPlan, "创建、更新草稿或 fork 一个 ClipAnvil RenderPlan。RenderPlan 是把 Producer 的创意级事实翻译成 Seedream / Seedance 生成计划的结构化对象，包含 reference bindings、subject bindings、prompt parts 和 params。")
+	return toolInfoFor[UpsertRenderPlanToolInput](toolUpsertRenderPlan, "创建、更新草稿或 fork 一个 ClipAnvil RenderPlan。RenderPlan 是把 Producer 的创意级事实翻译成 Seedream / Seedance 生成计划的结构化对象。优先提交短而正确的计划：必须继承当前 Craftsman task 的 scope 和 target_phase，只填写必要 reference bindings、subject bindings、prompt parts 和 params；不要一次生成超长 JSON。")
 }
 
 func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...einotool.Option) (string, error) {
@@ -125,11 +138,20 @@ func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 	if !ok {
 		return msg, nil
 	}
-	if msg, ok := renderPlanServiceOrError(t.service, toolUpsertRenderPlan); !ok {
-		return msg, nil
-	}
 	runtime, msg, ok := runtimeOrError(ctx, toolUpsertRenderPlan)
 	if !ok {
+		return msg, nil
+	}
+	if msg, ok := validateUpsertRenderPlanRuntime(runtime, input); !ok {
+		return msg, nil
+	}
+	input = normalizeUpsertRenderPlanInput(input)
+	if normalized, msg, ok := t.validateAndNormalizeReferenceBindings(ctx, runtime, input); !ok {
+		return msg, nil
+	} else {
+		input = normalized
+	}
+	if msg, ok := renderPlanServiceOrError(t.service, toolUpsertRenderPlan); !ok {
 		return msg, nil
 	}
 	scopeID, _ := pgUUIDFromString(input.Scope.ID)
@@ -255,13 +277,125 @@ func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {
 		}
 		return nil
 	}
-	if err := requireText(input.PromptParts.Objective, "prompt_parts.objective"); err != nil {
-		return err
-	}
-	if err := requireText(input.Rationale, "rationale"); err != nil {
-		return err
-	}
 	return nil
+}
+
+func validateUpsertRenderPlanRuntime(runtime NativeRuntimeContext, input UpsertRenderPlanToolInput) (string, bool) {
+	if strings.TrimSpace(runtime.ScopeType) != "" && input.Scope.Type != runtime.ScopeType {
+		return NaturalToolError(toolUpsertRenderPlan, fmt.Sprintf("scope 必须与当前 Craftsman 任务一致：当前是 %s，工具参数是 %s", runtime.ScopeType, input.Scope.Type), "请读取当前 Craftsman 任务上下文，使用 dispatch_craftsman 传入的 scope。"), false
+	}
+	if runtime.ScopeID.Valid {
+		scopeID, _ := pgUUIDFromString(input.Scope.ID)
+		if scopeID != runtime.ScopeID {
+			return NaturalToolError(toolUpsertRenderPlan, fmt.Sprintf("scope 必须与当前 Craftsman 任务一致：当前 scope_id=%s，工具参数 scope.id=%s", uuidString(runtime.ScopeID), input.Scope.ID), "请不要跨分镜或跨关键元素写 RenderPlan；如需处理其他 scope，请让 Producer 另行派发 Craftsman。"), false
+		}
+	}
+	if strings.TrimSpace(runtime.TargetPhase) != "" && input.TargetPhase != runtime.TargetPhase {
+		return NaturalToolError(toolUpsertRenderPlan, fmt.Sprintf("target_phase 必须与当前 Craftsman 任务一致：当前是 %s，工具参数是 %s", runtime.TargetPhase, input.TargetPhase), "请继承 dispatch_craftsman 的 target_phase。preview_image 任务只能写 seedream 预览图计划，不能改成 shot_video。"), false
+	}
+	return "", true
+}
+
+func normalizeUpsertRenderPlanInput(input UpsertRenderPlanToolInput) UpsertRenderPlanToolInput {
+	if strings.TrimSpace(input.PromptParts.Objective) == "" {
+		input.PromptParts.Objective = strings.TrimSpace(input.Brief)
+	}
+	if strings.TrimSpace(input.Rationale) == "" {
+		input.Rationale = strings.TrimSpace(input.Brief)
+	}
+	return input
+}
+
+func (t *UpsertRenderPlanNativeTool) validateAndNormalizeReferenceBindings(ctx context.Context, runtime NativeRuntimeContext, input UpsertRenderPlanToolInput) (UpsertRenderPlanToolInput, string, bool) {
+	if input.Mode == "mark_blocked" || !hasMediaNodeReferenceBinding(input.ReferenceBindings) {
+		return input, "", true
+	}
+	if t.referenceStore == nil {
+		return input, NaturalToolError(toolUpsertRenderPlan, "reference_bindings 包含 media_node，但工具缺少 media_node 校验 store，无法确认引用是否属于当前 workspace。", "请检查服务端 wiring；不要跳过引用校验直接提交 Worker。"), false
+	}
+	nodes, err := t.referenceStore.ListMediaNodesByWorkspace(ctx, runtime.WorkspaceID)
+	if err != nil {
+		return input, NaturalToolError(toolUpsertRenderPlan, "读取当前 workspace 的 media_node 列表失败："+err.Error(), "请稍后重试；如果持续失败，请让工程侧检查数据库连接和 workspace_id。"), false
+	}
+	normalized, problem, ok := normalizeMediaNodeReferenceBindings(input, nodes)
+	if !ok {
+		return input, NaturalToolError(toolUpsertRenderPlan, problem, "请先读取项目上下文，使用当前 workspace 中真实存在的 media_node UUID；如果只知道素材标题，必须填写唯一标题，不要编造 UUID。"), false
+	}
+	return normalized, "", true
+}
+
+func hasMediaNodeReferenceBinding(bindings []ReferenceBindingInput) bool {
+	for _, binding := range bindings {
+		if strings.TrimSpace(binding.SourceType) == "media_node" {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeMediaNodeReferenceBindings(input UpsertRenderPlanToolInput, nodes []db.MediaNode) (UpsertRenderPlanToolInput, string, bool) {
+	for i, binding := range input.ReferenceBindings {
+		if strings.TrimSpace(binding.SourceType) != "media_node" {
+			continue
+		}
+		sourceID := strings.TrimSpace(binding.SourceID)
+		if sourceID == "" {
+			return input, fmt.Sprintf("reference_bindings[%d].source_id 为空，无法绑定 media_node。当前可用 media_node：%s", i, describeAvailableMediaNodes(nodes)), false
+		}
+		node, problem := resolveRenderPlanMediaNodeReference(nodes, sourceID)
+		if problem != "" {
+			return input, fmt.Sprintf("reference_bindings[%d].source_id=%q %s。当前可用 media_node：%s", i, sourceID, problem, describeAvailableMediaNodes(nodes)), false
+		}
+		input.ReferenceBindings[i].SourceID = uuidString(node.ID)
+	}
+	return input, "", true
+}
+
+func resolveRenderPlanMediaNodeReference(nodes []db.MediaNode, sourceID string) (db.MediaNode, string) {
+	if id, ok := pgUUIDFromString(sourceID); ok {
+		for _, node := range nodes {
+			if node.ID == id {
+				return node, ""
+			}
+		}
+		return db.MediaNode{}, "指向的 media_node 不存在"
+	}
+	var matches []db.MediaNode
+	for _, node := range nodes {
+		if strings.EqualFold(strings.TrimSpace(node.Title), sourceID) {
+			matches = append(matches, node)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], ""
+	case 0:
+		return db.MediaNode{}, "没有匹配到同名 media_node"
+	default:
+		return db.MediaNode{}, "匹配到多个同名 media_node，引用有歧义"
+	}
+}
+
+func describeAvailableMediaNodes(nodes []db.MediaNode) string {
+	if len(nodes) == 0 {
+		return "当前 workspace 没有可用 media_node"
+	}
+	limit := len(nodes)
+	if limit > 8 {
+		limit = 8
+	}
+	parts := make([]string, 0, limit+1)
+	for i := 0; i < limit; i++ {
+		title := strings.TrimSpace(nodes[i].Title)
+		if title == "" {
+			title = "(无标题)"
+		}
+		parts = append(parts, fmt.Sprintf("%s(%s)", title, uuidString(nodes[i].ID)))
+	}
+	if len(nodes) > limit {
+		parts = append(parts, fmt.Sprintf("另有 %d 个", len(nodes)-limit))
+	}
+	return strings.Join(parts, "、")
 }
 
 func toRenderPlanReferenceBindings(input []ReferenceBindingInput) []renderplan.ReferenceBinding {

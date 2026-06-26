@@ -49,6 +49,13 @@ describe("agent React Flow canvas", () => {
     assert.doesNotMatch(pageSource, /AgentNodeDetailDrawer/);
   });
 
+  it("uses one visible Agent canvas title", async () => {
+    const pageSource = await readFile(agentPageUrl, "utf8");
+
+    assert.match(pageSource, /<p className="workspace-kicker">Agent Canvas<\/p>/);
+    assert.doesNotMatch(pageSource, /<h2>Agent 画布<\/h2>/);
+  });
+
   it("uses the shared read-only property panel for Agent node details", async () => {
     const pageSource = await readFile(agentPageUrl, "utf8");
 
@@ -133,5 +140,31 @@ describe("agent React Flow canvas", () => {
     assert.match(source, /updateCanvasNodeStatus/);
     assert.match(source, /isTerminalGenerationStatus/);
     assert.match(source, /status\s*===\s*"connected"[\s\S]{0,80}refreshCanvas\(\)/);
+  });
+
+  it("does not mount the old production overview panels in the Agent chat", async () => {
+    const pageSource = await readFile(agentPageUrl, "utf8");
+
+    assert.doesNotMatch(pageSource, /AgentProductionStatusBar/);
+    assert.doesNotMatch(pageSource, /AgentStoryboardPanel/);
+    assert.doesNotMatch(pageSource, /AgentTaskTimeline/);
+    assert.doesNotMatch(pageSource, /fetchAgentProductionOverview/);
+    assert.doesNotMatch(pageSource, /agent-production-overview-stack/);
+    assert.doesNotMatch(pageSource, /shouldRefreshAgentProductionOverview/);
+    assert.doesNotMatch(pageSource, /agentComposerDisabledReason/);
+    assert.doesNotMatch(pageSource, /agent-chat-hint/);
+  });
+
+  it("keeps the Agent chat composer out of the flexible grid row", async () => {
+    const cssSource = await readFile(mainCssUrl, "utf8");
+
+    assert.match(
+      cssSource,
+      /\.agent-chat-float\s*\{[\s\S]*grid-template-rows:\s*auto minmax\(96px,\s*1fr\) auto;/,
+    );
+    assert.doesNotMatch(
+      cssSource,
+      /\.agent-chat-float\s*\{[\s\S]*grid-template-rows:\s*auto auto minmax\(96px,\s*1fr\) auto;/,
+    );
   });
 });

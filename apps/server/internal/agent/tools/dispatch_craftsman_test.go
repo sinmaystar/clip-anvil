@@ -17,13 +17,20 @@ func TestDispatchCraftsmanDefinition(t *testing.T) {
 	if def.Name != "dispatch_craftsman" {
 		t.Fatalf("Name = %q", def.Name)
 	}
-	mode, ok := def.Parameters["properties"].(map[string]any)["mode"].(map[string]any)
+	targetPhase, ok := def.Parameters["properties"].(map[string]any)["target_phase"].(map[string]any)
 	if !ok {
-		t.Fatalf("mode schema missing: %#v", def.Parameters)
+		t.Fatalf("target_phase schema missing: %#v", def.Parameters)
 	}
-	enum, ok := mode["enum"].([]string)
-	if !ok || len(enum) != 2 || enum[0] != "preview_image" || enum[1] != "shot_video" {
-		t.Fatalf("mode enum = %#v", mode["enum"])
+	enum, ok := targetPhase["enum"].([]string)
+	if !ok || len(enum) != 3 || enum[0] != "reference_image" || enum[1] != "preview_image" || enum[2] != "shot_video" {
+		t.Fatalf("target_phase enum = %#v", targetPhase["enum"])
+	}
+	scope, ok := def.Parameters["properties"].(map[string]any)["scope"].(map[string]any)
+	if !ok {
+		t.Fatalf("scope schema missing: %#v", def.Parameters)
+	}
+	if scope["type"] != "object" {
+		t.Fatalf("scope schema = %#v", scope)
 	}
 	policy, ok := def.Parameters["properties"].(map[string]any)["execution_policy"].(map[string]any)
 	if !ok {
@@ -36,7 +43,7 @@ func TestDispatchCraftsmanDefinition(t *testing.T) {
 	if !def.Safety.UsesProductionService || def.Safety.WritesCanvas {
 		t.Fatalf("Safety = %#v", def.Safety)
 	}
-	if def.Visibility.UserLabel != "开始生成预览图" {
+	if def.Visibility.UserLabel != "派发生成任务" {
 		t.Fatalf("UserLabel = %q", def.Visibility.UserLabel)
 	}
 }
@@ -58,7 +65,7 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 		WorkspaceID: uuidWithByte(1),
 		ThreadID:    uuidWithByte(2),
 		TaskID:      uuidWithByte(3),
-		Arguments:   map[string]any{"mode": "preview_image", "execution_policy": "execute_immediately"},
+		Arguments:   map[string]any{"target_phase": "preview_image", "execution_policy": "execute_immediately", "scope": map[string]any{"type": "shot"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,13 +77,8 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 	if len(runtime.createdTasks) != 3 || len(enqueuer.tasks) != 3 {
 		t.Fatalf("created tasks = %d, enqueued = %d", len(runtime.createdTasks), len(enqueuer.tasks))
 	}
-	if len(store.statusUpdates) != 3 {
-		t.Fatalf("status updates = %#v", store.statusUpdates)
-	}
-	for _, update := range store.statusUpdates {
-		if update.Status != "preview_running" {
-			t.Fatalf("status update = %#v", update)
-		}
+	if len(store.statusUpdates) != 0 {
+		t.Fatalf("dispatch should not update shot status before render plan exists: %#v", store.statusUpdates)
 	}
 	summary, _ := out.Result["summary"].(string)
 	if !strings.Contains(summary, "加入队列") || !strings.Contains(summary, "不表示图片已经生成完成") {
@@ -93,7 +95,7 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 		if err := json.Unmarshal(task.Input, &input); err != nil {
 			t.Fatal(err)
 		}
-		if input["mode"] != "preview_image" {
+		if input["target_phase"] != "preview_image" {
 			t.Fatalf("task input = %#v", input)
 		}
 		if input["execution_policy"] != "execute_immediately" {
@@ -120,7 +122,8 @@ func TestDispatchCraftsmanNativeCarriesParentToolCallID(t *testing.T) {
 
 	got, err := tool.InvokableRun(ctx, `{
 		"brief":"直接生成所有分镜预览图。",
-		"mode":"preview_image",
+		"scope":{"type":"shot"},
+		"target_phase":"preview_image",
 		"execution_policy":"execute_immediately"
 	}`)
 	if err != nil {
@@ -139,8 +142,63 @@ func TestDispatchCraftsmanNativeCarriesParentToolCallID(t *testing.T) {
 	if input["parent_tool_call_id"] != "producer-dispatch-call" {
 		t.Fatalf("task input = %#v", input)
 	}
+	if input["producer_thread_id"] != "02000000-0000-0000-0000-000000000000" {
+		t.Fatalf("task input missing producer_thread_id: %#v", input)
+	}
+	if input["producer_task_id"] != "03000000-0000-0000-0000-000000000000" {
+		t.Fatalf("task input missing producer_task_id: %#v", input)
+	}
 	if input["execution_policy"] != "execute_immediately" {
 		t.Fatalf("task input = %#v", input)
+	}
+}
+
+func TestDispatchCraftsmanDispatchesKeyElementStateReferenceTask(t *testing.T) {
+	stateID := uuidWithByte(31)
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		keyElementStates: []db.KeyElementState{
+			{ID: stateID, WorkspaceID: uuidWithByte(1), ClientKey: "state_airport_morning", ReferenceStatus: "needs_reference", Status: "active"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	enqueuer := &fakeCraftsmanEnqueuer{}
+	tool := NewDispatchCraftsmanTool(store, runtime, enqueuer)
+
+	out, err := tool.Execute(context.Background(), ExecuteInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		Arguments: map[string]any{
+			"brief":            "生成机场晨光统一参考图。",
+			"target_phase":     "reference_image",
+			"execution_policy": "execute_immediately",
+			"scope":            map[string]any{"type": "key_element_state", "id": uuidString(stateID)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatched := out.Result["dispatched"].([]map[string]any)
+	if len(dispatched) != 1 || dispatched[0]["scope_type"] != "key_element_state" || dispatched[0]["scope_id"] != uuidString(stateID) {
+		t.Fatalf("dispatched = %#v", dispatched)
+	}
+	if len(runtime.createdTasks) != 1 || len(enqueuer.tasks) != 1 {
+		t.Fatalf("created tasks = %d, enqueued = %d", len(runtime.createdTasks), len(enqueuer.tasks))
+	}
+	task := runtime.createdTasks[0]
+	if task.ScopeType != "key_element_state" || task.ScopeID != stateID {
+		t.Fatalf("task scope = %s/%s", task.ScopeType, uuidString(task.ScopeID))
+	}
+	var input map[string]any
+	if err := json.Unmarshal(task.Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["target_phase"] != "reference_image" || input["scope_type"] != "key_element_state" || input["scope_id"] != uuidString(stateID) {
+		t.Fatalf("task input = %#v", input)
+	}
+	if len(store.statusUpdates) != 0 {
+		t.Fatalf("reference dispatch should not touch shot status: %#v", store.statusUpdates)
 	}
 }
 
@@ -160,8 +218,9 @@ func TestDispatchCraftsmanResolvesShotRefsAndCapsAttempts(t *testing.T) {
 		ThreadID:    uuidWithByte(2),
 		TaskID:      uuidWithByte(3),
 		Arguments: map[string]any{
-			"mode":             "preview_image",
+			"target_phase":     "preview_image",
 			"execution_policy": "wait_for_producer",
+			"scope":            map[string]any{"type": "shot"},
 			"shot_refs":        []any{"shot-02"},
 			"max_attempts":     99.0,
 			"review_record_id": "review-1",
@@ -199,10 +258,11 @@ func TestDispatchCraftsmanResolvesShotRefsAndCapsAttempts(t *testing.T) {
 }
 
 type fakeCraftsmanDispatchStore struct {
-	workspace     db.Workspace
-	shots         []db.Shot
-	linked        []db.SetShotCraftsmanThreadParams
-	statusUpdates []db.UpdateShotStatusParams
+	workspace        db.Workspace
+	shots            []db.Shot
+	keyElementStates []db.KeyElementState
+	linked           []db.SetShotCraftsmanThreadParams
+	statusUpdates    []db.UpdateShotStatusParams
 }
 
 func (f *fakeCraftsmanDispatchStore) GetWorkspaceByID(context.Context, pgtype.UUID) (db.Workspace, error) {
@@ -229,6 +289,15 @@ func (f *fakeCraftsmanDispatchStore) GetShotByClientKey(_ context.Context, param
 		}
 	}
 	return db.Shot{}, errShotNotFound
+}
+
+func (f *fakeCraftsmanDispatchStore) GetKeyElementStateByID(_ context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error) {
+	for _, state := range f.keyElementStates {
+		if state.WorkspaceID == params.WorkspaceID && state.ID == params.ID {
+			return state, nil
+		}
+	}
+	return db.KeyElementState{}, errScopeNotFound
 }
 
 func (f *fakeCraftsmanDispatchStore) SetShotCraftsmanThread(_ context.Context, params db.SetShotCraftsmanThreadParams) (db.Shot, error) {
@@ -260,6 +329,10 @@ type fakeCraftsmanRuntime struct {
 
 func (f *fakeCraftsmanRuntime) GetOrCreateCraftsmanThread(_ context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
 	return db.AgentThread{ID: pgtype.UUID{Bytes: shotID.Bytes, Valid: true}, WorkspaceID: workspaceID, Role: "craftsman", ScopeType: "shot", ScopeID: shotID}, nil
+}
+
+func (f *fakeCraftsmanRuntime) GetOrCreateCraftsmanThreadForScope(_ context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {
+	return db.AgentThread{ID: pgtype.UUID{Bytes: scopeID.Bytes, Valid: true}, WorkspaceID: workspaceID, Role: "craftsman", ScopeType: scopeType, ScopeID: scopeID}, nil
 }
 
 func (f *fakeCraftsmanRuntime) CreateTask(_ context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {

@@ -3,6 +3,7 @@ export interface SequencedAgentMessage {
   seq: number;
   created_at?: string;
   message_type?: string;
+  content?: unknown;
   raw_message?: {
     parent_tool_call_id?: unknown;
     tool_call_id?: unknown;
@@ -26,7 +27,19 @@ export function mergeAgentMessages<T extends SequencedAgentMessage>(
 export function visibleAgentMessages<T extends SequencedAgentMessage>(
   messages: T[],
 ) {
-  return messages.filter((message) => message.message_type !== "tool_result");
+  const completedDecisionToolCalls = requestDecisionToolCallIDsByStatus(
+    messages,
+    "succeeded",
+  );
+  return messages.filter((message) => {
+    if (message.message_type === "tool_result") {
+      return false;
+    }
+    return !isObsoleteRunningRequestDecisionToolCall(
+      message,
+      completedDecisionToolCalls,
+    );
+  });
 }
 
 function compareAgentMessages<T extends SequencedAgentMessage>(a: T, b: T) {
@@ -89,4 +102,84 @@ function orderNestedAgentMessages<T extends SequencedAgentMessage>(messages: T[]
 
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function requestDecisionToolCallIDsByStatus<T extends SequencedAgentMessage>(
+  messages: T[],
+  status: "running" | "succeeded" | "failed",
+) {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    const toolStatus = requestDecisionToolStatus(message);
+    if (!toolStatus || toolStatus.status !== status) {
+      continue;
+    }
+    const toolCallID =
+      stringValue(toolStatus.tool_call_id) ||
+      stringValue(message.raw_message?.tool_call_id);
+    if (toolCallID) {
+      ids.add(toolCallID);
+    }
+  }
+  return ids;
+}
+
+function isObsoleteRunningRequestDecisionToolCall<T extends SequencedAgentMessage>(
+  message: T,
+  completedDecisionToolCalls: Set<string>,
+) {
+  const toolStatus = requestDecisionToolStatus(message);
+  if (!toolStatus || toolStatus.status !== "running") {
+    return false;
+  }
+  const toolCallID =
+    stringValue(toolStatus.tool_call_id) ||
+    stringValue(message.raw_message?.tool_call_id);
+  return Boolean(toolCallID && completedDecisionToolCalls.has(toolCallID));
+}
+
+function requestDecisionToolStatus(message: { content?: unknown }) {
+  const content = message.content;
+  if (!content || typeof content !== "object") {
+    return null;
+  }
+  const envelope = content as { schema?: unknown; blocks?: unknown };
+  if (
+    envelope.schema !== "clipanvil.agent.message.v1" ||
+    !Array.isArray(envelope.blocks)
+  ) {
+    return null;
+  }
+  for (const block of envelope.blocks) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const value = block as {
+      type?: unknown;
+      tool_call_id?: unknown;
+      tool_name?: unknown;
+      label?: unknown;
+      status?: unknown;
+    };
+    const toolName = stringValue(value.tool_name) || stringValue(value.label);
+    const status = toolStatusValue(value.status);
+    if (
+      value.type === "tool_status" &&
+      toolName === "request_user_decision" &&
+      status
+    ) {
+      return {
+        tool_call_id: value.tool_call_id,
+        status,
+      };
+    }
+  }
+  return null;
+}
+
+function toolStatusValue(value: unknown) {
+  if (value === "running" || value === "succeeded" || value === "failed") {
+    return value;
+  }
+  return "";
 }

@@ -72,6 +72,7 @@ type RunTaskInput struct {
 	TaskID             pgtype.UUID
 	TriggerMessageID   pgtype.UUID
 	TriggerMessageSeq  int64
+	RuntimeTriggerText string
 	ResumeCheckpointID string
 	ResumeData         map[string]any
 	OriginalTaskID     pgtype.UUID
@@ -122,13 +123,14 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	}
 
 	graphInput := ProducerTurnInput{
-		WorkspaceID:       input.WorkspaceID,
-		ThreadID:          input.ThreadID,
-		TaskID:            input.TaskID,
-		TriggerMessageID:  input.TriggerMessageID,
-		TriggerMessageSeq: input.TriggerMessageSeq,
-		MaxToolCalls:      e.maxToolCalls,
-		ToolTimeout:       e.toolTimeout,
+		WorkspaceID:        input.WorkspaceID,
+		ThreadID:           input.ThreadID,
+		TaskID:             input.TaskID,
+		TriggerMessageID:   input.TriggerMessageID,
+		TriggerMessageSeq:  input.TriggerMessageSeq,
+		RuntimeTriggerText: input.RuntimeTriggerText,
+		MaxToolCalls:       e.maxToolCalls,
+		ToolTimeout:        e.toolTimeout,
 	}
 	graphInput.EmitDelta = func(ctx context.Context, delta ProducerStreamDelta) error {
 		if delta.Kind == "" {
@@ -601,10 +603,7 @@ func (e *Executor) broadcastMessageDelta(workspaceID pgtype.UUID, delta Producer
 }
 
 func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) {
-	var payload struct {
-		TriggerMessageID  string `json:"trigger_message_id"`
-		TriggerMessageSeq int64  `json:"trigger_message_seq"`
-	}
+	var payload producerTaskTriggerPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return
 	}
@@ -615,6 +614,47 @@ func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) {
 	}
 	if input.TriggerMessageSeq <= 0 {
 		input.TriggerMessageSeq = payload.TriggerMessageSeq
+	}
+	if strings.TrimSpace(input.RuntimeTriggerText) == "" {
+		input.RuntimeTriggerText = producerRuntimeTriggerText(payload)
+	}
+}
+
+type producerTaskTriggerPayload struct {
+	Trigger           string `json:"trigger"`
+	CraftsmanTaskID   string `json:"craftsman_task_id"`
+	CraftsmanThreadID string `json:"craftsman_thread_id"`
+	ScopeType         string `json:"scope_type"`
+	ScopeID           string `json:"scope_id"`
+	ShotID            string `json:"shot_id"`
+	TargetPhase       string `json:"target_phase"`
+	TriggerMessageID  string `json:"trigger_message_id"`
+	TriggerMessageSeq int64  `json:"trigger_message_seq"`
+}
+
+func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
+	switch strings.TrimSpace(payload.Trigger) {
+	case "craftsman_render_plan_ready":
+		lines := []string{
+			"系统事件：Craftsman 已完成 RenderPlan 编译，当前轮次由工程自动唤醒 Producer。",
+			"触发原因：craftsman_render_plan_ready。",
+			"下一步：请读取项目上下文，检查 waiting_for_approval RenderPlan，并决定调用 decide_render_plan accept/reject，或先派 Reviewer 评审。",
+		}
+		if targetPhase := strings.TrimSpace(payload.TargetPhase); targetPhase != "" {
+			lines = append(lines, "目标阶段："+targetPhase+"。")
+		}
+		if scopeType := strings.TrimSpace(payload.ScopeType); scopeType != "" {
+			lines = append(lines, "目标范围："+scopeType+" "+strings.TrimSpace(payload.ScopeID)+"。")
+		}
+		if shotID := strings.TrimSpace(payload.ShotID); shotID != "" {
+			lines = append(lines, "关联分镜："+shotID+"。")
+		}
+		if craftsmanTaskID := strings.TrimSpace(payload.CraftsmanTaskID); craftsmanTaskID != "" {
+			lines = append(lines, "Craftsman 任务："+craftsmanTaskID+"。")
+		}
+		return strings.Join(lines, "\n")
+	default:
+		return ""
 	}
 }
 

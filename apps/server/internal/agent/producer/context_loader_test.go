@@ -138,6 +138,27 @@ func TestRuntimeContextLoaderLoadsRecentMessagesThroughTrigger(t *testing.T) {
 	}
 }
 
+func TestRuntimeContextLoaderCarriesNaturalLanguageRuntimeTrigger(t *testing.T) {
+	loader := RuntimeContextLoader{Runtime: &fakeProducerContextRuntime{}}
+
+	out, err := loader.LoadProducerContext(context.Background(), ProducerTurnInput{
+		ThreadID: uuidWithByte(2),
+		RuntimeTriggerText: strings.Join([]string{
+			"系统事件：Craftsman 已完成 RenderPlan 编译。",
+			"触发原因：craftsman_render_plan_ready。",
+			"下一步：请读取项目上下文，检查 waiting_for_approval RenderPlan，并决定 accept/reject 或派 Reviewer。",
+		}, "\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out.RuntimeTriggerText, "Craftsman 已完成 RenderPlan 编译") ||
+		!strings.Contains(out.RuntimeTriggerText, "waiting_for_approval RenderPlan") {
+		t.Fatalf("runtime trigger text = %q", out.RuntimeTriggerText)
+	}
+}
+
 type fakeProducerContextRuntime struct {
 	messages []db.AgentMessage
 	afterSeq int64

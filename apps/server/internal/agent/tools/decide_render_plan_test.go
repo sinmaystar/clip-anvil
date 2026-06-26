@@ -102,10 +102,11 @@ func TestDecideRenderPlanRejectDoesNotSubmitWorkerTask(t *testing.T) {
 }
 
 type fakeRenderPlanDecisionStore struct {
-	plan      db.RenderPlan
-	shot      db.Shot
-	submitted bool
-	rejected  bool
+	plan            db.RenderPlan
+	shot            db.Shot
+	keyElementState db.KeyElementState
+	submitted       bool
+	rejected        bool
 }
 
 func (f *fakeRenderPlanDecisionStore) GetRenderPlanByID(_ context.Context, params db.GetRenderPlanByIDParams) (db.RenderPlan, error) {
@@ -120,6 +121,13 @@ func (f *fakeRenderPlanDecisionStore) GetShotByID(_ context.Context, id pgtype.U
 		return f.shot, nil
 	}
 	return db.Shot{}, errShotNotFound
+}
+
+func (f *fakeRenderPlanDecisionStore) GetKeyElementStateByID(_ context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error) {
+	if f.keyElementState.ID == params.ID && f.keyElementState.WorkspaceID == params.WorkspaceID {
+		return f.keyElementState, nil
+	}
+	return db.KeyElementState{}, errShotNotFound
 }
 
 func (f *fakeRenderPlanDecisionStore) MarkRenderPlanSubmitted(_ context.Context, params db.MarkRenderPlanSubmittedParams) (db.RenderPlan, error) {

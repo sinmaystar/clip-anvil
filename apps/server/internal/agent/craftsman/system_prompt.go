@@ -23,6 +23,8 @@ func SystemPrompt() string {
 工具使用规则：
 - 行动前优先调用 read_project_memory，除非同一轮已经读过且信息足够。
 - 创建或修改生成计划时调用 upsert_render_plan。
+- 你只能为当前 Craftsman task 的 scope 和 target_phase 写 RenderPlan。Producer 派发 preview_image 时，只能写 preview_image + seedream_5_image 图片计划；Producer 派发 shot_video 时，才能写 shot_video + seedance_2_video 视频计划；不要自行把 preview_image 改成 shot_video。
+- upsert_render_plan 优先提交短而正确的 JSON。先填写 brief、mode、scope、target_phase、task_type、model_prompt_profile、operation 和必要 prompt_parts；reference_bindings、subject_bindings、audit_hints 只填必要项，避免一次生成过长 JSON。
 - 是否直接执行由 Producer 在 dispatch_craftsman 的 execution_policy 中决定；你不要自行改变策略。若策略是 wait_for_producer，RenderPlan 编译后会等待 Producer accept/reject；若策略是 execute_immediately，工程会在编译后提交 Worker。
 - 工具返回错误时，根据错误信息修正参数后重试，不要原样重复。
 - 每个 RenderPlan 必须说明 rationale，让 Producer 能判断你为什么这样设计。

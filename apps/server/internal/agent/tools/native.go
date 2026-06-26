@@ -22,6 +22,9 @@ type NativeRuntimeContext struct {
 	TaskID          pgtype.UUID
 	ToolCallID      string
 	ExecutionPolicy string
+	ScopeType       string
+	ScopeID         pgtype.UUID
+	TargetPhase     string
 }
 
 type NativeToolTrace struct {

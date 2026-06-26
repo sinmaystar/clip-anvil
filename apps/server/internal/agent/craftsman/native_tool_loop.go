@@ -273,7 +273,10 @@ func prepareCraftsmanToolMessage(stateStore *craftsmanLoopToolStateStore, state 
 
 	messageForToolNode := cloneToolCallMessage(cleanMessage)
 	for i := range messageForToolNode.ToolCalls {
-		args := toolCallArgumentsMap(messageForToolNode.ToolCalls[i])
+		args, ok := toolCallArgumentsObject(messageForToolNode.ToolCalls[i].Function.Arguments)
+		if !ok {
+			continue
+		}
 		args[craftsmanLoopStateArgumentKey] = stateKey
 		raw, err := json.Marshal(args)
 		if err != nil {
@@ -326,6 +329,9 @@ func nativeCraftsmanToolRuntimeMiddleware(stateStore *craftsmanLoopToolStateStor
 							TaskID:          state.Context.Input.TaskID,
 							ToolCallID:      input.CallID,
 							ExecutionPolicy: state.Context.Input.ExecutionPolicy,
+							ScopeType:       state.Context.Input.ScopeType,
+							ScopeID:         state.Context.Input.ScopeID,
+							TargetPhase:     state.Context.Input.Mode,
 						})
 					}
 				}
@@ -432,14 +438,22 @@ func appendCraftsmanSameTurnMessages(input *Context, out CraftsmanTurnOutput, as
 }
 
 func toolCallArgumentsMap(call schema.ToolCall) map[string]any {
-	args := map[string]any{}
-	if strings.TrimSpace(call.Function.Arguments) == "" {
-		return args
-	}
-	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
-		return map[string]any{"_raw": call.Function.Arguments}
+	args, ok := toolCallArgumentsObject(call.Function.Arguments)
+	if !ok {
+		return map[string]any{}
 	}
 	return args
+}
+
+func toolCallArgumentsObject(arguments string) (map[string]any, bool) {
+	args := map[string]any{}
+	if strings.TrimSpace(arguments) == "" {
+		return args, true
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return nil, false
+	}
+	return args, true
 }
 
 var _ = agenteino.CheckpointKey

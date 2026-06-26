@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  agentComposerDisabledReason,
+  agentProcessingLabel,
   hasActiveAgentTask,
   hasProcessingAgentTask,
   hasRunningProducerTask,
@@ -69,20 +69,39 @@ describe("agent tasks", () => {
       ]),
       true,
     );
+    assert.equal(
+      hasProcessingAgentTask([
+        { id: "task-3", status: "running", task_type: "craftsman_turn" },
+        { id: "task-4", status: "queued", task_type: "worker_generation" },
+      ]),
+      false,
+    );
   });
 
-  it("renders composer disabled reason for processing tasks", () => {
+  it("renders processing labels for the shimmer thinking indicator", () => {
     assert.equal(
-      agentComposerDisabledReason([
-        { id: "task-1", status: "waiting_for_user", task_type: "producer_turn" },
+      agentProcessingLabel([
+        { id: "task-1", status: "running", task_type: "producer_turn" },
+      ]),
+      "ClipAnvil 正在思考",
+    );
+    assert.equal(
+      agentProcessingLabel([
+        { id: "task-2", status: "queued", task_type: "decision_resume" },
+      ]),
+      "ClipAnvil 正在处理你的选择",
+    );
+    assert.equal(
+      agentProcessingLabel([
+        { id: "task-3", status: "running", task_type: "worker_generation" },
       ]),
       "",
     );
     assert.equal(
-      agentComposerDisabledReason([
-        { id: "task-2", status: "running", task_type: "producer_turn" },
+      agentProcessingLabel([
+        { id: "task-4", status: "waiting_for_user", task_type: "producer_turn" },
       ]),
-      "ClipAnvil 正在思考",
+      "",
     );
   });
 });

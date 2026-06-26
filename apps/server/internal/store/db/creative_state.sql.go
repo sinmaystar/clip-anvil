@@ -823,6 +823,45 @@ func (q *Queries) GetKeyElementStateByClientKey(ctx context.Context, arg GetKeyE
 	return i, err
 }
 
+const getKeyElementStateByID = `-- name: GetKeyElementStateByID :one
+SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+FROM key_element_state
+WHERE id = $1
+  AND workspace_id = $2
+  AND archived_at IS NULL
+`
+
+type GetKeyElementStateByIDParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetKeyElementStateByID(ctx context.Context, arg GetKeyElementStateByIDParams) (KeyElementState, error) {
+	row := q.db.QueryRow(ctx, getKeyElementStateByID, arg.ID, arg.WorkspaceID)
+	var i KeyElementState
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.KeyElementID,
+		&i.ClientKey,
+		&i.Label,
+		&i.VisualDescription,
+		&i.ReferenceStatus,
+		&i.ReferenceNodeID,
+		&i.ReferenceVersionID,
+		&i.IsDefault,
+		&i.StateFacts,
+		&i.SourceRefs,
+		&i.Status,
+		&i.CreatedByThreadID,
+		&i.CreatedByTaskID,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getSceneByClientKey = `-- name: GetSceneByClientKey :one
 SELECT id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
 FROM scene

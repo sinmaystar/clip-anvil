@@ -13,14 +13,15 @@ import (
 type ProducerDeltaHandler func(ctx context.Context, delta ProducerStreamDelta) error
 
 type ProducerTurnInput struct {
-	WorkspaceID       pgtype.UUID
-	ThreadID          pgtype.UUID
-	TaskID            pgtype.UUID
-	TriggerMessageID  pgtype.UUID
-	TriggerMessageSeq int64
-	EmitDelta         ProducerDeltaHandler
-	MaxToolCalls      int
-	ToolTimeout       time.Duration
+	WorkspaceID        pgtype.UUID
+	ThreadID           pgtype.UUID
+	TaskID             pgtype.UUID
+	TriggerMessageID   pgtype.UUID
+	TriggerMessageSeq  int64
+	RuntimeTriggerText string
+	EmitDelta          ProducerDeltaHandler
+	MaxToolCalls       int
+	ToolTimeout        time.Duration
 }
 
 type ProducerTurnOutput struct {
@@ -48,6 +49,7 @@ type ProducerContext struct {
 	Messages            []db.AgentMessage
 	SameTurnMessages    []ProducerSameTurnMessage
 	LatestUserText      string
+	RuntimeTriggerText  string
 	Model               ProducerModelSelection
 	ToolInfos           []*schema.ToolInfo
 	ImageAttachments    map[string]ProducerImageAttachment

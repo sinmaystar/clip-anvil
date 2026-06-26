@@ -169,6 +169,13 @@ WHERE key_element_id = $1
   AND client_key = $2
   AND archived_at IS NULL;
 
+-- name: GetKeyElementStateByID :one
+SELECT *
+FROM key_element_state
+WHERE id = $1
+  AND workspace_id = $2
+  AND archived_at IS NULL;
+
 -- name: GetDefaultKeyElementState :one
 SELECT *
 FROM key_element_state

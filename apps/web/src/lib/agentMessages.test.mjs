@@ -143,4 +143,57 @@ describe("agent messages", () => {
       ["call", "answer"],
     );
   });
+
+  it("hides an obsolete running request_user_decision card after the same tool call succeeds", () => {
+    const messages = visibleAgentMessages([
+      {
+        id: "decision-running",
+        seq: 1,
+        message_type: "tool_call",
+        raw_message: { tool_call_id: "call-decision-1" },
+        content: toolStatusEnvelope({
+          id: "blk-running",
+          tool_call_id: "call-decision-1",
+          tool_name: "request_user_decision",
+          label: "request_user_decision",
+          status: "running",
+        }),
+      },
+      {
+        id: "decision-card",
+        seq: 2,
+        message_type: "ui_card",
+      },
+      {
+        id: "decision-succeeded",
+        seq: 3,
+        message_type: "tool_call",
+        raw_message: { tool_call_id: "call-decision-1" },
+        content: toolStatusEnvelope({
+          id: "blk-succeeded",
+          tool_call_id: "call-decision-1",
+          tool_name: "request_user_decision",
+          label: "request_user_decision",
+          status: "succeeded",
+        }),
+      },
+    ]);
+
+    assert.deepEqual(
+      messages.map((message) => message.id),
+      ["decision-card", "decision-succeeded"],
+    );
+  });
 });
+
+function toolStatusEnvelope(block) {
+  return {
+    schema: "clipanvil.agent.message.v1",
+    blocks: [
+      {
+        type: "tool_status",
+        ...block,
+      },
+    ],
+  };
+}

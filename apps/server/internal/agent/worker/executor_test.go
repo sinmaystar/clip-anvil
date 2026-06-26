@@ -151,6 +151,79 @@ func TestWorkerCreatesShotVideoNodeAndSubmitsImageToVideoIntent(t *testing.T) {
 	}
 }
 
+func TestWorkerCreatesReferenceImageNodeAndMarksKeyElementStateReady(t *testing.T) {
+	stateID := uuidWithByte(71)
+	store := &fakeWorkerStore{
+		keyElementState: db.KeyElementState{
+			ID:                stateID,
+			WorkspaceID:       uuidWithByte(1),
+			ClientKey:         "element_airport_terminal_default",
+			Label:             "机场航站楼",
+			VisualDescription: "明亮现代机场航站楼",
+			ReferenceStatus:   "needs_reference",
+			IsDefault:         true,
+			StateFacts:        []byte(`{"scene":"airport"}`),
+			SourceRefs:        []byte(`[]`),
+			Status:            "active",
+		},
+	}
+	runtime := &fakeWorkerRuntime{}
+	productionService := &fakeProductionSubmitter{
+		result: production.RunResult{
+			Node:    db.MediaNode{ID: uuidWithByte(20), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeImage},
+			Job:     db.GenerationJob{ID: uuidWithByte(30), TargetNodeID: uuidWithByte(20), OperationType: "text_to_image", Status: db.JobStatusQueued},
+			Version: db.ArtifactVersion{ID: uuidWithByte(40), NodeID: uuidWithByte(20), JobID: uuidWithByte(30), Status: db.JobStatusQueued},
+		},
+	}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Store: store, Production: productionService})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:                     "reference_image",
+		TargetPhase:              "reference_image",
+		ScopeType:                "key_element_state",
+		ScopeID:                  uuidString(stateID),
+		KeyElementStateClientKey: "element_airport_terminal_default",
+		CraftsmanThreadID:        uuidString(uuidWithByte(3)),
+		CraftsmanTaskID:          uuidString(uuidWithByte(4)),
+		Strategy:                 "先生成统一场景参考图",
+		Prompt:                   "A bright modern airport terminal reference image for a luggage ad",
+		Model:                    ModelSpec{Provider: "volcengine", ModelID: "seedream-5"},
+		Params:                   map[string]any{"size": "1024x1024"},
+		MaxAttempts:              3,
+	})
+	task.ScopeType = "key_element_state"
+	task.ScopeID = stateID
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if store.createdNode.NodeType != db.NodeTypeImage || store.createdNode.OperationType != "text_to_image" {
+		t.Fatalf("created node = %#v", store.createdNode)
+	}
+	if store.createdNode.ShotID.Valid {
+		t.Fatalf("reference image should not bind shot id: %#v", store.createdNode.ShotID)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(store.createdNode.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["agent_artifact_kind"] != "reference_image" || metadata["source_phase"] != "key_element_state" || metadata["key_element_state_client_key"] != "element_airport_terminal_default" {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+	if productionService.intent.OutputType != "image" || productionService.intent.OperationType != "text_to_image" {
+		t.Fatalf("intent = %#v", productionService.intent)
+	}
+	if len(store.keyElementStateUpdates) != 1 {
+		t.Fatalf("state updates = %#v", store.keyElementStateUpdates)
+	}
+	update := store.keyElementStateUpdates[0]
+	if update.ID != stateID || update.ReferenceStatus != "ready" || update.ReferenceNodeID != uuidWithByte(20) || update.ReferenceVersionID != uuidWithByte(40) {
+		t.Fatalf("state update = %#v", update)
+	}
+	if len(store.statusUpdates) != 0 {
+		t.Fatalf("shot status updates = %#v", store.statusUpdates)
+	}
+}
+
 func TestWorkerTracesGenerationSubmit(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -496,14 +569,16 @@ func (f *fakeWorkerRuntime) hasEvent(eventType string) bool {
 }
 
 type fakeWorkerStore struct {
-	createdNode     db.CreateAgentGenerationNodeParams
-	createNodeCalls int
-	existingNode    db.MediaNode
-	nodes           []db.MediaNode
-	assets          map[pgtype.UUID]db.MediaAsset
-	existingEdges   map[[2]pgtype.UUID]db.MediaEdge
-	createdEdges    []db.CreateMediaEdgeParams
-	statusUpdates   []db.UpdateShotStatusParams
+	createdNode            db.CreateAgentGenerationNodeParams
+	createNodeCalls        int
+	existingNode           db.MediaNode
+	nodes                  []db.MediaNode
+	assets                 map[pgtype.UUID]db.MediaAsset
+	keyElementState        db.KeyElementState
+	keyElementStateUpdates []db.UpdateKeyElementStateParams
+	existingEdges          map[[2]pgtype.UUID]db.MediaEdge
+	createdEdges           []db.CreateMediaEdgeParams
+	statusUpdates          []db.UpdateShotStatusParams
 }
 
 type fakeWorkerNodeBroadcaster struct {
@@ -558,6 +633,13 @@ func (f *fakeWorkerStore) GetArtifactVersionByID(context.Context, pgtype.UUID) (
 	return db.ArtifactVersion{}, errors.New("version not found")
 }
 
+func (f *fakeWorkerStore) GetKeyElementStateByID(_ context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error) {
+	if f.keyElementState.ID == params.ID && f.keyElementState.WorkspaceID == params.WorkspaceID {
+		return f.keyElementState, nil
+	}
+	return db.KeyElementState{}, errors.New("key element state not found")
+}
+
 func (f *fakeWorkerStore) GetDependencyEdgeByEndpoints(_ context.Context, params db.GetDependencyEdgeByEndpointsParams) (db.MediaEdge, error) {
 	if f.existingEdges != nil {
 		edge, ok := f.existingEdges[[2]pgtype.UUID{params.FromNodeID, params.ToNodeID}]
@@ -576,6 +658,14 @@ func (f *fakeWorkerStore) CreateMediaEdge(_ context.Context, params db.CreateMed
 func (f *fakeWorkerStore) UpdateShotStatus(_ context.Context, params db.UpdateShotStatusParams) (db.Shot, error) {
 	f.statusUpdates = append(f.statusUpdates, params)
 	return db.Shot{ID: params.ID, WorkspaceID: params.WorkspaceID, Status: params.Status}, nil
+}
+
+func (f *fakeWorkerStore) UpdateKeyElementState(_ context.Context, params db.UpdateKeyElementStateParams) (db.KeyElementState, error) {
+	f.keyElementStateUpdates = append(f.keyElementStateUpdates, params)
+	f.keyElementState.ReferenceStatus = params.ReferenceStatus
+	f.keyElementState.ReferenceNodeID = params.ReferenceNodeID
+	f.keyElementState.ReferenceVersionID = params.ReferenceVersionID
+	return f.keyElementState, nil
 }
 
 func (f *fakeWorkerStore) MarkRenderPlanCompleted(context.Context, db.MarkRenderPlanCompletedParams) (db.RenderPlan, error) {

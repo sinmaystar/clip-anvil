@@ -108,15 +108,19 @@ func (s *Service) GetOrCreateComposerThread(ctx context.Context, workspaceID pgt
 }
 
 func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
-	if !workspaceID.Valid || !shotID.Valid {
+	return s.GetOrCreateCraftsmanThreadForScope(ctx, workspaceID, "shot", shotID)
+}
+
+func (s *Service) GetOrCreateCraftsmanThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {
+	if !workspaceID.Valid || !scopeID.Valid || scopeType == "" {
 		return db.AgentThread{}, ErrInvalidRequest
 	}
 
 	params := db.GetActiveAgentThreadByScopeParams{
 		WorkspaceID: workspaceID,
 		Role:        "craftsman",
-		ScopeType:   "shot",
-		ScopeID:     shotID,
+		ScopeType:   scopeType,
+		ScopeID:     scopeID,
 	}
 	thread, err := s.queries.GetActiveAgentThreadByScope(ctx, params)
 	if err == nil {
@@ -129,8 +133,8 @@ func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, s
 	thread, err = s.CreateThread(ctx, CreateThreadParams{
 		WorkspaceID:      workspaceID,
 		Role:             "craftsman",
-		ScopeType:        "shot",
-		ScopeID:          shotID,
+		ScopeType:        scopeType,
+		ScopeID:          scopeID,
 		RuntimeProvider:  "eino",
 		RuntimeAgentName: "CraftsmanGraph",
 	})
@@ -147,6 +151,13 @@ func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, s
 
 func (s *Service) GetOrCreateReviewerThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
 	return s.GetOrCreateReviewerThreadForScope(ctx, workspaceID, "shot", shotID)
+}
+
+func (s *Service) UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error) {
+	if s == nil || s.queries == nil {
+		return db.Shot{}, ErrInvalidConfig
+	}
+	return s.queries.UpdateShotStatus(ctx, params)
 }
 
 func (s *Service) GetOrCreateReviewerThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {

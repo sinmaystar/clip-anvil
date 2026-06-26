@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/callbacks"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/otel/attribute"
 
@@ -25,8 +26,11 @@ type ExecutorRuntime interface {
 	MarkTaskFailed(ctx context.Context, taskID pgtype.UUID, code, message string) (db.AgentTask, error)
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
 	UpdateMessage(ctx context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error)
+	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
+	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
 	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
+	UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error)
 }
 
 type Runner interface {
@@ -34,11 +38,12 @@ type Runner interface {
 }
 
 type ExecutorConfig struct {
-	Runtime        ExecutorRuntime
-	Graph          Runner
-	Broadcaster    Broadcaster
-	Logger         *slog.Logger
-	TraceCallbacks []callbacks.Handler
+	Runtime          ExecutorRuntime
+	Graph            Runner
+	Broadcaster      Broadcaster
+	ProducerEnqueuer ProducerTaskEnqueuer
+	Logger           *slog.Logger
+	TraceCallbacks   []callbacks.Handler
 }
 
 type Broadcaster interface {
@@ -46,26 +51,41 @@ type Broadcaster interface {
 	BroadcastAgentMessageUpdated(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent)
 }
 
+type ProducerTaskEnqueuer interface {
+	EnqueueProducerTask(ctx context.Context, task db.AgentTask)
+}
+
 type Executor struct {
-	runtime        ExecutorRuntime
-	graph          Runner
-	broadcaster    Broadcaster
-	logger         *slog.Logger
-	traceCallbacks []callbacks.Handler
+	runtime          ExecutorRuntime
+	graph            Runner
+	broadcaster      Broadcaster
+	producerEnqueuer ProducerTaskEnqueuer
+	logger           *slog.Logger
+	traceCallbacks   []callbacks.Handler
 }
 
 func NewExecutor(config ExecutorConfig) *Executor {
 	return &Executor{
-		runtime:        config.Runtime,
-		graph:          config.Graph,
-		broadcaster:    config.Broadcaster,
-		logger:         config.Logger,
-		traceCallbacks: config.TraceCallbacks,
+		runtime:          config.Runtime,
+		graph:            config.Graph,
+		broadcaster:      config.Broadcaster,
+		producerEnqueuer: config.ProducerEnqueuer,
+		logger:           config.Logger,
+		traceCallbacks:   config.TraceCallbacks,
 	}
 }
 
 func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
-	if e == nil || e.runtime == nil || e.graph == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid || !input.ShotID.Valid {
+	if input.ScopeType == "" {
+		input.ScopeType = "shot"
+	}
+	if !input.ScopeID.Valid && input.ShotID.Valid {
+		input.ScopeID = input.ShotID
+	}
+	if input.ScopeType == "shot" && !input.ShotID.Valid {
+		input.ShotID = input.ScopeID
+	}
+	if e == nil || e.runtime == nil || e.graph == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid || !input.ScopeID.Valid {
 		return ErrInvalidConfig
 	}
 	if _, err := e.runtime.MarkTaskRunning(ctx, input.TaskID); err != nil {
@@ -77,7 +97,7 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		TaskID:      input.TaskID,
 		EventType:   "craftsman_started",
 		SourceRole:  "craftsman",
-		Scope:       mustJSON(map[string]any{"shot_id": uuidString(input.ShotID)}),
+		Scope:       mustJSON(map[string]any{"scope_type": input.ScopeType, "scope_id": uuidString(input.ScopeID), "shot_id": uuidString(input.ShotID)}),
 	})
 	taskInput, err := parseTaskInput(input.Input)
 	if err != nil {
@@ -87,6 +107,8 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		WorkspaceID:      input.WorkspaceID,
 		ThreadID:         input.ThreadID,
 		TaskID:           input.TaskID,
+		ScopeType:        input.ScopeType,
+		ScopeID:          input.ScopeID,
 		ShotID:           input.ShotID,
 		Mode:             taskInput.Mode,
 		ExecutionPolicy:  taskInput.ExecutionPolicy,
@@ -101,6 +123,8 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		attribute.String("clipanvil.agent.task_id", uuidString(input.TaskID)),
 		attribute.String("clipanvil.agent.role", "craftsman"),
 		attribute.String("clipanvil.agent.task_type", "craftsman_turn"),
+		attribute.String("clipanvil.agent.scope_type", input.ScopeType),
+		attribute.String("clipanvil.agent.scope_id", uuidString(input.ScopeID)),
 		attribute.String("clipanvil.agent.shot_id", uuidString(input.ShotID)),
 	)
 	liveToolTrace := newCraftsmanLiveToolTrace(e, input, taskInput.ParentToolCallID)
@@ -148,6 +172,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		TargetRole:  "worker",
 		Payload:     rawOutput,
 	})
+	if err := e.wakeProducerIfNeeded(ctx, input, taskInput, rawOutput); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -257,6 +284,8 @@ type parsedTaskInput struct {
 	Mode             string
 	ExecutionPolicy  string
 	ParentToolCallID string
+	ProducerThreadID pgtype.UUID
+	ProducerTaskID   pgtype.UUID
 	MaxAttempts      int
 	WorkerParams     map[string]any
 }
@@ -277,11 +306,20 @@ func parseTaskInput(raw []byte) (parsedTaskInput, error) {
 	if mode, ok := out.WorkerParams["mode"].(string); ok && strings.TrimSpace(mode) != "" {
 		out.Mode = strings.TrimSpace(mode)
 	}
+	if targetPhase, ok := out.WorkerParams["target_phase"].(string); ok && strings.TrimSpace(targetPhase) != "" {
+		out.Mode = strings.TrimSpace(targetPhase)
+	}
 	if executionPolicy, ok := out.WorkerParams["execution_policy"].(string); ok && strings.TrimSpace(executionPolicy) != "" {
 		out.ExecutionPolicy = strings.TrimSpace(executionPolicy)
 	}
 	if parentToolCallID, ok := out.WorkerParams["parent_tool_call_id"].(string); ok {
 		out.ParentToolCallID = strings.TrimSpace(parentToolCallID)
+	}
+	if producerThreadID, ok := stringUUIDValue(out.WorkerParams["producer_thread_id"]); ok {
+		out.ProducerThreadID = producerThreadID
+	}
+	if producerTaskID, ok := stringUUIDValue(out.WorkerParams["producer_task_id"]); ok {
+		out.ProducerTaskID = producerTaskID
 	}
 	if out.ExecutionPolicy != "execute_immediately" && out.ExecutionPolicy != "wait_for_producer" {
 		out.ExecutionPolicy = "wait_for_producer"
@@ -299,6 +337,67 @@ func parseTaskInput(raw []byte) (parsedTaskInput, error) {
 		out.MaxAttempts = 1
 	}
 	return out, nil
+}
+
+func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput, taskInput parsedTaskInput, craftsmanOutput []byte) error {
+	if taskInput.ExecutionPolicy != "wait_for_producer" || e == nil || e.runtime == nil || e.producerEnqueuer == nil || !taskInput.ProducerThreadID.Valid {
+		return nil
+	}
+	activeTasks, err := e.runtime.ListActiveAgentTasksByWorkspace(ctx, input.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	for _, task := range activeTasks {
+		if task.Role == "producer" && (task.TaskType == "producer_turn" || task.TaskType == "decision_resume") && (task.Status == "queued" || task.Status == "running") {
+			return nil
+		}
+	}
+	wakeInput := mustJSON(map[string]any{
+		"trigger":             "craftsman_render_plan_ready",
+		"craftsman_task_id":   uuidString(input.TaskID),
+		"craftsman_thread_id": uuidString(input.ThreadID),
+		"producer_task_id":    uuidString(taskInput.ProducerTaskID),
+		"scope_type":          input.ScopeType,
+		"scope_id":            uuidString(input.ScopeID),
+		"shot_id":             uuidString(input.ShotID),
+		"target_phase":        taskInput.Mode,
+	})
+	task, err := e.runtime.CreateTask(ctx, agentruntime.CreateTaskParams{
+		WorkspaceID: input.WorkspaceID,
+		ThreadID:    taskInput.ProducerThreadID,
+		Role:        "producer",
+		ScopeType:   "workspace",
+		TaskType:    "producer_turn",
+		MaxAttempts: 1,
+		Input:       wakeInput,
+	})
+	if err != nil {
+		return err
+	}
+	_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
+		WorkspaceID: input.WorkspaceID,
+		ThreadID:    taskInput.ProducerThreadID,
+		TaskID:      task.ID,
+		EventType:   "producer_turn_queued",
+		SourceRole:  "system",
+		TargetRole:  "producer",
+		Scope:       mustJSON(map[string]any{"trigger": "craftsman_render_plan_ready", "scope_type": input.ScopeType, "scope_id": uuidString(input.ScopeID)}),
+		Payload:     mustJSON(map[string]any{"craftsman_task_id": uuidString(input.TaskID), "target_phase": taskInput.Mode, "craftsman_output": json.RawMessage(craftsmanOutput)}),
+	})
+	e.producerEnqueuer.EnqueueProducerTask(ctx, task)
+	return nil
+}
+
+func stringUUIDValue(value any) (pgtype.UUID, bool) {
+	text, ok := value.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		return pgtype.UUID{}, false
+	}
+	parsed, err := uuid.Parse(strings.TrimSpace(text))
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	return pgtype.UUID{Bytes: parsed, Valid: true}, true
 }
 
 func taskInputStringSlice(value any) []string {
@@ -343,10 +442,13 @@ func (e *Executor) fail(ctx context.Context, input RunTaskInput, code string, er
 		"workspace_id", uuidString(input.WorkspaceID),
 		"thread_id", uuidString(input.ThreadID),
 		"task_id", uuidString(input.TaskID),
+		"scope_type", input.ScopeType,
+		"scope_id", uuidString(input.ScopeID),
 		"shot_id", uuidString(input.ShotID),
 		"error_code", code,
 		"error", message,
 	)
+	e.markScopedShotFailed(ctx, input)
 	_, _ = e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
 		WorkspaceID: input.WorkspaceID,
 		ThreadID:    input.ThreadID,
@@ -366,6 +468,17 @@ func (e *Executor) fail(ctx context.Context, input RunTaskInput, code string, er
 	})
 	_, _ = e.runtime.MarkTaskFailed(ctx, input.TaskID, code, message)
 	return fmt.Errorf("%s: %w", code, err)
+}
+
+func (e *Executor) markScopedShotFailed(ctx context.Context, input RunTaskInput) {
+	if e == nil || e.runtime == nil || input.ScopeType != "shot" || !input.ScopeID.Valid || !input.WorkspaceID.Valid {
+		return
+	}
+	_, _ = e.runtime.UpdateShotStatus(ctx, db.UpdateShotStatusParams{
+		ID:          input.ScopeID,
+		WorkspaceID: input.WorkspaceID,
+		Status:      "failed",
+	})
 }
 
 func (e *Executor) persistNativeToolTrace(ctx context.Context, input RunTaskInput, messages []CraftsmanSameTurnMessage, parentToolCallID string) error {

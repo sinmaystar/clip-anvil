@@ -16,6 +16,7 @@ import (
 type RenderPlanSubmitStore interface {
 	GetRenderPlanByID(ctx context.Context, params db.GetRenderPlanByIDParams) (db.RenderPlan, error)
 	GetShotByID(ctx context.Context, id pgtype.UUID) (db.Shot, error)
+	GetKeyElementStateByID(ctx context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error)
 	MarkRenderPlanSubmitted(ctx context.Context, params db.MarkRenderPlanSubmittedParams) (db.RenderPlan, error)
 }
 
@@ -46,13 +47,7 @@ func (s *RenderPlanSubmitter) SubmitRenderPlan(ctx context.Context, workspaceID 
 	if err != nil {
 		return db.AgentTask{}, db.RenderPlan{}, err
 	}
-	if plan.ScopeType != "shot" || !plan.ScopeID.Valid {
-		return db.AgentTask{}, db.RenderPlan{}, fmt.Errorf("只支持提交 shot 级 RenderPlan")
-	}
-	if plan.TargetPhase != "preview_image" && plan.TargetPhase != "shot_video" {
-		return db.AgentTask{}, db.RenderPlan{}, fmt.Errorf("只支持提交 preview_image 或 shot_video RenderPlan")
-	}
-	shot, err := s.store.GetShotByID(ctx, plan.ScopeID)
+	input, err := s.workerInputForRenderPlan(ctx, workspaceID, plan)
 	if err != nil {
 		return db.AgentTask{}, db.RenderPlan{}, err
 	}
@@ -60,7 +55,6 @@ func (s *RenderPlanSubmitter) SubmitRenderPlan(ctx context.Context, workspaceID 
 	if !threadID.Valid {
 		threadID = requestedThreadID
 	}
-	input := workerInputForRenderPlan(plan, shot)
 	rawInput, err := json.Marshal(input)
 	if err != nil {
 		return db.AgentTask{}, db.RenderPlan{}, err
@@ -69,7 +63,7 @@ func (s *RenderPlanSubmitter) SubmitRenderPlan(ctx context.Context, workspaceID 
 		WorkspaceID:  workspaceID,
 		ThreadID:     threadID,
 		Role:         "worker",
-		ScopeType:    "shot",
+		ScopeType:    plan.ScopeType,
 		ScopeID:      plan.ScopeID,
 		TaskType:     "worker_generation",
 		MaxAttempts:  3,
@@ -95,7 +89,7 @@ func (s *RenderPlanSubmitter) SubmitRenderPlan(ctx context.Context, workspaceID 
 		EventType:   "render_plan_submitted",
 		SourceRole:  "producer",
 		TargetRole:  "worker",
-		Scope:       mustJSON(map[string]any{"render_plan_id": uuidString(plan.ID), "shot_id": uuidString(plan.ScopeID)}),
+		Scope:       mustJSON(map[string]any{"render_plan_id": uuidString(plan.ID), "scope_type": plan.ScopeType, "scope_id": uuidString(plan.ScopeID)}),
 		Payload:     mustJSON(map[string]any{"reason": reason, "target_phase": plan.TargetPhase, "worker_task_id": uuidString(task.ID)}),
 	})
 	if s.enqueuer != nil {
@@ -104,12 +98,42 @@ func (s *RenderPlanSubmitter) SubmitRenderPlan(ctx context.Context, workspaceID 
 	return task, submitted, nil
 }
 
-func workerInputForRenderPlan(plan db.RenderPlan, shot db.Shot) agentworker.GenerationInput {
+func (s *RenderPlanSubmitter) workerInputForRenderPlan(ctx context.Context, workspaceID pgtype.UUID, plan db.RenderPlan) (agentworker.GenerationInput, error) {
+	switch plan.ScopeType {
+	case "shot":
+		if plan.TargetPhase != "preview_image" && plan.TargetPhase != "shot_video" {
+			return agentworker.GenerationInput{}, fmt.Errorf("shot 级 RenderPlan 只支持 preview_image 或 shot_video")
+		}
+		shot, err := s.store.GetShotByID(ctx, plan.ScopeID)
+		if err != nil {
+			return agentworker.GenerationInput{}, err
+		}
+		if shot.WorkspaceID != workspaceID {
+			return agentworker.GenerationInput{}, fmt.Errorf("shot 不属于当前 workspace")
+		}
+		return workerInputForShotRenderPlan(plan, shot), nil
+	case "key_element_state":
+		if plan.TargetPhase != "reference_image" {
+			return agentworker.GenerationInput{}, fmt.Errorf("key_element_state 级 RenderPlan 只支持 reference_image")
+		}
+		state, err := s.store.GetKeyElementStateByID(ctx, db.GetKeyElementStateByIDParams{ID: plan.ScopeID, WorkspaceID: workspaceID})
+		if err != nil {
+			return agentworker.GenerationInput{}, err
+		}
+		return workerInputForKeyElementStateRenderPlan(plan, state), nil
+	default:
+		return agentworker.GenerationInput{}, fmt.Errorf("不支持提交 %s 级 RenderPlan", plan.ScopeType)
+	}
+}
+
+func workerInputForShotRenderPlan(plan db.RenderPlan, shot db.Shot) agentworker.GenerationInput {
 	params := map[string]any{}
 	_ = json.Unmarshal(defaultJSON(plan.Params), &params)
 	return agentworker.GenerationInput{
 		Mode:              plan.TargetPhase,
 		TargetPhase:       plan.TargetPhase,
+		ScopeType:         plan.ScopeType,
+		ScopeID:           uuidString(plan.ScopeID),
 		ShotID:            uuidString(plan.ScopeID),
 		ShotClientKey:     shot.ClientKey,
 		ShotSortOrder:     int(shot.SortOrder),
@@ -123,6 +147,28 @@ func workerInputForRenderPlan(plan db.RenderPlan, shot db.Shot) agentworker.Gene
 		Model:             modelForRenderPlan(plan),
 		Params:            params,
 		MaxAttempts:       3,
+	}
+}
+
+func workerInputForKeyElementStateRenderPlan(plan db.RenderPlan, state db.KeyElementState) agentworker.GenerationInput {
+	params := map[string]any{}
+	_ = json.Unmarshal(defaultJSON(plan.Params), &params)
+	return agentworker.GenerationInput{
+		Mode:                     plan.TargetPhase,
+		TargetPhase:              plan.TargetPhase,
+		ScopeType:                plan.ScopeType,
+		ScopeID:                  uuidString(plan.ScopeID),
+		KeyElementStateClientKey: state.ClientKey,
+		CraftsmanThreadID:        uuidString(plan.CreatedByThreadID),
+		CraftsmanTaskID:          uuidString(plan.CreatedByTaskID),
+		Strategy:                 strings.TrimSpace(plan.Rationale),
+		Prompt:                   strings.TrimSpace(plan.CompiledPrompt),
+		InputNodeRefs:            renderPlanInputNodeRefs(plan.ReferenceBindings),
+		OutputType:               outputTypeForRenderPlan(plan),
+		OperationType:            plan.Operation,
+		Model:                    modelForRenderPlan(plan),
+		Params:                   params,
+		MaxAttempts:              3,
 	}
 }
 

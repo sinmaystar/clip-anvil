@@ -168,6 +168,38 @@ func TestServiceBuildsYuexingAirportCreativeState(t *testing.T) {
 	}
 }
 
+func TestServiceReadProjectContextIncludesRenderPlansForProducerDecisions(t *testing.T) {
+	workspaceID := testUUID(1)
+	store := newFakeStore(workspaceID, db.WorkspaceModeAgent)
+	shotID := testUUID(2)
+	planID := testUUID(3)
+	store.renderPlans = []db.RenderPlan{{
+		ID:                 planID,
+		WorkspaceID:        workspaceID,
+		ScopeType:          "shot",
+		ScopeID:            shotID,
+		TargetPhase:        "preview_image",
+		TaskType:           "generate",
+		ModelPromptProfile: "seedream_5_image",
+		Operation:          "text_to_image",
+		Status:             "waiting_for_approval",
+		Revision:           1,
+		CompiledPrompt:     "目标：生成行李箱预览图",
+	}}
+	service := NewService(store)
+
+	packet, err := service.ReadProjectContext(context.Background(), ReadContextInput{WorkspaceID: workspaceID})
+	if err != nil {
+		t.Fatalf("read context: %v", err)
+	}
+	if len(packet.RenderPlans) != 1 {
+		t.Fatalf("render plans len = %d, want 1", len(packet.RenderPlans))
+	}
+	if packet.RenderPlans[0].ID != planID || packet.RenderPlans[0].Status != "waiting_for_approval" {
+		t.Fatalf("unexpected render plan: %#v", packet.RenderPlans[0])
+	}
+}
+
 func TestServiceRejectsStudioWorkspace(t *testing.T) {
 	workspaceID := testUUID(1)
 	service := NewService(newFakeStore(workspaceID, db.WorkspaceModeStudio))
@@ -207,15 +239,16 @@ func TestServiceRejectsPromptDerivedElementWithoutMissingReferenceState(t *testi
 }
 
 type fakeStore struct {
-	workspace db.Workspace
-	briefs    map[string]db.CreativeBrief
-	memories  []db.ProjectMemory
-	elements  map[string]db.KeyElement
-	states    map[string]db.KeyElementState
-	scenes    map[string]db.Scene
-	shots     map[string]db.Shot
-	links     []db.ShotKeyElement
-	deps      []db.ShotDependency
+	workspace   db.Workspace
+	briefs      map[string]db.CreativeBrief
+	memories    []db.ProjectMemory
+	elements    map[string]db.KeyElement
+	states      map[string]db.KeyElementState
+	scenes      map[string]db.Scene
+	shots       map[string]db.Shot
+	links       []db.ShotKeyElement
+	deps        []db.ShotDependency
+	renderPlans []db.RenderPlan
 }
 
 func newFakeStore(workspaceID pgtype.UUID, mode db.WorkspaceMode) *fakeStore {
@@ -633,6 +666,10 @@ func (s *fakeStore) CreateShotDependency(_ context.Context, arg db.CreateShotDep
 
 func (s *fakeStore) ListShotDependenciesByWorkspace(context.Context, pgtype.UUID) ([]db.ShotDependency, error) {
 	return append([]db.ShotDependency(nil), s.deps...), nil
+}
+
+func (s *fakeStore) ListRenderPlansByWorkspace(context.Context, pgtype.UUID) ([]db.RenderPlan, error) {
+	return append([]db.RenderPlan(nil), s.renderPlans...), nil
 }
 
 func testUUID(seed byte) pgtype.UUID {

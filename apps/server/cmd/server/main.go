@@ -198,6 +198,7 @@ func main() {
 		Tracer:      agentTracing.Tracer,
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
+	producerEnqueuer := &agentProducerTaskEnqueuer{}
 	renderPlanSubmitter := agenttools.NewRenderPlanSubmitter(queries, agentRuntime, workerEnqueuer)
 	composerGraph, err := agentcomposer.NewGraph(agentcomposer.GraphConfig{
 		Runtime:          agentRuntime,
@@ -224,7 +225,7 @@ func main() {
 		ToolResponder: craftsmanResponderForConfig(cfg),
 		NativeToolRegistry: mustNativeRegistry(
 			agenttools.NewReadProjectMemoryNativeTool(creativeStateService),
-			agenttools.NewUpsertRenderPlanNativeTool(renderPlanService, renderPlanSubmitter),
+			agenttools.NewUpsertRenderPlanNativeTool(renderPlanService, renderPlanSubmitter).WithReferenceStore(queries),
 		),
 		CheckPointStore:  agentEinoCheckpointStore,
 		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
@@ -234,10 +235,11 @@ func main() {
 		os.Exit(1)
 	}
 	craftsmanExecutor := agentcraftsman.NewExecutor(agentcraftsman.ExecutorConfig{
-		Runtime:        agentRuntime,
-		Graph:          craftsmanGraph,
-		Broadcaster:    agentBroadcaster,
-		TraceCallbacks: agentTracing.Callbacks,
+		Runtime:          agentRuntime,
+		Graph:            craftsmanGraph,
+		Broadcaster:      agentBroadcaster,
+		ProducerEnqueuer: producerEnqueuer,
+		TraceCallbacks:   agentTracing.Callbacks,
 	})
 	craftsmanEnqueuer := agentCraftsmanTaskEnqueuer{executor: craftsmanExecutor}
 	reviewerNativeToolRegistry, err := agenttools.NewNativeRegistry(
@@ -311,6 +313,7 @@ func main() {
 		ToolTimeout:    time.Duration(cfg.Agent.ToolTimeoutSeconds) * time.Second,
 		TraceCallbacks: agentTracing.Callbacks,
 	})
+	producerEnqueuer.executor = producerExecutor
 	agentHandler := api.NewAgentHandler(queries, agentRuntime, agentHub, producerExecutor)
 	agentHandler.SetAttachmentStorage(storageService)
 	agentHandler.SetCanvasHub(canvasHub)
@@ -486,6 +489,26 @@ type agentCraftsmanTaskEnqueuer struct {
 	executor *agentcraftsman.Executor
 }
 
+type agentProducerTaskEnqueuer struct {
+	executor *agentproducer.Executor
+}
+
+func (e *agentProducerTaskEnqueuer) EnqueueProducerTask(ctx context.Context, task db.AgentTask) {
+	if e == nil || e.executor == nil {
+		return
+	}
+	runCtx := context.WithoutCancel(ctx)
+	go func() {
+		if err := e.executor.RunTask(runCtx, agentproducer.RunTaskInput{
+			WorkspaceID: task.WorkspaceID,
+			ThreadID:    task.ThreadID,
+			TaskID:      task.ID,
+		}); err != nil {
+			slog.Warn("failed to run producer task", "task_id", task.ID, "error", err)
+		}
+	}()
+}
+
 func (e agentCraftsmanTaskEnqueuer) EnqueueCraftsmanTask(ctx context.Context, task db.AgentTask) {
 	if e.executor == nil {
 		return
@@ -496,7 +519,9 @@ func (e agentCraftsmanTaskEnqueuer) EnqueueCraftsmanTask(ctx context.Context, ta
 			WorkspaceID: task.WorkspaceID,
 			ThreadID:    task.ThreadID,
 			TaskID:      task.ID,
-			ShotID:      task.ScopeID,
+			ScopeType:   task.ScopeType,
+			ScopeID:     task.ScopeID,
+			ShotID:      shotIDForCraftsmanTask(task),
 			Input:       task.Input,
 		}); err != nil {
 			slog.Warn("failed to run craftsman task", "task_id", task.ID, "error", err)
@@ -550,12 +575,21 @@ func recoverQueuedCraftsmanTasks(executor *agentcraftsman.Executor, runtime *age
 			WorkspaceID: task.WorkspaceID,
 			ThreadID:    task.ThreadID,
 			TaskID:      task.ID,
-			ShotID:      task.ScopeID,
+			ScopeType:   task.ScopeType,
+			ScopeID:     task.ScopeID,
+			ShotID:      shotIDForCraftsmanTask(task),
 			Input:       task.Input,
 		}); err != nil {
 			slog.Warn("failed to recover queued craftsman task", "task_id", task.ID, "error", err)
 		}
 	}
+}
+
+func shotIDForCraftsmanTask(task db.AgentTask) pgtype.UUID {
+	if task.ScopeType == "shot" {
+		return task.ScopeID
+	}
+	return pgtype.UUID{}
 }
 
 func recoverQueuedWorkerTasks(executor *agentworker.Executor, runtime *agentruntime.Service) {

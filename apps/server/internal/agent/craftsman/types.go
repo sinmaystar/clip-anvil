@@ -20,6 +20,8 @@ type RunTaskInput struct {
 	WorkspaceID pgtype.UUID
 	ThreadID    pgtype.UUID
 	TaskID      pgtype.UUID
+	ScopeType   string
+	ScopeID     pgtype.UUID
 	ShotID      pgtype.UUID
 	Input       []byte
 }
@@ -28,6 +30,8 @@ type GraphInput struct {
 	WorkspaceID      pgtype.UUID
 	ThreadID         pgtype.UUID
 	TaskID           pgtype.UUID
+	ScopeType        string
+	ScopeID          pgtype.UUID
 	ShotID           pgtype.UUID
 	Mode             string
 	ExecutionPolicy  string
@@ -47,6 +51,7 @@ type GraphOutput struct {
 type Context struct {
 	Input            GraphInput
 	Shot             db.Shot
+	KeyElementState  db.KeyElementState
 	Messages         []db.AgentMessage
 	Nodes            []NodeState
 	Dependencies     []db.ShotDependency

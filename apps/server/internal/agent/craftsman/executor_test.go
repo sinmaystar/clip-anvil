@@ -3,6 +3,7 @@ package craftsman
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -50,6 +51,51 @@ func TestCraftsmanExecutorRunsGraphAndMarksTaskSucceeded(t *testing.T) {
 	}
 	if runtime.threadCheckpoint != wantCheckpoint {
 		t.Fatalf("thread checkpoint = %q, want %q", runtime.threadCheckpoint, wantCheckpoint)
+	}
+}
+
+func TestCraftsmanExecutorWakesProducerWhenWaitingForProducer(t *testing.T) {
+	runtime := &fakeCraftsmanExecutorRuntime{}
+	producerEnqueuer := &fakeProducerTaskEnqueuer{}
+	graph := fakeCraftsmanRunner{output: GraphOutput{
+		AssistantText: "RenderPlan 已创建，等待 Producer 审批。",
+		Metadata:      map[string]any{"checkpoint_key": "craftsman:key"},
+	}}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:          runtime,
+		Graph:            &graph,
+		ProducerEnqueuer: producerEnqueuer,
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(30),
+		TaskID:      uuidWithByte(4),
+		ShotID:      uuidWithByte(2),
+		Input:       []byte(`{"target_phase":"preview_image","execution_policy":"wait_for_producer","producer_thread_id":"03000000-0000-0000-0000-000000000000","producer_task_id":"04000000-0000-0000-0000-000000000000"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.createdTasks) != 1 {
+		t.Fatalf("created producer tasks = %d", len(runtime.createdTasks))
+	}
+	task := runtime.createdTasks[0]
+	if task.Role != "producer" || task.TaskType != "producer_turn" {
+		t.Fatalf("producer wake task = %#v", task)
+	}
+	if task.ThreadID != uuidWithByte(3) || task.ScopeType != "workspace" {
+		t.Fatalf("producer wake task scope/thread = %#v", task)
+	}
+	var input map[string]any
+	if err := json.Unmarshal(task.Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["trigger"] != "craftsman_render_plan_ready" || input["craftsman_task_id"] != "04000000-0000-0000-0000-000000000000" {
+		t.Fatalf("producer wake input = %#v", input)
+	}
+	if len(producerEnqueuer.tasks) != 1 || producerEnqueuer.tasks[0].ID != task.ID {
+		t.Fatalf("enqueued producer tasks = %#v", producerEnqueuer.tasks)
 	}
 }
 
@@ -171,6 +217,30 @@ func TestCraftsmanExecutorPersistsNativeToolTrace(t *testing.T) {
 	}
 }
 
+func TestCraftsmanExecutorMarksShotFailedWhenGraphFails(t *testing.T) {
+	runtime := &fakeCraftsmanExecutorRuntime{}
+	graph := fakeCraftsmanRunner{err: errors.New("model rejected tool calling")}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: &graph})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(3),
+		TaskID:      uuidWithByte(4),
+		ShotID:      uuidWithByte(2),
+		Input:       []byte(`{"parent_tool_call_id":"producer-dispatch-call"}`),
+	})
+	if err == nil {
+		t.Fatal("RunTask succeeded, want failure")
+	}
+	if len(runtime.statusUpdates) != 1 {
+		t.Fatalf("status updates = %#v", runtime.statusUpdates)
+	}
+	update := runtime.statusUpdates[0]
+	if update.ID != uuidWithByte(2) || update.WorkspaceID != uuidWithByte(1) || update.Status != "failed" {
+		t.Fatalf("status update = %#v", update)
+	}
+}
+
 type fakeCraftsmanRunner struct {
 	output     GraphOutput
 	err        error
@@ -205,6 +275,8 @@ type fakeCraftsmanExecutorRuntime struct {
 	appendSeq        int64
 	appended         []db.AgentMessage
 	updated          []db.AgentMessage
+	statusUpdates    []db.UpdateShotStatusParams
+	createdTasks     []db.AgentTask
 }
 
 func (f *fakeCraftsmanExecutorRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
@@ -257,9 +329,35 @@ func (f *fakeCraftsmanExecutorRuntime) CreateEvent(context.Context, agentruntime
 	return db.AgentEvent{}, nil
 }
 
+func (f *fakeCraftsmanExecutorRuntime) CreateTask(_ context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {
+	task := db.AgentTask{
+		ID:          uuidWithByte(byte(70 + len(f.createdTasks))),
+		WorkspaceID: params.WorkspaceID,
+		ThreadID:    params.ThreadID,
+		Role:        params.Role,
+		ScopeType:   params.ScopeType,
+		ScopeID:     params.ScopeID,
+		TaskType:    params.TaskType,
+		Status:      "queued",
+		MaxAttempts: params.MaxAttempts,
+		Input:       params.Input,
+	}
+	f.createdTasks = append(f.createdTasks, task)
+	return task, nil
+}
+
+func (f *fakeCraftsmanExecutorRuntime) ListActiveAgentTasksByWorkspace(context.Context, pgtype.UUID) ([]db.AgentTask, error) {
+	return nil, nil
+}
+
 func (f *fakeCraftsmanExecutorRuntime) SetThreadCheckpoint(_ context.Context, _ pgtype.UUID, checkpointKey string) (db.AgentThread, error) {
 	f.threadCheckpoint = checkpointKey
 	return db.AgentThread{CurrentCheckpointKey: pgtype.Text{String: checkpointKey, Valid: checkpointKey != ""}}, nil
+}
+
+func (f *fakeCraftsmanExecutorRuntime) UpdateShotStatus(_ context.Context, params db.UpdateShotStatusParams) (db.Shot, error) {
+	f.statusUpdates = append(f.statusUpdates, params)
+	return db.Shot{ID: params.ID, WorkspaceID: params.WorkspaceID, Status: params.Status}, nil
 }
 
 func (f *fakeCraftsmanExecutorRuntime) appendedMessageTypes() []string {
@@ -280,4 +378,12 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+type fakeProducerTaskEnqueuer struct {
+	tasks []db.AgentTask
+}
+
+func (f *fakeProducerTaskEnqueuer) EnqueueProducerTask(_ context.Context, task db.AgentTask) {
+	f.tasks = append(f.tasks, task)
 }

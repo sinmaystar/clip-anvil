@@ -3,11 +3,13 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/creative"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 type ReadProjectContextNativeTool struct {
@@ -17,7 +19,7 @@ type ReadProjectContextNativeTool struct {
 type ReadProjectContextToolInput struct {
 	Brief       string              `json:"brief" jsonschema:"required" jsonschema_description:"本次读取上下文的目的，例如判断是否需要创建 brief、memory、关键元素或 storyboard。不要超过 160 个中文字符。"`
 	Scope       ProjectContextScope `json:"scope" jsonschema:"required" jsonschema_description:"读取范围。Producer 做全局决策时使用 workspace；修改局部分镜时使用 shot；检查场景时使用 scene；查看关键元素时使用 key_element。"`
-	Include     []string            `json:"include" jsonschema_description:"要返回的对象类型。可选值包括 brief、memory、elements、scenes、shots、dependencies、canvas_projection。为空时返回 Producer 默认上下文。"`
+	Include     []string            `json:"include" jsonschema_description:"要返回的对象类型。可选值包括 brief、memory、elements、scenes、shots、dependencies、render_plans、canvas_projection。为空时返回 Producer 默认上下文。"`
 	DetailLevel string              `json:"detail_level" jsonschema:"enum=summary,enum=full" jsonschema_description:"summary 返回摘要，适合普通规划；full 返回完整当前事实，适合写入前决策。默认 summary。"`
 }
 
@@ -70,6 +72,7 @@ func (t *ReadProjectContextNativeTool) InvokableRun(ctx context.Context, argumen
 	if packet.Memory != nil {
 		memoryStatus = fmt.Sprintf("v%d / %s", packet.Memory.Version, packet.Memory.Status)
 	}
+	renderPlanStatus := summarizeRenderPlans(packet.RenderPlans)
 	return NaturalResult{
 		Title: "已读取项目创作上下文",
 		Items: []NaturalResultItem{
@@ -77,9 +80,34 @@ func (t *ReadProjectContextNativeTool) InvokableRun(ctx context.Context, argumen
 			{Label: "ProjectMemory", Value: memoryStatus},
 			{Label: "关键元素", Value: fmt.Sprintf("%d 个，缺少参考 %d 个", len(packet.Elements), missingReferences)},
 			{Label: "Storyboard", Value: fmt.Sprintf("%d 个场景，%d 个分镜，%d 个依赖", len(packet.Scenes), len(packet.Shots), len(packet.Dependencies))},
+			{Label: "RenderPlan", Value: renderPlanStatus},
 		},
-		Next: "根据缺失对象选择 upsert_project_brief、update_project_memory、upsert_key_elements 或 upsert_storyboard。",
+		Next: "如果存在 waiting_for_approval RenderPlan，Producer 应调用 decide_render_plan accept/reject，或先派 Reviewer；否则根据缺失对象选择创作状态工具。",
 	}.String(), nil
+}
+
+func summarizeRenderPlans(plans []db.RenderPlan) string {
+	if len(plans) == 0 {
+		return "0 个"
+	}
+	byStatus := map[string]int{}
+	pending := make([]string, 0, 5)
+	for _, plan := range plans {
+		byStatus[plan.Status]++
+		if plan.Status == "waiting_for_approval" && len(pending) < 5 {
+			pending = append(pending, fmt.Sprintf("%s %s=%s phase=%s operation=%s", uuidString(plan.ID), plan.ScopeType, uuidString(plan.ScopeID), plan.TargetPhase, plan.Operation))
+		}
+	}
+	parts := []string{fmt.Sprintf("%d 个", len(plans))}
+	for _, status := range []string{"waiting_for_approval", "compiled", "submitted", "running", "succeeded", "failed", "rejected", "blocked", "draft"} {
+		if count := byStatus[status]; count > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", status, count))
+		}
+	}
+	if len(pending) > 0 {
+		parts = append(parts, "待决策："+strings.Join(pending, "；"))
+	}
+	return strings.Join(parts, "，")
 }
 
 func validateReadProjectContextInput(input ReadProjectContextToolInput) error {

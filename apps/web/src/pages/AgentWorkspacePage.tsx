@@ -25,7 +25,6 @@ import {
   type AgentTask,
   fetchAgentModelSelection,
   fetchAgentMessages,
-  fetchAgentProductionOverview,
   fetchAgentTasks,
   fetchAgentThread,
   postAgentDecision,
@@ -47,11 +46,8 @@ import {
   AgentMessageRenderer,
   type AgentMessageActions,
 } from "../components/agent/AgentMessageRenderer";
-import { AgentProductionStatusBar } from "../components/agent/AgentProductionStatusBar";
 import { AgentFlowCanvas } from "../components/canvas-flow/AgentFlowCanvas";
 import { PropertyPanel } from "../components/PropertyPanel";
-import { AgentStoryboardPanel } from "../components/agent/AgentStoryboardPanel";
-import { AgentTaskTimeline } from "../components/agent/AgentTaskTimeline";
 import {
   type AgentFloatingPosition,
   type AgentPanelCorner,
@@ -79,7 +75,9 @@ import {
   clearAgentStream,
   type AgentStreamState,
   mergeAgentStreamDelta,
+  rememberFinalAgentMessage,
   shouldShowAgentThinkingIndicator,
+  visibleAgentStreams,
 } from "../lib/agentStreaming";
 import {
   agentModelSupportsThinking,
@@ -87,13 +85,11 @@ import {
   agentThinkingEffortOptions,
 } from "../lib/agentThinking";
 import {
-  agentComposerDisabledReason,
+  agentProcessingLabel,
   hasProcessingAgentTask,
-  hasRunningProducerTask,
   mergeActiveAgentTaskSnapshot,
   mergeAgentTasks,
 } from "../lib/agentTasks";
-import { shouldRefreshAgentProductionOverview } from "../lib/agentProductionOverview";
 import {
   isTerminalGenerationStatus,
   nodeStatusForGenerationStatus,
@@ -118,6 +114,7 @@ export function AgentWorkspacePage() {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [streams, setStreams] = useState<AgentStreamState[]>([]);
+  const finalizedStreamKeysRef = useRef<Set<string>>(new Set());
   const [attachments, setAttachments] = useState<AgentAttachment[]>([]);
   const [resolvedDecisionIds, setResolvedDecisionIds] = useState<Set<string>>(
     () => new Set(),
@@ -276,13 +273,6 @@ export function AgentWorkspacePage() {
     queryFn: () => fetchAgentModelSelection(id ?? ""),
     enabled: agentEnabled,
   });
-  const agentProductionOverviewQuery = useQuery({
-    queryKey: ["agent", id, "production-overview"],
-    queryFn: () => fetchAgentProductionOverview(id ?? ""),
-    enabled: agentEnabled,
-    refetchInterval: (query) =>
-      query.state.data?.counts.running_tasks ? 2_000 : false,
-  });
   const modelSelectionMutation = useMutation({
     mutationFn: (input: { value: string; reasoningEffort?: string }) => {
       const payload = agentModelSelectionPayload(
@@ -384,16 +374,18 @@ export function AgentWorkspacePage() {
   const visibleMessages = useMemo(() => visibleAgentMessages(messages), [
     messages,
   ]);
+  const visibleStreams = useMemo(
+    () => visibleAgentStreams(streams, visibleMessages),
+    [streams, visibleMessages],
+  );
   const hasPendingDecision = pendingDecisionIds.length > 0;
   const agentBusy = hasProcessingAgentTask(tasks);
-  const composerDisabledReason = agentComposerDisabledReason(tasks);
-  const composerHint =
-    composerDisabledReason ||
-    (hasPendingDecision ? "可以点击选项，或直接输入自然语言回复当前决策" : "");
-  const producerRunning = hasRunningProducerTask(tasks);
+  const processingLabel = agentProcessingLabel(tasks);
+  const activityLabel =
+    processingLabel || (hasPendingDecision ? "ClipAnvil 等待你的确认" : "");
   const showThinkingIndicator = shouldShowAgentThinkingIndicator(
-    producerRunning,
-    streams,
+    Boolean(activityLabel),
+    visibleStreams,
   );
   const statusLabel = connectionStatusLabel(
     agentThreadQuery.isLoading ? "connecting" : connectionStatus,
@@ -447,7 +439,7 @@ export function AgentWorkspacePage() {
       return;
     }
     scrollMessagesToBottom();
-  }, [messages, streams, producerRunning]);
+  }, [messages, visibleStreams, activityLabel]);
 
   useEffect(() => {
     if (!id || !token || workspaceQuery.data?.mode !== "agent") {
@@ -471,16 +463,15 @@ export function AgentWorkspacePage() {
       workspaceId: id,
       token,
       onEvent: (event) => {
-        if (shouldRefreshAgentProductionOverview(event.type)) {
-          void queryClient.invalidateQueries({
-            queryKey: ["agent", id, "production-overview"],
-          });
-        }
         if (
           (event.type === "agent.message.created" ||
             event.type === "agent.message.updated") &&
           event.payload.workspace_id === id
         ) {
+          finalizedStreamKeysRef.current = rememberFinalAgentMessage(
+            finalizedStreamKeysRef.current,
+            event.payload.message,
+          );
           setMessages((current) =>
             mergeAgentMessages(current, [event.payload.message]),
           );
@@ -501,8 +492,9 @@ export function AgentWorkspacePage() {
               block_id: event.payload.block_id,
               block_type: event.payload.block_type,
               delta: event.payload.delta,
+              message_id: event.payload.message_id,
               sequence: event.payload.sequence,
-            }),
+            }, finalizedStreamKeysRef.current),
           );
         }
         if (
@@ -565,11 +557,6 @@ export function AgentWorkspacePage() {
       workspaceId: id,
       token,
       onEvent: (event) => {
-        if (shouldRefreshAgentProductionOverview(event.type)) {
-          void queryClient.invalidateQueries({
-            queryKey: ["agent", id, "production-overview"],
-          });
-        }
         switch (event.type) {
           case "NodeCreated":
           case "NodeUpdated": {
@@ -975,7 +962,6 @@ export function AgentWorkspacePage() {
           <div className="agent-canvas-header">
             <div>
               <p className="workspace-kicker">Agent Canvas</p>
-              <h2>Agent 画布</h2>
             </div>
             <span>{agentCanvasNodeCount} 个节点</span>
           </div>
@@ -1134,20 +1120,6 @@ export function AgentWorkspacePage() {
               </button>
             </div>
 
-            <div className="agent-production-overview-stack">
-              <AgentProductionStatusBar
-                isLoading={agentProductionOverviewQuery.isLoading}
-                overview={agentProductionOverviewQuery.data ?? null}
-              />
-              <AgentStoryboardPanel
-                onSelectNode={setSelectedNodeId}
-                overview={agentProductionOverviewQuery.data ?? null}
-              />
-              <AgentTaskTimeline
-                overview={agentProductionOverviewQuery.data ?? null}
-              />
-            </div>
-
             <div
               className="agent-message-list"
               aria-live="polite"
@@ -1181,7 +1153,7 @@ export function AgentWorkspacePage() {
                       </article>
                     );
                   })}
-                  {streams.map((stream) => (
+                  {visibleStreams.map((stream) => (
                     <article
                       className="agent-message agent-message-assistant agent-message-streaming"
                       key={stream.task_id}
@@ -1190,12 +1162,12 @@ export function AgentWorkspacePage() {
                     </article>
                   ))}
                   {showThinkingIndicator ? (
-                    <ThinkingIndicator />
+                    <ThinkingIndicator label={activityLabel} />
                   ) : null}
                 </>
               ) : (
                 <>
-                  {streams.map((stream) => (
+                  {visibleStreams.map((stream) => (
                     <article
                       className="agent-message agent-message-assistant agent-message-streaming"
                       key={stream.task_id}
@@ -1203,9 +1175,9 @@ export function AgentWorkspacePage() {
                       <AgentMessageRenderer message={streamToMessage(stream)} />
                     </article>
                   ))}
-                  {streams.length === 0 ? (
+                  {visibleStreams.length === 0 ? (
                     showThinkingIndicator ? (
-                      <ThinkingIndicator />
+                      <ThinkingIndicator label={activityLabel} />
                     ) : (
                       <p className="agent-empty-text">还没有 ClipAnvil 对话。</p>
                     )
@@ -1228,10 +1200,6 @@ export function AgentWorkspacePage() {
             {attachmentError ? (
               <p className="agent-chat-error">{attachmentError}</p>
             ) : null}
-            {composerHint ? (
-              <p className="agent-chat-hint">{composerHint}</p>
-            ) : null}
-
             <form
               className="agent-chat-composer"
               onSubmit={(event) => {
@@ -1461,10 +1429,11 @@ function updateCanvasNodeStatus(
   };
 }
 
-function ThinkingIndicator() {
+function ThinkingIndicator({ label }: { label: string }) {
+  const text = label || "ClipAnvil 正在思考";
   return (
-    <p className="agent-thinking-indicator" aria-label="ClipAnvil 正在思考">
-      <span aria-hidden="true">ClipAnvil 正在思考</span>
+    <p className="agent-thinking-indicator" aria-label={text}>
+      <span aria-hidden="true">{text}</span>
     </p>
   );
 }

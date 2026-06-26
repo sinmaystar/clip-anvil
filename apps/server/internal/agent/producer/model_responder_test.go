@@ -451,6 +451,40 @@ func TestProducerPromptMessagesIncludesProjectContext(t *testing.T) {
 	}
 }
 
+func TestProducerPromptMessagesIncludesRuntimeTrigger(t *testing.T) {
+	trigger := strings.Join([]string{
+		"系统事件：Craftsman 已完成 RenderPlan 编译。",
+		"触发原因：craftsman_render_plan_ready。",
+		"下一步：请读取项目上下文，检查 waiting_for_approval RenderPlan，并决定 accept/reject 或派 Reviewer。",
+	}, "\n")
+	messages := producerPromptMessages(ProducerContext{
+		Messages: []db.AgentMessage{
+			{
+				Role:        "assistant",
+				MessageType: "text",
+				Content:     mustAssistantContent(t, uimessage.AssistantMessageInput{Text: "我已派发 Craftsman。"}),
+			},
+		},
+		RuntimeTriggerText: trigger,
+	})
+	if len(messages) != 3 {
+		t.Fatalf("messages len = %d, want 3", len(messages))
+	}
+	if messages[0].Role != schema.System ||
+		strings.Contains(messages[0].Content, "当前触发事件") ||
+		strings.Contains(messages[0].Content, "Craftsman 已完成 RenderPlan 编译") {
+		t.Fatalf("system prompt = %q", messages[0].Content)
+	}
+	if messages[1].Role != schema.Assistant {
+		t.Fatalf("history assistant message = %#v", messages[1])
+	}
+	if messages[2].Role != schema.User ||
+		!strings.Contains(messages[2].Content, "系统事件：Craftsman 已完成 RenderPlan 编译") ||
+		!strings.Contains(messages[2].Content, "decide") {
+		t.Fatalf("runtime trigger user message = %#v", messages[2])
+	}
+}
+
 func TestProducerPromptMessagesSkipThinkingBlocks(t *testing.T) {
 	content := []byte(`{
 	  "schema":"clipanvil.agent.message.v1",

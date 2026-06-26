@@ -13,6 +13,7 @@ import (
 
 type ContextStore interface {
 	GetShotByID(ctx context.Context, id pgtype.UUID) (db.Shot, error)
+	GetKeyElementStateByID(ctx context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error)
 	ListMediaNodesByShot(ctx context.Context, params db.ListMediaNodesByShotParams) ([]db.MediaNode, error)
 	ListSourceMaterialNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error)
 	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
@@ -32,26 +33,44 @@ type ContextLoader struct {
 const craftsmanContextMessageLimit int32 = 1000
 
 func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, error) {
-	if l.Store == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid || !input.ShotID.Valid {
-		return Context{}, ErrInvalidInput
+	if input.ScopeType == "" {
+		input.ScopeType = "shot"
 	}
-	shot, err := l.Store.GetShotByID(ctx, input.ShotID)
-	if err != nil {
-		return Context{}, err
+	if !input.ScopeID.Valid && input.ShotID.Valid {
+		input.ScopeID = input.ShotID
 	}
-	if shot.WorkspaceID != input.WorkspaceID {
+	if l.Store == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid || !input.ScopeID.Valid {
 		return Context{}, ErrInvalidInput
 	}
 	messages := []db.AgentMessage{}
+	var err error
 	if l.Runtime != nil {
 		messages, err = l.Runtime.ListMessages(ctx, input.ThreadID, 0, craftsmanContextMessageLimit)
 		if err != nil {
 			return Context{}, err
 		}
 	}
+	if input.ScopeType == "key_element_state" {
+		return l.loadKeyElementStateContext(ctx, input, messages)
+	}
+	return l.loadShotContext(ctx, input, messages)
+}
+
+func (l ContextLoader) loadShotContext(ctx context.Context, input GraphInput, messages []db.AgentMessage) (Context, error) {
+	shotID := input.ShotID
+	if !shotID.Valid {
+		shotID = input.ScopeID
+	}
+	shot, err := l.Store.GetShotByID(ctx, shotID)
+	if err != nil {
+		return Context{}, err
+	}
+	if shot.WorkspaceID != input.WorkspaceID {
+		return Context{}, ErrInvalidInput
+	}
 	nodes, err := l.Store.ListMediaNodesByShot(ctx, db.ListMediaNodesByShotParams{
 		WorkspaceID: input.WorkspaceID,
-		ShotID:      input.ShotID,
+		ShotID:      shotID,
 	})
 	if err != nil {
 		return Context{}, err
@@ -68,7 +87,7 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 	if err != nil {
 		return Context{}, err
 	}
-	dependencies = filterShotDependencies(dependencies, input.ShotID)
+	dependencies = filterShotDependencies(dependencies, shotID)
 	sourceNodes, err := l.Store.ListSourceMaterialNodesByWorkspace(ctx, input.WorkspaceID)
 	if err != nil {
 		return Context{}, err
@@ -82,6 +101,14 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 		sourceMaterials = append(sourceMaterials, state)
 	}
 	structured := map[string]any{
+		"task": map[string]any{
+			"target_phase":     input.Mode,
+			"execution_policy": input.ExecutionPolicy,
+		},
+		"scope": map[string]any{
+			"type": "shot",
+			"id":   uuidString(shotID),
+		},
 		"shot": map[string]any{
 			"id":         uuidString(shot.ID),
 			"client_key": shot.ClientKey,
@@ -99,7 +126,54 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 		Nodes:           nodeStates,
 		Dependencies:    dependencies,
 		SourceMaterials: sourceMaterials,
-		Text:            buildContextText(shot, nodeStates, dependencies, sourceMaterials),
+		Text:            buildContextText(input, shot, nodeStates, dependencies, sourceMaterials),
+		Structured:      structured,
+	}, nil
+}
+
+func (l ContextLoader) loadKeyElementStateContext(ctx context.Context, input GraphInput, messages []db.AgentMessage) (Context, error) {
+	state, err := l.Store.GetKeyElementStateByID(ctx, db.GetKeyElementStateByIDParams{ID: input.ScopeID, WorkspaceID: input.WorkspaceID})
+	if err != nil {
+		return Context{}, err
+	}
+	if state.WorkspaceID != input.WorkspaceID {
+		return Context{}, ErrInvalidInput
+	}
+	sourceNodes, err := l.Store.ListSourceMaterialNodesByWorkspace(ctx, input.WorkspaceID)
+	if err != nil {
+		return Context{}, err
+	}
+	sourceMaterials := make([]NodeState, 0, len(sourceNodes))
+	for _, node := range sourceNodes {
+		nodeState, err := l.loadNodeState(ctx, node)
+		if err != nil {
+			return Context{}, err
+		}
+		sourceMaterials = append(sourceMaterials, nodeState)
+	}
+	structured := map[string]any{
+		"task": map[string]any{
+			"target_phase":     input.Mode,
+			"execution_policy": input.ExecutionPolicy,
+		},
+		"scope": map[string]any{
+			"type": "key_element_state",
+			"id":   uuidString(state.ID),
+		},
+		"key_element_state": map[string]any{
+			"id":               uuidString(state.ID),
+			"client_key":       state.ClientKey,
+			"label":            state.Label,
+			"reference_status": state.ReferenceStatus,
+		},
+		"source_material_count": len(sourceMaterials),
+	}
+	return Context{
+		Input:           input,
+		KeyElementState: state,
+		Messages:        messages,
+		SourceMaterials: sourceMaterials,
+		Text:            buildKeyElementStateContextText(input, state, sourceMaterials),
 		Structured:      structured,
 	}, nil
 }
@@ -126,8 +200,9 @@ func filterShotDependencies(dependencies []db.ShotDependency, shotID pgtype.UUID
 	return out
 }
 
-func buildContextText(shot db.Shot, nodes []NodeState, dependencies []db.ShotDependency, sourceMaterials []NodeState) string {
+func buildContextText(input GraphInput, shot db.Shot, nodes []NodeState, dependencies []db.ShotDependency, sourceMaterials []NodeState) string {
 	var b strings.Builder
+	writeTaskContext(&b, input)
 	fmt.Fprintf(&b, "Shot\n")
 	fmt.Fprintf(&b, "- id: %s\n", uuidString(shot.ID))
 	fmt.Fprintf(&b, "- client_key: %s\n", shot.ClientKey)
@@ -171,6 +246,40 @@ func buildContextText(shot db.Shot, nodes []NodeState, dependencies []db.ShotDep
 		}
 	}
 	return b.String()
+}
+
+func buildKeyElementStateContextText(input GraphInput, state db.KeyElementState, sourceMaterials []NodeState) string {
+	var b strings.Builder
+	writeTaskContext(&b, input)
+	fmt.Fprintf(&b, "KeyElementState\n")
+	fmt.Fprintf(&b, "- id: %s\n", uuidString(state.ID))
+	fmt.Fprintf(&b, "- client_key: %s\n", state.ClientKey)
+	fmt.Fprintf(&b, "- label: %s\n", state.Label)
+	fmt.Fprintf(&b, "- reference_status: %s\n", state.ReferenceStatus)
+	fmt.Fprintf(&b, "- visual_description: %s\n", state.VisualDescription)
+	if len(sourceMaterials) == 0 {
+		fmt.Fprintf(&b, "\nSource Materials\n- none\n")
+	} else {
+		fmt.Fprintf(&b, "\nSource Materials\n")
+		for _, node := range sourceMaterials {
+			writeNodeState(&b, node)
+		}
+	}
+	return b.String()
+}
+
+func writeTaskContext(b *strings.Builder, input GraphInput) {
+	if strings.TrimSpace(input.Mode) == "" && strings.TrimSpace(input.ExecutionPolicy) == "" {
+		return
+	}
+	fmt.Fprintf(b, "Current Task\n")
+	if strings.TrimSpace(input.Mode) != "" {
+		fmt.Fprintf(b, "- target_phase: %s\n", input.Mode)
+	}
+	if strings.TrimSpace(input.ExecutionPolicy) != "" {
+		fmt.Fprintf(b, "- execution_policy: %s\n", input.ExecutionPolicy)
+	}
+	fmt.Fprintf(b, "\n")
 }
 
 func writeNodeState(b *strings.Builder, node NodeState) {

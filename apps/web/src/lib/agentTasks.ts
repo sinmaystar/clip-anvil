@@ -43,36 +43,25 @@ export function hasActiveAgentTask(tasks: AgentTaskState[]) {
 }
 
 export function hasProcessingAgentTask(tasks: AgentTaskState[]) {
-  return tasks.some(
-    (task) => task.status === "queued" || task.status === "running",
-  );
+  return hasRunningProducerTask(tasks);
 }
 
-export function agentComposerDisabledReason(tasks: AgentTaskState[]) {
-  if (
-    tasks.some(
-      (task) =>
-        task.task_type === "producer_turn" &&
-        (task.status === "queued" || task.status === "running"),
-    )
-  ) {
+export function agentProcessingLabel(tasks: AgentTaskState[]) {
+  if (hasQueuedOrRunningTask(tasks, "producer_turn")) {
     return "ClipAnvil 正在思考";
   }
-  if (
-    tasks.some(
-      (task) =>
-        task.task_type === "decision_resume" &&
-        (task.status === "queued" || task.status === "running"),
-    )
-  ) {
+  if (hasQueuedOrRunningTask(tasks, "decision_resume")) {
     return "ClipAnvil 正在处理你的选择";
   }
-  if (
-    tasks.some((task) => task.status === "queued" || task.status === "running")
-  ) {
-    return "ClipAnvil 正在制作";
-  }
   return "";
+}
+
+function hasQueuedOrRunningTask(tasks: AgentTaskState[], taskType: string) {
+  return tasks.some(
+    (task) =>
+      task.task_type === taskType &&
+      (task.status === "queued" || task.status === "running"),
+  );
 }
 
 function isActiveAgentTask(task: AgentTaskState) {

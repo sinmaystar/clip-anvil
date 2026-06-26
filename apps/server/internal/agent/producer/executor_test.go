@@ -62,6 +62,37 @@ func TestExecutorPersistsAssistantMessageOnSuccess(t *testing.T) {
 	}
 }
 
+func TestExecutorTranslatesCraftsmanWakeTaskInputToRuntimeTriggerText(t *testing.T) {
+	runtime := &fakeRuntime{
+		runningTaskInput: []byte(`{
+			"trigger":"craftsman_render_plan_ready",
+			"craftsman_task_id":"04000000-0000-0000-0000-000000000000",
+			"craftsman_thread_id":"03000000-0000-0000-0000-000000000000",
+			"scope_type":"shot",
+			"scope_id":"02000000-0000-0000-0000-000000000000",
+			"shot_id":"02000000-0000-0000-0000-000000000000",
+			"target_phase":"preview_image"
+		}`),
+	}
+	graph := &fakeGraph{output: ProducerTurnOutput{AssistantText: "assistant reply"}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(graph.input.RuntimeTriggerText, "Craftsman 已完成 RenderPlan 编译") ||
+		!strings.Contains(graph.input.RuntimeTriggerText, "preview_image") ||
+		!strings.Contains(graph.input.RuntimeTriggerText, "decide_render_plan") {
+		t.Fatalf("runtime trigger text = %q", graph.input.RuntimeTriggerText)
+	}
+}
+
 func TestExecutorPersistsNativeToolTraceBeforeFinalAssistantMessage(t *testing.T) {
 	runtime := &fakeRuntime{}
 	executor := NewExecutor(ExecutorConfig{
@@ -368,12 +399,14 @@ type fakeGraph struct {
 	deltas            []string
 	err               error
 	emitLiveToolTrace bool
+	input             ProducerTurnInput
 	runOptions        agenteino.RunOptions
 	ctx               context.Context
 }
 
 func (f *fakeGraph) Run(ctx context.Context, input ProducerTurnInput, options ...agenteino.RunOptions) (ProducerTurnOutput, error) {
 	f.ctx = ctx
+	f.input = input
 	if len(options) > 0 {
 		f.runOptions = options[0]
 	}
@@ -462,11 +495,12 @@ type fakeRuntime struct {
 	appendMessageSeq     int64
 	appended             []db.AgentMessage
 	updated              []db.AgentMessage
+	runningTaskInput     []byte
 }
 
 func (f *fakeRuntime) MarkTaskRunning(_ context.Context, taskID pgtype.UUID) (db.AgentTask, error) {
 	f.runningTask = taskID
-	return db.AgentTask{ID: taskID, WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), Role: "producer", TaskType: "producer_turn", Status: "running"}, nil
+	return db.AgentTask{ID: taskID, WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), Role: "producer", TaskType: "producer_turn", Status: "running", Input: f.runningTaskInput}, nil
 }
 
 func (f *fakeRuntime) MarkTaskSucceeded(_ context.Context, taskID pgtype.UUID, _ []byte) (db.AgentTask, error) {

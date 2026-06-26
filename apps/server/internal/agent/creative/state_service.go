@@ -65,6 +65,8 @@ type Store interface {
 	DeleteShotDependenciesForShot(ctx context.Context, arg db.DeleteShotDependenciesForShotParams) error
 	CreateShotDependency(ctx context.Context, arg db.CreateShotDependencyParams) (db.ShotDependency, error)
 	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
+
+	ListRenderPlansByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.RenderPlan, error)
 }
 
 type Service struct {
@@ -369,6 +371,9 @@ func (s *Service) ReadProjectContext(ctx context.Context, input ReadContextInput
 		return ContextPacket{}, err
 	}
 	if packet.Dependencies, err = s.store.ListShotDependenciesByWorkspace(ctx, input.WorkspaceID); err != nil {
+		return ContextPacket{}, err
+	}
+	if packet.RenderPlans, err = s.store.ListRenderPlansByWorkspace(ctx, input.WorkspaceID); err != nil {
 		return ContextPacket{}, err
 	}
 	return packet, nil

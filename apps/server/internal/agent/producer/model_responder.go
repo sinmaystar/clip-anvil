@@ -506,6 +506,9 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 			messages = append(messages, next)
 		}
 	}
+	if trigger := strings.TrimSpace(producerContext.RuntimeTriggerText); trigger != "" {
+		messages = append(messages, schema.UserMessage(runtimeTriggerPromptText(trigger)))
+	}
 	if len(messages) == 1 {
 		text := strings.TrimSpace(producerContext.LatestUserText)
 		if text == "" {
@@ -514,6 +517,14 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 		messages = append(messages, schema.UserMessage(text))
 	}
 	return messages
+}
+
+func runtimeTriggerPromptText(trigger string) string {
+	trigger = strings.TrimSpace(trigger)
+	if trigger == "" {
+		return ""
+	}
+	return "请根据以下系统触发事件继续推进 Producer 工作。你需要读取项目上下文，确认真实状态，再决定调用 decide_render_plan、dispatch_reviewer 或 request_user_decision。\n\n" + trigger
 }
 
 func sameTurnPromptMessage(msg ProducerSameTurnMessage) *schema.Message {

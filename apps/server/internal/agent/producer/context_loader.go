@@ -62,6 +62,7 @@ func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input Pro
 		Input:               input,
 		Messages:            messages,
 		LatestUserText:      latestUserTextFromMessages(messages),
+		RuntimeTriggerText:  strings.TrimSpace(input.RuntimeTriggerText),
 		Model:               model,
 		ImageAttachments:    imageAttachments,
 		ProductionStateText: pssText,
