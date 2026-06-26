@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -28,6 +29,7 @@ type reviewerLoopState struct {
 	LastAssistantMessage *schema.Message
 	LastToolCalls        []schema.ToolCall
 	ToolIterations       int
+	ReminderCooldowns    map[string]int
 	Submitted            bool
 	SubmittedRecordID    pgtype.UUID
 	SubmittedVerdict     string
@@ -119,6 +121,12 @@ func newNativeToolLoopGraph(config GraphConfig) (*Graph, error) {
 	})); err != nil {
 		return nil, err
 	}
+	if err := g.AddLambdaNode("before_model", compose.InvokableLambda(func(_ context.Context, state reviewerLoopState) (reviewerLoopState, error) {
+		state = applyReviewerBeforeModel(state)
+		return state, nil
+	})); err != nil {
+		return nil, err
+	}
 	if err := g.AddLambdaNode("call_model", compose.InvokableLambda(func(ctx context.Context, state reviewerLoopState) (reviewerLoopState, error) {
 		out, err := config.ToolResponder.Respond(ctx, state.Context)
 		if err != nil {
@@ -189,7 +197,10 @@ func newNativeToolLoopGraph(config GraphConfig) (*Graph, error) {
 	if err := g.AddEdge("load_context", "prepare_turn_state"); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("prepare_turn_state", "call_model"); err != nil {
+	if err := g.AddEdge("prepare_turn_state", "before_model"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("before_model", "call_model"); err != nil {
 		return nil, err
 	}
 	if err := g.AddBranch("call_model", compose.NewGraphBranch(routeReviewerModelOutput(), map[string]bool{
@@ -205,7 +216,7 @@ func newNativeToolLoopGraph(config GraphConfig) (*Graph, error) {
 	if err := g.AddEdge("execute_tools", "append_tool_results"); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("append_tool_results", "call_model"); err != nil {
+	if err := g.AddEdge("append_tool_results", "before_model"); err != nil {
 		return nil, err
 	}
 	if err := g.AddEdge("finalize_response", compose.END); err != nil {
@@ -229,6 +240,35 @@ func newNativeToolLoopGraph(config GraphConfig) (*Graph, error) {
 		return nil, err
 	}
 	return &Graph{runnable: runnable}, nil
+}
+
+func applyReviewerBeforeModel(state reviewerLoopState) reviewerLoopState {
+	reminderState := toolloop.BeforeModel(reviewerLoopMessages(state.Context), state.ToolIterations, state.ReminderCooldowns, toolloop.DefaultConfig())
+	state.ReminderCooldowns = reminderState.Cooldowns
+	state.Context.PendingReminders = reminderState.PendingReminders
+	return state
+}
+
+func reviewerLoopMessages(context Context) []toolloop.Message {
+	out := make([]toolloop.Message, 0, len(context.Messages)+len(context.SameTurnMessages)+1)
+	for _, message := range context.Messages {
+		out = append(out, toolloop.Message{
+			Role:        strings.TrimSpace(message.Role),
+			MessageType: strings.TrimSpace(message.MessageType),
+			ToolName:    toolNameFromRaw(message.RawMessage),
+		})
+	}
+	if strings.TrimSpace(context.Text) != "" {
+		out = append(out, toolloop.Message{Role: "user", MessageType: "text"})
+	}
+	for _, message := range context.SameTurnMessages {
+		out = append(out, toolloop.Message{
+			Role:        strings.TrimSpace(message.Role),
+			MessageType: strings.TrimSpace(message.MessageType),
+			ToolName:    strings.TrimSpace(message.ToolName),
+		})
+	}
+	return out
 }
 
 func routeReviewerModelOutput() compose.GraphBranchCondition[reviewerLoopState] {
@@ -408,6 +448,18 @@ func cloneToolCallMessage(message *schema.Message) *schema.Message {
 		}
 	}
 	return &clone
+}
+
+func toolNameFromRaw(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	text, _ := payload["tool_name"].(string)
+	return strings.TrimSpace(text)
 }
 
 func toolSubmitReviewResultName() string {

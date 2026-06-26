@@ -38,6 +38,30 @@ describe("agent message blocks", () => {
     assert.equal(agentMessageMarkdownText(message), "visible");
   });
 
+  it("normalizes system-reminder markdown into a visible system reminder block", () => {
+    const message = {
+      content: {
+        schema: "clipanvil.agent.message.v1",
+        blocks: [
+          {
+            id: "blk_text",
+            type: "markdown",
+            text: "<system-reminder>\n系统事件：Craftsman 已完成 RenderPlan 编译。\n</system-reminder>",
+          },
+        ],
+      },
+    };
+
+    assert.deepEqual(agentMessageBlocks(message), [
+      {
+        id: "blk_text",
+        type: "system_reminder",
+        text: "系统事件：Craftsman 已完成 RenderPlan 编译。",
+        visibility: undefined,
+      },
+    ]);
+  });
+
   it("reads attachment blocks", () => {
     const message = {
       content: {

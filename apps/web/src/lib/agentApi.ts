@@ -1,4 +1,14 @@
 import { apiFetch, type MediaAsset, type MediaNode } from "./api";
+import type { AgentWorkbenchProjection } from "./agentWorkbench";
+import type { AgentWorkbenchSelection } from "./agentWorkbenchSelection";
+
+export type AgentJsonValue =
+  | null
+  | string
+  | number
+  | boolean
+  | AgentJsonValue[]
+  | { [key: string]: AgentJsonValue };
 
 export interface AgentThread {
   id: string;
@@ -152,6 +162,390 @@ export interface AgentModelSelectionResponse {
   options: AgentModelOption[];
 }
 
+export interface AgentCanvasDetail {
+  object_type: AgentWorkbenchSelection["objectType"];
+  object_id: string;
+  title: string;
+  status?: string;
+  updated_at?: string;
+  overview?: AgentCanvasOverviewDetail;
+  key_element?: AgentCanvasKeyElementDetail;
+  key_element_state?: AgentCanvasKeyElementStateDetail;
+  scene?: AgentCanvasSceneDetail;
+  shot?: AgentCanvasShotDetail;
+  artifact?: AgentCanvasArtifactDetail;
+  render_plan?: AgentCanvasRenderPlanDetail;
+  review?: AgentCanvasReviewDetail;
+  issue?: AgentCanvasIssueDetail;
+}
+
+export interface AgentCanvasOverviewDetail {
+  workspace_id: string;
+  brief?: AgentCanvasCreativeBriefDetail;
+  memory?: AgentCanvasProjectMemoryDetail;
+  key_elements: AgentCanvasKeyElementSummary[];
+  key_element_states: AgentCanvasKeyElementStateSummary[];
+  source_materials: AgentCanvasSourceMaterialSummary[];
+}
+
+export interface AgentCanvasCreativeBriefDetail {
+  id: string;
+  title: string;
+  video_type: string;
+  target_audience: string;
+  tone: string;
+  visual_style: string;
+  duration_sec?: number | null;
+  aspect_ratio: string;
+  language: string;
+  objective: string;
+  concept: string;
+  constraints?: AgentJsonValue;
+  metadata?: AgentJsonValue;
+  status: string;
+  updated_at?: string;
+}
+
+export interface AgentCanvasProjectMemoryDetail {
+  id: string;
+  version: number;
+  status: string;
+  core_intent: string;
+  soul: string;
+  brand_facts?: AgentJsonValue;
+  non_negotiables?: AgentJsonValue;
+  visual_anchors?: AgentJsonValue;
+  allowed?: AgentJsonValue;
+  forbidden?: AgentJsonValue;
+  prompt_injection_hints?: AgentJsonValue;
+  source_refs?: AgentJsonValue;
+}
+
+export interface AgentCanvasSourceMaterialSummary {
+  id: string;
+  title: string;
+  node_type: string;
+  status: string;
+}
+
+export interface AgentCanvasKeyElementSummary {
+  id: string;
+  client_key: string;
+  name: string;
+  type: string;
+  description?: string;
+  source_type?: string;
+  status: string;
+}
+
+export interface AgentCanvasKeyElementStateSummary {
+  id: string;
+  key_element_id: string;
+  client_key: string;
+  label: string;
+  visual_description?: string;
+  reference_status: string;
+  reference_node_id?: string;
+  reference_version_id?: string;
+  status: string;
+  is_default: boolean;
+}
+
+export interface AgentCanvasKeyElementDetail
+  extends AgentCanvasKeyElementSummary {
+  source_refs?: AgentJsonValue;
+  states: AgentCanvasKeyElementStateSummary[];
+  shot_refs: AgentCanvasShotKeyElementRefDetail[];
+}
+
+export interface AgentCanvasKeyElementStateDetail
+  extends AgentCanvasKeyElementStateSummary {
+  state_facts?: AgentJsonValue;
+  source_refs?: AgentJsonValue;
+  key_element?: AgentCanvasKeyElementSummary;
+  reference_node?: AgentCanvasMediaNodeDetail;
+  reference_version?: AgentCanvasArtifactVersion;
+  dependent_shots: AgentCanvasShotSummary[];
+  missing_reason?: string;
+}
+
+export interface AgentCanvasSceneDetail {
+  id: string;
+  client_key: string;
+  sort_order: number;
+  title: string;
+  description: string;
+  location: string;
+  mood: string;
+  status: string;
+  shots: AgentCanvasShotSummary[];
+  updated_at?: string;
+}
+
+export interface AgentCanvasShotSummary {
+  id: string;
+  client_key: string;
+  title: string;
+  status: string;
+  sequence_index: number;
+}
+
+export interface AgentCanvasShotDetail {
+  id: string;
+  client_key: string;
+  title: string;
+  status: string;
+  sequence_index: number;
+  scene_id?: string;
+  shot_kind?: string;
+  duration_sec?: number | null;
+  narrative_purpose?: string;
+  brief?: AgentJsonValue;
+  creative_text?: string;
+  visual_intent?: string;
+  action_text?: string;
+  camera_intent?: string;
+  dialogue?: string;
+  narration?: string;
+  audio_plan?: AgentJsonValue;
+  dependencies: AgentCanvasShotDependencyDetail[];
+  key_elements: AgentCanvasShotKeyElementRefDetail[];
+  artifacts: AgentCanvasArtifactSlot[];
+  render_plans: AgentCanvasRenderPlanSummary[];
+  reviews: AgentCanvasReviewSummary[];
+  issues: AgentCanvasIssueSummary[];
+  updated_at?: string;
+}
+
+export interface AgentCanvasShotDependencyDetail {
+  id: string;
+  from_shot_id: string;
+  to_shot_id: string;
+  dependency_type: string;
+  required_artifact?: string;
+  injection_role?: string;
+  blocking_phase?: string;
+  stale_policy?: string;
+  reason?: string;
+}
+
+export interface AgentCanvasShotKeyElementRefDetail {
+  id: string;
+  shot_id: string;
+  shot_title?: string;
+  key_element_id: string;
+  key_element_name?: string;
+  key_element_state_id?: string;
+  state_label?: string;
+  role: string;
+  required: boolean;
+  sort_order: number;
+}
+
+export interface AgentCanvasArtifactSlot {
+  kind: string;
+  status: string;
+  node_id?: string;
+  title?: string;
+  version_id?: string;
+  thumbnail_url?: string;
+  access_url?: string;
+  error_code?: string;
+  error_message?: string;
+}
+
+export interface AgentCanvasRenderPlanSummary {
+  id: string;
+  revision: number;
+  target_phase: string;
+  operation: string;
+  status: string;
+}
+
+export interface AgentCanvasReviewSummary {
+  id: string;
+  review_task: string;
+  target_phase: string;
+  status: string;
+  verdict: string;
+  score?: number;
+}
+
+export interface AgentCanvasIssueSummary {
+  id: string;
+  title: string;
+  severity: string;
+  dimension: string;
+  suggested_fix: string;
+}
+
+export interface AgentCanvasArtifactDetail {
+  node: AgentCanvasMediaNodeDetail;
+  asset?: AgentCanvasAssetRead;
+  current_version?: AgentCanvasArtifactVersion;
+  versions: AgentCanvasArtifactVersion[];
+  generation_jobs: AgentCanvasGenerationJob[];
+  render_plans: AgentCanvasRenderPlanSummary[];
+  reviews: AgentCanvasReviewRecord[];
+  issues: AgentCanvasIssueSummary[];
+}
+
+export interface AgentCanvasMediaNodeDetail {
+  id: string;
+  workspace_id: string;
+  node_type: string;
+  title: string;
+  status: string;
+  prompt?: string;
+  source?: string;
+  operation_type?: string;
+  shot_id?: string;
+  asset_id?: string;
+  model_provider?: string;
+  model_id?: string;
+  model_params?: AgentJsonValue;
+  current_version_id?: string;
+  metadata?: AgentJsonValue;
+  updated_at?: string;
+}
+
+export interface AgentCanvasAssetRead {
+  id: string;
+  type: string;
+  mime: string;
+  storage_url?: string;
+  access_url?: string;
+  text_content?: string;
+  size_bytes?: number;
+  metadata: Record<string, AgentJsonValue>;
+}
+
+export interface AgentCanvasArtifactVersion {
+  id: string;
+  workspace_id: string;
+  node_id: string;
+  job_id?: string;
+  asset_id?: string;
+  version_no: number;
+  winner: boolean;
+  output: Record<string, AgentJsonValue>;
+  review_score?: number;
+  input_hash: string;
+  status: string;
+  progress: number;
+  error_code?: string;
+  error_message?: string;
+  provider_request: Record<string, AgentJsonValue>;
+  provider_response: Record<string, AgentJsonValue>;
+  asset?: AgentCanvasAssetRead;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface AgentCanvasGenerationJob {
+  id: string;
+  workspace_id: string;
+  target_node_id: string;
+  parent_job_id?: string;
+  operation_type: string;
+  provider: string;
+  model_id: string;
+  intent: Record<string, AgentJsonValue>;
+  rendered_prompt: string;
+  provider_request: Record<string, AgentJsonValue>;
+  provider_response: Record<string, AgentJsonValue>;
+  status: string;
+  progress: number;
+  attempt: number;
+  max_attempts: number;
+  error_code?: string;
+  error_message?: string;
+  requested_by_type: string;
+  requested_by_id?: string;
+  created_at: string;
+}
+
+export interface AgentCanvasRenderPlanDetail {
+  id: string;
+  scope_type: string;
+  scope_id: string;
+  target_phase: string;
+  task_type: string;
+  model_prompt_profile: string;
+  operation: string;
+  status: string;
+  revision: number;
+  render_plan_key?: string;
+  reference_bindings?: AgentJsonValue;
+  subject_bindings?: AgentJsonValue;
+  prompt_parts?: AgentJsonValue;
+  params?: AgentJsonValue;
+  audit_hints?: AgentJsonValue;
+  blocker?: AgentJsonValue;
+  compiled_prompt?: string;
+  compiled_request?: AgentJsonValue;
+  prompt_audit?: AgentJsonValue;
+  cost_estimate?: AgentJsonValue;
+  rationale?: string;
+  submitted_worker_task_id?: string;
+  output_node?: AgentCanvasMediaNodeDetail;
+  output_version?: AgentCanvasArtifactVersion;
+  reviews: AgentCanvasReviewRecord[];
+  issues: AgentCanvasIssueSummary[];
+  created_at?: string;
+  updated_at?: string;
+  compiled_at?: string;
+  submitted_at?: string;
+  completed_at?: string;
+}
+
+export interface AgentCanvasReviewRecord {
+  id: string;
+  shot_id?: string;
+  node_id: string;
+  artifact_version_id: string;
+  generation_job_id?: string;
+  target_phase: string;
+  status: string;
+  attempt_no: number;
+  max_attempts: number;
+  overall_score?: number;
+  rubric: Record<string, AgentJsonValue>;
+  critique: string;
+  retry_recommendation: Record<string, AgentJsonValue>;
+  model_provider?: string;
+  model_id?: string;
+  error_code?: string;
+  error_message?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface AgentCanvasReviewDetail {
+  review: AgentCanvasReviewRecord;
+  issues: AgentCanvasIssueSummary[];
+}
+
+export interface AgentCanvasIssueDetail {
+  id: string;
+  review_record_id?: string;
+  dimension: string;
+  severity: string;
+  status: string;
+  target_object_type: string;
+  target_object_id: string;
+  title: string;
+  description: string;
+  evidence?: string;
+  suggested_fix?: string;
+  fix_hint?: string;
+  requires_user_confirmation: boolean;
+  review?: AgentCanvasReviewRecord;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface PostAgentDecisionResponse {
   message: AgentMessage;
   decision_event: AgentEvent;
@@ -273,6 +667,25 @@ export function fetchAgentModelSelection(workspaceId: string) {
 export function fetchAgentProductionOverview(workspaceId: string) {
   return apiFetch<AgentProductionOverview>(
     `/agent/workspaces/${workspaceId}/production-overview`,
+  );
+}
+
+export function fetchAgentCanvasWorkbench(workspaceId: string) {
+  return apiFetch<AgentWorkbenchProjection>(
+    `/agent/workspaces/${workspaceId}/canvas/workbench`,
+  );
+}
+
+export function fetchAgentCanvasDetail(
+  workspaceId: string,
+  selection: AgentWorkbenchSelection,
+) {
+  const params = new URLSearchParams({
+    object_type: selection.objectType,
+    object_id: selection.objectId,
+  });
+  return apiFetch<AgentCanvasDetail>(
+    `/agent/workspaces/${workspaceId}/canvas/details?${params.toString()}`,
   );
 }
 

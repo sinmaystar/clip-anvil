@@ -302,6 +302,44 @@ func TestCapabilityValidatorRejectsUnsupportedInputNodeType(t *testing.T) {
 	}
 }
 
+func TestMarkSubmittedRenderPlanTerminalUsesAgentWorkerTaskID(t *testing.T) {
+	syncer := &fakeRenderPlanTerminalSyncer{}
+	job := db.GenerationJob{
+		WorkspaceID:     pgtype.UUID{Bytes: [16]byte{0x01}, Valid: true},
+		RequestedByType: "agent_worker",
+		RequestedByID:   pgtype.Text{String: "02000000-0000-0000-0000-000000000000", Valid: true},
+	}
+	versionID := pgtype.UUID{Bytes: [16]byte{0x03}, Valid: true}
+	nodeID := pgtype.UUID{Bytes: [16]byte{0x04}, Valid: true}
+
+	if err := markSubmittedRenderPlanTerminal(context.Background(), syncer, job, "failed", versionID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if len(syncer.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(syncer.calls))
+	}
+	call := syncer.calls[0]
+	if call.SubmittedWorkerTaskID != (pgtype.UUID{Bytes: [16]byte{0x02}, Valid: true}) || call.Status != "failed" || call.OutputVersionID != versionID || call.OutputNodeID != nodeID {
+		t.Fatalf("call = %#v", call)
+	}
+}
+
+func TestMarkSubmittedRenderPlanTerminalIgnoresNonAgentWorkerJobs(t *testing.T) {
+	syncer := &fakeRenderPlanTerminalSyncer{}
+	job := db.GenerationJob{
+		WorkspaceID:     pgtype.UUID{Bytes: [16]byte{0x01}, Valid: true},
+		RequestedByType: "user",
+		RequestedByID:   pgtype.Text{String: "02000000-0000-0000-0000-000000000000", Valid: true},
+	}
+
+	if err := markSubmittedRenderPlanTerminal(context.Background(), syncer, job, "succeeded", pgtype.UUID{}, pgtype.UUID{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(syncer.calls) != 0 {
+		t.Fatalf("calls = %#v", syncer.calls)
+	}
+}
+
 func TestPromptRefKindForDirectDependency(t *testing.T) {
 	depID := pgtype.UUID{Bytes: [16]byte{0x31}, Valid: true}
 	target := db.MediaNode{
@@ -313,6 +351,15 @@ func TestPromptRefKindForDirectDependency(t *testing.T) {
 	if got := inputKindForDependency(target, dep); got != InputKindExplicit {
 		t.Fatalf("kind = %q, want explicit", got)
 	}
+}
+
+type fakeRenderPlanTerminalSyncer struct {
+	calls []db.MarkSubmittedRenderPlanCompletedByWorkerTaskParams
+}
+
+func (f *fakeRenderPlanTerminalSyncer) MarkSubmittedRenderPlanCompletedByWorkerTask(_ context.Context, params db.MarkSubmittedRenderPlanCompletedByWorkerTaskParams) (db.RenderPlan, error) {
+	f.calls = append(f.calls, params)
+	return db.RenderPlan{WorkspaceID: params.WorkspaceID, SubmittedWorkerTaskID: params.SubmittedWorkerTaskID, Status: params.Status}, nil
 }
 
 func TestPromptRefKindForImplicitDependency(t *testing.T) {

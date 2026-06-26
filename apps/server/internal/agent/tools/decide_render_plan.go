@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -18,6 +20,10 @@ type RenderPlanDecisionStore interface {
 type DecideRenderPlanNativeTool struct {
 	store     RenderPlanDecisionStore
 	submitter *RenderPlanSubmitter
+}
+
+type RenderPlanDecisionSignalRuntime interface {
+	MarkProducerPendingSignalsProcessedByRenderPlan(ctx context.Context, workspaceID, renderPlanID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error)
 }
 
 type DecideRenderPlanInput struct {
@@ -53,6 +59,11 @@ func (t *DecideRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 		if err != nil {
 			return NaturalToolError(toolDecideRenderPlan, err.Error(), "请读取 RenderPlan 状态，确认它处于 compiled 或 waiting_for_approval 后重试。"), nil
 		}
+		signalNote := t.markRenderPlanReadySignalProcessed(ctx, runtime, renderPlanID)
+		next := "Worker 已入队。Producer 后续应读取 generation_job、artifact_version 和 RenderPlan 状态，不要把提交等同于产物完成。"
+		if signalNote != "" {
+			next += "\n" + signalNote
+		}
 		return NaturalResult{
 			Title: "已接受 RenderPlan 并提交 worker_generation",
 			Items: []NaturalResultItem{
@@ -60,7 +71,7 @@ func (t *DecideRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 				{Label: "WorkerTask", Value: uuidString(task.ID)},
 				{Label: "原因", Value: input.Reason},
 			},
-			Next: "Worker 已入队。Producer 后续应读取 generation_job、artifact_version 和 RenderPlan 状态，不要把提交等同于产物完成。",
+			Next: next,
 		}.String(), nil
 	default:
 		if t == nil || t.store == nil {
@@ -82,6 +93,11 @@ func (t *DecideRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 		if err != nil {
 			return NaturalToolError(toolDecideRenderPlan, err.Error(), "请确认 RenderPlan 存在且仍在等待 Producer 决策。"), nil
 		}
+		signalNote := t.markRenderPlanReadySignalProcessed(ctx, runtime, renderPlanID)
+		next := "如需修订，请 Producer 再调用 dispatch_craftsman，并在 critique / fix_hints 中带上 revision_instructions。"
+		if signalNote != "" {
+			next += "\n" + signalNote
+		}
 		return NaturalResult{
 			Title: "已拒绝 RenderPlan",
 			Items: []NaturalResultItem{
@@ -89,9 +105,27 @@ func (t *DecideRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 				{Label: "下一步", Value: input.NextAction},
 				{Label: "原因", Value: input.Reason},
 			},
-			Next: "如需修订，请 Producer 再调用 dispatch_craftsman，并在 critique / fix_hints 中带上 revision_instructions。",
+			Next: next,
 		}.String(), nil
 	}
+}
+
+func (t *DecideRenderPlanNativeTool) markRenderPlanReadySignalProcessed(ctx context.Context, runtime NativeRuntimeContext, renderPlanID pgtype.UUID) string {
+	if t == nil || t.submitter == nil || t.submitter.runtime == nil || !runtime.WorkspaceID.Valid || !runtime.TaskID.Valid || !renderPlanID.Valid {
+		return ""
+	}
+	marker, ok := t.submitter.runtime.(RenderPlanDecisionSignalRuntime)
+	if !ok {
+		return ""
+	}
+	signals, err := marker.MarkProducerPendingSignalsProcessedByRenderPlan(ctx, runtime.WorkspaceID, renderPlanID, runtime.TaskID)
+	if err != nil {
+		return "Signal 回写警告：RenderPlan 已完成决策，但 pending signal 标记 processed 失败：" + strings.TrimSpace(err.Error())
+	}
+	if len(signals) == 0 {
+		return "Signal 回写：未找到对应的待处理 craftsman_render_plan_ready signal，可能已被其他 Producer 任务处理。"
+	}
+	return fmt.Sprintf("Signal 回写：已将 %d 个 craftsman_render_plan_ready signal 标记为 processed。", len(signals))
 }
 
 func validateDecideRenderPlanInput(input DecideRenderPlanInput) error {

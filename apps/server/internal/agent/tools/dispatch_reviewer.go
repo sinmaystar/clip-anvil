@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -24,6 +26,7 @@ type DispatchReviewerRuntime interface {
 	GetOrCreateReviewerThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error)
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
+	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
 }
 
 type DispatchReviewerTaskEnqueuer interface {
@@ -107,6 +110,9 @@ func (t *DispatchReviewerNativeTool) InvokableRun(ctx context.Context, arguments
 	if err != nil {
 		return NaturalToolError(toolDispatchReviewer, err.Error(), "请检查 reviewer task 参数后重试。"), nil
 	}
+	if err := t.appendDelegationMessage(ctx, runtime.WorkspaceID, thread.ID, task.ID, scopeType, scopeID, input); err != nil {
+		return NaturalToolError(toolDispatchReviewer, err.Error(), "Reviewer 任务已创建，但委派消息写入失败；请检查 agent_message 写入链路。"), nil
+	}
 	_, _ = t.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: runtime.WorkspaceID,
 		ThreadID:    thread.ID,
@@ -129,6 +135,44 @@ func (t *DispatchReviewerNativeTool) InvokableRun(ctx context.Context, arguments
 		},
 		Next: "派发成功只表示评审任务已入队。Producer 应读取 review_record 和 artifact_issue 后决定是否接受、修复或请求用户确认。",
 	}.String(), nil
+}
+
+func (t *DispatchReviewerNativeTool) appendDelegationMessage(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID, taskID pgtype.UUID, scopeType string, scopeID pgtype.UUID, input DispatchReviewerInput) error {
+	text := reviewerDelegationText(scopeType, scopeID, input)
+	content, err := uimessage.BuildUserMessageContent(uimessage.UserMessageInput{Text: text})
+	if err != nil {
+		return err
+	}
+	_, err = t.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: workspaceID,
+		ThreadID:    threadID,
+		Role:        "user",
+		MessageType: "text",
+		Content:     content,
+		RawMessage: mustJSON(map[string]any{
+			"schema":      "clipanvil.agent.delegation.v1",
+			"target_role": "reviewer",
+			"scope_type":  scopeType,
+			"scope_id":    uuidString(scopeID),
+			"review_task": input.ReviewTask,
+			"target":      input.Target,
+			"brief":       input.Brief,
+			"reason":      input.Reason,
+		}),
+		TaskID: taskID,
+	})
+	return err
+}
+
+func reviewerDelegationText(scopeType string, scopeID pgtype.UUID, input DispatchReviewerInput) string {
+	lines := []string{
+		"Producer 派发 Reviewer 评审任务。",
+		"- scope: " + scopeType + "=" + uuidString(scopeID),
+		"- review_task: " + input.ReviewTask,
+		"- brief: " + input.Brief,
+		"- reason: " + input.Reason,
+	}
+	return strings.Join(lines, "\n")
 }
 
 func validateDispatchReviewerInput(input DispatchReviewerInput) error {

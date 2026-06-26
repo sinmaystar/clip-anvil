@@ -152,15 +152,6 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr erro
 	if err := e.markScopedKeyElementStateReady(ctx, task, result); err != nil {
 		return e.fail(ctx, task, "worker_generation_state_update_failed", err)
 	}
-	if task.RenderPlanID.Valid {
-		_, _ = e.store.MarkRenderPlanCompleted(ctx, db.MarkRenderPlanCompletedParams{
-			ID:              task.RenderPlanID,
-			WorkspaceID:     task.WorkspaceID,
-			Status:          "succeeded",
-			OutputVersionID: result.Version.ID,
-			OutputNodeID:    result.Node.ID,
-		})
-	}
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, task.ID, rawOutput); err != nil {
 		return err
 	}

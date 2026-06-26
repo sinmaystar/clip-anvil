@@ -1,13 +1,26 @@
 export interface SequencedAgentMessage {
   id: string;
+  thread_id?: string;
   seq: number;
   created_at?: string;
   message_type?: string;
   content?: unknown;
   raw_message?: {
     parent_tool_call_id?: unknown;
+    source?: unknown;
+    trigger?: unknown;
     tool_call_id?: unknown;
   };
+}
+
+export function isProducerThreadMessage(
+  message: Pick<SequencedAgentMessage, "thread_id">,
+  producerThreadID: string | undefined | null,
+) {
+  if (!producerThreadID || !message.thread_id) {
+    return false;
+  }
+  return message.thread_id === producerThreadID;
 }
 
 export function mergeAgentMessages<T extends SequencedAgentMessage>(
@@ -40,6 +53,61 @@ export function visibleAgentMessages<T extends SequencedAgentMessage>(
       completedDecisionToolCalls,
     );
   });
+}
+
+export function formatAgentMessageTime(
+  createdAt: string | undefined | null,
+  timeZone?: string,
+) {
+  if (!createdAt) {
+    return "";
+  }
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  try {
+    const formatter = new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZone,
+    });
+    const parts = Object.fromEntries(
+      formatter
+        .formatToParts(date)
+        .filter((part) => part.type !== "literal")
+        .map((part) => [part.type, part.value]),
+    );
+    if (
+      !parts.year ||
+      !parts.month ||
+      !parts.day ||
+      !parts.hour ||
+      !parts.minute ||
+      !parts.second
+    ) {
+      return formatter.format(date);
+    }
+    return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+  } catch {
+    return "";
+  }
+}
+
+export function isSystemReminderMessage(
+  message: Pick<SequencedAgentMessage, "content" | "raw_message">,
+) {
+  const source = stringValue(message.raw_message?.source);
+  const trigger = stringValue(message.raw_message?.trigger);
+  if (source === "system" && trigger) {
+    return true;
+  }
+  return agentMessageText(message.content).includes("<system-reminder>");
 }
 
 function compareAgentMessages<T extends SequencedAgentMessage>(a: T, b: T) {
@@ -102,6 +170,29 @@ function orderNestedAgentMessages<T extends SequencedAgentMessage>(messages: T[]
 
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function agentMessageText(content: unknown) {
+  if (!content || typeof content !== "object") {
+    return "";
+  }
+  const envelope = content as { schema?: unknown; blocks?: unknown };
+  if (
+    envelope.schema !== "clipanvil.agent.message.v1" ||
+    !Array.isArray(envelope.blocks)
+  ) {
+    return "";
+  }
+  return envelope.blocks
+    .map((block) => {
+      if (!block || typeof block !== "object") {
+        return "";
+      }
+      const value = block as { text?: unknown };
+      return typeof value.text === "string" ? value.text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function requestDecisionToolCallIDsByStatus<T extends SequencedAgentMessage>(

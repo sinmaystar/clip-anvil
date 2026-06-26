@@ -183,13 +183,60 @@ func TestPostAgentDecisionRequestValidatesChoiceOrFreeText(t *testing.T) {
 }
 
 func TestAgentBusyReasonBlocksActiveTasks(t *testing.T) {
-	for _, status := range []string{"queued", "running", "waiting_for_user"} {
-		if reason := agentBusyReason([]db.AgentTask{{Status: status}}); reason == "" {
+	for _, status := range []string{"queued", "running"} {
+		if reason := agentBusyReason([]db.AgentTask{{TaskType: "producer_turn", Status: status}}); reason == "" {
 			t.Fatalf("status %s should be busy", status)
 		}
 	}
-	if reason := agentBusyReason([]db.AgentTask{{Status: "succeeded"}}); reason != "" {
+	if reason := agentBusyReason([]db.AgentTask{{TaskType: "producer_turn", Status: "succeeded"}}); reason != "" {
 		t.Fatalf("succeeded task busy reason = %q", reason)
+	}
+	if reason := agentBusyReason([]db.AgentTask{{TaskType: "craftsman_turn", Status: "running"}}); reason != "" {
+		t.Fatalf("async craftsman task should not block chat input, reason = %q", reason)
+	}
+	if reason := agentBusyReason([]db.AgentTask{{TaskType: "worker_generation", Status: "queued"}}); reason != "" {
+		t.Fatalf("async worker task should not block chat input, reason = %q", reason)
+	}
+	if reason := agentBusyReason([]db.AgentTask{{TaskType: "producer_turn", Status: "waiting_for_user"}}); reason != "" {
+		t.Fatalf("pending decision should be handled by decision UI, not processing lock, reason = %q", reason)
+	}
+}
+
+func TestAgentProcessingReasonOnlyBlocksProducerExecution(t *testing.T) {
+	if reason := agentProcessingReason([]db.AgentTask{{TaskType: "producer_turn", Status: "running"}}); reason == "" {
+		t.Fatal("running producer turn should block posting a new message")
+	}
+	if reason := agentProcessingReason([]db.AgentTask{{TaskType: "decision_resume", Status: "queued"}}); reason == "" {
+		t.Fatal("queued decision resume should block posting a new message")
+	}
+	if reason := agentProcessingReason([]db.AgentTask{{TaskType: "craftsman_turn", Status: "running"}}); reason != "" {
+		t.Fatalf("running craftsman task should not block posting a message, reason = %q", reason)
+	}
+	if reason := agentProcessingReason([]db.AgentTask{{TaskType: "worker_generation", Status: "queued"}}); reason != "" {
+		t.Fatalf("queued worker task should not block posting a message, reason = %q", reason)
+	}
+}
+
+func TestListMessagesUsesProducerThreadOnly(t *testing.T) {
+	source, err := os.ReadFile("agent_handler.go")
+	if err != nil {
+		t.Fatalf("read agent_handler.go: %v", err)
+	}
+	body := string(source)
+	start := strings.Index(body, "func (h *AgentHandler) ListMessages")
+	if start < 0 {
+		t.Fatal("AgentHandler.ListMessages must exist")
+	}
+	end := strings.Index(body[start:], "\nfunc (h *AgentHandler) ListActiveTasks")
+	if end < 0 {
+		t.Fatal("AgentHandler.ListActiveTasks must follow ListMessages")
+	}
+	listMessagesBody := body[start : start+end]
+	if strings.Contains(listMessagesBody, "ListWorkspaceMessages") {
+		t.Fatal("AgentHandler.ListMessages must not list workspace-level messages for the chat dialog")
+	}
+	if !strings.Contains(listMessagesBody, "h.runtime.ListMessages(ctx, thread.ID") {
+		t.Fatalf("AgentHandler.ListMessages must list messages from the Producer thread, got:\n%s", listMessagesBody)
 	}
 }
 
@@ -454,6 +501,32 @@ func TestAgentProductionOverviewRouteContract(t *testing.T) {
 	wantTasksRoute := `GET("/api/agent/workspaces/:workspaceID/tasks", authMiddleware, agentHandler.ListActiveTasks)`
 	if !strings.Contains(string(serverSource), wantTasksRoute) {
 		t.Fatalf("server route %q is not registered", wantTasksRoute)
+	}
+}
+
+func TestAgentCanvasWorkbenchRouteContract(t *testing.T) {
+	handlerSource, err := os.ReadFile("agent_handler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(handlerSource), "func (h *AgentHandler) GetCanvasWorkbench") {
+		t.Fatal("AgentHandler.GetCanvasWorkbench must be implemented")
+	}
+	if !strings.Contains(string(handlerSource), "func (h *AgentHandler) GetCanvasDetail") {
+		t.Fatal("AgentHandler.GetCanvasDetail must be implemented")
+	}
+
+	serverSource, err := os.ReadFile("../../cmd/server/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoute := `GET("/api/agent/workspaces/:workspaceID/canvas/workbench", authMiddleware, agentHandler.GetCanvasWorkbench)`
+	if !strings.Contains(string(serverSource), wantRoute) {
+		t.Fatalf("server route %q is not registered", wantRoute)
+	}
+	wantDetailRoute := `GET("/api/agent/workspaces/:workspaceID/canvas/details", authMiddleware, agentHandler.GetCanvasDetail)`
+	if !strings.Contains(string(serverSource), wantDetailRoute) {
+		t.Fatalf("server route %q is not registered", wantDetailRoute)
 	}
 }
 

@@ -1,8 +1,6 @@
 import {
-  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type SyntheticEvent,
   useEffect,
   useMemo,
   useRef,
@@ -13,9 +11,6 @@ import { Navigate, useNavigate, useParams } from "react-router";
 import {
   type CanvasPayload,
   fetchCanvas,
-  fetchModelCapabilities,
-  fetchNodeProductionState,
-  fetchReferencePackItems,
   fetchWorkspace,
   type MediaNode,
 } from "../lib/api";
@@ -23,8 +18,10 @@ import {
   type AgentAttachment,
   type AgentMessage,
   type AgentTask,
+  fetchAgentCanvasDetail,
   fetchAgentModelSelection,
   fetchAgentMessages,
+  fetchAgentCanvasWorkbench,
   fetchAgentTasks,
   fetchAgentThread,
   postAgentDecision,
@@ -46,8 +43,8 @@ import {
   AgentMessageRenderer,
   type AgentMessageActions,
 } from "../components/agent/AgentMessageRenderer";
-import { AgentFlowCanvas } from "../components/canvas-flow/AgentFlowCanvas";
-import { PropertyPanel } from "../components/PropertyPanel";
+import { AgentCanvasDetailPanel } from "../components/agent-workbench/AgentCanvasDetailPanel";
+import { AgentWorkbenchCanvas } from "../components/agent-workbench/AgentWorkbenchCanvas";
 import {
   type AgentFloatingPosition,
   type AgentPanelCorner,
@@ -62,6 +59,9 @@ import {
   resizeAgentPanelFromCorner,
 } from "../lib/agentLayout";
 import {
+  formatAgentMessageTime,
+  isProducerThreadMessage,
+  isSystemReminderMessage,
   mergeAgentMessages,
   visibleAgentMessages,
 } from "../lib/agentMessages";
@@ -72,10 +72,9 @@ import {
   formatAgentModelOption,
 } from "../lib/agentModelSelection";
 import {
-  clearAgentStream,
+  finalizeAgentStreamWithMessage,
   type AgentStreamState,
   mergeAgentStreamDelta,
-  rememberFinalAgentMessage,
   shouldShowAgentThinkingIndicator,
   visibleAgentStreams,
 } from "../lib/agentStreaming";
@@ -95,14 +94,15 @@ import {
   nodeStatusForGenerationStatus,
   shouldPollCanvasForProductionUpdates,
 } from "../lib/canvasRunState";
-import {
-  type AgentConnectionStatus,
-  connectAgentSocket,
-} from "../lib/agentWs";
+import { type AgentConnectionStatus, connectAgentSocket } from "../lib/agentWs";
 import { connectCanvasSocket } from "../lib/ws";
 import { createClientMessageId } from "../lib/clientMessageId";
 import { preserveCanvasAssetUrls } from "../lib/canvasAssetUrls";
-import { isSourceMaterialNode } from "../lib/sourceMaterial";
+import {
+  agentWorkbenchVisibleNodeCount,
+  type AgentWorkbenchProjection,
+} from "../lib/agentWorkbench";
+import type { AgentWorkbenchSelection } from "../lib/agentWorkbenchSelection";
 import { workspaceModeRoute } from "../lib/workspaceRoutes";
 import { useAuthStore } from "../stores/auth";
 
@@ -181,13 +181,8 @@ export function AgentWorkspacePage() {
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [sendError, setSendError] = useState("");
   const [attachmentError, setAttachmentError] = useState("");
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [nodeEditorPosition, setNodeEditorPosition] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    maxHeight: number;
-  } | null>(null);
+  const [selectedWorkbenchSelection, setSelectedWorkbenchSelection] =
+    useState<AgentWorkbenchSelection | null>(null);
   const [connectionStatus, setConnectionStatus] =
     useState<AgentConnectionStatus>("offline");
   const [canvasConnectionStatus, setCanvasConnectionStatus] =
@@ -209,7 +204,7 @@ export function AgentWorkspacePage() {
     queryFn: () => fetchWorkspace(id ?? ""),
     enabled: Boolean(id),
   });
-  const canvasQuery = useQuery<CanvasPayload>({
+  useQuery<CanvasPayload>({
     queryKey: ["workspace", id, "canvas"],
     queryFn: () => fetchCanvas(id ?? ""),
     enabled: Boolean(id),
@@ -224,29 +219,32 @@ export function AgentWorkspacePage() {
         newData as CanvasPayload,
       ),
   });
-  const canvas = canvasQuery.data;
-  const selectedNode =
-    canvas?.nodes.find((node) => node.id === selectedNodeId) ?? null;
-  const agentCanvasNodeCount = canvas
-    ? canvas.groups.length +
-      canvas.nodes.length +
-      (canvas.domain_projection?.nodes.length ?? 0)
-    : 0;
-  const modelCapabilitiesQuery = useQuery({
-    queryKey: ["model-capabilities"],
-    queryFn: fetchModelCapabilities,
-  });
-  const selectedNodeProductionStateQuery = useQuery({
-    queryKey: ["node", selectedNode?.id ?? null, "production-state"],
-    queryFn: () => fetchNodeProductionState(selectedNode?.id ?? ""),
-    enabled: Boolean(selectedNode),
-  });
-  const selectedReferencePackItemsQuery = useQuery({
-    queryKey: ["reference-pack", selectedNodeId, "items"],
-    queryFn: () => fetchReferencePackItems(selectedNodeId ?? ""),
-    enabled: selectedNode?.node_type === "reference_pack",
-  });
   const agentEnabled = Boolean(id && workspaceQuery.data?.mode === "agent");
+  const workbenchQuery = useQuery<AgentWorkbenchProjection>({
+    queryKey: ["workspace", id, "agent-workbench"],
+    queryFn: () => fetchAgentCanvasWorkbench(id ?? ""),
+    enabled: agentEnabled,
+    refetchInterval: (query) =>
+      canvasConnectionStatus !== "connected" &&
+      hasActiveWorkbenchProduction(query.state.data)
+        ? 2_000
+        : false,
+  });
+  const agentCanvasNodeCount = workbenchQuery.data
+    ? agentWorkbenchVisibleNodeCount(workbenchQuery.data)
+    : 0;
+  const detailQuery = useQuery({
+    queryKey: [
+      "workspace",
+      id,
+      "agent-canvas-detail",
+      selectedWorkbenchSelection?.objectType,
+      selectedWorkbenchSelection?.objectId,
+    ],
+    queryFn: () =>
+      fetchAgentCanvasDetail(id ?? "", selectedWorkbenchSelection!),
+    enabled: agentEnabled && Boolean(selectedWorkbenchSelection),
+  });
   const agentThreadQuery = useQuery({
     queryKey: ["agent", id, "thread"],
     queryFn: () => fetchAgentThread(id ?? ""),
@@ -301,9 +299,7 @@ export function AgentWorkspacePage() {
       }),
     onSuccess: (response) => {
       shouldPinToBottomRef.current = true;
-      setMessages((current) =>
-        mergeAgentMessages(current, [response.message]),
-      );
+      setMessages((current) => mergeAgentMessages(current, [response.message]));
       setTasks((current) => mergeAgentTasks(current, [response.task]));
       const decisionEvent = response.decision_event;
       if (decisionEvent) {
@@ -352,9 +348,7 @@ export function AgentWorkspacePage() {
         next.add(response.decision_event.id);
         return next;
       });
-      setMessages((current) =>
-        mergeAgentMessages(current, [response.message]),
-      );
+      setMessages((current) => mergeAgentMessages(current, [response.message]));
       setTasks((current) => mergeAgentTasks(current, [response.task]));
       setSendError("");
       scrollMessagesToBottom();
@@ -371,9 +365,10 @@ export function AgentWorkspacePage() {
         card.status === "pending" && !resolvedDecisionIds.has(card.decision_id),
     )
     .map((card) => card.decision_id);
-  const visibleMessages = useMemo(() => visibleAgentMessages(messages), [
-    messages,
-  ]);
+  const visibleMessages = useMemo(
+    () => visibleAgentMessages(messages),
+    [messages],
+  );
   const visibleStreams = useMemo(
     () => visibleAgentStreams(streams, visibleMessages),
     [streams, visibleMessages],
@@ -445,19 +440,28 @@ export function AgentWorkspacePage() {
     if (!id || !token || workspaceQuery.data?.mode !== "agent") {
       return;
     }
+    const producerThreadID = agentThreadQuery.data?.thread.id;
 
-		const fetchMissingMessages = () => {
-			void fetchAgentMessages(id, lastMessageCreatedAtRef.current, 1000).then((response) => {
-			setMessages((current) =>
-				mergeAgentMessages(current, response.messages),
-			);
-		});
-	};
-	const refetchAgentCanvas = () => {
-		void queryClient.refetchQueries({
-			queryKey: ["workspace", id, "canvas"],
-		});
-	};
+    const fetchMissingMessages = () => {
+      void fetchAgentMessages(id, lastMessageCreatedAtRef.current, 1000).then(
+        (response) => {
+          setMessages((current) =>
+            mergeAgentMessages(current, response.messages),
+          );
+        },
+      );
+    };
+    const refetchAgentCanvas = () => {
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "canvas"],
+      });
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-workbench"],
+      });
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-canvas-detail"],
+      });
+    };
 
     return connectAgentSocket({
       workspaceId: id,
@@ -468,48 +472,65 @@ export function AgentWorkspacePage() {
             event.type === "agent.message.updated") &&
           event.payload.workspace_id === id
         ) {
-          finalizedStreamKeysRef.current = rememberFinalAgentMessage(
-            finalizedStreamKeysRef.current,
-            event.payload.message,
-          );
+          if (
+            !isProducerThreadMessage(event.payload.message, producerThreadID)
+          ) {
+            return;
+          }
           setMessages((current) =>
             mergeAgentMessages(current, [event.payload.message]),
           );
-			if (event.type === "agent.message.created") {
-				setStreams((current) =>
-					clearAgentStream(current, event.payload.message.task_id),
-				);
-			}
-			refetchAgentCanvas();
-		}
+          if (event.type === "agent.message.created") {
+            setStreams((current) => {
+              const finalized = finalizeAgentStreamWithMessage(
+                current,
+                finalizedStreamKeysRef.current,
+                event.payload.message,
+              );
+              finalizedStreamKeysRef.current = finalized.finalizedStreamKeys;
+              return finalized.streams;
+            });
+          } else {
+            finalizedStreamKeysRef.current = finalizeAgentStreamWithMessage(
+              [],
+              finalizedStreamKeysRef.current,
+              event.payload.message,
+            ).finalizedStreamKeys;
+          }
+          refetchAgentCanvas();
+        }
         if (
           event.type === "agent.message.delta" &&
           event.payload.workspace_id === id
         ) {
           setStreams((current) =>
-            mergeAgentStreamDelta(current, {
-              task_id: event.payload.task_id,
-              block_id: event.payload.block_id,
-              block_type: event.payload.block_type,
-              delta: event.payload.delta,
-              message_id: event.payload.message_id,
-              sequence: event.payload.sequence,
-            }, finalizedStreamKeysRef.current),
+            mergeAgentStreamDelta(
+              current,
+              {
+                task_id: event.payload.task_id,
+                block_id: event.payload.block_id,
+                block_type: event.payload.block_type,
+                delta: event.payload.delta,
+                message_id: event.payload.message_id,
+                sequence: event.payload.sequence,
+              },
+              finalizedStreamKeysRef.current,
+            ),
           );
         }
         if (
           event.type === "agent.task.updated" &&
           event.payload.workspace_id === id
-		) {
-			setTasks((current) => mergeAgentTasks(current, [event.payload.task]));
-			refetchAgentCanvas();
-		}
-		if (
-			event.type === "agent.event.created" &&
-			event.payload.workspace_id === id
-		) {
-			refetchAgentCanvas();
-			const agentEvent = event.payload.event;
+        ) {
+          setTasks((current) => mergeAgentTasks(current, [event.payload.task]));
+          refetchAgentCanvas();
+        }
+        if (
+          event.type === "agent.event.created" &&
+          event.payload.workspace_id === id
+        ) {
+          refetchAgentCanvas();
+          const agentEvent = event.payload.event;
           if (
             agentEvent.event_type === "decision_requested" &&
             agentEvent.status === "handled"
@@ -537,7 +558,13 @@ export function AgentWorkspacePage() {
       onReconnect: fetchMissingMessages,
       onStatusChange: setConnectionStatus,
     });
-  }, [id, token, workspaceQuery.data?.mode]);
+  }, [
+    id,
+    token,
+    workspaceQuery.data?.mode,
+    queryClient,
+    agentThreadQuery.data?.thread.id,
+  ]);
 
   useEffect(() => {
     if (!id || !token || workspaceQuery.data?.mode !== "agent") {
@@ -547,6 +574,17 @@ export function AgentWorkspacePage() {
     const refetchCanvasSnapshot = () => {
       void queryClient.refetchQueries({
         queryKey: ["workspace", id, "canvas"],
+      });
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-workbench"],
+      });
+    };
+    const refetchWorkbench = () => {
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-workbench"],
+      });
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-canvas-detail"],
       });
     };
     const refreshCanvas = () => {
@@ -566,6 +604,7 @@ export function AgentWorkspacePage() {
                 ["workspace", id, "canvas"],
                 (current) => upsertCanvasNode(current, node),
               );
+              refetchWorkbench();
             }
             break;
           }
@@ -592,6 +631,7 @@ export function AgentWorkspacePage() {
                     nodeStatus,
                   ),
               );
+              refetchWorkbench();
             }
             if (
               event.type === "production.job.updated" &&
@@ -612,53 +652,6 @@ export function AgentWorkspacePage() {
       },
     });
   }, [id, queryClient, token, workspaceQuery.data?.mode]);
-
-  useEffect(() => {
-    if (!selectedNode || !canvas) {
-      setNodeEditorPosition(null);
-      return;
-    }
-    const frame = agentCanvasSurfaceRef.current;
-    const frameRect = frame?.getBoundingClientRect();
-    if (!frame || !frameRect) {
-      setNodeEditorPosition(null);
-      return;
-    }
-    const isComposerPopover =
-      selectedNode.node_type !== "reference_pack" &&
-      !isSourceMaterialNode(selectedNode);
-    const minWidth = isComposerPopover ? 460 : 420;
-    const maxWidth = isComposerPopover ? 680 : 560;
-    const width = Math.min(maxWidth, Math.max(minWidth, frameRect.width - 24));
-    const maxHeight = Math.round(
-      Math.min(720, Math.max(320, frameRect.height - 32)),
-    );
-    const renderedNodeRect = frame
-      .querySelector(
-        `.react-flow__node[data-id="${cssSelectorValue(selectedNode.id)}"]`,
-      )
-      ?.getBoundingClientRect();
-    const fallbackBottomLeft = {
-      x: selectedNode.canvas_x * canvas.camera.zoom + canvas.camera.x,
-      y:
-        (selectedNode.canvas_y + selectedNode.canvas_h) * canvas.camera.zoom +
-        canvas.camera.y,
-    };
-    const nodeLeftX = renderedNodeRect
-      ? renderedNodeRect.left - frameRect.left
-      : fallbackBottomLeft.x;
-    const nodeBottomY = renderedNodeRect
-      ? renderedNodeRect.bottom - frameRect.top
-      : fallbackBottomLeft.y;
-    setNodeEditorPosition({
-      left: Math.round(
-        clamp(nodeLeftX, 12, Math.max(12, frameRect.width - width - 12)),
-      ),
-      top: Math.round(nodeBottomY + 28),
-      width: Math.round(width),
-      maxHeight,
-    });
-  }, [canvas, selectedNode]);
 
   if (workspaceQuery.isLoading) {
     return (
@@ -697,8 +690,7 @@ export function AgentWorkspacePage() {
     agentModelSelectionQuery.data?.selection.producer.reasoning_effort ||
     selectedModelOption?.default_reasoning_effort ||
     "";
-  const thinkingEffortOptions =
-    agentThinkingEffortOptions(selectedModelOption);
+  const thinkingEffortOptions = agentThinkingEffortOptions(selectedModelOption);
   const thinkingSelectorEnabled =
     agentModelSupportsThinking(selectedModelOption) &&
     thinkingEffortOptions.length > 0;
@@ -772,7 +764,9 @@ export function AgentWorkspacePage() {
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   };
-  const beginWidthPointerResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const beginWidthPointerResize = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     beginWidthResizeFrom(event.clientX, panelWidth);
@@ -804,7 +798,9 @@ export function AgentWorkspacePage() {
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   };
-  const beginHeightPointerResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const beginHeightPointerResize = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     beginHeightResizeFrom(event.clientY, panelHeight);
@@ -930,7 +926,7 @@ export function AgentWorkspacePage() {
     if (!collapsed) {
       setCollapsed(true);
     }
-    setSelectedNodeId(null);
+    setSelectedWorkbenchSelection(null);
   };
 
   return (
@@ -953,6 +949,14 @@ export function AgentWorkspacePage() {
         className="agent-canvas-stage"
         aria-label="Agent 画布"
         onPointerDown={(event) => {
+          if (
+            shouldClearAgentWorkbenchSelection(
+              event.target,
+              event.currentTarget,
+            )
+          ) {
+            setSelectedWorkbenchSelection(null);
+          }
           if (event.target === event.currentTarget) {
             collapseFromCanvas();
           }
@@ -966,79 +970,31 @@ export function AgentWorkspacePage() {
             <span>{agentCanvasNodeCount} 个节点</span>
           </div>
           <div className="agent-canvas-surface" ref={agentCanvasSurfaceRef}>
-            {canvasQuery.isLoading ? (
+            {workbenchQuery.isLoading ? (
               <p className="agent-empty-text">正在加载画布</p>
-            ) : canvas && agentCanvasNodeCount > 0 && id ? (
-              <>
-                <AgentFlowCanvas
-                  canvas={canvas}
-                  onSelectNode={setSelectedNodeId}
-                  selectedNodeId={selectedNodeId}
-                  workspaceId={id}
-                />
-                {selectedNode && nodeEditorPosition ? (
-                  <div
-                    className="node-editor-overlay node-production-popover agent-node-production-popover"
-                    onClick={stopCanvasEvent}
-                    onContextMenu={stopCanvasEvent}
-                    onKeyDown={stopCanvasEvent}
-                    onPointerDown={stopCanvasEvent}
-                    onWheel={stopCanvasEvent}
-                    style={
-                      {
-                        left: nodeEditorPosition.left,
-                        top: nodeEditorPosition.top,
-                        width: nodeEditorPosition.width,
-                        maxHeight: nodeEditorPosition.maxHeight,
-                        "--node-editor-max-height": `${nodeEditorPosition.maxHeight}px`,
-                      } as CSSProperties
-                    }
-                  >
-                    <PropertyPanel
-                      edges={canvas.edges}
-                      groups={canvas.groups}
-                      isModelCapabilitiesLoading={
-                        modelCapabilitiesQuery.isLoading
-                      }
-                      isProductionStateLoading={
-                        selectedNodeProductionStateQuery.isLoading
-                      }
-                      isReferencePackItemsLoading={
-                        selectedReferencePackItemsQuery.isLoading
-                      }
-                      isRetryingJob={false}
-                      isRunningNode={false}
-                      isSelectingVersion={false}
-                      isUpdatingGroupMembers={false}
-                      isUpdatingNode={false}
-                      isUpdatingReferencePackItems={false}
-                      modelCapabilities={modelCapabilitiesQuery.data ?? []}
-                      nodeProductionState={
-                        selectedNodeProductionStateQuery.data ?? null
-                      }
-                      nodes={canvas.nodes}
-                      readOnly
-                      referencePackItems={
-                        selectedReferencePackItemsQuery.data ?? []
-                      }
-                      selectedEdgeId={null}
-                      selectedGroupId={null}
-                      selectedNodeId={selectedNodeId}
-                      onReplaceReferencePackItems={noopReplaceReferencePackItems}
-                      onPromptRefSelect={noopPromptRefSelect}
-                      onRetryJob={noopStringCallback}
-                      onRunNode={noopRunNode}
-                      onSelectVersion={noopSelectVersion}
-                      onUpdateNode={noopUpdateNode}
-                    />
-                  </div>
-                ) : null}
-              </>
+            ) : workbenchQuery.data && agentCanvasNodeCount > 1 ? (
+              <AgentWorkbenchCanvas
+                onSelectObject={setSelectedWorkbenchSelection}
+                selected={selectedWorkbenchSelection}
+                workbench={workbenchQuery.data}
+              />
             ) : (
-              <p className="agent-empty-text">Agent 尚未创建画布节点。</p>
+              <p className="agent-empty-text">Agent 尚未创建场景或分镜。</p>
             )}
           </div>
         </section>
+
+        <AgentCanvasDetailPanel
+          detail={detailQuery.data}
+          error={detailQuery.error instanceof Error ? detailQuery.error : null}
+          isLoading={detailQuery.isLoading}
+          onClose={() => setSelectedWorkbenchSelection(null)}
+          onRetry={() => {
+            void detailQuery.refetch();
+          }}
+          onSelectObject={setSelectedWorkbenchSelection}
+          selection={selectedWorkbenchSelection}
+        />
 
         {collapsed ? (
           <button
@@ -1136,6 +1092,9 @@ export function AgentWorkspacePage() {
                       decisionCard !== null &&
                       (decisionCard.status === "handled" ||
                         resolvedDecisionIds.has(decisionCard.decision_id));
+                    const messageTime = formatAgentMessageTime(
+                      message.created_at,
+                    );
                     return (
                       <article
                         className={`agent-message agent-message-${messageClass(message)}${isNestedAgentMessage(message) ? " agent-message-nested" : ""}`}
@@ -1150,6 +1109,14 @@ export function AgentWorkspacePage() {
                           }}
                           message={message}
                         />
+                        {messageTime ? (
+                          <time
+                            className="agent-message-time"
+                            dateTime={message.created_at}
+                          >
+                            {messageTime}
+                          </time>
+                        ) : null}
                       </article>
                     );
                   })}
@@ -1179,7 +1146,9 @@ export function AgentWorkspacePage() {
                     showThinkingIndicator ? (
                       <ThinkingIndicator label={activityLabel} />
                     ) : (
-                      <p className="agent-empty-text">还没有 ClipAnvil 对话。</p>
+                      <p className="agent-empty-text">
+                        还没有 ClipAnvil 对话。
+                      </p>
                     )
                   ) : null}
                 </>
@@ -1315,7 +1284,8 @@ export function AgentWorkspacePage() {
                         ))}
                       </select>
                     ) : null}
-                    {agentModelSelectionQuery.data && thinkingSelectorEnabled ? (
+                    {agentModelSelectionQuery.data &&
+                    thinkingSelectorEnabled ? (
                       <select
                         aria-label="思考深度"
                         className="agent-thinking-select"
@@ -1370,37 +1340,57 @@ function canvasNodeFromEventPayload(node: unknown): MediaNode | null {
   return null;
 }
 
-function stopCanvasEvent(event: SyntheticEvent) {
-  event.stopPropagation();
-}
-
-function noopStringCallback() {}
-
-function noopRunNode() {}
-
-function noopUpdateNode() {}
-
-function noopReplaceReferencePackItems() {}
-
-function noopPromptRefSelect() {}
-
-function noopSelectVersion() {}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function cssSelectorValue(value: string) {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function upsertCanvasNode(
-  current: CanvasPayload | undefined,
-  node: MediaNode,
+function shouldClearAgentWorkbenchSelection(
+  target: EventTarget | null,
+  currentTarget: HTMLElement,
 ) {
+  if (!(target instanceof Element) || !currentTarget.contains(target)) {
+    return false;
+  }
+  if (
+    target.closest(
+      [
+        ".agent-canvas-detail-panel",
+        ".agent-chat-float",
+        ".agent-chat-restore",
+        ".react-flow__node",
+        ".react-flow__controls",
+        ".react-flow__minimap",
+        "button",
+        "a",
+        "input",
+        "textarea",
+        "select",
+      ].join(","),
+    )
+  ) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      ".agent-canvas-surface, .agent-workbench-surface, .react-flow__pane",
+    ),
+  );
+}
+
+function hasActiveWorkbenchProduction(
+  workbench: AgentWorkbenchProjection | undefined,
+) {
+  if (!workbench) {
+    return false;
+  }
+  return workbench.scenes.some((scene) =>
+    scene.shots.some(
+      (shot) =>
+        shot.preview.status === "queued" ||
+        shot.preview.status === "running" ||
+        shot.video.status === "queued" ||
+        shot.video.status === "running",
+    ),
+  );
+}
+
+function upsertCanvasNode(current: CanvasPayload | undefined, node: MediaNode) {
   if (!current) {
     return current;
   }
@@ -1441,6 +1431,9 @@ function ThinkingIndicator({ label }: { label: string }) {
 function messageClass(message: AgentMessage) {
   if (message.message_type === "error") {
     return "error";
+  }
+  if (isSystemReminderMessage(message)) {
+    return "system-reminder";
   }
   return message.role;
 }

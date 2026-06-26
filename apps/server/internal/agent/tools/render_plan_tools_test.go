@@ -188,6 +188,19 @@ func TestUpsertRenderPlanToolRejectsMissingMediaNodeReferenceBeforeService(t *te
 	}
 }
 
+func TestReadProjectContextSummarizesRenderPlansByTargetPhase(t *testing.T) {
+	got := summarizeRenderPlans([]db.RenderPlan{
+		{ID: uuidWithByte(11), ScopeType: "shot", ScopeID: uuidWithByte(21), TargetPhase: "preview_image", Operation: "text_to_image", Status: "succeeded"},
+		{ID: uuidWithByte(12), ScopeType: "shot", ScopeID: uuidWithByte(22), TargetPhase: "shot_video", Operation: "image_to_video_first_frame", Status: "running"},
+		{ID: uuidWithByte(13), ScopeType: "shot", ScopeID: uuidWithByte(23), TargetPhase: "shot_video", Operation: "image_to_video_first_frame", Status: "failed"},
+	})
+	for _, want := range []string{"3 个", "preview_image: succeeded=1", "shot_video: running=1 failed=1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q: %s", want, got)
+		}
+	}
+}
+
 func TestUpsertRenderPlanNormalizesMediaNodeTitleReference(t *testing.T) {
 	input := UpsertRenderPlanToolInput{ReferenceBindings: []ReferenceBindingInput{{
 		ClientKey:  "ref_product_luggage",

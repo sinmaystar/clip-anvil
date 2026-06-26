@@ -67,6 +67,7 @@ type Store interface {
 	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
 
 	ListRenderPlansByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.RenderPlan, error)
+	ListRenderPlansByScope(ctx context.Context, arg db.ListRenderPlansByScopeParams) ([]db.RenderPlan, error)
 }
 
 type Service struct {
@@ -373,10 +374,28 @@ func (s *Service) ReadProjectContext(ctx context.Context, input ReadContextInput
 	if packet.Dependencies, err = s.store.ListShotDependenciesByWorkspace(ctx, input.WorkspaceID); err != nil {
 		return ContextPacket{}, err
 	}
-	if packet.RenderPlans, err = s.store.ListRenderPlansByWorkspace(ctx, input.WorkspaceID); err != nil {
+	if shouldReadScopedRenderPlans(input.ScopeType, input.ScopeID) {
+		scopeID, parseErr := parseUUID(input.ScopeID)
+		if parseErr != nil {
+			return ContextPacket{}, ErrInvalidCreativeStateInput
+		}
+		packet.RenderPlans, err = s.store.ListRenderPlansByScope(ctx, db.ListRenderPlansByScopeParams{
+			WorkspaceID: input.WorkspaceID,
+			ScopeType:   strings.TrimSpace(input.ScopeType),
+			ScopeID:     scopeID,
+		})
+	} else {
+		packet.RenderPlans, err = s.store.ListRenderPlansByWorkspace(ctx, input.WorkspaceID)
+	}
+	if err != nil {
 		return ContextPacket{}, err
 	}
 	return packet, nil
+}
+
+func shouldReadScopedRenderPlans(scopeType string, scopeID string) bool {
+	scopeType = strings.TrimSpace(scopeType)
+	return scopeType == "shot" && strings.TrimSpace(scopeID) != ""
 }
 
 func (s *Service) requireAgentWorkspace(ctx context.Context, workspaceID pgtype.UUID) error {

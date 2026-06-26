@@ -117,6 +117,7 @@ type Context struct {
 	Node             db.MediaNode
 	Version          db.ArtifactVersion
 	GenerationJob    db.GenerationJob
+	Messages         []db.AgentMessage
 	PriorReviews     []db.ReviewRecord
 	ProductionText   string
 	AssetURL         string
@@ -124,6 +125,7 @@ type Context struct {
 	Text             string
 	ToolInfos        []*schema.ToolInfo
 	SameTurnMessages []ReviewerSameTurnMessage
+	PendingReminders []string
 }
 
 type ReviewerSameTurnMessage struct {

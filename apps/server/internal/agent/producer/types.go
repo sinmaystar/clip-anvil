@@ -45,17 +45,16 @@ type ProducerStreamDelta struct {
 }
 
 type ProducerContext struct {
-	Input               ProducerTurnInput
-	Messages            []db.AgentMessage
-	SameTurnMessages    []ProducerSameTurnMessage
-	LatestUserText      string
-	RuntimeTriggerText  string
-	Model               ProducerModelSelection
-	ToolInfos           []*schema.ToolInfo
-	ImageAttachments    map[string]ProducerImageAttachment
-	ProductionStateText string
-	ProductionState     map[string]any
-	EmitDelta           ProducerDeltaHandler
+	Input              ProducerTurnInput
+	Messages           []db.AgentMessage
+	SameTurnMessages   []ProducerSameTurnMessage
+	LatestUserText     string
+	RuntimeTriggerText string
+	Model              ProducerModelSelection
+	ToolInfos          []*schema.ToolInfo
+	ImageAttachments   map[string]ProducerImageAttachment
+	PendingReminders   []string
+	EmitDelta          ProducerDeltaHandler
 }
 
 type ProducerSameTurnMessage struct {

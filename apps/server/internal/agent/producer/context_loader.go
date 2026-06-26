@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
-	agentpss "github.com/sinmaystar/clip-anvil/internal/agent/pss"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -39,9 +38,6 @@ type RuntimeContextLoader struct {
 	ModelSelection interface {
 		ResolveProducerModel(ctx context.Context, workspace db.Workspace) (modelselection.Option, error)
 	}
-	PSSBuilder interface {
-		BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID) (agentpss.ProducerPSS, error)
-	}
 }
 
 func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input ProducerTurnInput) (ProducerContext, error) {
@@ -54,20 +50,14 @@ func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input Pro
 		return ProducerContext{}, err
 	}
 	imageAttachments := l.loadImageAttachments(ctx, messages)
-	pssText, structuredState, err := l.loadProductionState(ctx, input.WorkspaceID)
-	if err != nil {
-		return ProducerContext{}, err
-	}
 	return ProducerContext{
-		Input:               input,
-		Messages:            messages,
-		LatestUserText:      latestUserTextFromMessages(messages),
-		RuntimeTriggerText:  strings.TrimSpace(input.RuntimeTriggerText),
-		Model:               model,
-		ImageAttachments:    imageAttachments,
-		ProductionStateText: pssText,
-		ProductionState:     structuredState,
-		EmitDelta:           input.EmitDelta,
+		Input:              input,
+		Messages:           messages,
+		LatestUserText:     latestUserTextFromMessages(messages),
+		RuntimeTriggerText: strings.TrimSpace(input.RuntimeTriggerText),
+		Model:              model,
+		ImageAttachments:   imageAttachments,
+		EmitDelta:          input.EmitDelta,
 	}, nil
 }
 
@@ -80,17 +70,6 @@ func producerMessageWindowAfterSeq(triggerSeq int64, limit int64) int64 {
 		return 0
 	}
 	return afterSeq
-}
-
-func (l RuntimeContextLoader) loadProductionState(ctx context.Context, workspaceID pgtype.UUID) (string, map[string]any, error) {
-	if l.PSSBuilder == nil {
-		return "", nil, nil
-	}
-	state, err := l.PSSBuilder.BuildProducerPSS(ctx, workspaceID)
-	if err != nil {
-		return "", nil, AgentError{Code: "agent_pss_unavailable", Message: "build Producer PSS", Cause: err}
-	}
-	return state.Text, state.Structured, nil
 }
 
 func (l RuntimeContextLoader) loadModel(ctx context.Context, workspaceID pgtype.UUID) (ProducerModelSelection, error) {

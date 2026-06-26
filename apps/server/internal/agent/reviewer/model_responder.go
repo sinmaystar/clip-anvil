@@ -11,6 +11,9 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	agentprompt "github.com/sinmaystar/clip-anvil/internal/agent/prompt"
+	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
 )
 
 type arkChatStreamer interface {
@@ -122,8 +125,14 @@ func reviewToolPromptMessages(reviewContext Context) []*schema.Message {
 			Role:    schema.System,
 			Content: SystemPrompt(),
 		},
-		reviewUserMessage(reviewContext),
 	}
+	for _, reminder := range reviewContext.PendingReminders {
+		if text := toolloop.NormalizeSystemReminder(reminder); text != "" {
+			messages = append(messages, schema.SystemMessage(text))
+		}
+	}
+	messages = append(messages, agentprompt.HistoryMessages(reviewContext.Messages)...)
+	messages = append(messages, reviewUserMessage(reviewContext))
 	for _, message := range reviewContext.SameTurnMessages {
 		switch message.Role {
 		case "assistant":

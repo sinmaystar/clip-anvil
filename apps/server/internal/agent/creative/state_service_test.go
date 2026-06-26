@@ -200,6 +200,56 @@ func TestServiceReadProjectContextIncludesRenderPlansForProducerDecisions(t *tes
 	}
 }
 
+func TestServiceReadProjectContextFiltersRenderPlansForShotScope(t *testing.T) {
+	workspaceID := testUUID(1)
+	store := newFakeStore(workspaceID, db.WorkspaceModeAgent)
+	targetShotID := testUUID(2)
+	otherShotID := testUUID(3)
+	targetPlanID := testUUID(4)
+	store.renderPlans = []db.RenderPlan{
+		{
+			ID:                 targetPlanID,
+			WorkspaceID:        workspaceID,
+			ScopeType:          "shot",
+			ScopeID:            targetShotID,
+			TargetPhase:        "preview_image",
+			TaskType:           "generate",
+			ModelPromptProfile: "seedream_5_image",
+			Operation:          "image_to_image",
+			Status:             "waiting_for_approval",
+			Revision:           1,
+		},
+		{
+			ID:                 testUUID(5),
+			WorkspaceID:        workspaceID,
+			ScopeType:          "shot",
+			ScopeID:            otherShotID,
+			TargetPhase:        "preview_image",
+			TaskType:           "generate",
+			ModelPromptProfile: "seedream_5_image",
+			Operation:          "image_to_image",
+			Status:             "waiting_for_approval",
+			Revision:           1,
+		},
+	}
+	service := NewService(store)
+
+	packet, err := service.ReadProjectContext(context.Background(), ReadContextInput{
+		WorkspaceID: workspaceID,
+		ScopeType:   "shot",
+		ScopeID:     uuidString(targetShotID),
+	})
+	if err != nil {
+		t.Fatalf("read context: %v", err)
+	}
+	if len(packet.RenderPlans) != 1 {
+		t.Fatalf("render plans len = %d, want 1: %#v", len(packet.RenderPlans), packet.RenderPlans)
+	}
+	if packet.RenderPlans[0].ID != targetPlanID {
+		t.Fatalf("render plan id = %s, want %s", uuidString(packet.RenderPlans[0].ID), uuidString(targetPlanID))
+	}
+}
+
 func TestServiceRejectsStudioWorkspace(t *testing.T) {
 	workspaceID := testUUID(1)
 	service := NewService(newFakeStore(workspaceID, db.WorkspaceModeStudio))
@@ -670,6 +720,16 @@ func (s *fakeStore) ListShotDependenciesByWorkspace(context.Context, pgtype.UUID
 
 func (s *fakeStore) ListRenderPlansByWorkspace(context.Context, pgtype.UUID) ([]db.RenderPlan, error) {
 	return append([]db.RenderPlan(nil), s.renderPlans...), nil
+}
+
+func (s *fakeStore) ListRenderPlansByScope(_ context.Context, arg db.ListRenderPlansByScopeParams) ([]db.RenderPlan, error) {
+	out := []db.RenderPlan{}
+	for _, plan := range s.renderPlans {
+		if plan.WorkspaceID == arg.WorkspaceID && plan.ScopeType == arg.ScopeType && plan.ScopeID == arg.ScopeID {
+			out = append(out, plan)
+		}
+	}
+	return out, nil
 }
 
 func testUUID(seed byte) pgtype.UUID {

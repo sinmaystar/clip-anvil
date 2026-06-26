@@ -28,6 +28,8 @@ type ExecutorRuntime interface {
 	UpdateMessage(ctx context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error)
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
+	CreateProducerPendingSignal(ctx context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error)
+	GetLatestRenderPlanByTaskScopePhase(ctx context.Context, params db.GetLatestRenderPlanByTaskScopePhaseParams) (db.RenderPlan, error)
 	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
 	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
 	UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error)
@@ -141,6 +143,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 			return e.fail(ctx, input, "craftsman_tool_trace_persist_failed", err)
 		}
 	}
+	if err := e.persistAssistantText(ctx, input, out.AssistantText); err != nil {
+		return e.fail(ctx, input, "craftsman_message_persist_failed", err)
+	}
 	outputPayload := map[string]any{
 		"assistant_text": out.AssistantText,
 		"metadata":       out.Metadata,
@@ -157,9 +162,6 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		outputPayload["checkpoint_key"] = out.Metadata["checkpoint_key"]
 	}
 	rawOutput, _ := json.Marshal(outputPayload)
-	if _, err := e.runtime.MarkTaskSucceeded(ctx, input.TaskID, rawOutput); err != nil {
-		return err
-	}
 	if _, err := e.runtime.SetThreadCheckpoint(ctx, input.ThreadID, checkpointKey); err != nil {
 		return e.fail(ctx, input, "craftsman_checkpoint_update_failed", err)
 	}
@@ -173,6 +175,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		Payload:     rawOutput,
 	})
 	if err := e.wakeProducerIfNeeded(ctx, input, taskInput, rawOutput); err != nil {
+		return e.fail(ctx, input, "craftsman_ready_missing_render_plan", err)
+	}
+	if _, err := e.runtime.MarkTaskSucceeded(ctx, input.TaskID, rawOutput); err != nil {
 		return err
 	}
 	return nil
@@ -343,12 +348,80 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 	if taskInput.ExecutionPolicy != "wait_for_producer" || e == nil || e.runtime == nil || e.producerEnqueuer == nil || !taskInput.ProducerThreadID.Valid {
 		return nil
 	}
+	renderPlan, err := e.runtime.GetLatestRenderPlanByTaskScopePhase(ctx, db.GetLatestRenderPlanByTaskScopePhaseParams{
+		WorkspaceID:     input.WorkspaceID,
+		ScopeType:       input.ScopeType,
+		ScopeID:         input.ScopeID,
+		TargetPhase:     taskInput.Mode,
+		CreatedByTaskID: input.TaskID,
+	})
+	if err != nil {
+		return fmt.Errorf("craftsman ready missing render plan: %w", err)
+	}
+	triggerText := craftsmanReadyUserMessageText(input, taskInput)
+	triggerContent, err := uimessage.BuildUserMessageContent(uimessage.UserMessageInput{Text: triggerText})
+	if err != nil {
+		return err
+	}
+	triggerMessage, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: input.WorkspaceID,
+		ThreadID:    taskInput.ProducerThreadID,
+		Role:        "user",
+		MessageType: "text",
+		Content:     triggerContent,
+		RawMessage: mustJSON(map[string]any{
+			"source":              "system",
+			"trigger":             "craftsman_render_plan_ready",
+			"craftsman_task_id":   uuidString(input.TaskID),
+			"craftsman_thread_id": uuidString(input.ThreadID),
+			"scope_type":          input.ScopeType,
+			"scope_id":            uuidString(input.ScopeID),
+			"shot_id":             uuidString(input.ShotID),
+			"target_phase":        taskInput.Mode,
+			"render_plan_id":      uuidString(renderPlan.ID),
+		}),
+		TaskID: input.TaskID,
+	})
+	if err != nil {
+		return err
+	}
+	e.broadcastMessage(input.WorkspaceID, triggerMessage, db.AgentEvent{})
+	_, err = e.runtime.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
+		WorkspaceID:      input.WorkspaceID,
+		ProducerThreadID: taskInput.ProducerThreadID,
+		SourceRole:       "craftsman",
+		SourceTaskID:     input.TaskID,
+		SourceThreadID:   input.ThreadID,
+		SignalType:       "craftsman_render_plan_ready",
+		ScopeType:        input.ScopeType,
+		ScopeID:          input.ScopeID,
+		RenderPlanID:     renderPlan.ID,
+		MessageID:        triggerMessage.ID,
+		Priority:         50,
+		DedupeKey:        "craftsman_render_plan_ready:" + uuidString(renderPlan.ID),
+		Payload: mustJSON(map[string]any{
+			"target_phase":        taskInput.Mode,
+			"render_plan_id":      uuidString(renderPlan.ID),
+			"render_plan_status":  renderPlan.Status,
+			"scope_type":          input.ScopeType,
+			"scope_id":            uuidString(input.ScopeID),
+			"shot_id":             uuidString(input.ShotID),
+			"craftsman_task_id":   uuidString(input.TaskID),
+			"craftsman_thread_id": uuidString(input.ThreadID),
+			"craftsman_output":    json.RawMessage(craftsmanOutput),
+		}),
+	})
+	if err != nil {
+		return err
+	}
 	activeTasks, err := e.runtime.ListActiveAgentTasksByWorkspace(ctx, input.WorkspaceID)
 	if err != nil {
 		return err
 	}
 	for _, task := range activeTasks {
-		if task.Role == "producer" && (task.TaskType == "producer_turn" || task.TaskType == "decision_resume") && (task.Status == "queued" || task.Status == "running") {
+		if task.Role == "producer" &&
+			(task.TaskType == "producer_turn" || task.TaskType == "decision_resume") &&
+			(task.Status == "queued" || task.Status == "running" || task.Status == "waiting_for_user") {
 			return nil
 		}
 	}
@@ -361,6 +434,9 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 		"scope_id":            uuidString(input.ScopeID),
 		"shot_id":             uuidString(input.ShotID),
 		"target_phase":        taskInput.Mode,
+		"render_plan_id":      uuidString(renderPlan.ID),
+		"trigger_message_id":  uuidString(triggerMessage.ID),
+		"trigger_message_seq": triggerMessage.Seq,
 	})
 	task, err := e.runtime.CreateTask(ctx, agentruntime.CreateTaskParams{
 		WorkspaceID: input.WorkspaceID,
@@ -382,10 +458,34 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 		SourceRole:  "system",
 		TargetRole:  "producer",
 		Scope:       mustJSON(map[string]any{"trigger": "craftsman_render_plan_ready", "scope_type": input.ScopeType, "scope_id": uuidString(input.ScopeID)}),
-		Payload:     mustJSON(map[string]any{"craftsman_task_id": uuidString(input.TaskID), "target_phase": taskInput.Mode, "craftsman_output": json.RawMessage(craftsmanOutput)}),
+		Payload:     mustJSON(map[string]any{"craftsman_task_id": uuidString(input.TaskID), "target_phase": taskInput.Mode, "render_plan_id": uuidString(renderPlan.ID), "trigger_message_id": uuidString(triggerMessage.ID), "trigger_message_seq": triggerMessage.Seq, "craftsman_output": json.RawMessage(craftsmanOutput)}),
 	})
 	e.producerEnqueuer.EnqueueProducerTask(ctx, task)
 	return nil
+}
+
+func craftsmanReadyUserMessageText(input RunTaskInput, taskInput parsedTaskInput) string {
+	lines := []string{
+		"<system-reminder>",
+		"系统事件：Craftsman 已完成 RenderPlan 编译。",
+		"触发原因：craftsman_render_plan_ready。",
+		"当前 ready 的 RenderPlan 已写入 Producer Pending Signal。请结合系统提醒里的 signal 列表处理，不要只依赖聊天消息顺序。",
+		"下一步：请读取项目上下文，按 signal 指定的 RenderPlan 决定调用 decide_render_plan accept/reject，或先派 Reviewer 评审。",
+	}
+	if targetPhase := strings.TrimSpace(taskInput.Mode); targetPhase != "" {
+		lines = append(lines, "目标阶段："+targetPhase+"。")
+	}
+	if scopeType := strings.TrimSpace(input.ScopeType); scopeType != "" {
+		lines = append(lines, "目标范围："+scopeType+" "+uuidString(input.ScopeID)+"。")
+	}
+	if input.ShotID.Valid {
+		lines = append(lines, "关联分镜："+uuidString(input.ShotID)+"。")
+	}
+	if input.TaskID.Valid {
+		lines = append(lines, "Craftsman 任务："+uuidString(input.TaskID)+"。")
+	}
+	lines = append(lines, "</system-reminder>")
+	return strings.Join(lines, "\n")
 }
 
 func stringUUIDValue(value any) (pgtype.UUID, bool) {
@@ -525,6 +625,31 @@ func (e *Executor) persistNativeToolTrace(ctx context.Context, input RunTaskInpu
 			}
 		}
 	}
+	return nil
+}
+
+func (e *Executor) persistAssistantText(ctx context.Context, input RunTaskInput, text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	content, err := uimessage.BuildAssistantMessageContent(uimessage.AssistantMessageInput{Text: text})
+	if err != nil {
+		return err
+	}
+	msg, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: input.WorkspaceID,
+		ThreadID:    input.ThreadID,
+		Role:        "assistant",
+		MessageType: "text",
+		Content:     content,
+		RawMessage:  mustJSON(map[string]any{"schema": "clipanvil.agent.assistant_text.v1", "text": text}),
+		TaskID:      input.TaskID,
+	})
+	if err != nil {
+		return err
+	}
+	e.broadcastMessage(input.WorkspaceID, msg, db.AgentEvent{})
 	return nil
 }
 

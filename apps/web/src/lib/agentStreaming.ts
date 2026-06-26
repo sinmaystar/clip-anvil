@@ -28,6 +28,21 @@ export interface AgentStreamFinalMessage {
   content?: unknown;
 }
 
+export function finalizeAgentStreamWithMessage<T extends AgentStreamFinalMessage>(
+  currentStreams: AgentStreamState[],
+  currentFinalizedKeys: Set<string>,
+  message: T,
+) {
+  const finalizedStreamKeys = rememberFinalAgentMessage(
+    currentFinalizedKeys,
+    message,
+  );
+  return {
+    finalizedStreamKeys,
+    streams: clearAgentStream(currentStreams, message.task_id),
+  };
+}
+
 export function mergeAgentStreamDelta(
   current: AgentStreamState[],
   incoming: AgentStreamDelta,

@@ -33,11 +33,18 @@ type PSSBuilder interface {
 	BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID) (agentpss.ProducerPSS, error)
 }
 
+type MessageRuntime interface {
+	ListMessages(ctx context.Context, threadID pgtype.UUID, afterSeq int64, limit int32) ([]db.AgentMessage, error)
+}
+
 type ContextLoader struct {
 	Store       ContextStore
+	Runtime     MessageRuntime
 	ImageReader ImageObjectReader
 	PSSBuilder  PSSBuilder
 }
+
+const reviewerContextMessageLimit int32 = 1000
 
 func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, error) {
 	if l.Store == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid {
@@ -79,6 +86,13 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 	if version.NodeID != node.ID {
 		return Context{}, ErrInvalidInput
 	}
+	messages := []db.AgentMessage{}
+	if l.Runtime != nil {
+		messages, err = l.Runtime.ListMessages(ctx, input.ThreadID, 0, reviewerContextMessageLimit)
+		if err != nil {
+			return Context{}, err
+		}
+	}
 	job := db.GenerationJob{}
 	if jobID, ok := pgUUIDFromString(input.Task.GenerationJobID); ok {
 		job, err = l.Store.GetGenerationJobByID(ctx, jobID)
@@ -116,6 +130,7 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 		Node:           node,
 		Version:        version,
 		GenerationJob:  job,
+		Messages:       messages,
 		PriorReviews:   priorReviews,
 		ProductionText: productionText,
 		AssetURL:       assetURL,

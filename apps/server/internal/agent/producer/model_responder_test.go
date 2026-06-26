@@ -64,17 +64,24 @@ func TestVolcengineModelResponderStreamsDeltasAndReturnsFinalText(t *testing.T) 
 }
 
 func TestProducerSystemPromptContainsDomainConcepts(t *testing.T) {
-	prompt := ProducerSystemPrompt(ProducerContext{ProductionStateText: "已有 2 个分镜。"})
+	prompt := ProducerSystemPrompt(ProducerContext{})
 	for _, want := range []string{
 		"ClipAnvil 领域概念",
 		"ProjectMemory 是项目创作宪法",
 		"KeyElement 是视频中需要保持一致或复用的关键元素",
 		"Storyboard 不是一段纯文本脚本",
 		"不要在 Producer 字段中写 Seedance",
-		"当前 Project Context",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"当前 Project Context",
+		"已有 2 个分镜",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt contains dynamic project state %q", forbidden)
 		}
 	}
 }
@@ -436,18 +443,33 @@ func TestProducerPromptMessagesUseMarkdownBlocks(t *testing.T) {
 	}
 }
 
-func TestProducerPromptMessagesIncludesProjectContext(t *testing.T) {
+func TestProducerPromptMessagesKeepsSystemPromptStable(t *testing.T) {
 	messages := producerPromptMessages(ProducerContext{
-		LatestUserText:      "创建分镜",
-		ProductionStateText: "Storyboard\n- 当前还没有 storyboard。",
+		LatestUserText: "创建分镜",
 	})
 	if len(messages) != 2 {
 		t.Fatalf("messages len = %d, want 2", len(messages))
 	}
-	if !strings.Contains(messages[0].Content, "当前 Project Context") ||
-		!strings.Contains(messages[0].Content, "当前还没有 storyboard") ||
-		!strings.Contains(messages[0].Content, "upsert_storyboard") {
+	if strings.Contains(messages[0].Content, "当前 Project Context") ||
+		strings.Contains(messages[0].Content, "当前还没有 storyboard") {
 		t.Fatalf("system prompt = %q", messages[0].Content)
+	}
+	if !strings.Contains(messages[0].Content, "upsert_storyboard") {
+		t.Fatalf("system prompt missing tool guidance = %q", messages[0].Content)
+	}
+}
+
+func TestProducerPromptMessagesInjectsPendingSystemReminders(t *testing.T) {
+	messages := producerPromptMessages(ProducerContext{
+		LatestUserText:   "继续",
+		PendingReminders: []string{"<system-reminder>你已连续调用 read_project_context 5 次，请反思策略。</system-reminder>"},
+	})
+	if len(messages) < 3 {
+		t.Fatalf("messages len = %d, want at least 3", len(messages))
+	}
+	if messages[1].Role != schema.System || !strings.Contains(messages[1].Content, "<system-reminder>") ||
+		!strings.Contains(messages[1].Content, "read_project_context") {
+		t.Fatalf("system reminder message = %#v", messages[1])
 	}
 }
 

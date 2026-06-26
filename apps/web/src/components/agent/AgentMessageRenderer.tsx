@@ -10,6 +10,7 @@ import {
   type AgentMarkdownBlock as AgentMarkdownBlockData,
   type AgentMediaBlock as AgentMediaBlockData,
   type AgentMessageBlock,
+  type AgentSystemReminderBlock as AgentSystemReminderBlockData,
   type AgentThinkingBlock as AgentThinkingBlockData,
   type AgentToolStatusBlock as AgentToolStatusBlockData,
 } from "../../lib/agentMessageBlocks";
@@ -65,6 +66,9 @@ function AgentMessageBlockRenderer({
   if (isMarkdownBlock(block)) {
     return <AgentMarkdownBlock block={block} />;
   }
+  if (isSystemReminderBlock(block)) {
+    return <AgentSystemReminderBlock block={block} />;
+  }
   if (isThinkingBlock(block)) {
     return <AgentThinkingBlock block={block} />;
   }
@@ -101,6 +105,28 @@ function isMarkdownBlock(
   block: AgentMessageBlock,
 ): block is AgentMarkdownBlockData {
   return block.type === "markdown" && typeof block.text === "string";
+}
+
+function isSystemReminderBlock(
+  block: AgentMessageBlock,
+): block is AgentSystemReminderBlockData {
+  return block.type === "system_reminder" && typeof block.text === "string";
+}
+
+function AgentSystemReminderBlock({
+  block,
+}: {
+  block: AgentSystemReminderBlockData;
+}) {
+  if (!block.text.trim()) {
+    return null;
+  }
+  return (
+    <div className="agent-system-reminder-block">
+      <span>system-reminder</span>
+      <pre>{block.text}</pre>
+    </div>
+  );
 }
 
 function isThinkingBlock(

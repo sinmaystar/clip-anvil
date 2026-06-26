@@ -9,6 +9,9 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 func TestVolcengineReviewerResponderReturnsNativeToolCallingMessage(t *testing.T) {
@@ -45,6 +48,54 @@ func TestVolcengineReviewerResponderReturnsNativeToolCallingMessage(t *testing.T
 	}
 	if len(streamer.messages[1].UserInputMultiContent) != 2 {
 		t.Fatalf("multi content = %#v", streamer.messages[1].UserInputMultiContent)
+	}
+}
+
+func TestReviewerPromptIncludesHistoricalThreadMessages(t *testing.T) {
+	userContent, err := uimessage.BuildUserMessageContent(uimessage.UserMessageInput{Text: "用户要求 Reviewer 重点检查产品一致性"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assistantContent, err := uimessage.BuildAssistantMessageContent(uimessage.AssistantMessageInput{Text: "已将产品一致性设为评审重点"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := reviewToolPromptMessages(Context{
+		Text: "Review Target\n- shot: shot_01\n- phase: preview_image",
+		Messages: []db.AgentMessage{
+			{Role: "user", MessageType: "text", Content: userContent},
+			{Role: "assistant", MessageType: "text", Content: assistantContent},
+			{
+				Role:        "assistant",
+				MessageType: "tool_call",
+				RawMessage:  []byte(`{"tool_call_id":"call_review_old","tool_name":"submit_review_result","arguments":{"verdict":"accepted_with_warnings"}}`),
+			},
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				Content:     []byte(`{"text":"工具返回：Reviewer 结果已提交"}`),
+				RawMessage:  []byte(`{"tool_call_id":"call_review_old","tool_name":"submit_review_result","result_text":"Reviewer 结果已提交"}`),
+			},
+		},
+	})
+
+	if len(messages) != 6 {
+		t.Fatalf("message count = %d, messages = %#v", len(messages), messages)
+	}
+	if messages[1].Role != schema.User || !strings.Contains(messages[1].Content, "重点检查产品一致性") {
+		t.Fatalf("historical user message missing: %#v", messages[1])
+	}
+	if messages[2].Role != schema.Assistant || !strings.Contains(messages[2].Content, "产品一致性设为评审重点") {
+		t.Fatalf("historical assistant message missing: %#v", messages[2])
+	}
+	if messages[3].Role != schema.Assistant || len(messages[3].ToolCalls) != 1 || messages[3].ToolCalls[0].ID != "call_review_old" || messages[3].ToolCalls[0].Function.Name != "submit_review_result" {
+		t.Fatalf("historical tool call missing: %#v", messages[3])
+	}
+	if messages[4].Role != schema.Tool || messages[4].ToolCallID != "call_review_old" || !strings.Contains(messages[4].Content, "Reviewer 结果已提交") {
+		t.Fatalf("historical tool result missing: %#v", messages[4])
+	}
+	if messages[5].Role != schema.User || !strings.Contains(messages[5].Content, "phase: preview_image") {
+		t.Fatalf("current review target should be last user message before same-turn tools: %#v", messages[5])
 	}
 }
 

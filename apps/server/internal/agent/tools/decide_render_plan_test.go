@@ -67,6 +67,9 @@ func TestDecideRenderPlanAcceptSubmitsWorkerTask(t *testing.T) {
 	if !store.submitted {
 		t.Fatal("render plan was not marked submitted")
 	}
+	if len(runtime.processedRenderPlans) != 1 || runtime.processedRenderPlans[0] != store.plan.ID {
+		t.Fatalf("processed render plans = %#v", runtime.processedRenderPlans)
+	}
 }
 
 func TestDecideRenderPlanRejectDoesNotSubmitWorkerTask(t *testing.T) {
@@ -98,6 +101,9 @@ func TestDecideRenderPlanRejectDoesNotSubmitWorkerTask(t *testing.T) {
 	}
 	if !store.rejected {
 		t.Fatal("render plan was not marked rejected")
+	}
+	if len(runtime.processedRenderPlans) != 1 || runtime.processedRenderPlans[0] != store.plan.ID {
+		t.Fatalf("processed render plans = %#v", runtime.processedRenderPlans)
 	}
 }
 
@@ -145,8 +151,10 @@ func (f *fakeRenderPlanDecisionStore) MarkRenderPlanRejected(_ context.Context, 
 }
 
 type fakeRenderPlanDecisionRuntime struct {
-	createdTasks []db.AgentTask
-	events       []agentruntime.CreateEventParams
+	createdTasks          []db.AgentTask
+	events                []agentruntime.CreateEventParams
+	processedRenderPlans  []pgtype.UUID
+	processedByProducerID []pgtype.UUID
 }
 
 func (f *fakeRenderPlanDecisionRuntime) CreateTask(_ context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {
@@ -170,6 +178,12 @@ func (f *fakeRenderPlanDecisionRuntime) CreateTask(_ context.Context, params age
 func (f *fakeRenderPlanDecisionRuntime) CreateEvent(_ context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
 	f.events = append(f.events, params)
 	return db.AgentEvent{ID: uuidWithByte(100), WorkspaceID: params.WorkspaceID, ThreadID: params.ThreadID, TaskID: params.TaskID, EventType: params.EventType}, nil
+}
+
+func (f *fakeRenderPlanDecisionRuntime) MarkProducerPendingSignalsProcessedByRenderPlan(_ context.Context, workspaceID, renderPlanID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error) {
+	f.processedRenderPlans = append(f.processedRenderPlans, renderPlanID)
+	f.processedByProducerID = append(f.processedByProducerID, taskID)
+	return []db.ProducerPendingSignal{{ID: uuidWithByte(120), WorkspaceID: workspaceID, RenderPlanID: renderPlanID, ProcessedByTaskID: taskID, Status: "processed"}}, nil
 }
 
 type fakeWorkerTaskEnqueuer struct {

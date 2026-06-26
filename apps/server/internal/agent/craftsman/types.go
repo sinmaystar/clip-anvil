@@ -60,6 +60,7 @@ type Context struct {
 	Structured       map[string]any
 	ToolInfos        []*schema.ToolInfo
 	SameTurnMessages []CraftsmanSameTurnMessage
+	PendingReminders []string
 }
 
 type CraftsmanSameTurnMessage struct {

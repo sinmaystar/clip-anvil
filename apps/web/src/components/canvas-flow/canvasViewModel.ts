@@ -61,7 +61,6 @@ export function domainNodeToFlowNode(
     height: node.h,
     data: { kind: "domain", node },
     draggable: false,
-    selectable: false,
   };
 }
 

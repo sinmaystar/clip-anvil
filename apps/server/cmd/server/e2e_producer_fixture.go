@@ -222,7 +222,14 @@ func (e2eM3ReviewerGateProducerResponder) Respond(ctx context.Context, producerC
 	}
 	switch e2eToolResultCount(producerContext.SameTurnMessages) {
 	case 0:
-		args, ok := e2eDispatchReviewerArgs(producerContext.ProductionState)
+		return e2eToolCallOutput("e2e-read-production-state", "read_project_context", `{
+			"brief":"读取生产状态，寻找可评审的 succeeded 预览图 artifact。",
+			"scope":{"type":"workspace","id":""},
+			"include":["production_state"],
+			"detail_level":"summary"
+		}`), nil
+	case 1:
+		args, ok := e2eDispatchReviewerArgsFromText(e2eLatestToolResultText(producerContext.SameTurnMessages))
 		if !ok {
 			return agentproducer.ProducerTurnOutput{
 				AssistantText: "M3 Reviewer Gate fixture 未找到可评审的 preview image，请先完成 M2 RenderPlan 并插入 succeeded artifact。",
@@ -238,78 +245,64 @@ func (e2eM3ReviewerGateProducerResponder) Respond(ctx context.Context, producerC
 	}
 }
 
-func e2eDispatchReviewerArgs(state map[string]any) (string, bool) {
-	shots := e2eAnySlice(state["shots"])
-	for _, item := range shots {
-		shot := e2eAnyMap(item)
-		shotID := e2eStringValue(shot["id"])
-		clientKey := e2eStringValue(shot["client_key"])
-		previews := e2eAnySlice(shot["preview_nodes"])
-		for _, previewItem := range previews {
-			preview := e2eAnyMap(previewItem)
-			nodeID := e2eStringValue(preview["node_id"])
-			versionID := e2eStringValue(preview["version_id"])
-			versionStatus := e2eStringValue(preview["version_status"])
-			if shotID == "" || nodeID == "" || versionID == "" || versionStatus != "succeeded" {
-				continue
-			}
-			return fmt.Sprintf(`{
-				"brief":"评审 %s 的 Seedream 预览图是否可进入后续视频生成。",
-				"review_task":"preview_image_review",
-				"target":{
-					"workspace_scope":"shot",
-					"shot_id":%q,
-					"node_id":%q,
-					"artifact_version_id":%q
-				},
-				"policy":{
-					"overall_threshold":0.72,
-					"axis_threshold":0.70,
-					"max_attempts":1
-				},
-				"auto_decision":{
-					"allow_auto_accept":true,
-					"allow_auto_repair":false,
-					"require_user_on_reject":true
-				},
-				"reason":"M3 E2E 验证 Producer 派发 Reviewer Gate，并要求 Reviewer 写入结构化评审和开放问题。"
-			}`, clientKey, shotID, nodeID, versionID), true
+func e2eDispatchReviewerArgsFromText(text string) (string, bool) {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "PreviewArtifact:") || !strings.Contains(line, "version_status=succeeded") {
+			continue
 		}
+		fields := e2eKeyValueFields(line)
+		shotID := fields["shot_id"]
+		clientKey := fields["shot"]
+		nodeID := fields["node_id"]
+		versionID := fields["version_id"]
+		if shotID == "" || nodeID == "" || versionID == "" {
+			continue
+		}
+		return fmt.Sprintf(`{
+			"brief":"评审 %s 的 Seedream 预览图是否可进入后续视频生成。",
+			"review_task":"preview_image_review",
+			"target":{
+				"workspace_scope":"shot",
+				"shot_id":%q,
+				"node_id":%q,
+				"artifact_version_id":%q
+			},
+			"policy":{
+				"overall_threshold":0.72,
+				"axis_threshold":0.70,
+				"max_attempts":1
+			},
+			"auto_decision":{
+				"allow_auto_accept":true,
+				"allow_auto_repair":false,
+				"require_user_on_reject":true
+			},
+			"reason":"M3 E2E 验证 Producer 派发 Reviewer Gate，并要求 Reviewer 写入结构化评审和开放问题。"
+		}`, clientKey, shotID, nodeID, versionID), true
 	}
 	return "", false
 }
 
-func e2eAnySlice(value any) []any {
-	switch typed := value.(type) {
-	case []any:
-		return typed
-	case []map[string]any:
-		out := make([]any, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, item)
+func e2eKeyValueFields(line string) map[string]string {
+	out := map[string]string{}
+	for _, field := range strings.Fields(line) {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			continue
 		}
-		return out
-	default:
-		return nil
+		out[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), "；,，")
 	}
+	return out
 }
 
-func e2eAnyMap(value any) map[string]any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return typed
-	default:
-		return nil
+func e2eLatestToolResultText(messages []agentproducer.ProducerSameTurnMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "tool" {
+			return messages[i].Content
+		}
 	}
-}
-
-func e2eStringValue(value any) string {
-	switch typed := value.(type) {
-	case string:
-		return typed
-	default:
-		return ""
-	}
+	return ""
 }
 
 func e2eToolResultCount(messages []agentproducer.ProducerSameTurnMessage) int {

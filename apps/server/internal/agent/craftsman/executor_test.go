@@ -19,9 +19,10 @@ import (
 func TestCraftsmanExecutorRunsGraphAndMarksTaskSucceeded(t *testing.T) {
 	runtime := &fakeCraftsmanExecutorRuntime{}
 	graph := fakeCraftsmanRunner{output: GraphOutput{
-		Strategy:   Strategy{Strategy: "方向", PreviewPrompt: "prompt"},
-		WorkerTask: db.AgentTask{ID: uuidWithByte(20), TaskType: "worker_generation"},
-		Metadata:   map[string]any{"checkpoint_key": "craftsman:key"},
+		AssistantText: "Craftsman 已完成 RenderPlan。",
+		Strategy:      Strategy{Strategy: "方向", PreviewPrompt: "prompt"},
+		WorkerTask:    db.AgentTask{ID: uuidWithByte(20), TaskType: "worker_generation"},
+		Metadata:      map[string]any{"checkpoint_key": "craftsman:key"},
 	}}
 	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: &graph})
 
@@ -51,6 +52,9 @@ func TestCraftsmanExecutorRunsGraphAndMarksTaskSucceeded(t *testing.T) {
 	}
 	if runtime.threadCheckpoint != wantCheckpoint {
 		t.Fatalf("thread checkpoint = %q, want %q", runtime.threadCheckpoint, wantCheckpoint)
+	}
+	if len(runtime.appended) != 1 || runtime.appended[0].Role != "assistant" || runtime.appended[0].MessageType != "text" || !strings.Contains(string(runtime.appended[0].Content), "Craftsman 已完成 RenderPlan") {
+		t.Fatalf("assistant message not persisted: %#v", runtime.appended)
 	}
 }
 
@@ -94,8 +98,111 @@ func TestCraftsmanExecutorWakesProducerWhenWaitingForProducer(t *testing.T) {
 	if input["trigger"] != "craftsman_render_plan_ready" || input["craftsman_task_id"] != "04000000-0000-0000-0000-000000000000" {
 		t.Fatalf("producer wake input = %#v", input)
 	}
+	if input["render_plan_id"] != "5a000000-0000-0000-0000-000000000000" {
+		t.Fatalf("producer wake input missing render_plan_id: %#v", input)
+	}
+	if triggerMessageID, ok := input["trigger_message_id"].(string); !ok || triggerMessageID == "" {
+		t.Fatalf("producer wake input missing trigger_message_id: %#v", input)
+	}
+	if triggerMessageSeq, ok := input["trigger_message_seq"].(float64); !ok || triggerMessageSeq <= 0 {
+		t.Fatalf("producer wake input missing trigger_message_seq: %#v", input)
+	}
+	if len(runtime.appended) != 2 {
+		t.Fatalf("appended messages = %#v", runtime.appended)
+	}
+	wakeMessage := runtime.appended[1]
+	if wakeMessage.ThreadID != uuidWithByte(3) || wakeMessage.Role != "user" || wakeMessage.MessageType != "text" {
+		t.Fatalf("wake user message = %#v", wakeMessage)
+	}
+	if !strings.Contains(string(wakeMessage.Content), "craftsman_render_plan_ready") ||
+		!strings.Contains(string(wakeMessage.Content), "当前 ready 的 RenderPlan") ||
+		!strings.Contains(string(wakeMessage.Content), "关联分镜：02000000-0000-0000-0000-000000000000") {
+		t.Fatalf("wake user message content = %s", wakeMessage.Content)
+	}
+	if len(runtime.signals) != 1 {
+		t.Fatalf("signals = %#v", runtime.signals)
+	}
+	signal := runtime.signals[0]
+	if signal.SignalType != "craftsman_render_plan_ready" ||
+		signal.RenderPlanID != uuidWithByte(90) ||
+		signal.MessageID != wakeMessage.ID ||
+		signal.DedupeKey != "craftsman_render_plan_ready:5a000000-0000-0000-0000-000000000000" {
+		t.Fatalf("signal = %#v", signal)
+	}
 	if len(producerEnqueuer.tasks) != 1 || producerEnqueuer.tasks[0].ID != task.ID {
 		t.Fatalf("enqueued producer tasks = %#v", producerEnqueuer.tasks)
+	}
+}
+
+func TestCraftsmanExecutorDoesNotWakeProducerWhenProducerWaitingForUser(t *testing.T) {
+	runtime := &fakeCraftsmanExecutorRuntime{
+		activeTasks: []db.AgentTask{
+			{ID: uuidWithByte(91), Role: "producer", TaskType: "producer_turn", Status: "waiting_for_user"},
+		},
+	}
+	producerEnqueuer := &fakeProducerTaskEnqueuer{}
+	graph := fakeCraftsmanRunner{output: GraphOutput{
+		AssistantText: "RenderPlan 已创建，等待 Producer 审批。",
+		Metadata:      map[string]any{"checkpoint_key": "craftsman:key"},
+	}}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:          runtime,
+		Graph:            &graph,
+		ProducerEnqueuer: producerEnqueuer,
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(30),
+		TaskID:      uuidWithByte(4),
+		ShotID:      uuidWithByte(2),
+		Input:       []byte(`{"target_phase":"preview_image","execution_policy":"wait_for_producer","producer_thread_id":"03000000-0000-0000-0000-000000000000","producer_task_id":"04000000-0000-0000-0000-000000000000"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.signals) != 1 {
+		t.Fatalf("signals = %#v", runtime.signals)
+	}
+	if len(runtime.createdTasks) != 0 || len(producerEnqueuer.tasks) != 0 {
+		t.Fatalf("created tasks = %#v, enqueued = %#v", runtime.createdTasks, producerEnqueuer.tasks)
+	}
+}
+
+func TestCraftsmanExecutorFailsWhenWaitingForProducerWithoutRenderPlan(t *testing.T) {
+	runtime := &fakeCraftsmanExecutorRuntime{renderPlanErr: errors.New("render plan not found")}
+	producerEnqueuer := &fakeProducerTaskEnqueuer{}
+	graph := fakeCraftsmanRunner{output: GraphOutput{
+		AssistantText: "我已经准备好让 Producer 处理。",
+		Metadata:      map[string]any{"checkpoint_key": "craftsman:key"},
+	}}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:          runtime,
+		Graph:            &graph,
+		ProducerEnqueuer: producerEnqueuer,
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(30),
+		TaskID:      uuidWithByte(4),
+		ShotID:      uuidWithByte(2),
+		Input:       []byte(`{"target_phase":"shot_video","execution_policy":"wait_for_producer","producer_thread_id":"03000000-0000-0000-0000-000000000000","producer_task_id":"04000000-0000-0000-0000-000000000000"}`),
+	})
+	if err == nil {
+		t.Fatal("RunTask succeeded, want failure")
+	}
+	if runtime.succeeded {
+		t.Fatal("task was marked succeeded even though no RenderPlan was created")
+	}
+	if !runtime.failed || runtime.failedCode != "craftsman_ready_missing_render_plan" {
+		t.Fatalf("failed=%v code=%q", runtime.failed, runtime.failedCode)
+	}
+	if len(runtime.createdTasks) != 0 || len(runtime.signals) != 0 || len(producerEnqueuer.tasks) != 0 {
+		t.Fatalf("producer wake leaked: created=%#v signals=%#v enqueued=%#v", runtime.createdTasks, runtime.signals, producerEnqueuer.tasks)
+	}
+	if len(runtime.statusUpdates) != 1 || runtime.statusUpdates[0].Status != "failed" {
+		t.Fatalf("shot status updates = %#v", runtime.statusUpdates)
 	}
 }
 
@@ -270,6 +377,9 @@ func traceAttribute(ctx context.Context, key string) string {
 type fakeCraftsmanExecutorRuntime struct {
 	running          bool
 	succeeded        bool
+	failed           bool
+	failedCode       string
+	failedMessage    string
 	output           []byte
 	threadCheckpoint string
 	appendSeq        int64
@@ -277,6 +387,9 @@ type fakeCraftsmanExecutorRuntime struct {
 	updated          []db.AgentMessage
 	statusUpdates    []db.UpdateShotStatusParams
 	createdTasks     []db.AgentTask
+	activeTasks      []db.AgentTask
+	signals          []db.ProducerPendingSignal
+	renderPlanErr    error
 }
 
 func (f *fakeCraftsmanExecutorRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
@@ -290,7 +403,10 @@ func (f *fakeCraftsmanExecutorRuntime) MarkTaskSucceeded(_ context.Context, _ pg
 	return db.AgentTask{}, nil
 }
 
-func (f *fakeCraftsmanExecutorRuntime) MarkTaskFailed(context.Context, pgtype.UUID, string, string) (db.AgentTask, error) {
+func (f *fakeCraftsmanExecutorRuntime) MarkTaskFailed(_ context.Context, _ pgtype.UUID, code, message string) (db.AgentTask, error) {
+	f.failed = true
+	f.failedCode = code
+	f.failedMessage = message
 	return db.AgentTask{}, nil
 }
 
@@ -329,6 +445,43 @@ func (f *fakeCraftsmanExecutorRuntime) CreateEvent(context.Context, agentruntime
 	return db.AgentEvent{}, nil
 }
 
+func (f *fakeCraftsmanExecutorRuntime) CreateProducerPendingSignal(_ context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error) {
+	signal := db.ProducerPendingSignal{
+		ID:               uuidWithByte(byte(80 + len(f.signals))),
+		WorkspaceID:      params.WorkspaceID,
+		ProducerThreadID: params.ProducerThreadID,
+		SourceRole:       params.SourceRole,
+		SourceTaskID:     params.SourceTaskID,
+		SourceThreadID:   params.SourceThreadID,
+		SignalType:       params.SignalType,
+		ScopeType:        params.ScopeType,
+		ScopeID:          params.ScopeID,
+		RenderPlanID:     params.RenderPlanID,
+		MessageID:        params.MessageID,
+		Status:           "pending",
+		Priority:         params.Priority,
+		DedupeKey:        params.DedupeKey,
+		Payload:          params.Payload,
+	}
+	f.signals = append(f.signals, signal)
+	return signal, nil
+}
+
+func (f *fakeCraftsmanExecutorRuntime) GetLatestRenderPlanByTaskScopePhase(_ context.Context, params db.GetLatestRenderPlanByTaskScopePhaseParams) (db.RenderPlan, error) {
+	if f.renderPlanErr != nil {
+		return db.RenderPlan{}, f.renderPlanErr
+	}
+	return db.RenderPlan{
+		ID:              uuidWithByte(90),
+		WorkspaceID:     params.WorkspaceID,
+		ScopeType:       params.ScopeType,
+		ScopeID:         params.ScopeID,
+		TargetPhase:     params.TargetPhase,
+		Status:          "waiting_for_approval",
+		CreatedByTaskID: params.CreatedByTaskID,
+	}, nil
+}
+
 func (f *fakeCraftsmanExecutorRuntime) CreateTask(_ context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {
 	task := db.AgentTask{
 		ID:          uuidWithByte(byte(70 + len(f.createdTasks))),
@@ -347,7 +500,7 @@ func (f *fakeCraftsmanExecutorRuntime) CreateTask(_ context.Context, params agen
 }
 
 func (f *fakeCraftsmanExecutorRuntime) ListActiveAgentTasksByWorkspace(context.Context, pgtype.UUID) ([]db.AgentTask, error) {
-	return nil, nil
+	return f.activeTasks, nil
 }
 
 func (f *fakeCraftsmanExecutorRuntime) SetThreadCheckpoint(_ context.Context, _ pgtype.UUID, checkpointKey string) (db.AgentThread, error) {

@@ -4,14 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
+	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 var ErrInvalidGraphConfig = errors.New("invalid producer graph config")
@@ -24,8 +29,14 @@ type GraphConfig struct {
 	Loader             ContextLoader
 	Responder          Responder
 	NativeToolRegistry *agenttools.NativeRegistry
+	SignalRuntime      ProducerSignalRuntime
 	CheckPointStore    compose.CheckPointStore
 	CompileCallbacks   []compose.GraphCompileCallback
+}
+
+type ProducerSignalRuntime interface {
+	ClaimProducerPendingSignals(ctx context.Context, params agentruntime.ClaimProducerPendingSignalsParams) ([]db.ProducerPendingSignal, error)
+	ListClaimedProducerSignalsByTask(ctx context.Context, workspaceID, producerThreadID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error)
 }
 
 type Graph struct {
@@ -44,6 +55,8 @@ type ProducerLoopState struct {
 	LastToolCalls        []schema.ToolCall
 	LastToolResults      []*schema.Message
 	ToolIterations       int
+	ReminderCooldowns    map[string]int
+	NewlyClaimedSignals  int
 }
 
 func NewGraph(config GraphConfig) (*Graph, error) {
@@ -68,6 +81,11 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 	if err := g.AddLambdaNode("prepare_turn_state", compose.InvokableLambda(func(_ context.Context, input ProducerContext) (ProducerLoopState, error) {
 		input.ToolInfos = toolInfos
 		return ProducerLoopState{Context: input}, nil
+	})); err != nil {
+		return nil, err
+	}
+	if err := g.AddLambdaNode("before_model", compose.InvokableLambda(func(ctx context.Context, state ProducerLoopState) (ProducerLoopState, error) {
+		return applyProducerBeforeModel(ctx, config.SignalRuntime, state)
 	})); err != nil {
 		return nil, err
 	}
@@ -104,6 +122,11 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 	})); err != nil {
 		return nil, err
 	}
+	if err := g.AddLambdaNode("check_signals_before_finalize", compose.InvokableLambda(func(ctx context.Context, state ProducerLoopState) (ProducerLoopState, error) {
+		return applyProducerSignalCheck(ctx, config.SignalRuntime, state)
+	})); err != nil {
+		return nil, err
+	}
 	if err := g.AddLambdaNode("finalize_response", compose.InvokableLambda(func(_ context.Context, state ProducerLoopState) (ProducerTurnOutput, error) {
 		out, err := finalizeProducerOutput(state.LastOutput)
 		if err != nil {
@@ -125,13 +148,16 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 	if err := g.AddEdge("load_context", "prepare_turn_state"); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("prepare_turn_state", "call_model"); err != nil {
+	if err := g.AddEdge("prepare_turn_state", "before_model"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("before_model", "call_model"); err != nil {
 		return nil, err
 	}
 	if err := g.AddBranch("call_model", compose.NewGraphBranch(routeProducerModelOutput(), map[string]bool{
-		"prepare_tool_message": true,
-		"finalize_response":    true,
-		"fail_turn":            true,
+		"prepare_tool_message":          true,
+		"check_signals_before_finalize": true,
+		"fail_turn":                     true,
 	})); err != nil {
 		return nil, err
 	}
@@ -141,7 +167,13 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 	if err := g.AddEdge("execute_tools", "append_tool_results"); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("append_tool_results", "call_model"); err != nil {
+	if err := g.AddEdge("append_tool_results", "before_model"); err != nil {
+		return nil, err
+	}
+	if err := g.AddBranch("check_signals_before_finalize", compose.NewGraphBranch(routeProducerFinalizeCheck(), map[string]bool{
+		"call_model":        true,
+		"finalize_response": true,
+	})); err != nil {
 		return nil, err
 	}
 	if err := g.AddEdge("finalize_response", compose.END); err != nil {
@@ -152,6 +184,107 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 	}
 
 	return compileProducerGraph(g, config)
+}
+
+func applyProducerBeforeModel(ctx context.Context, signalRuntime ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
+	reminderState := toolloop.BeforeModel(producerLoopMessages(state.Context), state.ToolIterations, state.ReminderCooldowns, toolloop.DefaultConfig())
+	state.ReminderCooldowns = reminderState.Cooldowns
+	state.Context.PendingReminders = reminderState.PendingReminders
+	signalReminders, newlyClaimed, err := producerSignalReminders(ctx, signalRuntime, state.Context.Input)
+	if err != nil {
+		return ProducerLoopState{}, err
+	}
+	state.NewlyClaimedSignals = newlyClaimed
+	state.Context.PendingReminders = append(state.Context.PendingReminders, signalReminders...)
+	return state, nil
+}
+
+func applyProducerSignalCheck(ctx context.Context, signalRuntime ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
+	signalReminders, newlyClaimed, err := producerSignalReminders(ctx, signalRuntime, state.Context.Input)
+	if err != nil {
+		return ProducerLoopState{}, err
+	}
+	state.NewlyClaimedSignals = newlyClaimed
+	if newlyClaimed > 0 {
+		state.Context.PendingReminders = signalReminders
+	}
+	return state, nil
+}
+
+func producerSignalReminders(ctx context.Context, runtime ProducerSignalRuntime, input ProducerTurnInput) ([]string, int, error) {
+	if runtime == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid {
+		return nil, 0, nil
+	}
+	claimed, err := runtime.ClaimProducerPendingSignals(ctx, agentruntime.ClaimProducerPendingSignalsParams{
+		WorkspaceID:       input.WorkspaceID,
+		ProducerThreadID:  input.ThreadID,
+		ClaimedByTaskID:   input.TaskID,
+		Limit:             20,
+		StaleAfterSeconds: 600,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	signals, err := runtime.ListClaimedProducerSignalsByTask(ctx, input.WorkspaceID, input.ThreadID, input.TaskID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(signals) == 0 {
+		return nil, len(claimed), nil
+	}
+	return []string{formatProducerSignalReminder(signals)}, len(claimed), nil
+}
+
+func formatProducerSignalReminder(signals []db.ProducerPendingSignal) string {
+	lines := []string{
+		"<system-reminder>",
+		fmt.Sprintf("你有 %d 个待处理 Producer signal。", len(signals)),
+		"这些 signal 是工程事件队列，不是普通用户需求；请读取项目上下文，然后按业务优先级处理。",
+		"处理 craftsman_render_plan_ready 时，应针对 signal 指定的 render_plan_id 调用 decide_render_plan accept/reject，或先派 Reviewer。",
+	}
+	for i, signal := range signals {
+		lines = append(lines, fmt.Sprintf("%d. %s: scope=%s/%s render_plan_id=%s target_phase=%s source_task=%s",
+			i+1,
+			strings.TrimSpace(signal.SignalType),
+			strings.TrimSpace(signal.ScopeType),
+			uuidString(signal.ScopeID),
+			uuidString(signal.RenderPlanID),
+			signalPayloadString(signal.Payload, "target_phase"),
+			uuidString(signal.SourceTaskID),
+		))
+	}
+	lines = append(lines, "</system-reminder>")
+	return strings.Join(lines, "\n")
+}
+
+func signalPayloadString(raw []byte, key string) string {
+	if len(raw) == 0 || strings.TrimSpace(key) == "" {
+		return ""
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	return stringFromAny(payload[key])
+}
+
+func producerLoopMessages(context ProducerContext) []toolloop.Message {
+	out := make([]toolloop.Message, 0, len(context.Messages)+len(context.SameTurnMessages))
+	for _, message := range context.Messages {
+		out = append(out, toolloop.Message{
+			Role:        strings.TrimSpace(message.Role),
+			MessageType: strings.TrimSpace(message.MessageType),
+			ToolName:    toolNameFromRaw(message.RawMessage),
+		})
+	}
+	for _, message := range context.SameTurnMessages {
+		out = append(out, toolloop.Message{
+			Role:        strings.TrimSpace(message.Role),
+			MessageType: strings.TrimSpace(message.MessageType),
+			ToolName:    strings.TrimSpace(message.ToolName),
+		})
+	}
+	return out
 }
 
 func compileProducerGraph(g *compose.Graph[ProducerTurnInput, ProducerTurnOutput], config GraphConfig) (*Graph, error) {
@@ -179,6 +312,15 @@ func routeProducerModelOutput() compose.GraphBranchCondition[ProducerLoopState] 
 				return "fail_turn", nil
 			}
 			return "prepare_tool_message", nil
+		}
+		return "check_signals_before_finalize", nil
+	}
+}
+
+func routeProducerFinalizeCheck() compose.GraphBranchCondition[ProducerLoopState] {
+	return func(_ context.Context, state ProducerLoopState) (string, error) {
+		if state.NewlyClaimedSignals > 0 {
+			return "call_model", nil
 		}
 		return "finalize_response", nil
 	}
@@ -266,6 +408,17 @@ func producerLoopStateForToolResults(stateStore *producerLoopToolStateStore, too
 func stringFromMap(values map[string]any, key string) string {
 	value, _ := values[key].(string)
 	return value
+}
+
+func toolNameFromRaw(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	return stringFromAny(payload["tool_name"])
 }
 
 func nativeToolCalls(message *schema.Message) []schema.ToolCall {

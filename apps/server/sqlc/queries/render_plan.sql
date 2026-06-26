@@ -38,6 +38,17 @@ WHERE workspace_id = $1
 ORDER BY revision DESC
 LIMIT 1;
 
+-- name: GetLatestRenderPlanByTaskScopePhase :one
+SELECT * FROM render_plan
+WHERE workspace_id = $1
+  AND scope_type = $2
+  AND scope_id = $3
+  AND target_phase = $4
+  AND created_by_task_id = $5
+  AND archived_at IS NULL
+ORDER BY revision DESC, updated_at DESC
+LIMIT 1;
+
 -- name: UpdateRenderPlanDraft :one
 UPDATE render_plan
 SET task_type = $3,
@@ -117,6 +128,19 @@ SET status = $3,
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
+  AND status IN ('submitted', 'running')
+  AND archived_at IS NULL
+RETURNING *;
+
+-- name: MarkSubmittedRenderPlanCompletedByWorkerTask :one
+UPDATE render_plan
+SET status = $3,
+    output_version_id = $4,
+    output_node_id = $5,
+    completed_at = now(),
+    updated_at = now()
+WHERE workspace_id = $1
+  AND submitted_worker_task_id = $2
   AND status IN ('submitted', 'running')
   AND archived_at IS NULL
 RETURNING *;

@@ -138,7 +138,7 @@ func (b *Builder) BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID)
 		"scenes":            sceneSummaries(scenes),
 		"source_materials":  nodeSummaries(nodes),
 		"nodes":             nodeSummaries(nodes),
-		"shots":             shotSummaries(shots, previewByShot),
+		"shots":             shotSummaries(shots, previewByShot, shotVideoByShot),
 		"shot_videos":       shotVideoSummaries(shotVideoByShot, shots),
 		"final_outputs":     finalOutputSummaries(finalOutputs),
 		"shot_dependencies": dependencySummaries(deps, shots),
@@ -341,8 +341,12 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeB
 				}
 				b.WriteString("\n")
 			}
-			for _, video := range shotVideoByShot[shot.ID] {
-				fmt.Fprintf(&b, "  ShotVideo: %s, node_status=%s", video.Node.Title, video.Node.Status)
+			videos := shotVideoByShot[shot.ID]
+			if len(videos) == 0 {
+				b.WriteString("  ShotVideo: missing\n")
+			}
+			for _, video := range videos {
+				fmt.Fprintf(&b, "  ShotVideo: %s, state=%s, node_status=%s", video.Node.Title, productionNodeState(video), video.Node.Status)
 				if len(video.Jobs) > 0 {
 					latestJob := video.Jobs[len(video.Jobs)-1]
 					fmt.Fprintf(&b, ", job=%s", latestJob.Status)
@@ -356,13 +360,18 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeB
 		}
 	}
 	b.WriteString("\n分镜视频\n")
-	if len(shotVideoByShot) == 0 {
+	if len(shots) == 0 {
 		b.WriteString("- 无\n")
 	} else {
 		shotNames := shotKeyByID(shots)
 		for _, shot := range shots {
-			for _, video := range shotVideoByShot[shot.ID] {
-				fmt.Fprintf(&b, "- %s ShotVideo: %s, node_status=%s", shotNames[shot.ID], video.Node.Title, video.Node.Status)
+			videos := shotVideoByShot[shot.ID]
+			if len(videos) == 0 {
+				fmt.Fprintf(&b, "- %s ShotVideo: missing\n", shotNames[shot.ID])
+				continue
+			}
+			for _, video := range videos {
+				fmt.Fprintf(&b, "- %s ShotVideo: %s, state=%s, node_status=%s", shotNames[shot.ID], video.Node.Title, productionNodeState(video), video.Node.Status)
 				if len(video.Jobs) > 0 {
 					fmt.Fprintf(&b, ", job=%s", video.Jobs[len(video.Jobs)-1].Status)
 				}
@@ -587,7 +596,7 @@ func nodeSummaries(nodes []db.MediaNode) []map[string]any {
 	return out
 }
 
-func shotSummaries(shots []db.Shot, previewByShot map[pgtype.UUID][]previewNodeState) []map[string]any {
+func shotSummaries(shots []db.Shot, previewByShot map[pgtype.UUID][]previewNodeState, shotVideoByShot map[pgtype.UUID][]previewNodeState) []map[string]any {
 	out := make([]map[string]any, 0, len(shots))
 	for _, shot := range shots {
 		out = append(out, map[string]any{
@@ -598,6 +607,8 @@ func shotSummaries(shots []db.Shot, previewByShot map[pgtype.UUID][]previewNodeS
 			"status":            shot.Status,
 			"narrative_purpose": shot.NarrativePurpose,
 			"preview_nodes":     previewSummaries(previewByShot[shot.ID]),
+			"shot_video_state":  shotVideoState(shotVideoByShot[shot.ID]),
+			"shot_video_nodes":  productionNodeSummaries(shotVideoByShot[shot.ID]),
 		})
 	}
 	return out
@@ -631,12 +642,29 @@ func shotVideoSummaries(shotVideoByShot map[pgtype.UUID][]previewNodeState, shot
 	shotNames := shotKeyByID(shots)
 	out := []map[string]any{}
 	for _, shot := range shots {
-		for _, video := range shotVideoByShot[shot.ID] {
+		videos := shotVideoByShot[shot.ID]
+		if len(videos) == 0 {
+			out = append(out, map[string]any{
+				"shot_id": uuidString(shot.ID),
+				"shot":    shotNames[shot.ID],
+				"state":   "missing",
+			})
+			continue
+		}
+		for _, video := range videos {
 			summary := productionNodeSummary(video)
 			summary["shot_id"] = uuidString(shot.ID)
 			summary["shot"] = shotNames[shot.ID]
 			out = append(out, summary)
 		}
+	}
+	return out
+}
+
+func productionNodeSummaries(states []previewNodeState) []map[string]any {
+	out := make([]map[string]any, 0, len(states))
+	for _, state := range states {
+		out = append(out, productionNodeSummary(state))
 	}
 	return out
 }
@@ -653,6 +681,7 @@ func productionNodeSummary(state previewNodeState) map[string]any {
 	summary := map[string]any{
 		"node_id":   uuidString(state.Node.ID),
 		"title":     state.Node.Title,
+		"state":     productionNodeState(state),
 		"status":    string(state.Node.Status),
 		"operation": state.Node.OperationType,
 	}
@@ -667,6 +696,47 @@ func productionNodeSummary(state previewNodeState) map[string]any {
 		summary["version_status"] = string(latestVersion.Status)
 	}
 	return summary
+}
+
+func shotVideoState(videos []previewNodeState) string {
+	if len(videos) == 0 {
+		return "missing"
+	}
+	return productionNodeState(videos[len(videos)-1])
+}
+
+func productionNodeState(state previewNodeState) string {
+	statuses := []string{string(state.Node.Status)}
+	if len(state.Jobs) > 0 {
+		statuses = append(statuses, string(state.Jobs[len(state.Jobs)-1].Status))
+	}
+	if len(state.Versions) > 0 {
+		statuses = append(statuses, string(state.Versions[len(state.Versions)-1].Status))
+	}
+	if containsStatus(statuses, "failed") {
+		return "failed"
+	}
+	if containsStatus(statuses, "running") || containsStatus(statuses, "queued") || containsStatus(statuses, "submitted") {
+		return "running"
+	}
+	if containsStatus(statuses, "succeeded") {
+		return "succeeded"
+	}
+	for _, status := range statuses {
+		if strings.TrimSpace(status) != "" {
+			return strings.TrimSpace(status)
+		}
+	}
+	return "unknown"
+}
+
+func containsStatus(statuses []string, want string) bool {
+	for _, status := range statuses {
+		if strings.TrimSpace(status) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func dependencySummaries(deps []db.ShotDependency, shots []db.Shot) []map[string]any {

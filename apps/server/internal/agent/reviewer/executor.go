@@ -104,6 +104,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 			return e.fail(ctx, task.ID, "reviewer_tool_trace_persist_failed", err)
 		}
 	}
+	if err := e.persistAssistantText(ctx, task, out.Result.Critique); err != nil {
+		return e.fail(ctx, task.ID, "reviewer_message_persist_failed", err)
+	}
 	rawOutput := mustJSON(map[string]any{
 		"review_record_id": uuidString(out.Record.ID),
 		"status":           out.Decision.Status,
@@ -343,6 +346,31 @@ func (e *Executor) persistNativeToolTrace(ctx context.Context, task db.AgentTask
 			}
 		}
 	}
+	return nil
+}
+
+func (e *Executor) persistAssistantText(ctx context.Context, task db.AgentTask, text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	content, err := uimessage.BuildAssistantMessageContent(uimessage.AssistantMessageInput{Text: text})
+	if err != nil {
+		return err
+	}
+	msg, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: task.WorkspaceID,
+		ThreadID:    task.ThreadID,
+		Role:        "assistant",
+		MessageType: "text",
+		Content:     content,
+		RawMessage:  mustJSON(map[string]any{"schema": "clipanvil.agent.assistant_text.v1", "text": text}),
+		TaskID:      task.ID,
+	})
+	if err != nil {
+		return err
+	}
+	e.broadcastMessage(task.WorkspaceID, msg, db.AgentEvent{})
 	return nil
 }
 

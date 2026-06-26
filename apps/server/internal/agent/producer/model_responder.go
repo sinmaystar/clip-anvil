@@ -17,6 +17,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	arkModel "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -472,6 +473,11 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 	messages := []*schema.Message{
 		schema.SystemMessage(systemPrompt),
 	}
+	for _, reminder := range producerContext.PendingReminders {
+		if text := toolloop.NormalizeSystemReminder(reminder); text != "" {
+			messages = append(messages, schema.SystemMessage(text))
+		}
+	}
 	for _, msg := range producerContext.Messages {
 		switch msg.Role {
 		case "user":
@@ -509,7 +515,7 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 	if trigger := strings.TrimSpace(producerContext.RuntimeTriggerText); trigger != "" {
 		messages = append(messages, schema.UserMessage(runtimeTriggerPromptText(trigger)))
 	}
-	if len(messages) == 1 {
+	if !hasNonSystemPromptMessage(messages) {
 		text := strings.TrimSpace(producerContext.LatestUserText)
 		if text == "" {
 			text = "请开始一次 Producer 对话。"
@@ -517,6 +523,15 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 		messages = append(messages, schema.UserMessage(text))
 	}
 	return messages
+}
+
+func hasNonSystemPromptMessage(messages []*schema.Message) bool {
+	for _, message := range messages {
+		if message != nil && message.Role != schema.System {
+			return true
+		}
+	}
+	return false
 }
 
 func runtimeTriggerPromptText(trigger string) string {

@@ -176,6 +176,74 @@ func (q *Queries) GetLatestRenderPlanByScopePhase(ctx context.Context, arg GetLa
 	return i, err
 }
 
+const getLatestRenderPlanByTaskScopePhase = `-- name: GetLatestRenderPlanByTaskScopePhase :one
+SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at FROM render_plan
+WHERE workspace_id = $1
+  AND scope_type = $2
+  AND scope_id = $3
+  AND target_phase = $4
+  AND created_by_task_id = $5
+  AND archived_at IS NULL
+ORDER BY revision DESC, updated_at DESC
+LIMIT 1
+`
+
+type GetLatestRenderPlanByTaskScopePhaseParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	ScopeType       string      `json:"scope_type"`
+	ScopeID         pgtype.UUID `json:"scope_id"`
+	TargetPhase     string      `json:"target_phase"`
+	CreatedByTaskID pgtype.UUID `json:"created_by_task_id"`
+}
+
+func (q *Queries) GetLatestRenderPlanByTaskScopePhase(ctx context.Context, arg GetLatestRenderPlanByTaskScopePhaseParams) (RenderPlan, error) {
+	row := q.db.QueryRow(ctx, getLatestRenderPlanByTaskScopePhase,
+		arg.WorkspaceID,
+		arg.ScopeType,
+		arg.ScopeID,
+		arg.TargetPhase,
+		arg.CreatedByTaskID,
+	)
+	var i RenderPlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ScopeType,
+		&i.ScopeID,
+		&i.TargetPhase,
+		&i.TaskType,
+		&i.ModelPromptProfile,
+		&i.Operation,
+		&i.Status,
+		&i.Revision,
+		&i.ForkedFromRenderPlanID,
+		&i.RenderPlanKey,
+		&i.ReferenceBindings,
+		&i.SubjectBindings,
+		&i.PromptParts,
+		&i.Params,
+		&i.AuditHints,
+		&i.Blocker,
+		&i.CompiledPrompt,
+		&i.CompiledRequest,
+		&i.PromptAudit,
+		&i.CostEstimate,
+		&i.Rationale,
+		&i.CreatedByThreadID,
+		&i.CreatedByTaskID,
+		&i.SubmittedWorkerTaskID,
+		&i.OutputNodeID,
+		&i.OutputVersionID,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompiledAt,
+		&i.SubmittedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const getRenderPlanByID = `-- name: GetRenderPlanByID :one
 SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at FROM render_plan
 WHERE id = $1 AND workspace_id = $2 AND archived_at IS NULL
@@ -723,6 +791,76 @@ type MarkRenderPlanWaitingForApprovalParams struct {
 
 func (q *Queries) MarkRenderPlanWaitingForApproval(ctx context.Context, arg MarkRenderPlanWaitingForApprovalParams) (RenderPlan, error) {
 	row := q.db.QueryRow(ctx, markRenderPlanWaitingForApproval, arg.ID, arg.WorkspaceID)
+	var i RenderPlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ScopeType,
+		&i.ScopeID,
+		&i.TargetPhase,
+		&i.TaskType,
+		&i.ModelPromptProfile,
+		&i.Operation,
+		&i.Status,
+		&i.Revision,
+		&i.ForkedFromRenderPlanID,
+		&i.RenderPlanKey,
+		&i.ReferenceBindings,
+		&i.SubjectBindings,
+		&i.PromptParts,
+		&i.Params,
+		&i.AuditHints,
+		&i.Blocker,
+		&i.CompiledPrompt,
+		&i.CompiledRequest,
+		&i.PromptAudit,
+		&i.CostEstimate,
+		&i.Rationale,
+		&i.CreatedByThreadID,
+		&i.CreatedByTaskID,
+		&i.SubmittedWorkerTaskID,
+		&i.OutputNodeID,
+		&i.OutputVersionID,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompiledAt,
+		&i.SubmittedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const markSubmittedRenderPlanCompletedByWorkerTask = `-- name: MarkSubmittedRenderPlanCompletedByWorkerTask :one
+UPDATE render_plan
+SET status = $3,
+    output_version_id = $4,
+    output_node_id = $5,
+    completed_at = now(),
+    updated_at = now()
+WHERE workspace_id = $1
+  AND submitted_worker_task_id = $2
+  AND status IN ('submitted', 'running')
+  AND archived_at IS NULL
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+`
+
+type MarkSubmittedRenderPlanCompletedByWorkerTaskParams struct {
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	SubmittedWorkerTaskID pgtype.UUID `json:"submitted_worker_task_id"`
+	Status                string      `json:"status"`
+	OutputVersionID       pgtype.UUID `json:"output_version_id"`
+	OutputNodeID          pgtype.UUID `json:"output_node_id"`
+}
+
+func (q *Queries) MarkSubmittedRenderPlanCompletedByWorkerTask(ctx context.Context, arg MarkSubmittedRenderPlanCompletedByWorkerTaskParams) (RenderPlan, error) {
+	row := q.db.QueryRow(ctx, markSubmittedRenderPlanCompletedByWorkerTask,
+		arg.WorkspaceID,
+		arg.SubmittedWorkerTaskID,
+		arg.Status,
+		arg.OutputVersionID,
+		arg.OutputNodeID,
+	)
 	var i RenderPlan
 	err := row.Scan(
 		&i.ID,

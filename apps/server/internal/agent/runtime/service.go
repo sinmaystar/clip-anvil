@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -158,6 +159,16 @@ func (s *Service) UpdateShotStatus(ctx context.Context, params db.UpdateShotStat
 		return db.Shot{}, ErrInvalidConfig
 	}
 	return s.queries.UpdateShotStatus(ctx, params)
+}
+
+func (s *Service) GetLatestRenderPlanByTaskScopePhase(ctx context.Context, params db.GetLatestRenderPlanByTaskScopePhaseParams) (db.RenderPlan, error) {
+	if s == nil || s.queries == nil {
+		return db.RenderPlan{}, ErrInvalidConfig
+	}
+	if !params.WorkspaceID.Valid || !params.ScopeID.Valid || !params.CreatedByTaskID.Valid || strings.TrimSpace(params.ScopeType) == "" || strings.TrimSpace(params.TargetPhase) == "" {
+		return db.RenderPlan{}, ErrInvalidRequest
+	}
+	return s.queries.GetLatestRenderPlanByTaskScopePhase(ctx, params)
 }
 
 func (s *Service) GetOrCreateReviewerThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {
@@ -565,6 +576,175 @@ func (s *Service) ListAgentEventsByWorkspace(ctx context.Context, workspaceID pg
 	})
 }
 
+type CreateProducerPendingSignalParams struct {
+	WorkspaceID      pgtype.UUID
+	ProducerThreadID pgtype.UUID
+	SourceRole       string
+	SourceTaskID     pgtype.UUID
+	SourceThreadID   pgtype.UUID
+	SignalType       string
+	ScopeType        string
+	ScopeID          pgtype.UUID
+	RenderPlanID     pgtype.UUID
+	MessageID        pgtype.UUID
+	Priority         int32
+	DedupeKey        string
+	Payload          []byte
+}
+
+func (s *Service) CreateProducerPendingSignal(ctx context.Context, params CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return db.ProducerPendingSignal{}, ErrInvalidConfig
+	}
+	if !params.WorkspaceID.Valid || !params.ProducerThreadID.Valid || !validProducerSignalSourceRole(params.SourceRole) || strings.TrimSpace(params.SignalType) == "" || !validProducerSignalScope(params.ScopeType) || strings.TrimSpace(params.DedupeKey) == "" {
+		return db.ProducerPendingSignal{}, ErrInvalidRequest
+	}
+	if params.SignalType == "craftsman_render_plan_ready" && !params.RenderPlanID.Valid {
+		return db.ProducerPendingSignal{}, ErrInvalidRequest
+	}
+	if params.Priority == 0 {
+		params.Priority = 100
+	}
+	return s.queries.CreateProducerPendingSignal(ctx, db.CreateProducerPendingSignalParams{
+		WorkspaceID:      params.WorkspaceID,
+		ProducerThreadID: params.ProducerThreadID,
+		SourceRole:       params.SourceRole,
+		SourceTaskID:     params.SourceTaskID,
+		SourceThreadID:   params.SourceThreadID,
+		SignalType:       params.SignalType,
+		ScopeType:        params.ScopeType,
+		ScopeID:          params.ScopeID,
+		RenderPlanID:     params.RenderPlanID,
+		MessageID:        params.MessageID,
+		Priority:         params.Priority,
+		DedupeKey:        params.DedupeKey,
+		Payload:          defaultJSON(params.Payload),
+	})
+}
+
+type ClaimProducerPendingSignalsParams struct {
+	WorkspaceID       pgtype.UUID
+	ProducerThreadID  pgtype.UUID
+	ClaimedByTaskID   pgtype.UUID
+	Limit             int32
+	StaleAfterSeconds int32
+}
+
+func (s *Service) ClaimProducerPendingSignals(ctx context.Context, params ClaimProducerPendingSignalsParams) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !params.WorkspaceID.Valid || !params.ProducerThreadID.Valid || !params.ClaimedByTaskID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+	if params.Limit > 100 {
+		params.Limit = 100
+	}
+	if params.StaleAfterSeconds <= 0 {
+		params.StaleAfterSeconds = 600
+	}
+	return s.queries.ClaimProducerPendingSignals(ctx, db.ClaimProducerPendingSignalsParams{
+		WorkspaceID:       params.WorkspaceID,
+		ProducerThreadID:  params.ProducerThreadID,
+		ClaimedByTaskID:   params.ClaimedByTaskID,
+		StaleAfterSeconds: params.StaleAfterSeconds,
+		RowLimit:          params.Limit,
+	})
+}
+
+func (s *Service) ListClaimedProducerSignalsByTask(ctx context.Context, workspaceID, producerThreadID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !workspaceID.Valid || !producerThreadID.Valid || !taskID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	return s.queries.ListClaimedProducerSignalsByTask(ctx, db.ListClaimedProducerSignalsByTaskParams{
+		WorkspaceID:      workspaceID,
+		ProducerThreadID: producerThreadID,
+		ClaimedByTaskID:  taskID,
+	})
+}
+
+func (s *Service) MarkProducerPendingSignalProcessed(ctx context.Context, signalID, workspaceID, taskID pgtype.UUID) (db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return db.ProducerPendingSignal{}, ErrInvalidConfig
+	}
+	if !signalID.Valid || !workspaceID.Valid || !taskID.Valid {
+		return db.ProducerPendingSignal{}, ErrInvalidRequest
+	}
+	return s.queries.MarkProducerPendingSignalProcessed(ctx, db.MarkProducerPendingSignalProcessedParams{
+		ID:                signalID,
+		WorkspaceID:       workspaceID,
+		ProcessedByTaskID: taskID,
+	})
+}
+
+func (s *Service) MarkProducerPendingSignalsProcessedByRenderPlan(ctx context.Context, workspaceID, renderPlanID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !workspaceID.Valid || !renderPlanID.Valid || !taskID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	return s.queries.MarkProducerPendingSignalsProcessedByRenderPlan(ctx, db.MarkProducerPendingSignalsProcessedByRenderPlanParams{
+		WorkspaceID:       workspaceID,
+		RenderPlanID:      renderPlanID,
+		ProcessedByTaskID: taskID,
+	})
+}
+
+func (s *Service) MarkProducerPendingSignalIgnored(ctx context.Context, signalID, workspaceID, taskID pgtype.UUID, reason string) (db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return db.ProducerPendingSignal{}, ErrInvalidConfig
+	}
+	if !signalID.Valid || !workspaceID.Valid || !taskID.Valid || strings.TrimSpace(reason) == "" {
+		return db.ProducerPendingSignal{}, ErrInvalidRequest
+	}
+	return s.queries.MarkProducerPendingSignalIgnored(ctx, db.MarkProducerPendingSignalIgnoredParams{
+		ID:                signalID,
+		WorkspaceID:       workspaceID,
+		ProcessedByTaskID: taskID,
+		LastError:         nullableText(reason),
+	})
+}
+
+func (s *Service) ReleaseProducerPendingSignalsForTask(ctx context.Context, workspaceID, taskID pgtype.UUID, reason string) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !workspaceID.Valid || !taskID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	return s.queries.ReleaseProducerPendingSignalsForTask(ctx, db.ReleaseProducerPendingSignalsForTaskParams{
+		WorkspaceID:     workspaceID,
+		ClaimedByTaskID: taskID,
+		LastError:       nullableText(reason),
+	})
+}
+
+func (s *Service) ListPendingProducerSignals(ctx context.Context, workspaceID pgtype.UUID, limit int32) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !workspaceID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	return s.queries.ListPendingProducerSignals(ctx, db.ListPendingProducerSignalsParams{
+		WorkspaceID: workspaceID,
+		Limit:       limit,
+	})
+}
+
 type UpsertCheckpointParams struct {
 	Key         string
 	WorkspaceID pgtype.UUID
@@ -710,6 +890,24 @@ func validTaskType(value string) bool {
 func validEventSourceRole(value string) bool {
 	switch value {
 	case "user", "producer", "craftsman", "reviewer", "composer", "worker", "system":
+		return true
+	default:
+		return false
+	}
+}
+
+func validProducerSignalSourceRole(value string) bool {
+	switch value {
+	case "craftsman", "worker", "reviewer", "composer", "system":
+		return true
+	default:
+		return false
+	}
+}
+
+func validProducerSignalScope(value string) bool {
+	switch value {
+	case "workspace", "shot", "render_plan", "final_output", "key_element_state", "node", "job":
 		return true
 	default:
 		return false

@@ -6,11 +6,7 @@ import (
 )
 
 func ProducerSystemPrompt(producerContext ProducerContext) string {
-	systemPrompt := strings.TrimSpace(strings.ReplaceAll(producerSystemPromptTemplate, "{current_date}", time.Now().Format("2006-01-02")))
-	if pss := strings.TrimSpace(producerContext.ProductionStateText); pss != "" {
-		systemPrompt += "\n\n当前 Project Context:\n" + pss
-	}
-	return systemPrompt
+	return strings.TrimSpace(strings.ReplaceAll(producerSystemPromptTemplate, "{current_date}", time.Now().Format("2006-01-02")))
 }
 
 const producerSystemPromptTemplate = `
@@ -43,6 +39,12 @@ const producerSystemPromptTemplate = `
 - 用户可见回复使用中文。
 - 工具入参中的自然语言字段也使用中文。
 - 当前日期：{current_date}
+
+### System Reminder
+
+上下文中可能出现 <system-reminder>...</system-reminder> 标签。这是 ClipAnvil 工程运行时给你的过程提醒，常用于提示工具调用循环、系统自动唤醒或需要反思策略的情况。
+
+你必须认真参考其中的提醒，但不要把它当成用户的新创意需求，也不要把标签原样复述给用户。遇到提醒时，应先反思当前策略，避免重复无效工具调用，必要时改用决策、写入、委派、评审或向用户说明阻塞点。
 
 ---
 

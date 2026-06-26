@@ -59,6 +59,9 @@ func TestDispatchReviewerCreatesReviewerTask(t *testing.T) {
 	if len(enqueuer.tasks) != 1 {
 		t.Fatalf("enqueued tasks = %d", len(enqueuer.tasks))
 	}
+	if len(runtime.appended) != 1 || runtime.appended[0].Role != "user" || runtime.appended[0].MessageType != "text" || !strings.Contains(string(runtime.appended[0].Content), "Producer 派发 Reviewer 评审任务") {
+		t.Fatalf("delegation message = %#v", runtime.appended)
+	}
 }
 
 type fakeDispatchReviewerStore struct {
@@ -86,6 +89,8 @@ func (f fakeDispatchReviewerStore) GetRenderPlanByID(context.Context, db.GetRend
 
 type fakeDispatchReviewerRuntime struct {
 	createdTask db.AgentTask
+	appendSeq   int64
+	appended    []db.AgentMessage
 }
 
 func (f *fakeDispatchReviewerRuntime) GetOrCreateReviewerThreadForScope(_ context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {
@@ -108,6 +113,23 @@ func (f *fakeDispatchReviewerRuntime) CreateTask(_ context.Context, params agent
 
 func (f *fakeDispatchReviewerRuntime) CreateEvent(context.Context, agentruntime.CreateEventParams) (db.AgentEvent, error) {
 	return db.AgentEvent{ID: uuidWithByte(11), EventType: "review_queued"}, nil
+}
+
+func (f *fakeDispatchReviewerRuntime) AppendMessage(_ context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error) {
+	f.appendSeq++
+	msg := db.AgentMessage{
+		ID:          uuidWithByte(byte(20 + f.appendSeq)),
+		WorkspaceID: params.WorkspaceID,
+		ThreadID:    params.ThreadID,
+		Role:        params.Role,
+		MessageType: params.MessageType,
+		Content:     params.Content,
+		RawMessage:  params.RawMessage,
+		TaskID:      params.TaskID,
+		Seq:         f.appendSeq,
+	}
+	f.appended = append(f.appended, msg)
+	return msg, nil
 }
 
 type fakeReviewerTaskEnqueuer struct {

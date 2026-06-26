@@ -34,6 +34,10 @@ type Runtime interface {
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
 }
 
+type producerSignalReleaser interface {
+	ReleaseProducerPendingSignalsForTask(ctx context.Context, workspaceID, taskID pgtype.UUID, reason string) ([]db.ProducerPendingSignal, error)
+}
+
 type Runner interface {
 	Run(ctx context.Context, input ProducerTurnInput, options ...agenteino.RunOptions) (ProducerTurnOutput, error)
 }
@@ -533,6 +537,9 @@ func (e *Executor) failTask(ctx context.Context, input RunTaskInput, code string
 		"error_code", code,
 		"error", message,
 	)
+	if releaser, ok := e.runtime.(producerSignalReleaser); ok {
+		_, _ = releaser.ReleaseProducerPendingSignalsForTask(ctx, input.WorkspaceID, input.TaskID, code+": "+message)
+	}
 	errorMsg, msgErr := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
 		WorkspaceID: input.WorkspaceID,
 		ThreadID:    input.ThreadID,
@@ -615,7 +622,7 @@ func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) {
 	if input.TriggerMessageSeq <= 0 {
 		input.TriggerMessageSeq = payload.TriggerMessageSeq
 	}
-	if strings.TrimSpace(input.RuntimeTriggerText) == "" {
+	if strings.TrimSpace(input.RuntimeTriggerText) == "" && !input.TriggerMessageID.Valid && input.TriggerMessageSeq <= 0 {
 		input.RuntimeTriggerText = producerRuntimeTriggerText(payload)
 	}
 }
@@ -636,6 +643,7 @@ func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 	switch strings.TrimSpace(payload.Trigger) {
 	case "craftsman_render_plan_ready":
 		lines := []string{
+			"<system-reminder>",
 			"系统事件：Craftsman 已完成 RenderPlan 编译，当前轮次由工程自动唤醒 Producer。",
 			"触发原因：craftsman_render_plan_ready。",
 			"下一步：请读取项目上下文，检查 waiting_for_approval RenderPlan，并决定调用 decide_render_plan accept/reject，或先派 Reviewer 评审。",
@@ -652,6 +660,7 @@ func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 		if craftsmanTaskID := strings.TrimSpace(payload.CraftsmanTaskID); craftsmanTaskID != "" {
 			lines = append(lines, "Craftsman 任务："+craftsmanTaskID+"。")
 		}
+		lines = append(lines, "</system-reminder>")
 		return strings.Join(lines, "\n")
 	default:
 		return ""

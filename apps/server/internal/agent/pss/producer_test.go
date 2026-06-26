@@ -234,6 +234,70 @@ func TestProducerPSSListsShotVideosAndFinalOutputs(t *testing.T) {
 	}
 }
 
+func TestProducerPSSListsShotVideoMissingAndFailedPerShot(t *testing.T) {
+	shotMissing := db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SortOrder: 1, Title: "开场", Status: "preview_ready"}
+	shotFailed := db.Shot{ID: uuidWithByte(3), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SortOrder: 2, Title: "卖点", Status: "failed"}
+	shotRunning := db.Shot{ID: uuidWithByte(4), WorkspaceID: uuidWithByte(1), ClientKey: "shot-03", SortOrder: 3, Title: "行动", Status: "video_running"}
+	failedVideo := db.MediaNode{
+		ID:            uuidWithByte(5),
+		WorkspaceID:   uuidWithByte(1),
+		ShotID:        shotFailed.ID,
+		Title:         "shot-02 shot video",
+		NodeType:      db.NodeTypeVideo,
+		Source:        "agent",
+		Status:        "failed",
+		OperationType: "image_to_video",
+		Metadata:      []byte(`{"agent_artifact_kind":"shot_video"}`),
+	}
+	runningVideo := db.MediaNode{
+		ID:            uuidWithByte(6),
+		WorkspaceID:   uuidWithByte(1),
+		ShotID:        shotRunning.ID,
+		Title:         "shot-03 shot video",
+		NodeType:      db.NodeTypeVideo,
+		Source:        "agent",
+		Status:        "queued",
+		OperationType: "image_to_video",
+		Metadata:      []byte(`{"agent_artifact_kind":"shot_video"}`),
+	}
+	builder := NewBuilder(fakeStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Name: "agent-ws", Mode: db.WorkspaceModeAgent},
+		shots:     []db.Shot{shotMissing, shotFailed, shotRunning},
+		nodes:     []db.MediaNode{failedVideo, runningVideo},
+		jobs: map[pgtype.UUID][]db.GenerationJob{
+			failedVideo.ID:  {{ID: uuidWithByte(7), TargetNodeID: failedVideo.ID, OperationType: "image_to_video", Status: db.JobStatusFailed}},
+			runningVideo.ID: {{ID: uuidWithByte(8), TargetNodeID: runningVideo.ID, OperationType: "image_to_video", Status: db.JobStatusRunning}},
+		},
+		versions: map[pgtype.UUID][]db.ArtifactVersion{
+			failedVideo.ID:  {{ID: uuidWithByte(9), NodeID: failedVideo.ID, Status: db.JobStatusFailed}},
+			runningVideo.ID: {{ID: uuidWithByte(10), NodeID: runningVideo.ID, Status: db.JobStatusQueued}},
+		},
+	})
+
+	pss, err := builder.BuildProducerPSS(context.Background(), uuidWithByte(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"[shot-01] 开场",
+		"ShotVideo: missing",
+		"shot-02 ShotVideo: shot-02 shot video, state=failed",
+		"shot-03 ShotVideo: shot-03 shot video, state=running",
+	} {
+		if !strings.Contains(pss.Text, want) {
+			t.Fatalf("PSS missing %q:\n%s", want, pss.Text)
+		}
+	}
+	shots := pss.Structured["shots"].([]map[string]any)
+	if shots[0]["shot_video_state"] != "missing" || shots[1]["shot_video_state"] != "failed" || shots[2]["shot_video_state"] != "running" {
+		t.Fatalf("structured shots = %#v", shots)
+	}
+	shotVideos := pss.Structured["shot_videos"].([]map[string]any)
+	if len(shotVideos) != 3 || shotVideos[0]["state"] != "missing" || shotVideos[1]["state"] != "failed" || shotVideos[2]["state"] != "running" {
+		t.Fatalf("shot_videos = %#v", shotVideos)
+	}
+}
+
 func TestProducerPSSListsDependencyStatus(t *testing.T) {
 	shot1 := db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SortOrder: 1, Title: "开场"}
 	shot2 := db.Shot{ID: uuidWithByte(3), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SortOrder: 2, Title: "演示"}

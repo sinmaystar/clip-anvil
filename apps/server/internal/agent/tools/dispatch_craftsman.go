@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -31,6 +32,7 @@ type CraftsmanRuntime interface {
 	GetOrCreateCraftsmanThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error)
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
+	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
 }
 
 type CraftsmanTaskEnqueuer interface {
@@ -222,6 +224,9 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		if err != nil {
 			return ExecuteOutput{}, err
 		}
+		if err := t.appendDelegationMessage(ctx, input.WorkspaceID, thread.ID, task.ID, scope, args, taskInput); err != nil {
+			return ExecuteOutput{}, err
+		}
 		_, _ = t.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 			WorkspaceID: input.WorkspaceID,
 			ThreadID:    thread.ID,
@@ -252,6 +257,55 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		"dispatched":   dispatched,
 		"skipped":      skipped,
 	}}, nil
+}
+
+func (t DispatchCraftsmanTool) appendDelegationMessage(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID, taskID pgtype.UUID, scope craftsmanDispatchScope, args parsedDispatchCraftsmanArgs, taskInput map[string]any) error {
+	text := craftsmanDelegationText(scope, args)
+	content, err := uimessage.BuildUserMessageContent(uimessage.UserMessageInput{Text: text})
+	if err != nil {
+		return err
+	}
+	_, err = t.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: workspaceID,
+		ThreadID:    threadID,
+		Role:        "user",
+		MessageType: "text",
+		Content:     content,
+		RawMessage: mustJSON(map[string]any{
+			"schema":       "clipanvil.agent.delegation.v1",
+			"target_role":  "craftsman",
+			"scope_type":   scope.ScopeType,
+			"scope_id":     uuidString(scope.ScopeID),
+			"client_key":   scope.ClientKey,
+			"target_phase": args.TargetPhase,
+			"task_input":   taskInput,
+		}),
+		TaskID: taskID,
+	})
+	return err
+}
+
+func craftsmanDelegationText(scope craftsmanDispatchScope, args parsedDispatchCraftsmanArgs) string {
+	lines := []string{
+		"Producer 派发 Craftsman 任务。",
+		"- scope: " + scope.ScopeType + "=" + uuidString(scope.ScopeID),
+		"- client_key: " + scope.ClientKey,
+		"- target_phase: " + args.TargetPhase,
+		"- execution_policy: " + args.ExecutionPolicy,
+	}
+	if args.Brief != "" {
+		lines = append(lines, "- brief: "+args.Brief)
+	}
+	if args.Critique != "" {
+		lines = append(lines, "- critique: "+args.Critique)
+	}
+	if len(args.FixHints) > 0 {
+		lines = append(lines, "- fix_hints: "+strings.Join(args.FixHints, "；"))
+	}
+	if len(args.InputNodeRefs) > 0 {
+		lines = append(lines, "- input_node_refs: "+strings.Join(args.InputNodeRefs, "；"))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func dispatchCraftsmanSummary(dispatched int, skipped int, scopeType string, targetPhase string, executionPolicy string) string {

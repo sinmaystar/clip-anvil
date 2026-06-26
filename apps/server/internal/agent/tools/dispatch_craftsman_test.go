@@ -77,6 +77,14 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 	if len(runtime.createdTasks) != 3 || len(enqueuer.tasks) != 3 {
 		t.Fatalf("created tasks = %d, enqueued = %d", len(runtime.createdTasks), len(enqueuer.tasks))
 	}
+	if len(runtime.appended) != 3 {
+		t.Fatalf("delegation messages = %#v", runtime.appended)
+	}
+	for _, msg := range runtime.appended {
+		if msg.Role != "user" || msg.MessageType != "text" || !strings.Contains(string(msg.Content), "Producer 派发 Craftsman 任务") {
+			t.Fatalf("delegation message = %#v", msg)
+		}
+	}
 	if len(store.statusUpdates) != 0 {
 		t.Fatalf("dispatch should not update shot status before render plan exists: %#v", store.statusUpdates)
 	}
@@ -325,6 +333,8 @@ func (f *fakeCraftsmanDispatchStore) UpdateShotStatus(_ context.Context, params 
 type fakeCraftsmanRuntime struct {
 	createdTasks []db.AgentTask
 	events       []agentruntime.CreateEventParams
+	appendSeq    int64
+	appended     []db.AgentMessage
 }
 
 func (f *fakeCraftsmanRuntime) GetOrCreateCraftsmanThread(_ context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
@@ -355,6 +365,23 @@ func (f *fakeCraftsmanRuntime) CreateTask(_ context.Context, params agentruntime
 func (f *fakeCraftsmanRuntime) CreateEvent(_ context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
 	f.events = append(f.events, params)
 	return db.AgentEvent{ID: uuidWithByte(90), WorkspaceID: params.WorkspaceID, ThreadID: params.ThreadID, TaskID: params.TaskID, EventType: params.EventType}, nil
+}
+
+func (f *fakeCraftsmanRuntime) AppendMessage(_ context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error) {
+	f.appendSeq++
+	msg := db.AgentMessage{
+		ID:          uuidWithByte(byte(100 + f.appendSeq)),
+		WorkspaceID: params.WorkspaceID,
+		ThreadID:    params.ThreadID,
+		Role:        params.Role,
+		MessageType: params.MessageType,
+		Content:     params.Content,
+		RawMessage:  params.RawMessage,
+		TaskID:      params.TaskID,
+		Seq:         f.appendSeq,
+	}
+	f.appended = append(f.appended, msg)
+	return msg, nil
 }
 
 type fakeCraftsmanEnqueuer struct {

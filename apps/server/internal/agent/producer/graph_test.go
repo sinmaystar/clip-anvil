@@ -10,8 +10,10 @@ import (
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
+	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -83,7 +85,7 @@ func TestProducerGraphCompileCapturesGraphInfo(t *testing.T) {
 	if !ok {
 		t.Fatal("producer graph info was not captured")
 	}
-	for _, node := range []string{"load_context", "prepare_turn_state", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "finalize_response"} {
+	for _, node := range []string{"load_context", "prepare_turn_state", "before_model", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "check_signals_before_finalize", "finalize_response"} {
 		if _, ok := info.Nodes[node]; !ok {
 			t.Fatalf("node %q missing from graph info", node)
 		}
@@ -106,7 +108,7 @@ func TestProducerGraphExplicitToolLoopCapturesGraphInfo(t *testing.T) {
 	if !ok {
 		t.Fatal("producer graph info was not captured")
 	}
-	for _, node := range []string{"load_context", "prepare_turn_state", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "finalize_response"} {
+	for _, node := range []string{"load_context", "prepare_turn_state", "before_model", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "check_signals_before_finalize", "finalize_response"} {
 		if _, ok := info.Nodes[node]; !ok {
 			t.Fatalf("node %q missing from graph info", node)
 		}
@@ -128,8 +130,131 @@ func TestProducerGraphExplicitToolLoopCapturesGraphInfo(t *testing.T) {
 	if !graphInfoHasEdge(info.Edges, "execute_tools", "append_tool_results") {
 		t.Fatalf("edge execute_tools -> append_tool_results missing from graph info: %#v", info.Edges)
 	}
-	if !graphInfoHasEdge(info.Edges, "append_tool_results", "call_model") {
-		t.Fatalf("edge append_tool_results -> call_model missing from graph info: %#v", info.Edges)
+	if !graphInfoHasEdge(info.Edges, "append_tool_results", "before_model") {
+		t.Fatalf("edge append_tool_results -> before_model missing from graph info: %#v", info.Edges)
+	}
+	if !graphInfoHasEdge(info.Edges, "before_model", "call_model") {
+		t.Fatalf("edge before_model -> call_model missing from graph info: %#v", info.Edges)
+	}
+}
+
+func TestProducerGraphInjectsClaimedSignalRemindersBeforeModel(t *testing.T) {
+	signals := make([]db.ProducerPendingSignal, 0, 5)
+	for i := byte(0); i < 5; i++ {
+		signals = append(signals, db.ProducerPendingSignal{
+			ID:               uuidWithByte(80 + i),
+			WorkspaceID:      uuidWithByte(1),
+			ProducerThreadID: uuidWithByte(2),
+			SourceTaskID:     uuidWithByte(30 + i),
+			SignalType:       "craftsman_render_plan_ready",
+			ScopeType:        "shot",
+			ScopeID:          uuidWithByte(40 + i),
+			RenderPlanID:     uuidWithByte(50 + i),
+			Status:           "pending",
+			Payload:          []byte(`{"target_phase":"preview_image"}`),
+		})
+	}
+	signalRuntime := &fakeProducerSignalRuntime{pending: signals}
+	responder := &recordingResponder{outputs: []ProducerTurnOutput{{AssistantText: "收到 signal"}}}
+	graph, err := NewGraph(GraphConfig{
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
+		Responder:          responder,
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "read_project_context"),
+		SignalRuntime:      signalRuntime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = graph.Run(context.Background(), ProducerTurnInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(9),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signalRuntime.claimCalls == 0 {
+		t.Fatal("signal runtime was not claimed")
+	}
+	if len(signalRuntime.claimed) != 5 {
+		t.Fatalf("claimed signals = %d, want 5", len(signalRuntime.claimed))
+	}
+	if len(responder.contexts) == 0 || len(responder.contexts[0].PendingReminders) != 1 {
+		t.Fatalf("pending reminders = %#v", responder.contexts)
+	}
+	reminder := responder.contexts[0].PendingReminders[0]
+	if !strings.Contains(reminder, "<system-reminder>") ||
+		!strings.Contains(reminder, "craftsman_render_plan_ready") ||
+		!strings.Contains(reminder, "你有 5 个待处理 Producer signal") ||
+		!strings.Contains(reminder, "render_plan_id=32000000-0000-0000-0000-000000000000") ||
+		!strings.Contains(reminder, "render_plan_id=36000000-0000-0000-0000-000000000000") ||
+		!strings.Contains(reminder, "target_phase=preview_image") {
+		t.Fatalf("signal reminder = %q", reminder)
+	}
+}
+
+func TestProducerGraphContinuesWhenSignalArrivesBeforeFinalize(t *testing.T) {
+	signalRuntime := &fakeProducerSignalRuntime{
+		pendingByClaimCall: [][]db.ProducerPendingSignal{
+			nil,
+			{
+				{
+					ID:               uuidWithByte(88),
+					WorkspaceID:      uuidWithByte(1),
+					ProducerThreadID: uuidWithByte(2),
+					SourceTaskID:     uuidWithByte(31),
+					SignalType:       "craftsman_render_plan_ready",
+					ScopeType:        "shot",
+					ScopeID:          uuidWithByte(41),
+					RenderPlanID:     uuidWithByte(51),
+					Status:           "pending",
+					Payload:          []byte(`{"target_phase":"preview_image"}`),
+				},
+			},
+		},
+	}
+	responder := &recordingResponder{outputs: []ProducerTurnOutput{
+		{AssistantText: "本轮准备结束。"},
+		{AssistantText: "已看到运行中新增 signal。"},
+	}}
+	graph, err := NewGraph(GraphConfig{
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
+		Responder:          responder,
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "read_project_context"),
+		SignalRuntime:      signalRuntime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(9),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.AssistantText != "已看到运行中新增 signal。" {
+		t.Fatalf("assistant text = %q", out.AssistantText)
+	}
+	if len(responder.contexts) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(responder.contexts))
+	}
+	if len(responder.contexts[0].PendingReminders) != 0 {
+		t.Fatalf("first model reminders = %#v", responder.contexts[0].PendingReminders)
+	}
+	if len(responder.contexts[1].PendingReminders) != 1 {
+		t.Fatalf("second model reminders = %#v", responder.contexts[1].PendingReminders)
+	}
+	reminder := responder.contexts[1].PendingReminders[0]
+	if !strings.Contains(reminder, "craftsman_render_plan_ready") ||
+		!strings.Contains(reminder, "render_plan_id=33000000-0000-0000-0000-000000000000") {
+		t.Fatalf("second model reminder = %q", reminder)
+	}
+	if len(signalRuntime.claimed) != 1 || signalRuntime.claimCalls < 2 {
+		t.Fatalf("claimCalls=%d claimed=%#v", signalRuntime.claimCalls, signalRuntime.claimed)
 	}
 }
 
@@ -198,6 +323,40 @@ func TestProducerGraphExplicitToolLoopReturnsSameTurnToolTrace(t *testing.T) {
 	}
 	if out.SameTurnMessages[1].MessageType != "tool_result" || out.SameTurnMessages[1].ToolCallID != out.SameTurnMessages[0].ToolCallID {
 		t.Fatalf("tool result trace = %#v", out.SameTurnMessages[1])
+	}
+}
+
+func TestProducerGraphAddsPendingReminderAfterContinuousReadToolCalls(t *testing.T) {
+	responder := &recordingResponder{outputs: []ProducerTurnOutput{
+		nativeToolCallOutput("call-read-1", "read_project_context", `{"brief":"读取1","scope":{"type":"workspace","id":""}}`),
+		nativeToolCallOutput("call-read-2", "read_project_context", `{"brief":"读取2","scope":{"type":"workspace","id":""}}`),
+		nativeToolCallOutput("call-read-3", "read_project_context", `{"brief":"读取3","scope":{"type":"workspace","id":""}}`),
+		nativeToolCallOutput("call-read-4", "read_project_context", `{"brief":"读取4","scope":{"type":"workspace","id":""}}`),
+		nativeToolCallOutput("call-read-5", "read_project_context", `{"brief":"读取5","scope":{"type":"workspace","id":""}}`),
+		{AssistantText: "已停止重复读取。"},
+	}}
+	graph, err := NewGraph(GraphConfig{
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "检查循环"}},
+		Responder:          responder,
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "read_project_context"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = graph.Run(context.Background(), ProducerTurnInput{MaxToolCalls: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(responder.contexts) < 6 {
+		t.Fatalf("model calls = %d, want at least 6", len(responder.contexts))
+	}
+	reminders := responder.contexts[5].PendingReminders
+	if len(reminders) != 1 {
+		t.Fatalf("pending reminders = %#v, want one", reminders)
+	}
+	if !strings.Contains(reminders[0], "read_project_context") || !strings.Contains(reminders[0], "连续调用") {
+		t.Fatalf("unexpected reminder = %q", reminders[0])
 	}
 }
 
@@ -606,6 +765,50 @@ func (r *recordingResponder) Respond(_ context.Context, context ProducerContext)
 	}
 	out := r.outputs[r.index]
 	r.index++
+	return out, nil
+}
+
+type fakeProducerSignalRuntime struct {
+	pending            []db.ProducerPendingSignal
+	pendingByClaimCall [][]db.ProducerPendingSignal
+	claimed            []db.ProducerPendingSignal
+	claimCalls         int
+}
+
+func (f *fakeProducerSignalRuntime) ClaimProducerPendingSignals(_ context.Context, params agentruntime.ClaimProducerPendingSignalsParams) ([]db.ProducerPendingSignal, error) {
+	f.claimCalls++
+	pending := f.pending
+	if len(f.pendingByClaimCall) > 0 {
+		index := f.claimCalls - 1
+		if index >= 0 && index < len(f.pendingByClaimCall) {
+			pending = f.pendingByClaimCall[index]
+		} else {
+			pending = nil
+		}
+	} else {
+		f.pending = nil
+	}
+	if len(pending) == 0 {
+		return nil, nil
+	}
+	claimed := make([]db.ProducerPendingSignal, 0, len(pending))
+	for _, signal := range pending {
+		signal.Status = "claimed"
+		signal.ClaimedByTaskID = params.ClaimedByTaskID
+		signal.ProducerThreadID = params.ProducerThreadID
+		claimed = append(claimed, signal)
+	}
+	f.claimed = append(f.claimed, claimed...)
+	return claimed, nil
+}
+
+func (f *fakeProducerSignalRuntime) ListClaimedProducerSignalsByTask(_ context.Context, workspaceID, producerThreadID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error) {
+	out := make([]db.ProducerPendingSignal, 0, len(f.claimed))
+	for _, signal := range f.claimed {
+		if signal.WorkspaceID == workspaceID && signal.ProducerThreadID == producerThreadID && signal.ClaimedByTaskID == taskID {
+			out = append(out, signal)
+		}
+	}
 	return out, nil
 }
 

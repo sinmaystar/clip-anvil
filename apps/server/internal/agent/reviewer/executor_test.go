@@ -17,7 +17,10 @@ import (
 
 func TestReviewerExecutorRunsReviewerTurnTask(t *testing.T) {
 	runtime := &fakeReviewerExecutorRuntime{}
-	graph := &fakeReviewerRunner{output: GraphOutput{Decision: ReviewDecision{Status: ReviewStatusAccepted}}}
+	graph := &fakeReviewerRunner{output: GraphOutput{
+		Decision: ReviewDecision{Status: ReviewStatusAccepted},
+		Result:   ReviewResult{Critique: "Reviewer 评审通过，产品一致性可接受。"},
+	}}
 	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
 	input := TaskInput{
 		TargetPhase:       TargetPhasePreviewImage,
@@ -52,6 +55,9 @@ func TestReviewerExecutorRunsReviewerTurnTask(t *testing.T) {
 	}
 	if runtime.threadCheckpoint != wantCheckpoint {
 		t.Fatalf("thread checkpoint = %q, want %q", runtime.threadCheckpoint, wantCheckpoint)
+	}
+	if len(runtime.appended) != 1 || runtime.appended[0].Role != "assistant" || runtime.appended[0].MessageType != "text" || !strings.Contains(string(runtime.appended[0].Content), "Reviewer 评审通过") {
+		t.Fatalf("assistant message not persisted: %#v", runtime.appended)
 	}
 }
 

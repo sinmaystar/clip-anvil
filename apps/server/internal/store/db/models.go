@@ -564,6 +564,31 @@ type NodeStaleReason struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
+type ProducerPendingSignal struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProducerThreadID  pgtype.UUID        `json:"producer_thread_id"`
+	SourceRole        string             `json:"source_role"`
+	SourceTaskID      pgtype.UUID        `json:"source_task_id"`
+	SourceThreadID    pgtype.UUID        `json:"source_thread_id"`
+	SignalType        string             `json:"signal_type"`
+	ScopeType         string             `json:"scope_type"`
+	ScopeID           pgtype.UUID        `json:"scope_id"`
+	RenderPlanID      pgtype.UUID        `json:"render_plan_id"`
+	MessageID         pgtype.UUID        `json:"message_id"`
+	Status            string             `json:"status"`
+	Priority          int32              `json:"priority"`
+	DedupeKey         string             `json:"dedupe_key"`
+	Payload           []byte             `json:"payload"`
+	ClaimedByTaskID   pgtype.UUID        `json:"claimed_by_task_id"`
+	ClaimedAt         pgtype.Timestamptz `json:"claimed_at"`
+	ProcessedByTaskID pgtype.UUID        `json:"processed_by_task_id"`
+	ProcessedAt       pgtype.Timestamptz `json:"processed_at"`
+	LastError         pgtype.Text        `json:"last_error"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ProjectMemory struct {
 	ID                   pgtype.UUID        `json:"id"`
 	WorkspaceID          pgtype.UUID        `json:"workspace_id"`

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   clearAgentStream,
+  finalizeAgentStreamWithMessage,
   mergeAgentStreamDelta,
   rememberFinalAgentMessage,
   shouldShowAgentThinkingIndicator,
@@ -194,6 +195,37 @@ describe("agent streaming", () => {
       ),
       [],
     );
+  });
+
+  it("finalizes a streamed assistant message atomically when created arrives", () => {
+    const currentStreams = [
+      {
+        task_id: "task-1",
+        message_id: "stream-message-1",
+        blocks: [
+          {
+            id: "blk_answer",
+            type: "markdown",
+            text: "完整回复",
+            sequence: 2,
+          },
+        ],
+      },
+    ];
+    const result = finalizeAgentStreamWithMessage(
+      currentStreams,
+      new Set(),
+      {
+        id: "final-message-1",
+        role: "assistant",
+        message_type: "text",
+        task_id: "task-1",
+      },
+    );
+
+    assert.deepEqual(result.streams, []);
+    assert.equal(result.finalizedStreamKeys.has("task-1"), true);
+    assert.equal(result.finalizedStreamKeys.has("final-message-1"), true);
   });
 
   it("shows the standalone thinking indicator only before streaming starts", () => {

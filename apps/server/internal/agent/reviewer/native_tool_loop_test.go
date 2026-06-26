@@ -32,7 +32,7 @@ func TestReviewerGraphUsesNativeToolLoop(t *testing.T) {
 	if !ok {
 		t.Fatal("reviewer_gate graph info was not captured")
 	}
-	for _, want := range []string{"load_context", "prepare_turn_state", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "finalize_response"} {
+	for _, want := range []string{"load_context", "prepare_turn_state", "before_model", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "finalize_response"} {
 		if _, ok := info.Nodes[want]; !ok {
 			t.Fatalf("reviewer graph missing node %q", want)
 		}

@@ -71,6 +71,9 @@ func TestWorkerCreatesPreviewNodeAndSubmitsGenerationIntent(t *testing.T) {
 	if runtime.succeededOutput.Status != "submitted" || runtime.succeededOutput.NodeID == "" {
 		t.Fatalf("output = %#v", runtime.succeededOutput)
 	}
+	if len(store.renderPlanCompletions) != 0 {
+		t.Fatalf("worker submit must not mark render plan terminal: %#v", store.renderPlanCompletions)
+	}
 }
 
 func TestWorkerCreatesShotVideoNodeAndSubmitsImageToVideoIntent(t *testing.T) {
@@ -148,6 +151,33 @@ func TestWorkerCreatesShotVideoNodeAndSubmitsImageToVideoIntent(t *testing.T) {
 	}
 	if runtime.succeededOutput.OperationType != "image_to_video" {
 		t.Fatalf("output = %#v", runtime.succeededOutput)
+	}
+}
+
+func TestWorkerDoesNotMarkRenderPlanSucceededOnAsyncSubmit(t *testing.T) {
+	store := &fakeWorkerStore{}
+	runtime := &fakeWorkerRuntime{}
+	productionService := &fakeProductionSubmitter{
+		result: production.RunResult{
+			Node:    db.MediaNode{ID: uuidWithByte(20), WorkspaceID: uuidWithByte(1)},
+			Job:     db.GenerationJob{ID: uuidWithByte(30), TargetNodeID: uuidWithByte(20), OperationType: "text_to_image", Status: db.JobStatusQueued},
+			Version: db.ArtifactVersion{ID: uuidWithByte(40), NodeID: uuidWithByte(20), JobID: uuidWithByte(30), Status: db.JobStatusQueued},
+		},
+	}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Store: store, Production: productionService})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:        "preview_image",
+		ShotID:      uuidString(uuidWithByte(2)),
+		Prompt:      "A bright product close-up",
+		MaxAttempts: 3,
+	})
+	task.RenderPlanID = uuidWithByte(77)
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.renderPlanCompletions) != 0 {
+		t.Fatalf("worker submit must not mark render plan terminal: %#v", store.renderPlanCompletions)
 	}
 }
 
@@ -510,6 +540,31 @@ func TestWorkerMarksShotFailedWhenSynchronousSubmitFails(t *testing.T) {
 	}
 }
 
+func TestWorkerMarksRenderPlanFailedWhenSynchronousSubmitFails(t *testing.T) {
+	store := &fakeWorkerStore{}
+	runtime := &fakeWorkerRuntime{}
+	productionService := &fakeProductionSubmitter{failuresBeforeSuccess: 3}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Store: store, Production: productionService})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:        "preview_image",
+		ShotID:      uuidString(uuidWithByte(2)),
+		Prompt:      "prompt",
+		MaxAttempts: 3,
+	})
+	task.RenderPlanID = uuidWithByte(77)
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err == nil {
+		t.Fatal("RunTask succeeded, want failure")
+	}
+	if len(store.renderPlanCompletions) != 1 {
+		t.Fatalf("render plan completions = %#v", store.renderPlanCompletions)
+	}
+	got := store.renderPlanCompletions[0]
+	if got.ID != task.RenderPlanID || got.Status != "failed" {
+		t.Fatalf("render plan completion = %#v", got)
+	}
+}
+
 func workerTaskWithInput(t *testing.T, input GenerationInput) db.AgentTask {
 	t.Helper()
 	raw, err := json.Marshal(input)
@@ -579,6 +634,7 @@ type fakeWorkerStore struct {
 	existingEdges          map[[2]pgtype.UUID]db.MediaEdge
 	createdEdges           []db.CreateMediaEdgeParams
 	statusUpdates          []db.UpdateShotStatusParams
+	renderPlanCompletions  []db.MarkRenderPlanCompletedParams
 }
 
 type fakeWorkerNodeBroadcaster struct {
@@ -668,8 +724,9 @@ func (f *fakeWorkerStore) UpdateKeyElementState(_ context.Context, params db.Upd
 	return f.keyElementState, nil
 }
 
-func (f *fakeWorkerStore) MarkRenderPlanCompleted(context.Context, db.MarkRenderPlanCompletedParams) (db.RenderPlan, error) {
-	return db.RenderPlan{}, nil
+func (f *fakeWorkerStore) MarkRenderPlanCompleted(_ context.Context, params db.MarkRenderPlanCompletedParams) (db.RenderPlan, error) {
+	f.renderPlanCompletions = append(f.renderPlanCompletions, params)
+	return db.RenderPlan{ID: params.ID, WorkspaceID: params.WorkspaceID, Status: params.Status, OutputNodeID: params.OutputNodeID, OutputVersionID: params.OutputVersionID}, nil
 }
 
 type fakeProductionSubmitter struct {

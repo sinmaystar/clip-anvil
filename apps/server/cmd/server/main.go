@@ -217,6 +217,7 @@ func main() {
 		Graph:          composerGraph,
 		TraceCallbacks: agentTracing.Callbacks,
 	})
+	_ = composerExecutor
 	craftsmanGraph, err := agentcraftsman.NewGraph(agentcraftsman.GraphConfig{
 		Loader: agentcraftsman.ContextLoader{
 			Store:   queries,
@@ -254,6 +255,7 @@ func main() {
 	reviewerGraph, err := agentreviewer.NewGraph(agentreviewer.GraphConfig{
 		Loader: agentreviewer.ContextLoader{
 			Store:       queries,
+			Runtime:     agentRuntime,
 			ImageReader: storageService,
 			PSSBuilder:  producerPSSBuilder,
 		},
@@ -274,7 +276,7 @@ func main() {
 	})
 	reviewerEnqueuer := agentReviewerTaskEnqueuer{executor: reviewerExecutor}
 	producerNativeToolRegistry, err := agenttools.NewNativeRegistry(
-		agenttools.NewReadProjectContextNativeTool(creativeStateService),
+		agenttools.NewReadProjectContextNativeTool(creativeStateService, producerPSSBuilder),
 		agenttools.NewUpsertProjectBriefNativeTool(creativeStateService),
 		agenttools.NewUpdateProjectMemoryNativeTool(creativeStateService),
 		agenttools.NewUpsertKeyElementsNativeTool(creativeStateService),
@@ -294,10 +296,10 @@ func main() {
 			Queries:        queries,
 			ImageReader:    storageService,
 			ModelSelection: agentModelSelection,
-			PSSBuilder:     producerPSSBuilder,
 		},
 		Responder:          producerResponderForConfig(cfg),
 		NativeToolRegistry: producerNativeToolRegistry,
+		SignalRuntime:      agentRuntime,
 		CheckPointStore:    agentEinoCheckpointStore,
 		CompileCallbacks:   []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
@@ -319,26 +321,29 @@ func main() {
 	agentHandler.SetCanvasHub(canvasHub)
 	agentHandler.SetModelSelectionService(agentModelSelection)
 	agentHandler.SetHITLService(hitlService)
-	go func() {
-		tasks, err := agentRuntime.ListQueuedProducerTasksAcrossWorkspaces(context.Background(), 1000)
-		if err != nil {
-			slog.Warn("skipping queued producer recovery", "error", err)
-			return
-		}
-		for _, task := range tasks {
-			if err := producerExecutor.RunTask(context.Background(), agentproducer.RunTaskInput{
-				WorkspaceID: task.WorkspaceID,
-				ThreadID:    task.ThreadID,
-				TaskID:      task.ID,
-			}); err != nil {
-				slog.Warn("failed to recover queued producer task", "task_id", task.ID, "error", err)
-			}
-		}
-	}()
-	go recoverQueuedCraftsmanTasks(craftsmanExecutor, agentRuntime)
-	go recoverQueuedWorkerTasks(workerExecutor, agentRuntime)
-	go recoverQueuedReviewerTasks(reviewerExecutor, agentRuntime)
-	go recoverQueuedComposerTasks(composerExecutor, agentRuntime)
+	// Disabled during Agent architecture development: local restarts often leave
+	// large batches of test tasks queued, and auto-recovering them makes each
+	// restart expensive and noisy.
+	// go func() {
+	// 	tasks, err := agentRuntime.ListQueuedProducerTasksAcrossWorkspaces(context.Background(), 1000)
+	// 	if err != nil {
+	// 		slog.Warn("skipping queued producer recovery", "error", err)
+	// 		return
+	// 	}
+	// 	for _, task := range tasks {
+	// 		if err := producerExecutor.RunTask(context.Background(), agentproducer.RunTaskInput{
+	// 			WorkspaceID: task.WorkspaceID,
+	// 			ThreadID:    task.ThreadID,
+	// 			TaskID:      task.ID,
+	// 		}); err != nil {
+	// 			slog.Warn("failed to recover queued producer task", "task_id", task.ID, "error", err)
+	// 		}
+	// 	}
+	// }()
+	// go recoverQueuedCraftsmanTasks(craftsmanExecutor, agentRuntime)
+	// go recoverQueuedWorkerTasks(workerExecutor, agentRuntime)
+	// go recoverQueuedReviewerTasks(reviewerExecutor, agentRuntime)
+	// go recoverQueuedComposerTasks(composerExecutor, agentRuntime)
 	runHandler := api.NewRunHandler(productionService, queries, storageService)
 	modelHandler := api.NewModelHandler(queries)
 	referencePackHandler := api.NewReferencePackHandler(pgPool, queries, productionService)
@@ -420,6 +425,8 @@ func main() {
 	h.GET("/api/agent/workspaces/:workspaceID/messages", authMiddleware, agentHandler.ListMessages)
 	h.GET("/api/agent/workspaces/:workspaceID/tasks", authMiddleware, agentHandler.ListActiveTasks)
 	h.GET("/api/agent/workspaces/:workspaceID/production-overview", authMiddleware, agentHandler.GetProductionOverview)
+	h.GET("/api/agent/workspaces/:workspaceID/canvas/workbench", authMiddleware, agentHandler.GetCanvasWorkbench)
+	h.GET("/api/agent/workspaces/:workspaceID/canvas/details", authMiddleware, agentHandler.GetCanvasDetail)
 	h.GET("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.GetModelSelection)
 	h.PUT("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.PutModelSelection)
 	h.POST("/api/agent/workspaces/:workspaceID/attachments", authMiddleware, agentHandler.PostAttachment)
@@ -561,6 +568,14 @@ func (e agentReviewerTaskEnqueuer) EnqueueReviewerTask(ctx context.Context, task
 	}()
 }
 
+func shotIDForCraftsmanTask(task db.AgentTask) pgtype.UUID {
+	if task.ScopeType == "shot" {
+		return task.ScopeID
+	}
+	return pgtype.UUID{}
+}
+
+/*
 func recoverQueuedCraftsmanTasks(executor *agentcraftsman.Executor, runtime *agentruntime.Service) {
 	if executor == nil || runtime == nil {
 		return
@@ -583,13 +598,6 @@ func recoverQueuedCraftsmanTasks(executor *agentcraftsman.Executor, runtime *age
 			slog.Warn("failed to recover queued craftsman task", "task_id", task.ID, "error", err)
 		}
 	}
-}
-
-func shotIDForCraftsmanTask(task db.AgentTask) pgtype.UUID {
-	if task.ScopeType == "shot" {
-		return task.ScopeID
-	}
-	return pgtype.UUID{}
 }
 
 func recoverQueuedWorkerTasks(executor *agentworker.Executor, runtime *agentruntime.Service) {
@@ -639,6 +647,7 @@ func recoverQueuedReviewerTasks(executor *agentreviewer.Executor, runtime *agent
 		}
 	}
 }
+*/
 
 func mustNativeRegistry(tools ...agenttools.NativeTool) *agenttools.NativeRegistry {
 	registry, err := agenttools.NewNativeRegistry(tools...)

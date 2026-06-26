@@ -135,6 +135,48 @@ func (h *AgentHandler) GetProductionOverview(ctx context.Context, c *app.Request
 	c.JSON(consts.StatusOK, overview)
 }
 
+func (h *AgentHandler) GetCanvasWorkbench(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+
+	workbench, err := buildAgentWorkbenchProjection(ctx, h.queries, h.storage, workspace.ID)
+	if err != nil {
+		slog.Error("failed to build agent canvas workbench", "workspace_id", uuidToString(workspace.ID), "error", err)
+		writeError(c, consts.StatusInternalServerError, "failed to load agent canvas workbench")
+		return
+	}
+	c.JSON(consts.StatusOK, workbench)
+}
+
+func (h *AgentHandler) GetCanvasDetail(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+
+	detail, err := buildAgentCanvasDetail(
+		ctx,
+		h.queries,
+		h.storage,
+		workspace.ID,
+		strings.TrimSpace(c.Query("object_type")),
+		strings.TrimSpace(c.Query("object_id")),
+	)
+	if err != nil {
+		var detailErr agentCanvasDetailError
+		if errors.As(err, &detailErr) {
+			writeError(c, detailErr.Status, detailErr.Message)
+			return
+		}
+		slog.Error("failed to build agent canvas detail", "workspace_id", uuidToString(workspace.ID), "error", err)
+		writeError(c, consts.StatusInternalServerError, "failed to load agent canvas detail")
+		return
+	}
+	c.JSON(consts.StatusOK, detail)
+}
+
 func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) {
 	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
 	if !ok {
@@ -147,11 +189,13 @@ func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) 
 		return
 	}
 
-	messages, err := h.runtime.ListWorkspaceMessages(ctx, workspace.ID, queryTimestamp(c, "after_created_at"), queryInt32(c, "limit", 1000))
+	afterCreatedAt := queryTimestamp(c, "after_created_at")
+	messages, err := h.runtime.ListMessages(ctx, thread.ID, 0, queryInt32(c, "limit", 1000))
 	if err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to list agent messages")
 		return
 	}
+	messages = filterAgentMessagesAfterCreatedAt(messages, afterCreatedAt)
 
 	out := make([]agentMessageResponse, 0, len(messages))
 	for _, msg := range messages {
@@ -168,6 +212,19 @@ func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) 
 		Thread:   toAgentThreadResponse(thread),
 		Messages: out,
 	})
+}
+
+func filterAgentMessagesAfterCreatedAt(messages []db.AgentMessage, afterCreatedAt pgtype.Timestamptz) []db.AgentMessage {
+	if !afterCreatedAt.Valid {
+		return messages
+	}
+	out := messages[:0]
+	for _, message := range messages {
+		if message.CreatedAt.Valid && message.CreatedAt.Time.After(afterCreatedAt.Time) {
+			out = append(out, message)
+		}
+	}
+	return out
 }
 
 func (h *AgentHandler) ListActiveTasks(ctx context.Context, c *app.RequestContext) {
@@ -700,11 +757,12 @@ func (h *AgentHandler) rejectIfAgentProcessing(ctx context.Context, workspaceID 
 
 func agentBusyReason(tasks []db.AgentTask) string {
 	for _, task := range tasks {
+		if !isProducerProcessingTask(task) {
+			continue
+		}
 		switch task.Status {
 		case "queued", "running":
 			return "ClipAnvil 正在处理上一条消息，请稍后再试"
-		case "waiting_for_user":
-			return "ClipAnvil 正在等待你的选择，请先完成当前决策"
 		}
 	}
 	return ""
@@ -712,12 +770,19 @@ func agentBusyReason(tasks []db.AgentTask) string {
 
 func agentProcessingReason(tasks []db.AgentTask) string {
 	for _, task := range tasks {
+		if !isProducerProcessingTask(task) {
+			continue
+		}
 		switch task.Status {
 		case "queued", "running":
 			return "ClipAnvil 正在处理上一条消息，请稍后再试"
 		}
 	}
 	return ""
+}
+
+func isProducerProcessingTask(task db.AgentTask) bool {
+	return task.TaskType == "producer_turn" || task.TaskType == "decision_resume"
 }
 
 func hydrateDecisionCardStatus(content map[string]any, status string) {

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  formatAgentMessageTime,
+  isProducerThreadMessage,
+  isSystemReminderMessage,
   mergeAgentMessages,
   visibleAgentMessages,
 } from "../../dist-test/lib/agentMessages.js";
@@ -64,6 +67,70 @@ describe("agent messages", () => {
       messages.map((message) => message.id),
       ["craftsman-tool", "producer-tool", "producer-text"],
     );
+  });
+
+  it("keeps only messages from the Producer thread in the chat stream", () => {
+    assert.equal(
+      isProducerThreadMessage({ thread_id: "producer-thread" }, "producer-thread"),
+      true,
+    );
+    assert.equal(
+      isProducerThreadMessage({ thread_id: "craftsman-thread" }, "producer-thread"),
+      false,
+    );
+    assert.equal(isProducerThreadMessage({ thread_id: "" }, "producer-thread"), false);
+    assert.equal(isProducerThreadMessage({ thread_id: "producer-thread" }, ""), false);
+  });
+
+  it("identifies system reminder messages from raw metadata and message text", () => {
+    assert.equal(
+      isSystemReminderMessage({
+        id: "raw-reminder",
+        seq: 1,
+        raw_message: {
+          source: "system",
+          trigger: "craftsman_render_plan_ready",
+        },
+      }),
+      true,
+    );
+    assert.equal(
+      isSystemReminderMessage({
+        id: "text-reminder",
+        seq: 2,
+        content: {
+          schema: "clipanvil.agent.message.v1",
+          blocks: [
+            {
+              id: "blk",
+              type: "markdown",
+              text: "<system-reminder>Craftsman 已完成 RenderPlan 编译。</system-reminder>",
+            },
+          ],
+        },
+      }),
+      true,
+    );
+    assert.equal(
+      isSystemReminderMessage({
+        id: "normal-user",
+        seq: 3,
+        content: {
+          schema: "clipanvil.agent.message.v1",
+          blocks: [{ id: "blk", type: "markdown", text: "继续推进" }],
+        },
+      }),
+      false,
+    );
+  });
+
+  it("formats message timestamps in the requested local timezone", () => {
+    assert.equal(
+      formatAgentMessageTime("2026-06-26T13:04:05Z", "Asia/Shanghai"),
+      "2026/06/26 21:04:05",
+    );
+    assert.equal(formatAgentMessageTime("not-a-date", "Asia/Shanghai"), "");
+    assert.equal(formatAgentMessageTime("", "Asia/Shanghai"), "");
   });
 
   it("keeps nested agent messages after their parent tool call", () => {
