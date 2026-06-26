@@ -110,6 +110,21 @@ export function isSystemReminderMessage(
   return agentMessageText(message.content).includes("<system-reminder>");
 }
 
+export function messageDisplayClass(
+  message: Pick<SequencedAgentMessage, "content" | "raw_message"> & {
+    role?: string;
+    message_type?: string;
+  },
+) {
+  if (message.message_type === "error") {
+    return "error";
+  }
+  if (isSystemReminderMessage(message)) {
+    return "system-reminder";
+  }
+  return message.role || "assistant";
+}
+
 function compareAgentMessages<T extends SequencedAgentMessage>(a: T, b: T) {
   const aCreatedAt = Date.parse(a.created_at ?? "");
   const bCreatedAt = Date.parse(b.created_at ?? "");
@@ -125,6 +140,13 @@ function compareAgentMessages<T extends SequencedAgentMessage>(a: T, b: T) {
 }
 
 function orderNestedAgentMessages<T extends SequencedAgentMessage>(messages: T[]) {
+  const parentKeys = new Set<string>();
+  for (const message of messages) {
+    const toolCallID = stringValue(message.raw_message?.tool_call_id);
+    if (toolCallID) {
+      parentKeys.add(nestedToolKey(message.thread_id, toolCallID));
+    }
+  }
   const childrenByParent = new Map<string, T[]>();
   const childIDs = new Set<string>();
   for (const message of messages) {
@@ -132,10 +154,14 @@ function orderNestedAgentMessages<T extends SequencedAgentMessage>(messages: T[]
     if (!parentToolCallID) {
       continue;
     }
+    const parentKey = nestedToolKey(message.thread_id, parentToolCallID);
+    if (!parentKeys.has(parentKey)) {
+      continue;
+    }
     childIDs.add(message.id);
-    const children = childrenByParent.get(parentToolCallID) ?? [];
+    const children = childrenByParent.get(parentKey) ?? [];
     children.push(message);
-    childrenByParent.set(parentToolCallID, children);
+    childrenByParent.set(parentKey, children);
   }
   if (childIDs.size === 0) {
     return messages;
@@ -152,7 +178,9 @@ function orderNestedAgentMessages<T extends SequencedAgentMessage>(messages: T[]
     if (!toolCallID) {
       continue;
     }
-    for (const child of childrenByParent.get(toolCallID) ?? []) {
+    const children =
+      childrenByParent.get(nestedToolKey(message.thread_id, toolCallID)) ?? [];
+    for (const child of children) {
       if (emittedChildren.has(child.id)) {
         continue;
       }
@@ -166,6 +194,10 @@ function orderNestedAgentMessages<T extends SequencedAgentMessage>(messages: T[]
     }
   }
   return ordered;
+}
+
+function nestedToolKey(threadID: unknown, toolCallID: string) {
+  return `${stringValue(threadID)}:${toolCallID}`;
 }
 
 function stringValue(value: unknown) {

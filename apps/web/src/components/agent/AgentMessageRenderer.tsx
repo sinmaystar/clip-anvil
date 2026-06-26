@@ -1,4 +1,4 @@
-import type { AgentMessage } from "../../lib/agentApi";
+import type { AgentMessage, AgentObservedThread } from "../../lib/agentApi";
 import {
   agentMessageBlocks,
   agentMessageMarkdownText,
@@ -27,7 +27,10 @@ import { AgentThinkingBlock } from "./AgentThinkingBlock";
 import { AgentToolStatusBlock } from "./AgentToolStatusBlock";
 import { AgentReviewCardBlock } from "./AgentReviewCardBlock";
 
-export type AgentMessageActions = AgentDecisionActions;
+export type AgentMessageActions = AgentDecisionActions & {
+  onSelectAgentThread?: (threadId: string) => void;
+  observedAgentThreads?: AgentObservedThread[];
+};
 
 export function AgentMessageRenderer({
   message,
@@ -82,7 +85,7 @@ function AgentMessageBlockRenderer({
     return <AgentFinalVideoCardBlock block={block} />;
   }
   if (isToolStatusBlock(block)) {
-    return <AgentToolStatusBlock block={block} />;
+    return <AgentToolStatusBlock actions={actions} block={block} />;
   }
   if (isAttachmentBlock(block)) {
     return <AgentAttachmentBlock block={block} />;

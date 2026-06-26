@@ -57,6 +57,8 @@ type ProducerLoopState struct {
 	ToolIterations       int
 	ReminderCooldowns    map[string]int
 	NewlyClaimedSignals  int
+	SignalReminderCount  int
+	SignalReminderKey    string
 }
 
 func NewGraph(config GraphConfig) (*Graph, error) {
@@ -195,17 +197,23 @@ func applyProducerBeforeModel(ctx context.Context, signalRuntime ProducerSignalR
 		return ProducerLoopState{}, err
 	}
 	state.NewlyClaimedSignals = newlyClaimed
+	state.SignalReminderCount = newlyClaimed
+	state.SignalReminderKey = signalReminderKey(signalReminders)
 	state.Context.PendingReminders = append(state.Context.PendingReminders, signalReminders...)
 	return state, nil
 }
 
 func applyProducerSignalCheck(ctx context.Context, signalRuntime ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
+	previousSignalKey := state.SignalReminderKey
 	signalReminders, newlyClaimed, err := producerSignalReminders(ctx, signalRuntime, state.Context.Input)
 	if err != nil {
 		return ProducerLoopState{}, err
 	}
-	state.NewlyClaimedSignals = newlyClaimed
-	if newlyClaimed > 0 {
+	state.SignalReminderCount = newlyClaimed
+	state.SignalReminderKey = signalReminderKey(signalReminders)
+	state.NewlyClaimedSignals = 0
+	if newlyClaimed > 0 && state.SignalReminderKey != previousSignalKey {
+		state.NewlyClaimedSignals = newlyClaimed
 		state.Context.PendingReminders = signalReminders
 	}
 	return state, nil
@@ -215,7 +223,7 @@ func producerSignalReminders(ctx context.Context, runtime ProducerSignalRuntime,
 	if runtime == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid {
 		return nil, 0, nil
 	}
-	claimed, err := runtime.ClaimProducerPendingSignals(ctx, agentruntime.ClaimProducerPendingSignalsParams{
+	_, err := runtime.ClaimProducerPendingSignals(ctx, agentruntime.ClaimProducerPendingSignalsParams{
 		WorkspaceID:       input.WorkspaceID,
 		ProducerThreadID:  input.ThreadID,
 		ClaimedByTaskID:   input.TaskID,
@@ -230,9 +238,13 @@ func producerSignalReminders(ctx context.Context, runtime ProducerSignalRuntime,
 		return nil, 0, err
 	}
 	if len(signals) == 0 {
-		return nil, len(claimed), nil
+		return nil, 0, nil
 	}
-	return []string{formatProducerSignalReminder(signals)}, len(claimed), nil
+	return []string{formatProducerSignalReminder(signals)}, len(signals), nil
+}
+
+func signalReminderKey(reminders []string) string {
+	return strings.Join(reminders, "\n")
 }
 
 func formatProducerSignalReminder(signals []db.ProducerPendingSignal) string {
@@ -240,7 +252,7 @@ func formatProducerSignalReminder(signals []db.ProducerPendingSignal) string {
 		"<system-reminder>",
 		fmt.Sprintf("你有 %d 个待处理 Producer signal。", len(signals)),
 		"这些 signal 是工程事件队列，不是普通用户需求；请读取项目上下文，然后按业务优先级处理。",
-		"处理 craftsman_render_plan_ready 时，应针对 signal 指定的 render_plan_id 调用 decide_render_plan accept/reject，或先派 Reviewer。",
+		"处理 craftsman_render_plan_ready 时，应针对每条 signal 指定的 render_plan_id 调用 decide_render_plan accept/reject，或先派 Reviewer；不要只处理列表中的第一条。",
 	}
 	for i, signal := range signals {
 		lines = append(lines, fmt.Sprintf("%d. %s: scope=%s/%s render_plan_id=%s target_phase=%s source_task=%s",

@@ -80,6 +80,10 @@ type listAgentMessagesResponse struct {
 	Messages []agentMessageResponse `json:"messages"`
 }
 
+type listAgentThreadsResponse struct {
+	Threads []agentObservedThreadResponse `json:"threads"`
+}
+
 type agentTasksResponse struct {
 	Tasks []agentTaskResponse `json:"tasks"`
 }
@@ -118,6 +122,35 @@ func (h *AgentHandler) GetThread(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(consts.StatusOK, getAgentThreadResponse{Thread: toAgentThreadResponse(thread)})
+}
+
+func (h *AgentHandler) ListThreads(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+
+	includeProducer := strings.TrimSpace(c.Query("include_producer")) == "true"
+	threads, err := h.runtime.ListAgentThreadsByWorkspace(ctx, workspace.ID, includeProducer)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to list agent threads")
+		return
+	}
+
+	out := make([]agentObservedThreadResponse, 0, len(threads))
+	for _, thread := range threads {
+		var latestTask *db.AgentTask
+		if task, err := h.runtime.LatestTaskByThread(ctx, thread.ID); err == nil {
+			latestTask = &task
+		}
+		var latestMessage *db.AgentMessage
+		if message, err := h.runtime.LatestMessageByThread(ctx, thread.ID); err == nil {
+			latestMessage = &message
+		}
+		out = append(out, toObservedAgentThreadResponse(thread, latestTask, latestMessage))
+	}
+
+	c.JSON(consts.StatusOK, listAgentThreadsResponse{Threads: out})
 }
 
 func (h *AgentHandler) GetProductionOverview(ctx context.Context, c *app.RequestContext) {
@@ -196,6 +229,45 @@ func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) 
 		return
 	}
 	messages = filterAgentMessagesAfterCreatedAt(messages, afterCreatedAt)
+
+	out := make([]agentMessageResponse, 0, len(messages))
+	for _, msg := range messages {
+		response := h.toAgentMessageResponse(ctx, msg)
+		if msg.MessageType == "ui_card" && msg.EventID.Valid {
+			if event, err := h.runtime.GetAgentEventForWorkspace(ctx, msg.EventID, workspace.ID); err == nil {
+				hydrateDecisionCardFromEvent(response.Content, event)
+			}
+		}
+		out = append(out, response)
+	}
+
+	c.JSON(consts.StatusOK, listAgentMessagesResponse{
+		Thread:   toAgentThreadResponse(thread),
+		Messages: out,
+	})
+}
+
+func (h *AgentHandler) ListThreadMessages(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+	threadID, ok := uuidFromString(c.Param("threadID"))
+	if !ok {
+		writeError(c, consts.StatusBadRequest, "invalid agent thread")
+		return
+	}
+
+	thread, err := h.runtime.GetThreadForWorkspace(ctx, threadID, workspace.ID)
+	if err != nil {
+		writeError(c, consts.StatusNotFound, "agent thread not found")
+		return
+	}
+	messages, err := h.runtime.ListThreadMessages(ctx, thread.ID, queryInt64(c, "after_seq", 0), queryInt32(c, "limit", 1000))
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to list agent thread messages")
+		return
+	}
 
 	out := make([]agentMessageResponse, 0, len(messages))
 	for _, msg := range messages {
@@ -1125,4 +1197,16 @@ func queryInt32(c *app.RequestContext, key string, fallback int32) int32 {
 		return fallback
 	}
 	return int32(value)
+}
+
+func queryInt64(c *app.RequestContext, key string, fallback int64) int64 {
+	raw := string(c.Query(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return value
 }

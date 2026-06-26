@@ -232,11 +232,23 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 			"checkpoint_key":     checkpointKey,
 		}))
 	}
+	e.releasePendingSignalsForTask(ctx, input, "producer_turn_completed: released unprocessed claimed signals")
 
 	e.broadcastMessage(input.WorkspaceID, msg, completed)
 	e.broadcastEvent(input.WorkspaceID, completed)
 	e.broadcastTask(input.WorkspaceID, succeededTask)
 	return nil
+}
+
+func (e *Executor) releasePendingSignalsForTask(ctx context.Context, input RunTaskInput, reason string) {
+	if e == nil || e.runtime == nil {
+		return
+	}
+	releaser, ok := e.runtime.(producerSignalReleaser)
+	if !ok {
+		return
+	}
+	_, _ = releaser.ReleaseProducerPendingSignalsForTask(ctx, input.WorkspaceID, input.TaskID, reason)
 }
 
 func (e *Executor) persistNativeToolTrace(ctx context.Context, input RunTaskInput, messages []ProducerSameTurnMessage) error {
@@ -537,9 +549,7 @@ func (e *Executor) failTask(ctx context.Context, input RunTaskInput, code string
 		"error_code", code,
 		"error", message,
 	)
-	if releaser, ok := e.runtime.(producerSignalReleaser); ok {
-		_, _ = releaser.ReleaseProducerPendingSignalsForTask(ctx, input.WorkspaceID, input.TaskID, code+": "+message)
-	}
+	e.releasePendingSignalsForTask(ctx, input, code+": "+message)
 	errorMsg, msgErr := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
 		WorkspaceID: input.WorkspaceID,
 		ThreadID:    input.ThreadID,

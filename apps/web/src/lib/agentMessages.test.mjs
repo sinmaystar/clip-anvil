@@ -133,17 +133,19 @@ describe("agent messages", () => {
     assert.equal(formatAgentMessageTime("", "Asia/Shanghai"), "");
   });
 
-  it("keeps nested agent messages after their parent tool call", () => {
+  it("does not reorder child thread messages into another thread's tool call", () => {
     const messages = mergeAgentMessages(
       [
         {
           id: "child-tool",
+          thread_id: "craftsman-thread",
           seq: 1,
           created_at: "2026-06-25T10:00:02Z",
           raw_message: { parent_tool_call_id: "dispatch-1" },
         },
         {
           id: "producer-tool",
+          thread_id: "producer-thread",
           seq: 10,
           created_at: "2026-06-25T10:00:10Z",
           raw_message: { tool_call_id: "dispatch-1" },
@@ -152,6 +154,41 @@ describe("agent messages", () => {
       [
         {
           id: "producer-answer",
+          thread_id: "producer-thread",
+          seq: 11,
+          created_at: "2026-06-25T10:00:11Z",
+        },
+      ],
+    );
+
+    assert.deepEqual(
+      messages.map((message) => message.id),
+      ["child-tool", "producer-tool", "producer-answer"],
+    );
+  });
+
+  it("keeps same-thread nested tool messages after their parent tool call", () => {
+    const messages = mergeAgentMessages(
+      [
+        {
+          id: "child-tool",
+          thread_id: "producer-thread",
+          seq: 1,
+          created_at: "2026-06-25T10:00:02Z",
+          raw_message: { parent_tool_call_id: "dispatch-1" },
+        },
+        {
+          id: "producer-tool",
+          thread_id: "producer-thread",
+          seq: 10,
+          created_at: "2026-06-25T10:00:10Z",
+          raw_message: { tool_call_id: "dispatch-1" },
+        },
+      ],
+      [
+        {
+          id: "producer-answer",
+          thread_id: "producer-thread",
           seq: 11,
           created_at: "2026-06-25T10:00:11Z",
         },

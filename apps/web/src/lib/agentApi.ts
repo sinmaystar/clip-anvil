@@ -14,7 +14,12 @@ export interface AgentThread {
   id: string;
   workspace_id: string;
   role: "producer" | "craftsman" | "reviewer" | "composer";
-  scope_type: "workspace" | "shot" | "final_output";
+  scope_type:
+    | "workspace"
+    | "shot"
+    | "final_output"
+    | "render_plan"
+    | "key_element_state";
   scope_id?: string | null;
   runtime_provider: string;
   runtime_agent_name: string;
@@ -80,7 +85,15 @@ export interface AgentTask {
     | "system";
   scope_type: "workspace" | "shot" | "node" | "job" | "final_output";
   scope_id?: string | null;
-  task_type: "producer_turn" | "tool_call" | "decision_resume";
+  task_type:
+    | "producer_turn"
+    | "tool_call"
+    | "decision_resume"
+    | "craftsman_turn"
+    | "reviewer_turn"
+    | "worker_generation"
+    | "composer_turn"
+    | "dependency_scheduler";
   status:
     | "queued"
     | "running"
@@ -117,6 +130,20 @@ export interface AgentThreadResponse {
 export interface AgentMessagesResponse {
   thread: AgentThread;
   messages: AgentMessage[];
+}
+
+export interface AgentObservedThread extends AgentThread {
+  display_name: string;
+  scope_label: string;
+  scope_title?: string;
+  latest_task?: AgentTask;
+  latest_message_at?: string;
+  latest_message_preview?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentThreadsResponse {
+  threads: AgentObservedThread[];
 }
 
 export interface AgentTasksResponse {
@@ -649,6 +676,29 @@ export function fetchAgentMessages(
   }
   return apiFetch<AgentMessagesResponse>(
     `/agent/workspaces/${workspaceId}/messages?${params.toString()}`,
+  );
+}
+
+export function fetchAgentThreads(workspaceId: string) {
+  return apiFetch<AgentThreadsResponse>(
+    `/agent/workspaces/${workspaceId}/threads`,
+  );
+}
+
+export function fetchAgentThreadMessages(
+  workspaceId: string,
+  threadId: string,
+  afterSeq = 0,
+  limit = 1000,
+) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+  });
+  if (afterSeq > 0) {
+    params.set("after_seq", String(afterSeq));
+  }
+  return apiFetch<AgentMessagesResponse>(
+    `/agent/workspaces/${workspaceId}/threads/${threadId}/messages?${params.toString()}`,
   );
 }
 

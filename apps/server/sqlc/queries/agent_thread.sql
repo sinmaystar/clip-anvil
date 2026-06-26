@@ -54,6 +54,34 @@ FROM agent_thread
 WHERE workspace_id = $1
 ORDER BY created_at DESC;
 
+-- name: ListObservableAgentThreadsByWorkspace :many
+SELECT *
+FROM agent_thread
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND (sqlc.arg(include_producer)::boolean OR role <> 'producer')
+ORDER BY updated_at DESC, created_at DESC;
+
+-- name: GetAgentThreadForWorkspace :one
+SELECT *
+FROM agent_thread
+WHERE id = sqlc.arg(id)
+  AND workspace_id = sqlc.arg(workspace_id)
+LIMIT 1;
+
+-- name: GetLatestAgentTaskByThread :one
+SELECT *
+FROM agent_task
+WHERE thread_id = $1
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: GetLatestAgentMessageByThread :one
+SELECT *
+FROM agent_message
+WHERE thread_id = $1
+ORDER BY seq DESC
+LIMIT 1;
+
 -- name: UpdateAgentThreadStatus :one
 UPDATE agent_thread
 SET status = $2,

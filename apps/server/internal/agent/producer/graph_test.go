@@ -258,6 +258,79 @@ func TestProducerGraphContinuesWhenSignalArrivesBeforeFinalize(t *testing.T) {
 	}
 }
 
+func TestProducerGraphContinuesWhenClaimedSignalsRemainBeforeFinalize(t *testing.T) {
+	signals := []db.ProducerPendingSignal{
+		{
+			ID:               uuidWithByte(81),
+			WorkspaceID:      uuidWithByte(1),
+			ProducerThreadID: uuidWithByte(2),
+			SourceTaskID:     uuidWithByte(31),
+			SignalType:       "craftsman_render_plan_ready",
+			ScopeType:        "shot",
+			ScopeID:          uuidWithByte(41),
+			RenderPlanID:     uuidWithByte(51),
+			Status:           "claimed",
+			ClaimedByTaskID:  uuidWithByte(9),
+			Payload:          []byte(`{"target_phase":"preview_image"}`),
+		},
+		{
+			ID:               uuidWithByte(82),
+			WorkspaceID:      uuidWithByte(1),
+			ProducerThreadID: uuidWithByte(2),
+			SourceTaskID:     uuidWithByte(32),
+			SignalType:       "craftsman_render_plan_ready",
+			ScopeType:        "shot",
+			ScopeID:          uuidWithByte(42),
+			RenderPlanID:     uuidWithByte(52),
+			Status:           "claimed",
+			ClaimedByTaskID:  uuidWithByte(9),
+			Payload:          []byte(`{"target_phase":"preview_image"}`),
+		},
+	}
+	signalRuntime := &fakeProducerSignalRuntime{
+		pending: signals,
+		claimedByListCall: [][]db.ProducerPendingSignal{
+			signals,
+			{signals[1]},
+			nil,
+		},
+	}
+	responder := &recordingResponder{outputs: []ProducerTurnOutput{
+		{AssistantText: "已处理第一条 signal。"},
+		{AssistantText: "已处理剩余 signal。"},
+	}}
+	graph, err := NewGraph(GraphConfig{
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
+		Responder:          responder,
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "read_project_context"),
+		SignalRuntime:      signalRuntime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(9),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.AssistantText != "已处理剩余 signal。" {
+		t.Fatalf("assistant text = %q", out.AssistantText)
+	}
+	if len(responder.contexts) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(responder.contexts))
+	}
+	if len(responder.contexts[0].PendingReminders) != 1 || !strings.Contains(responder.contexts[0].PendingReminders[0], "你有 2 个待处理 Producer signal") {
+		t.Fatalf("first reminders = %#v", responder.contexts[0].PendingReminders)
+	}
+	if len(responder.contexts[1].PendingReminders) != 1 || !strings.Contains(responder.contexts[1].PendingReminders[0], "render_plan_id=34000000-0000-0000-0000-000000000000") {
+		t.Fatalf("second reminders = %#v", responder.contexts[1].PendingReminders)
+	}
+}
+
 func TestProducerGraphExplicitToolLoopExecutesToolWithEinoToolNode(t *testing.T) {
 	registry := mustTestNativeToolRegistry(t, "create_agent_text_node")
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
@@ -771,8 +844,10 @@ func (r *recordingResponder) Respond(_ context.Context, context ProducerContext)
 type fakeProducerSignalRuntime struct {
 	pending            []db.ProducerPendingSignal
 	pendingByClaimCall [][]db.ProducerPendingSignal
+	claimedByListCall  [][]db.ProducerPendingSignal
 	claimed            []db.ProducerPendingSignal
 	claimCalls         int
+	listCalls          int
 }
 
 func (f *fakeProducerSignalRuntime) ClaimProducerPendingSignals(_ context.Context, params agentruntime.ClaimProducerPendingSignalsParams) ([]db.ProducerPendingSignal, error) {
@@ -803,13 +878,25 @@ func (f *fakeProducerSignalRuntime) ClaimProducerPendingSignals(_ context.Contex
 }
 
 func (f *fakeProducerSignalRuntime) ListClaimedProducerSignalsByTask(_ context.Context, workspaceID, producerThreadID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error) {
-	out := make([]db.ProducerPendingSignal, 0, len(f.claimed))
-	for _, signal := range f.claimed {
+	f.listCalls++
+	if len(f.claimedByListCall) > 0 {
+		index := f.listCalls - 1
+		if index >= 0 && index < len(f.claimedByListCall) {
+			return signalsForTask(f.claimedByListCall[index], workspaceID, producerThreadID, taskID), nil
+		}
+		return nil, nil
+	}
+	return signalsForTask(f.claimed, workspaceID, producerThreadID, taskID), nil
+}
+
+func signalsForTask(signals []db.ProducerPendingSignal, workspaceID, producerThreadID, taskID pgtype.UUID) []db.ProducerPendingSignal {
+	out := make([]db.ProducerPendingSignal, 0, len(signals))
+	for _, signal := range signals {
 		if signal.WorkspaceID == workspaceID && signal.ProducerThreadID == producerThreadID && signal.ClaimedByTaskID == taskID {
 			out = append(out, signal)
 		}
 	}
-	return out, nil
+	return out
 }
 
 type testNativeTool struct {

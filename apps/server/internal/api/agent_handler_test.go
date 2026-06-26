@@ -530,6 +530,32 @@ func TestAgentCanvasWorkbenchRouteContract(t *testing.T) {
 	}
 }
 
+func TestAgentThreadObserverRouteContract(t *testing.T) {
+	handlerSource, err := os.ReadFile("agent_handler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(handlerSource), "func (h *AgentHandler) ListThreads") {
+		t.Fatal("AgentHandler.ListThreads must be implemented")
+	}
+	if !strings.Contains(string(handlerSource), "func (h *AgentHandler) ListThreadMessages") {
+		t.Fatal("AgentHandler.ListThreadMessages must be implemented")
+	}
+
+	serverSource, err := os.ReadFile("../../cmd/server/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantThreadsRoute := `GET("/api/agent/workspaces/:workspaceID/threads", authMiddleware, agentHandler.ListThreads)`
+	if !strings.Contains(string(serverSource), wantThreadsRoute) {
+		t.Fatalf("server route %q is not registered", wantThreadsRoute)
+	}
+	wantMessagesRoute := `GET("/api/agent/workspaces/:workspaceID/threads/:threadID/messages", authMiddleware, agentHandler.ListThreadMessages)`
+	if !strings.Contains(string(serverSource), wantMessagesRoute) {
+		t.Fatalf("server route %q is not registered", wantMessagesRoute)
+	}
+}
+
 type fakeAgentDBTX struct{}
 
 func (fakeAgentDBTX) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {

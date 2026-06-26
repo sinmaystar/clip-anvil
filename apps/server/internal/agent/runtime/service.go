@@ -367,6 +367,56 @@ func (s *Service) ListWorkspaceMessages(ctx context.Context, workspaceID pgtype.
 	})
 }
 
+func (s *Service) ListAgentThreadsByWorkspace(ctx context.Context, workspaceID pgtype.UUID, includeProducer bool) ([]db.AgentThread, error) {
+	if !workspaceID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	return s.queries.ListObservableAgentThreadsByWorkspace(ctx, db.ListObservableAgentThreadsByWorkspaceParams{
+		WorkspaceID:     workspaceID,
+		IncludeProducer: includeProducer,
+	})
+}
+
+func (s *Service) GetThreadForWorkspace(ctx context.Context, threadID pgtype.UUID, workspaceID pgtype.UUID) (db.AgentThread, error) {
+	if !threadID.Valid || !workspaceID.Valid {
+		return db.AgentThread{}, ErrInvalidRequest
+	}
+	if s == nil || s.queries == nil {
+		return db.AgentThread{}, ErrInvalidConfig
+	}
+	return s.queries.GetAgentThreadForWorkspace(ctx, db.GetAgentThreadForWorkspaceParams{
+		ID:          threadID,
+		WorkspaceID: workspaceID,
+	})
+}
+
+func (s *Service) ListThreadMessages(ctx context.Context, threadID pgtype.UUID, afterSeq int64, limit int32) ([]db.AgentMessage, error) {
+	return s.ListMessages(ctx, threadID, afterSeq, limit)
+}
+
+func (s *Service) LatestTaskByThread(ctx context.Context, threadID pgtype.UUID) (db.AgentTask, error) {
+	if !threadID.Valid {
+		return db.AgentTask{}, ErrInvalidRequest
+	}
+	if s == nil || s.queries == nil {
+		return db.AgentTask{}, ErrInvalidConfig
+	}
+	return s.queries.GetLatestAgentTaskByThread(ctx, threadID)
+}
+
+func (s *Service) LatestMessageByThread(ctx context.Context, threadID pgtype.UUID) (db.AgentMessage, error) {
+	if !threadID.Valid {
+		return db.AgentMessage{}, ErrInvalidRequest
+	}
+	if s == nil || s.queries == nil {
+		return db.AgentMessage{}, ErrInvalidConfig
+	}
+	return s.queries.GetLatestAgentMessageByThread(ctx, threadID)
+}
+
 type CreateTaskParams struct {
 	WorkspaceID  pgtype.UUID
 	ThreadID     pgtype.UUID

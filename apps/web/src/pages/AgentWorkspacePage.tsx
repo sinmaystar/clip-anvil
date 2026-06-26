@@ -7,7 +7,12 @@ import {
   useState,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Navigate, useNavigate, useParams } from "react-router";
+import {
+  Navigate,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router";
 import {
   type CanvasPayload,
   fetchCanvas,
@@ -17,6 +22,7 @@ import {
 import {
   type AgentAttachment,
   type AgentMessage,
+  type AgentObservedThread,
   type AgentTask,
   fetchAgentCanvasDetail,
   fetchAgentModelSelection,
@@ -24,6 +30,8 @@ import {
   fetchAgentCanvasWorkbench,
   fetchAgentTasks,
   fetchAgentThread,
+  fetchAgentThreadMessages,
+  fetchAgentThreads,
   postAgentDecision,
   postAgentMessage,
   putAgentModelSelection,
@@ -61,10 +69,12 @@ import {
 import {
   formatAgentMessageTime,
   isProducerThreadMessage,
-  isSystemReminderMessage,
+  messageDisplayClass,
   mergeAgentMessages,
   visibleAgentMessages,
 } from "../lib/agentMessages";
+import { AgentThreadDrawer } from "../components/agent/AgentThreadDrawer";
+import { AgentThreadObserverPanel } from "../components/agent/AgentThreadObserverPanel";
 import { agentMessageSchemaV1 } from "../lib/agentMessageBlocks";
 import {
   agentModelSelectionPayload,
@@ -90,6 +100,13 @@ import {
   mergeAgentTasks,
 } from "../lib/agentTasks";
 import {
+  type AgentThreadMessageCache,
+  mergeAgentThreadMessages,
+  mergeObservedAgentThreads,
+  updateObservedThreadFromMessage,
+  updateObservedThreadFromTask,
+} from "../lib/agentThreads";
+import {
   isTerminalGenerationStatus,
   nodeStatusForGenerationStatus,
   shouldPollCanvasForProductionUpdates,
@@ -109,11 +126,23 @@ import { useAuthStore } from "../stores/auth";
 export function AgentWorkspacePage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const token = useAuthStore((state) => state.token);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [streams, setStreams] = useState<AgentStreamState[]>([]);
+  const [observedThreads, setObservedThreads] = useState<AgentObservedThread[]>(
+    [],
+  );
+  const [selectedAgentThreadId, setSelectedAgentThreadId] = useState(
+    () => searchParams.get("agentThread") ?? "",
+  );
+  const [agentThreadMessageCache, setAgentThreadMessageCache] =
+    useState<AgentThreadMessageCache>({});
+  const [subThreadStreams, setSubThreadStreams] = useState<
+    Record<string, AgentStreamState[]>
+  >({});
   const finalizedStreamKeysRef = useRef<Set<string>>(new Set());
   const [attachments, setAttachments] = useState<AgentAttachment[]>([]);
   const [resolvedDecisionIds, setResolvedDecisionIds] = useState<Set<string>>(
@@ -254,6 +283,19 @@ export function AgentWorkspacePage() {
     queryKey: ["agent", id, "messages"],
     queryFn: () => fetchAgentMessages(id ?? ""),
     enabled: agentEnabled,
+  });
+  const agentThreadsQuery = useQuery({
+    queryKey: ["agent", id, "threads"],
+    queryFn: () => fetchAgentThreads(id ?? ""),
+    enabled: agentEnabled,
+  });
+  const selectedAgentThread = observedThreads.find(
+    (thread) => thread.id === selectedAgentThreadId,
+  );
+  const selectedAgentThreadMessagesQuery = useQuery({
+    queryKey: ["agent", id, "threads", selectedAgentThreadId, "messages"],
+    queryFn: () => fetchAgentThreadMessages(id ?? "", selectedAgentThreadId),
+    enabled: agentEnabled && Boolean(selectedAgentThreadId),
   });
   const agentTasksQuery = useQuery({
     queryKey: ["agent", id, "tasks"],
@@ -408,6 +450,19 @@ export function AgentWorkspacePage() {
     );
   }
 
+  function selectAgentThread(threadID: string) {
+    setSelectedAgentThreadId(threadID);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (threadID) {
+        next.set("agentThread", threadID);
+      } else {
+        next.delete("agentThread");
+      }
+      return next;
+    });
+  }
+
   useEffect(() => {
     if (agentMessagesQuery.data) {
       setMessages((current) =>
@@ -415,6 +470,30 @@ export function AgentWorkspacePage() {
       );
     }
   }, [agentMessagesQuery.data]);
+
+  useEffect(() => {
+    if (agentThreadsQuery.data) {
+      setObservedThreads(
+        mergeObservedAgentThreads([], agentThreadsQuery.data.threads),
+      );
+    }
+  }, [agentThreadsQuery.data]);
+
+  useEffect(() => {
+    setSelectedAgentThreadId(searchParams.get("agentThread") ?? "");
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (selectedAgentThreadId && selectedAgentThreadMessagesQuery.data) {
+      setAgentThreadMessageCache((current) =>
+        mergeAgentThreadMessages(
+          current,
+          selectedAgentThreadId,
+          selectedAgentThreadMessagesQuery.data.messages,
+        ),
+      );
+    }
+  }, [selectedAgentThreadId, selectedAgentThreadMessagesQuery.data]);
 
   useEffect(() => {
     if (agentTasksQuery.data) {
@@ -450,6 +529,7 @@ export function AgentWorkspacePage() {
           );
         },
       );
+      void queryClient.invalidateQueries({ queryKey: ["agent", id, "threads"] });
     };
     const refetchAgentCanvas = () => {
       void queryClient.refetchQueries({
@@ -472,57 +552,95 @@ export function AgentWorkspacePage() {
             event.type === "agent.message.updated") &&
           event.payload.workspace_id === id
         ) {
-          if (
-            !isProducerThreadMessage(event.payload.message, producerThreadID)
-          ) {
-            return;
-          }
-          setMessages((current) =>
-            mergeAgentMessages(current, [event.payload.message]),
-          );
-          if (event.type === "agent.message.created") {
-            setStreams((current) => {
-              const finalized = finalizeAgentStreamWithMessage(
-                current,
+          const message = event.payload.message;
+          if (isProducerThreadMessage(message, producerThreadID)) {
+            setMessages((current) => mergeAgentMessages(current, [message]));
+            if (event.type === "agent.message.created") {
+              setStreams((current) => {
+                const finalized = finalizeAgentStreamWithMessage(
+                  current,
+                  finalizedStreamKeysRef.current,
+                  message,
+                );
+                finalizedStreamKeysRef.current = finalized.finalizedStreamKeys;
+                return finalized.streams;
+              });
+            } else {
+              finalizedStreamKeysRef.current = finalizeAgentStreamWithMessage(
+                [],
                 finalizedStreamKeysRef.current,
-                event.payload.message,
-              );
-              finalizedStreamKeysRef.current = finalized.finalizedStreamKeys;
-              return finalized.streams;
-            });
+                message,
+              ).finalizedStreamKeys;
+            }
+            refetchAgentCanvas();
           } else {
-            finalizedStreamKeysRef.current = finalizeAgentStreamWithMessage(
-              [],
-              finalizedStreamKeysRef.current,
-              event.payload.message,
-            ).finalizedStreamKeys;
+            setAgentThreadMessageCache((current) =>
+              mergeAgentThreadMessages(current, message.thread_id, [message]),
+            );
+            setObservedThreads((current) => {
+              if (!current.some((thread) => thread.id === message.thread_id)) {
+                void queryClient.invalidateQueries({
+                  queryKey: ["agent", id, "threads"],
+                });
+              }
+              return updateObservedThreadFromMessage(current, message);
+            });
+            setSubThreadStreams((current) => ({
+              ...current,
+              [message.thread_id]: finalizeAgentStreamWithMessage(
+                current[message.thread_id] ?? [],
+                new Set(),
+                message,
+              ).streams,
+            }));
           }
-          refetchAgentCanvas();
         }
         if (
           event.type === "agent.message.delta" &&
           event.payload.workspace_id === id
         ) {
-          setStreams((current) =>
-            mergeAgentStreamDelta(
-              current,
-              {
-                task_id: event.payload.task_id,
-                block_id: event.payload.block_id,
-                block_type: event.payload.block_type,
-                delta: event.payload.delta,
-                message_id: event.payload.message_id,
-                sequence: event.payload.sequence,
-              },
-              finalizedStreamKeysRef.current,
-            ),
-          );
+          const deltaPayload = {
+            task_id: event.payload.task_id,
+            block_id: event.payload.block_id,
+            block_type: event.payload.block_type,
+            delta: event.payload.delta,
+            message_id: event.payload.message_id,
+            sequence: event.payload.sequence,
+          };
+          if (event.payload.thread_id === producerThreadID) {
+            setStreams((current) =>
+              mergeAgentStreamDelta(
+                current,
+                deltaPayload,
+                finalizedStreamKeysRef.current,
+              ),
+            );
+          } else if (event.payload.thread_id === selectedAgentThreadId) {
+            setSubThreadStreams((current) => ({
+              ...current,
+              [event.payload.thread_id]: mergeAgentStreamDelta(
+                current[event.payload.thread_id] ?? [],
+                deltaPayload,
+              ),
+            }));
+          }
         }
         if (
           event.type === "agent.task.updated" &&
           event.payload.workspace_id === id
         ) {
           setTasks((current) => mergeAgentTasks(current, [event.payload.task]));
+          setObservedThreads((current) =>
+            updateObservedThreadFromTask(current, event.payload.task),
+          );
+          if (
+            event.payload.task.thread_id &&
+            event.payload.task.thread_id !== producerThreadID
+          ) {
+            void queryClient.invalidateQueries({
+              queryKey: ["agent", id, "threads"],
+            });
+          }
           refetchAgentCanvas();
         }
         if (
@@ -1066,104 +1184,115 @@ export function AgentWorkspacePage() {
                   <span className="agent-sr-only">{statusLabel}</span>
                 </span>
               </div>
-              <button
-                className="agent-icon-button"
-                onClick={() => setCollapsed(true)}
-                title="收起"
-                type="button"
-              >
-                ×
-              </button>
+              <div className="agent-chat-header-actions">
+                <AgentThreadObserverPanel
+                  threads={observedThreads}
+                  selectedThreadId={selectedAgentThreadId}
+                  onSelectThread={selectAgentThread}
+                />
+                <button
+                  className="agent-icon-button"
+                  onClick={() => setCollapsed(true)}
+                  title="收起"
+                  type="button"
+                >
+                  ×
+                </button>
+              </div>
             </div>
 
-            <div
-              className="agent-message-list"
-              aria-live="polite"
-              onScroll={updateMessageScrollState}
-              ref={messageListRef}
-            >
-              {agentMessagesQuery.isLoading ? (
-                <p className="agent-empty-text">正在加载对话</p>
-              ) : visibleMessages.length > 0 ? (
-                <>
-                  {visibleMessages.map((message) => {
-                    const decisionCard = decisionCardFromMessage(message);
-                    const isDecisionResolved =
-                      decisionCard !== null &&
-                      (decisionCard.status === "handled" ||
-                        resolvedDecisionIds.has(decisionCard.decision_id));
-                    const messageTime = formatAgentMessageTime(
-                      message.created_at,
-                    );
-                    return (
-                      <article
-                        className={`agent-message agent-message-${messageClass(message)}${isNestedAgentMessage(message) ? " agent-message-nested" : ""}`}
-                        key={message.id}
-                      >
-                        <AgentMessageRenderer
-                          actions={{
-                            ...messageActions,
-                            disabled:
-                              isDecisionResolved ||
-                              respondDecisionMutation.isPending,
-                          }}
-                          message={message}
-                        />
-                        {messageTime ? (
-                          <time
-                            className="agent-message-time"
-                            dateTime={message.created_at}
-                          >
-                            {messageTime}
-                          </time>
-                        ) : null}
-                      </article>
-                    );
-                  })}
-                  {visibleStreams.map((stream) => (
-                    <article
-                      className="agent-message agent-message-assistant agent-message-streaming"
-                      key={stream.task_id}
-                    >
-                      <AgentMessageRenderer message={streamToMessage(stream)} />
-                    </article>
-                  ))}
-                  {showThinkingIndicator ? (
-                    <ThinkingIndicator label={activityLabel} />
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  {visibleStreams.map((stream) => (
-                    <article
-                      className="agent-message agent-message-assistant agent-message-streaming"
-                      key={stream.task_id}
-                    >
-                      <AgentMessageRenderer message={streamToMessage(stream)} />
-                    </article>
-                  ))}
-                  {visibleStreams.length === 0 ? (
-                    showThinkingIndicator ? (
-                      <ThinkingIndicator label={activityLabel} />
-                    ) : (
-                      <p className="agent-empty-text">
-                        还没有 ClipAnvil 对话。
-                      </p>
-                    )
-                  ) : null}
-                </>
-              )}
-            </div>
-            {showJumpToLatest ? (
-              <button
-                aria-label="跳到最新消息"
-                className="agent-scroll-latest-button"
-                onClick={scrollMessagesToBottom}
-                type="button"
+            <div className="agent-chat-main-column">
+              <div
+                className="agent-message-list"
+                aria-live="polite"
+                onScroll={updateMessageScrollState}
+                ref={messageListRef}
               >
-                ↓
-              </button>
-            ) : null}
+                {agentMessagesQuery.isLoading ? (
+                  <p className="agent-empty-text">正在加载对话</p>
+                ) : visibleMessages.length > 0 ? (
+                  <>
+                    {visibleMessages.map((message) => {
+                      const decisionCard = decisionCardFromMessage(message);
+                      const isDecisionResolved =
+                        decisionCard !== null &&
+                        (decisionCard.status === "handled" ||
+                          resolvedDecisionIds.has(decisionCard.decision_id));
+                      const messageTime = formatAgentMessageTime(
+                        message.created_at,
+                      );
+                      return (
+                        <article
+                          className={`agent-message agent-message-${messageClass(message)}${isNestedAgentMessage(message) ? " agent-message-nested" : ""}`}
+                          key={message.id}
+                        >
+                          <AgentMessageRenderer
+                            actions={{
+                              ...messageActions,
+                              observedAgentThreads: observedThreads,
+                              onSelectAgentThread: selectAgentThread,
+                              disabled:
+                                isDecisionResolved ||
+                                respondDecisionMutation.isPending,
+                            }}
+                            message={message}
+                          />
+                          {messageTime ? (
+                            <time
+                              className="agent-message-time"
+                              dateTime={message.created_at}
+                            >
+                              {messageTime}
+                            </time>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+                    {visibleStreams.map((stream) => (
+                      <article
+                        className="agent-message agent-message-assistant agent-message-streaming"
+                        key={stream.task_id}
+                      >
+                        <AgentMessageRenderer message={streamToMessage(stream)} />
+                      </article>
+                    ))}
+                    {showThinkingIndicator ? (
+                      <ThinkingIndicator label={activityLabel} />
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    {visibleStreams.map((stream) => (
+                      <article
+                        className="agent-message agent-message-assistant agent-message-streaming"
+                        key={stream.task_id}
+                      >
+                        <AgentMessageRenderer message={streamToMessage(stream)} />
+                      </article>
+                    ))}
+                    {visibleStreams.length === 0 ? (
+                      showThinkingIndicator ? (
+                        <ThinkingIndicator label={activityLabel} />
+                      ) : (
+                        <p className="agent-empty-text">
+                          还没有 ClipAnvil 对话。
+                        </p>
+                      )
+                    ) : null}
+                  </>
+                )}
+              </div>
+              {showJumpToLatest ? (
+                <button
+                  aria-label="跳到最新消息"
+                  className="agent-scroll-latest-button"
+                  onClick={scrollMessagesToBottom}
+                  type="button"
+                >
+                  ↓
+                </button>
+              ) : null}
+            </div>
 
             {sendError ? <p className="agent-chat-error">{sendError}</p> : null}
             {attachmentError ? (
@@ -1321,6 +1450,22 @@ export function AgentWorkspacePage() {
                 </div>
               </div>
             </form>
+            <AgentThreadDrawer
+              isLoading={selectedAgentThreadMessagesQuery.isLoading}
+              messages={
+                selectedAgentThreadId
+                  ? (agentThreadMessageCache[selectedAgentThreadId]?.messages ??
+                    [])
+                  : []
+              }
+              onClose={() => selectAgentThread("")}
+              streams={
+                selectedAgentThreadId
+                  ? (subThreadStreams[selectedAgentThreadId] ?? [])
+                  : []
+              }
+              thread={selectedAgentThread}
+            />
           </aside>
         )}
       </section>
@@ -1429,13 +1574,7 @@ function ThinkingIndicator({ label }: { label: string }) {
 }
 
 function messageClass(message: AgentMessage) {
-  if (message.message_type === "error") {
-    return "error";
-  }
-  if (isSystemReminderMessage(message)) {
-    return "system-reminder";
-  }
-  return message.role;
+  return messageDisplayClass(message);
 }
 
 function isNestedAgentMessage(message: AgentMessage) {

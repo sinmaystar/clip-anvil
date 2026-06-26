@@ -101,23 +101,17 @@ func TestCraftsmanExecutorWakesProducerWhenWaitingForProducer(t *testing.T) {
 	if input["render_plan_id"] != "5a000000-0000-0000-0000-000000000000" {
 		t.Fatalf("producer wake input missing render_plan_id: %#v", input)
 	}
-	if triggerMessageID, ok := input["trigger_message_id"].(string); !ok || triggerMessageID == "" {
-		t.Fatalf("producer wake input missing trigger_message_id: %#v", input)
+	if _, ok := input["trigger_message_id"]; ok {
+		t.Fatalf("producer wake input should not depend on a synthetic producer user message: %#v", input)
 	}
-	if triggerMessageSeq, ok := input["trigger_message_seq"].(float64); !ok || triggerMessageSeq <= 0 {
-		t.Fatalf("producer wake input missing trigger_message_seq: %#v", input)
+	if _, ok := input["trigger_message_seq"]; ok {
+		t.Fatalf("producer wake input should not depend on a synthetic producer user message seq: %#v", input)
 	}
-	if len(runtime.appended) != 2 {
+	if len(runtime.appended) != 1 {
 		t.Fatalf("appended messages = %#v", runtime.appended)
 	}
-	wakeMessage := runtime.appended[1]
-	if wakeMessage.ThreadID != uuidWithByte(3) || wakeMessage.Role != "user" || wakeMessage.MessageType != "text" {
-		t.Fatalf("wake user message = %#v", wakeMessage)
-	}
-	if !strings.Contains(string(wakeMessage.Content), "craftsman_render_plan_ready") ||
-		!strings.Contains(string(wakeMessage.Content), "当前 ready 的 RenderPlan") ||
-		!strings.Contains(string(wakeMessage.Content), "关联分镜：02000000-0000-0000-0000-000000000000") {
-		t.Fatalf("wake user message content = %s", wakeMessage.Content)
+	if runtime.appended[0].ThreadID == uuidWithByte(3) || runtime.appended[0].Role == "user" {
+		t.Fatalf("craftsman should not append synthetic user messages to producer thread: %#v", runtime.appended[0])
 	}
 	if len(runtime.signals) != 1 {
 		t.Fatalf("signals = %#v", runtime.signals)
@@ -125,7 +119,7 @@ func TestCraftsmanExecutorWakesProducerWhenWaitingForProducer(t *testing.T) {
 	signal := runtime.signals[0]
 	if signal.SignalType != "craftsman_render_plan_ready" ||
 		signal.RenderPlanID != uuidWithByte(90) ||
-		signal.MessageID != wakeMessage.ID ||
+		signal.MessageID.Valid ||
 		signal.DedupeKey != "craftsman_render_plan_ready:5a000000-0000-0000-0000-000000000000" {
 		t.Fatalf("signal = %#v", signal)
 	}

@@ -28,6 +28,7 @@
     "src/lib/canvasRunState.ts",
     "src/lib/canvasSelectors.ts",
     "src/lib/agentTasks.ts",
+    "src/lib/agentThreads.ts",
     "src/lib/clientMessageId.ts",
     "src/lib/connectionFeedback.ts",
     "src/lib/connectionGeometry.ts",

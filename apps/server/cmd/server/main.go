@@ -422,6 +422,8 @@ func main() {
 	h.GET("/api/workspaces/:id", authMiddleware, workspaceHandler.Get)
 	h.GET("/api/model-capabilities", authMiddleware, modelHandler.ListCapabilities)
 	h.GET("/api/agent/workspaces/:workspaceID/thread", authMiddleware, agentHandler.GetThread)
+	h.GET("/api/agent/workspaces/:workspaceID/threads", authMiddleware, agentHandler.ListThreads)
+	h.GET("/api/agent/workspaces/:workspaceID/threads/:threadID/messages", authMiddleware, agentHandler.ListThreadMessages)
 	h.GET("/api/agent/workspaces/:workspaceID/messages", authMiddleware, agentHandler.ListMessages)
 	h.GET("/api/agent/workspaces/:workspaceID/tasks", authMiddleware, agentHandler.ListActiveTasks)
 	h.GET("/api/agent/workspaces/:workspaceID/production-overview", authMiddleware, agentHandler.GetProductionOverview)

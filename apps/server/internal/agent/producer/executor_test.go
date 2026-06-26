@@ -62,6 +62,32 @@ func TestExecutorPersistsAssistantMessageOnSuccess(t *testing.T) {
 	}
 }
 
+func TestExecutorReleasesUnprocessedClaimedSignalsOnSuccess(t *testing.T) {
+	runtime := &fakeRuntime{}
+	graph := &fakeGraph{output: ProducerTurnOutput{AssistantText: "只处理了一条 signal，剩余 signal 下轮继续。"}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runtime.releasedSignals) != 1 {
+		t.Fatalf("released signals = %#v", runtime.releasedSignals)
+	}
+	release := runtime.releasedSignals[0]
+	if release.workspaceID != uuidWithByte(1) || release.taskID != uuidWithByte(3) {
+		t.Fatalf("release target = %#v", release)
+	}
+	if !strings.Contains(release.reason, "producer_turn_completed") {
+		t.Fatalf("release reason = %q", release.reason)
+	}
+}
+
 func TestExecutorTranslatesCraftsmanWakeTaskInputToRuntimeTriggerText(t *testing.T) {
 	runtime := &fakeRuntime{
 		runningTaskInput: []byte(`{
@@ -496,6 +522,13 @@ type fakeRuntime struct {
 	appended             []db.AgentMessage
 	updated              []db.AgentMessage
 	runningTaskInput     []byte
+	releasedSignals      []releasedSignal
+}
+
+type releasedSignal struct {
+	workspaceID pgtype.UUID
+	taskID      pgtype.UUID
+	reason      string
 }
 
 func (f *fakeRuntime) MarkTaskRunning(_ context.Context, taskID pgtype.UUID) (db.AgentTask, error) {
@@ -578,6 +611,11 @@ func (f *fakeRuntime) CreateEvent(_ context.Context, params agentruntime.CreateE
 		EventType:   params.EventType,
 		SourceRole:  params.SourceRole,
 	}, nil
+}
+
+func (f *fakeRuntime) ReleaseProducerPendingSignalsForTask(_ context.Context, workspaceID, taskID pgtype.UUID, reason string) ([]db.ProducerPendingSignal, error) {
+	f.releasedSignals = append(f.releasedSignals, releasedSignal{workspaceID: workspaceID, taskID: taskID, reason: reason})
+	return []db.ProducerPendingSignal{{WorkspaceID: workspaceID, ClaimedByTaskID: taskID, Status: "pending"}}, nil
 }
 
 type fakeEinoCheckpointStore struct{}

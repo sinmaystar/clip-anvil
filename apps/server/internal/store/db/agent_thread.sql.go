@@ -196,6 +196,100 @@ func (q *Queries) GetAgentThreadByID(ctx context.Context, id pgtype.UUID) (Agent
 	return i, err
 }
 
+const getAgentThreadForWorkspace = `-- name: GetAgentThreadForWorkspace :one
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+FROM agent_thread
+WHERE id = $1
+  AND workspace_id = $2
+LIMIT 1
+`
+
+type GetAgentThreadForWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetAgentThreadForWorkspace(ctx context.Context, arg GetAgentThreadForWorkspaceParams) (AgentThread, error) {
+	row := q.db.QueryRow(ctx, getAgentThreadForWorkspace, arg.ID, arg.WorkspaceID)
+	var i AgentThread
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Role,
+		&i.ScopeType,
+		&i.ScopeID,
+		&i.RuntimeProvider,
+		&i.RuntimeAgentName,
+		&i.CurrentCheckpointKey,
+		&i.Status,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLatestAgentMessageByThread = `-- name: GetLatestAgentMessageByThread :one
+SELECT id, workspace_id, thread_id, seq, role, message_type, content, raw_message, task_id, event_id, created_at
+FROM agent_message
+WHERE thread_id = $1
+ORDER BY seq DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestAgentMessageByThread(ctx context.Context, threadID pgtype.UUID) (AgentMessage, error) {
+	row := q.db.QueryRow(ctx, getLatestAgentMessageByThread, threadID)
+	var i AgentMessage
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ThreadID,
+		&i.Seq,
+		&i.Role,
+		&i.MessageType,
+		&i.Content,
+		&i.RawMessage,
+		&i.TaskID,
+		&i.EventID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getLatestAgentTaskByThread = `-- name: GetLatestAgentTaskByThread :one
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id
+FROM agent_task
+WHERE thread_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestAgentTaskByThread(ctx context.Context, threadID pgtype.UUID) (AgentTask, error) {
+	row := q.db.QueryRow(ctx, getLatestAgentTaskByThread, threadID)
+	var i AgentTask
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ThreadID,
+		&i.Role,
+		&i.ScopeType,
+		&i.ScopeID,
+		&i.TaskType,
+		&i.Status,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.Input,
+		&i.Output,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.RenderPlanID,
+	)
+	return i, err
+}
+
 const listAgentThreadsByWorkspace = `-- name: ListAgentThreadsByWorkspace :many
 SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
 FROM agent_thread
@@ -205,6 +299,52 @@ ORDER BY created_at DESC
 
 func (q *Queries) ListAgentThreadsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]AgentThread, error) {
 	rows, err := q.db.Query(ctx, listAgentThreadsByWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentThread{}
+	for rows.Next() {
+		var i AgentThread
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Role,
+			&i.ScopeType,
+			&i.ScopeID,
+			&i.RuntimeProvider,
+			&i.RuntimeAgentName,
+			&i.CurrentCheckpointKey,
+			&i.Status,
+			&i.Summary,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listObservableAgentThreadsByWorkspace = `-- name: ListObservableAgentThreadsByWorkspace :many
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+FROM agent_thread
+WHERE workspace_id = $1
+  AND ($2::boolean OR role <> 'producer')
+ORDER BY updated_at DESC, created_at DESC
+`
+
+type ListObservableAgentThreadsByWorkspaceParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	IncludeProducer bool        `json:"include_producer"`
+}
+
+func (q *Queries) ListObservableAgentThreadsByWorkspace(ctx context.Context, arg ListObservableAgentThreadsByWorkspaceParams) ([]AgentThread, error) {
+	rows, err := q.db.Query(ctx, listObservableAgentThreadsByWorkspace, arg.WorkspaceID, arg.IncludeProducer)
 	if err != nil {
 		return nil, err
 	}

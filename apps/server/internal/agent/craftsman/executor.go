@@ -358,34 +358,6 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 	if err != nil {
 		return fmt.Errorf("craftsman ready missing render plan: %w", err)
 	}
-	triggerText := craftsmanReadyUserMessageText(input, taskInput)
-	triggerContent, err := uimessage.BuildUserMessageContent(uimessage.UserMessageInput{Text: triggerText})
-	if err != nil {
-		return err
-	}
-	triggerMessage, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
-		WorkspaceID: input.WorkspaceID,
-		ThreadID:    taskInput.ProducerThreadID,
-		Role:        "user",
-		MessageType: "text",
-		Content:     triggerContent,
-		RawMessage: mustJSON(map[string]any{
-			"source":              "system",
-			"trigger":             "craftsman_render_plan_ready",
-			"craftsman_task_id":   uuidString(input.TaskID),
-			"craftsman_thread_id": uuidString(input.ThreadID),
-			"scope_type":          input.ScopeType,
-			"scope_id":            uuidString(input.ScopeID),
-			"shot_id":             uuidString(input.ShotID),
-			"target_phase":        taskInput.Mode,
-			"render_plan_id":      uuidString(renderPlan.ID),
-		}),
-		TaskID: input.TaskID,
-	})
-	if err != nil {
-		return err
-	}
-	e.broadcastMessage(input.WorkspaceID, triggerMessage, db.AgentEvent{})
 	_, err = e.runtime.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
 		WorkspaceID:      input.WorkspaceID,
 		ProducerThreadID: taskInput.ProducerThreadID,
@@ -396,7 +368,6 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 		ScopeType:        input.ScopeType,
 		ScopeID:          input.ScopeID,
 		RenderPlanID:     renderPlan.ID,
-		MessageID:        triggerMessage.ID,
 		Priority:         50,
 		DedupeKey:        "craftsman_render_plan_ready:" + uuidString(renderPlan.ID),
 		Payload: mustJSON(map[string]any{
@@ -435,8 +406,6 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 		"shot_id":             uuidString(input.ShotID),
 		"target_phase":        taskInput.Mode,
 		"render_plan_id":      uuidString(renderPlan.ID),
-		"trigger_message_id":  uuidString(triggerMessage.ID),
-		"trigger_message_seq": triggerMessage.Seq,
 	})
 	task, err := e.runtime.CreateTask(ctx, agentruntime.CreateTaskParams{
 		WorkspaceID: input.WorkspaceID,
@@ -458,34 +427,10 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 		SourceRole:  "system",
 		TargetRole:  "producer",
 		Scope:       mustJSON(map[string]any{"trigger": "craftsman_render_plan_ready", "scope_type": input.ScopeType, "scope_id": uuidString(input.ScopeID)}),
-		Payload:     mustJSON(map[string]any{"craftsman_task_id": uuidString(input.TaskID), "target_phase": taskInput.Mode, "render_plan_id": uuidString(renderPlan.ID), "trigger_message_id": uuidString(triggerMessage.ID), "trigger_message_seq": triggerMessage.Seq, "craftsman_output": json.RawMessage(craftsmanOutput)}),
+		Payload:     mustJSON(map[string]any{"craftsman_task_id": uuidString(input.TaskID), "target_phase": taskInput.Mode, "render_plan_id": uuidString(renderPlan.ID), "craftsman_output": json.RawMessage(craftsmanOutput)}),
 	})
 	e.producerEnqueuer.EnqueueProducerTask(ctx, task)
 	return nil
-}
-
-func craftsmanReadyUserMessageText(input RunTaskInput, taskInput parsedTaskInput) string {
-	lines := []string{
-		"<system-reminder>",
-		"系统事件：Craftsman 已完成 RenderPlan 编译。",
-		"触发原因：craftsman_render_plan_ready。",
-		"当前 ready 的 RenderPlan 已写入 Producer Pending Signal。请结合系统提醒里的 signal 列表处理，不要只依赖聊天消息顺序。",
-		"下一步：请读取项目上下文，按 signal 指定的 RenderPlan 决定调用 decide_render_plan accept/reject，或先派 Reviewer 评审。",
-	}
-	if targetPhase := strings.TrimSpace(taskInput.Mode); targetPhase != "" {
-		lines = append(lines, "目标阶段："+targetPhase+"。")
-	}
-	if scopeType := strings.TrimSpace(input.ScopeType); scopeType != "" {
-		lines = append(lines, "目标范围："+scopeType+" "+uuidString(input.ScopeID)+"。")
-	}
-	if input.ShotID.Valid {
-		lines = append(lines, "关联分镜："+uuidString(input.ShotID)+"。")
-	}
-	if input.TaskID.Valid {
-		lines = append(lines, "Craftsman 任务："+uuidString(input.TaskID)+"。")
-	}
-	lines = append(lines, "</system-reminder>")
-	return strings.Join(lines, "\n")
 }
 
 func stringUUIDValue(value any) (pgtype.UUID, bool) {

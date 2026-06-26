@@ -25,6 +25,17 @@ type agentThreadResponse struct {
 	UpdatedAt            string  `json:"updated_at"`
 }
 
+type agentObservedThreadResponse struct {
+	agentThreadResponse
+	DisplayName          string             `json:"display_name"`
+	ScopeLabel           string             `json:"scope_label"`
+	ScopeTitle           string             `json:"scope_title,omitempty"`
+	LatestTask           *agentTaskResponse `json:"latest_task,omitempty"`
+	LatestMessageAt      string             `json:"latest_message_at,omitempty"`
+	LatestMessagePreview string             `json:"latest_message_preview,omitempty"`
+	Metadata             map[string]any     `json:"metadata,omitempty"`
+}
+
 type agentMessageResponse struct {
 	ID          string         `json:"id"`
 	WorkspaceID string         `json:"workspace_id"`
@@ -173,6 +184,84 @@ func toAgentThreadResponse(thread db.AgentThread) agentThreadResponse {
 		CreatedAt:            timestamptzString(thread.CreatedAt),
 		UpdatedAt:            timestamptzString(thread.UpdatedAt),
 	}
+}
+
+func toObservedAgentThreadResponse(thread db.AgentThread, latestTask *db.AgentTask, latestMessage *db.AgentMessage) agentObservedThreadResponse {
+	base := toAgentThreadResponse(thread)
+	out := agentObservedThreadResponse{
+		agentThreadResponse: base,
+		DisplayName:         observedThreadDisplayName(thread),
+		ScopeLabel:          observedThreadScopeLabel(thread),
+	}
+	if latestTask != nil {
+		task := toAgentTaskResponse(*latestTask)
+		out.LatestTask = &task
+	}
+	if latestMessage != nil {
+		out.LatestMessageAt = timestamptzString(latestMessage.CreatedAt)
+		out.LatestMessagePreview = agentMessagePreview(*latestMessage)
+	}
+	return out
+}
+
+func observedThreadDisplayName(thread db.AgentThread) string {
+	role := observedThreadRoleName(thread.Role)
+	label := observedThreadScopeLabel(thread)
+	if label == "" {
+		return role
+	}
+	return role + " · " + label
+}
+
+func observedThreadRoleName(role string) string {
+	switch role {
+	case "craftsman":
+		return "Craftsman"
+	case "reviewer":
+		return "Reviewer"
+	case "composer":
+		return "Composer"
+	case "producer":
+		return "Producer"
+	default:
+		return role
+	}
+}
+
+func observedThreadScopeLabel(thread db.AgentThread) string {
+	if thread.ScopeID.Valid {
+		return thread.ScopeType + ":" + uuidToString(thread.ScopeID)
+	}
+	return thread.ScopeType
+}
+
+func agentMessagePreview(message db.AgentMessage) string {
+	return trimPreviewText(agentMessageContentText(jsonObjectMap(message.Content)))
+}
+
+func agentMessageContentText(content map[string]any) string {
+	blocks, _ := content["blocks"].([]any)
+	lines := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		value, _ := block.(map[string]any)
+		text, _ := value["text"].(string)
+		if strings.TrimSpace(text) != "" {
+			lines = append(lines, strings.TrimSpace(text))
+		}
+	}
+	if len(lines) > 0 {
+		return strings.Join(lines, "\n")
+	}
+	text, _ := content["text"].(string)
+	return strings.TrimSpace(text)
+}
+
+func trimPreviewText(text string) string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) <= 160 {
+		return string(runes)
+	}
+	return string(runes[:160])
 }
 
 func toAgentMessageResponse(msg db.AgentMessage) agentMessageResponse {
