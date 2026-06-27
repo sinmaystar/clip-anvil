@@ -39,7 +39,7 @@ export const mediaNodePreviewLimits: Record<MediaType, NodePreviewLimit> = {
     maxH: 380,
   },
   video: {
-    minW: 280,
+    minW: 180,
     minH: 188,
     defaultW: 400,
     defaultH: 260,
@@ -100,8 +100,8 @@ export function adaptiveMediaNodeSize(
   }
   if (node.node_type === "video") {
     return mediaRatioSize(
-      node.production_preview?.width,
-      node.production_preview?.height,
+      node.production_preview?.width ?? measuredMediaDimensions?.width,
+      node.production_preview?.height ?? measuredMediaDimensions?.height,
       limits,
       16 / 9,
     );

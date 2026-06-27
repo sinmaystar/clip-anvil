@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import type {
   AgentCanvasArtifactDetail,
   AgentCanvasArtifactSlot,
@@ -565,6 +565,14 @@ function OutputCard({
   const previewUrl = artifact.thumbnail_url || artifact.access_url;
   const title = artifact.title || outputKindLabel(artifact.kind, index);
   const selectable = Boolean(artifact.node_id);
+  const [measuredDimensions, setMeasuredDimensions] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const previewDimensions =
+    artifact.width && artifact.height
+      ? { width: artifact.width, height: artifact.height }
+      : measuredDimensions;
   return (
     <button
       className="agent-canvas-output-card"
@@ -583,17 +591,40 @@ function OutputCard({
       }}
       type="button"
     >
-      <div className="agent-canvas-output-card-preview">
+      <div
+        className="agent-canvas-output-card-preview"
+        style={outputCardPreviewStyle(previewDimensions)}
+      >
         {previewUrl ? (
           artifact.kind === "shot_video" ? (
             <video
               muted
+              onLoadedMetadata={(event) => {
+                const { videoHeight, videoWidth } = event.currentTarget;
+                if (videoWidth <= 0 || videoHeight <= 0) {
+                  return;
+                }
+                setMeasuredDimensions({ width: videoWidth, height: videoHeight });
+              }}
               playsInline
               poster={artifact.thumbnail_url}
               src={artifact.access_url || artifact.thumbnail_url}
             />
           ) : (
-            <img alt={title} src={previewUrl} />
+            <img
+              alt={title}
+              onLoad={(event) => {
+                const { naturalHeight, naturalWidth } = event.currentTarget;
+                if (naturalWidth <= 0 || naturalHeight <= 0) {
+                  return;
+                }
+                setMeasuredDimensions({
+                  width: naturalWidth,
+                  height: naturalHeight,
+                });
+              }}
+              src={previewUrl}
+            />
           )
         ) : (
           <span>{artifactPlaceholderText(artifact.status)}</span>
@@ -605,6 +636,15 @@ function OutputCard({
       </div>
     </button>
   );
+}
+
+function outputCardPreviewStyle(
+  dimensions: { width: number; height: number } | null,
+): CSSProperties | undefined {
+  if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
+    return undefined;
+  }
+  return { aspectRatio: `${dimensions.width} / ${dimensions.height}` };
 }
 
 function DetailSubsection({

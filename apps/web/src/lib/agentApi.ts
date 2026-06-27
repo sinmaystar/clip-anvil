@@ -377,6 +377,8 @@ export interface AgentCanvasArtifactSlot {
   version_id?: string;
   thumbnail_url?: string;
   access_url?: string;
+  width?: number;
+  height?: number;
   error_code?: string;
   error_message?: string;
 }

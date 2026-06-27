@@ -220,13 +220,22 @@ describe("agent React Flow canvas", () => {
     assert.match(detailSource, /agent-canvas-output-card/);
     assert.match(detailSource, /objectType:\s*"artifact"/);
     assert.doesNotMatch(detailSource, /<DetailSection title="生产状态">/);
+    assert.match(detailSource, /outputCardPreviewStyle/);
+    assert.match(detailSource, /onLoadedMetadata/);
+    assert.match(detailSource, /videoWidth/);
+    assert.match(detailSource, /videoHeight/);
     assert.match(cssSource, /\.agent-canvas-output-grid/);
     assert.match(cssSource, /\.agent-canvas-output-card/);
+    assert.doesNotMatch(
+      cssSource,
+      /\.agent-canvas-output-card-preview\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9/,
+    );
   });
 
   it("renders Agent shots as modern media cards instead of dense artifact grids", async () => {
     const shotSource = await readFile(agentShotNodeUrl, "utf8");
     const canvasSource = await readFile(agentWorkbenchCanvasUrl, "utf8");
+    const viewModelSource = await readFile(agentWorkbenchViewModelUrl, "utf8");
     const cssSource = await readFile(mainCssUrl, "utf8");
 
     assert.match(shotSource, /agent-workbench-shot-media-card/);
@@ -240,8 +249,13 @@ describe("agent React Flow canvas", () => {
     assert.match(shotSource, /style=\{mediaSlotStyle\(slot,\s*measuredDimensions\)\}/);
     assert.match(shotSource, /naturalWidth/);
     assert.match(shotSource, /onMediaDimensionsChange/);
+    assert.match(shotSource, /ResizeObserver/);
+    assert.match(shotSource, /scrollHeight/);
+    assert.match(shotSource, /onShotHeightChange/);
     assert.match(canvasSource, /mediaDimensions/);
     assert.match(canvasSource, /setMediaDimensions/);
+    assert.match(canvasSource, /shotHeights/);
+    assert.match(canvasSource, /handleShotHeightChange/);
     assert.doesNotMatch(
       cssSource,
       /\.agent-workbench-shot-media-button\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9/,
@@ -250,9 +264,14 @@ describe("agent React Flow canvas", () => {
       cssSource,
       /\.agent-workbench-shot-media-card\s*\{[^}]*background:\s*transparent;/,
     );
+    assert.match(shotSource, /videoWidth/);
+    assert.match(shotSource, /videoHeight/);
+    assert.match(viewModelSource, /height:\s*layout\.height/);
+    assert.match(viewModelSource, /style:\s*\{\s*width:\s*SHOT_WIDTH,\s*height:\s*layout\.height\s*\}/);
+    assert.match(cssSource, /grid-template-rows:\s*auto auto auto auto;/);
     assert.match(
       cssSource,
-      /\.agent-workbench-shot-media-button img,\s*\.agent-workbench-shot-media-button video\s*\{[^}]*object-fit:\s*cover;/,
+      /\.agent-workbench-shot-media-button img,\s*\.agent-workbench-shot-media-button video\s*\{[^}]*object-fit:\s*contain;/,
     );
   });
 

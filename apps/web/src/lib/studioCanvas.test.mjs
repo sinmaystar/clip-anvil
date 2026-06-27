@@ -87,6 +87,8 @@ describe("studio React Flow canvas", () => {
     assert.match(mediaSource, /media-node-kind-icon/);
     assert.match(mediaSource, /aria-label=\{nodeTypeLabel/);
     assert.match(mediaSource, /naturalWidth/);
+    assert.match(mediaSource, /videoWidth/);
+    assert.match(mediaSource, /videoHeight/);
     assert.match(mediaSource, /useUpdateNodeInternals/);
     assert.match(mediaSource, /onMediaDimensionsChange/);
     assert.match(surfaceSource, /handleMediaDimensionsChange/);
@@ -100,7 +102,7 @@ describe("studio React Flow canvas", () => {
     assert.doesNotMatch(cssSource, /\.media-node-header/);
     assert.match(cssSource, /\.media-node-floating-title\s*\{[\s\S]*background:\s*transparent;/);
     assert.match(cssSource, /\.media-node-media-frame\s*\{[\s\S]*background:\s*transparent;/);
-    assert.match(cssSource, /\.media-node-media-frame img,[\s\S]*object-fit:\s*cover;/);
+    assert.match(cssSource, /\.media-node-media-frame img,[\s\S]*object-fit:\s*contain;/);
   });
 
   it("renders selected node editing as a compact prompt composer with dependency inputs and bottom controls", async () => {
