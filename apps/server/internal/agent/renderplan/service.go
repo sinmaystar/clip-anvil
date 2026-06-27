@@ -207,6 +207,7 @@ func createParams(input UpsertInput, revision int32) db.CreateRenderPlanParams {
 }
 
 func createParamsWithStatus(input UpsertInput, revision int32, status string) db.CreateRenderPlanParams {
+	semanticKey := renderPlanKey(input, revision)
 	return db.CreateRenderPlanParams{
 		WorkspaceID:            input.WorkspaceID,
 		ScopeType:              input.Scope.Type,
@@ -218,7 +219,7 @@ func createParamsWithStatus(input UpsertInput, revision int32, status string) db
 		Status:                 status,
 		Revision:               revision,
 		ForkedFromRenderPlanID: input.ForkFromRenderPlanID,
-		RenderPlanKey:          renderPlanKey(input, revision),
+		RenderPlanKey:          semanticKey,
 		ReferenceBindings:      mustJSON(input.ReferenceBindings),
 		SubjectBindings:        mustJSON(input.SubjectBindings),
 		PromptParts:            mustJSON(input.PromptParts),
@@ -228,6 +229,8 @@ func createParamsWithStatus(input UpsertInput, revision int32, status string) db
 		Rationale:              input.Rationale,
 		CreatedByThreadID:      input.ThreadID,
 		CreatedByTaskID:        input.TaskID,
+		SemanticKey:            semanticKey,
+		DisplayName:            renderPlanDisplayName(input, revision),
 	}
 }
 
@@ -250,7 +253,19 @@ func updateDraftParams(input UpsertInput, id pgtype.UUID, status string) db.Upda
 }
 
 func renderPlanKey(input UpsertInput, revision int32) string {
-	return fmt.Sprintf("%s:%s:%s:%d", input.Scope.Type, uuidString(input.Scope.ID), input.TargetPhase, revision)
+	scopeKey := strings.TrimSpace(input.Scope.Key)
+	if scopeKey == "" {
+		scopeKey = strings.TrimSpace(input.Scope.Type) + ".semantic_key_missing"
+	}
+	return fmt.Sprintf("%s.%s.r%d", scopeKey, input.TargetPhase, revision)
+}
+
+func renderPlanDisplayName(input UpsertInput, revision int32) string {
+	scopeKey := strings.TrimSpace(input.Scope.Key)
+	if scopeKey == "" {
+		scopeKey = strings.TrimSpace(input.Scope.Type)
+	}
+	return fmt.Sprintf("%s %s RenderPlan r%d", scopeKey, input.TargetPhase, revision)
 }
 
 func mustJSON(value any) []byte {
@@ -259,11 +274,4 @@ func mustJSON(value any) []byte {
 		return []byte("{}")
 	}
 	return raw
-}
-
-func uuidString(id pgtype.UUID) string {
-	if !id.Valid {
-		return ""
-	}
-	return fmt.Sprintf("%x-%x-%x-%x-%x", id.Bytes[0:4], id.Bytes[4:6], id.Bytes[6:8], id.Bytes[8:10], id.Bytes[10:16])
 }

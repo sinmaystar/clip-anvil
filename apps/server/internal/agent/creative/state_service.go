@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agentidentity "github.com/sinmaystar/clip-anvil/internal/agent/identity"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -68,6 +69,7 @@ type Store interface {
 
 	ListRenderPlansByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.RenderPlan, error)
 	ListRenderPlansByScope(ctx context.Context, arg db.ListRenderPlansByScopeParams) ([]db.RenderPlan, error)
+	ListAgentObjectsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentObjectIndex, error)
 }
 
 type Service struct {
@@ -105,6 +107,8 @@ func (s *Service) UpsertProjectBrief(ctx context.Context, input UpsertProjectBri
 			Constraints:       jsonBytes(input.Constraints, "[]"),
 			Metadata:          jsonBytes(map[string]any{"brief": input.Brief, "reason": input.Reason}, "{}"),
 			Status:            "active",
+			SemanticKey:       "creative_brief.main",
+			DisplayName:       defaultString(input.Title, "Creative Brief"),
 			CreatedByThreadID: input.ThreadID,
 			CreatedByTaskID:   input.TaskID,
 		})
@@ -187,6 +191,8 @@ func (s *Service) UpdateProjectMemory(ctx context.Context, input UpdateProjectMe
 		Forbidden:            mergeArray(current.Forbidden, input.Forbidden, mode),
 		PromptInjectionHints: mergeArray(current.PromptInjectionHints, input.PromptInjectionHints, mode),
 		SourceRefs:           mergeArray(current.SourceRefs, input.SourceRefs, mode),
+		SemanticKey:          fmt.Sprintf("project_memory.v%d", version),
+		DisplayName:          fmt.Sprintf("Project Memory v%d", version),
 		CreatedByThreadID:    input.ThreadID,
 		CreatedByTaskID:      input.TaskID,
 	})
@@ -217,6 +223,8 @@ func (s *Service) UpsertKeyElements(ctx context.Context, input UpsertKeyElements
 				SourceType:        elementInput.SourceType,
 				SourceRefs:        jsonBytes(elementInput.SourceRefs, "[]"),
 				Status:            "active",
+				SemanticKey:       keyElementSemanticKey(elementInput.ClientKey, elementInput.Name),
+				DisplayName:       defaultString(elementInput.Name, elementInput.ClientKey),
 				CreatedByThreadID: input.ThreadID,
 				CreatedByTaskID:   input.TaskID,
 			})
@@ -395,6 +403,10 @@ func (s *Service) ReadProjectContext(ctx context.Context, input ReadContextInput
 	if err != nil {
 		return ContextPacket{}, err
 	}
+	packet.ObjectIndex, err = s.store.ListAgentObjectsByWorkspace(ctx, input.WorkspaceID)
+	if err != nil {
+		return ContextPacket{}, err
+	}
 	return packet, nil
 }
 
@@ -456,6 +468,8 @@ func (s *Service) upsertElementState(ctx context.Context, input UpsertKeyElement
 			StateFacts:         jsonBytes(stateInput.StateFacts, "[]"),
 			SourceRefs:         jsonBytes(stateInput.SourceRefs, "[]"),
 			Status:             "active",
+			SemanticKey:        keyElementStateSemanticKey(element, stateInput),
+			DisplayName:        defaultString(stateInput.Label, stateInput.ClientKey),
 			CreatedByThreadID:  input.ThreadID,
 			CreatedByTaskID:    input.TaskID,
 		})
@@ -498,6 +512,8 @@ func (s *Service) upsertScene(ctx context.Context, input UpsertStoryboardInput, 
 			Location:          sceneInput.Location,
 			Mood:              sceneInput.Mood,
 			Status:            "planned",
+			SemanticKey:       sceneSemanticKey(sceneInput.ClientKey, sceneInput.Title, sceneInput.SortOrder),
+			DisplayName:       defaultString(sceneInput.Title, sceneInput.ClientKey),
 			CreatedByThreadID: input.ThreadID,
 			CreatedByTaskID:   input.TaskID,
 		})
@@ -561,6 +577,8 @@ func (s *Service) upsertShot(ctx context.Context, input UpsertStoryboardInput, s
 			Dialogue:         shotInput.Dialogue,
 			Narration:        shotInput.Narration,
 			AudioPlan:        audioPlan,
+			SemanticKey:      shotSemanticKey(shotInput.ClientKey, shotInput.SortOrder),
+			DisplayName:      defaultString(shotInput.Title, shotInput.ClientKey),
 		})
 		return created, true, err
 	}
@@ -667,6 +685,8 @@ func (s *Service) createShotDependency(ctx context.Context, workspaceID pgtype.U
 		BlockingPhase:    input.BlockingPhase,
 		StalePolicy:      "mark_downstream_stale",
 		Reason:           input.Reason,
+		SemanticKey:      shotDependencySemanticKey(fromShot, toShot, input),
+		DisplayName:      fromShot.SemanticKey + " -> " + toShot.SemanticKey + " " + input.DependencyType,
 	})
 	return created, err == nil, err
 }
@@ -700,6 +720,65 @@ func validateKeyElement(input KeyElementInput) error {
 		return fmt.Errorf("%w: 同一个 key element 只能有一个默认 state", ErrInvalidCreativeStateInput)
 	}
 	return nil
+}
+
+func keyElementSemanticKey(clientKey string, name string) string {
+	clientKey = strings.TrimSpace(clientKey)
+	if strings.HasPrefix(clientKey, "element_") {
+		return clientKey
+	}
+	if clientKey != "" {
+		return "element_" + agentidentity.NormalizeKeyPart(clientKey)
+	}
+	return agentidentity.KeyElementKey(name)
+}
+
+func keyElementStateSemanticKey(element db.KeyElement, input KeyElementStateInput) string {
+	elementKey := strings.TrimSpace(element.SemanticKey)
+	if elementKey == "" {
+		elementKey = keyElementSemanticKey(element.ClientKey, element.Name)
+	}
+	label := strings.TrimSpace(input.ClientKey)
+	if label == "" {
+		label = input.Label
+	}
+	label = strings.TrimPrefix(label, "state_")
+	return agentidentity.KeyElementStateKey(elementKey, label)
+}
+
+func sceneSemanticKey(clientKey string, title string, sortOrder int32) string {
+	clientKey = strings.TrimSpace(clientKey)
+	if strings.HasPrefix(clientKey, "scene_") {
+		return clientKey
+	}
+	if clientKey != "" {
+		return "scene_" + agentidentity.NormalizeKeyPart(clientKey)
+	}
+	return agentidentity.SceneKey(title, int(sortOrder))
+}
+
+func shotSemanticKey(clientKey string, sortOrder int32) string {
+	clientKey = strings.TrimSpace(clientKey)
+	if strings.HasPrefix(clientKey, "shot_") {
+		return clientKey
+	}
+	return agentidentity.ShotKey(int(sortOrder))
+}
+
+func shotDependencySemanticKey(fromShot db.Shot, toShot db.Shot, input ShotDependencyInput) string {
+	fromKey := strings.TrimSpace(fromShot.SemanticKey)
+	if fromKey == "" {
+		fromKey = shotSemanticKey(fromShot.ClientKey, fromShot.SortOrder)
+	}
+	toKey := strings.TrimSpace(toShot.SemanticKey)
+	if toKey == "" {
+		toKey = shotSemanticKey(toShot.ClientKey, toShot.SortOrder)
+	}
+	blockingPhase := strings.TrimSpace(input.BlockingPhase)
+	if blockingPhase == "" {
+		blockingPhase = "any"
+	}
+	return "dep." + fromKey + ".to." + toKey + "." + agentidentity.NormalizeKeyPart(input.DependencyType) + "." + agentidentity.NormalizeKeyPart(blockingPhase)
 }
 
 func oneOf(value string, allowed ...string) bool {

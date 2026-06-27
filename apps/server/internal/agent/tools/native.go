@@ -24,6 +24,7 @@ type NativeRuntimeContext struct {
 	ExecutionPolicy string
 	ScopeType       string
 	ScopeID         pgtype.UUID
+	ScopeKey        string
 	TargetPhase     string
 
 	ReviewTask                 string

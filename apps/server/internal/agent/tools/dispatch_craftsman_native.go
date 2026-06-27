@@ -14,12 +14,12 @@ type DispatchCraftsmanNativeTool struct {
 
 type DispatchCraftsmanToolInput struct {
 	Brief           string                 `json:"brief" jsonschema:"required" jsonschema_description:"一句话描述调用该工具的意图，例如生成机场晨光统一参考图或直接生成所有分镜预览图。不要超过 160 个中文字符。"`
-	Scope           DispatchCraftsmanScope `json:"scope" jsonschema:"required" jsonschema_description:"生产归属范围。shot 表示分镜图或分镜视频；key_element_state 表示共享参考图。scope.type=shot 且 id 为空时，可配合 shot_refs 批量派发；scope.type=key_element_state 时 id 填 key_element_state UUID 或 state_client_key。"`
-	ShotRefs        []string               `json:"shot_refs" jsonschema_description:"scope.type=shot 时可填写的分镜 UUID 或稳定 client_key。为空表示派发所有可生成的 active shots。scope.type=key_element_state 时必须留空。"`
+	Scope           DispatchCraftsmanScope `json:"scope" jsonschema:"required" jsonschema_description:"生产归属范围。shot 表示分镜图或分镜视频；key_element_state 表示共享参考图。scope.type=shot 且 key 为空时，可配合 shot_refs 批量派发；scope.type=key_element_state 时 key 填 read_project_context 返回的 semantic_key。"`
+	ShotRefs        []string               `json:"shot_refs" jsonschema_description:"scope.type=shot 时可填写分镜 semantic_key 或稳定 client_key。为空表示派发所有可生成的 active shots。scope.type=key_element_state 时必须留空。"`
 	TargetPhase     string                 `json:"target_phase" jsonschema:"required,enum=reference_image,enum=preview_image,enum=shot_video" jsonschema_description:"生成阶段。reference_image 生成 KeyElementState 统一参考图；preview_image 生成分镜预览图；shot_video 基于已确认预览图生成分镜视频。"`
 	Mode            string                 `json:"mode" jsonschema:"enum=preview_image,enum=shot_video" jsonschema_description:"兼容旧参数；新调用请使用 target_phase。"`
 	ExecutionPolicy string                 `json:"execution_policy" jsonschema:"required,enum=execute_immediately,enum=wait_for_producer" jsonschema_description:"执行策略。execute_immediately 表示 Craftsman 编译 RenderPlan 后工程自动提交 Worker；wait_for_producer 表示只编译并等待 Producer 后续 accept/reject。"`
-	Force           bool                   `json:"force" jsonschema_description:"为 true 时即使已有结果也创建新尝试；默认 false。"`
+	Force           bool                   `json:"force" jsonschema_description:"为 true 时即使已有完成结果也创建新尝试；默认 false。不能用于绕过正在排队或运行中的同 scope/target_phase Craftsman 任务。"`
 	MaxAttempts     int32                  `json:"max_attempts" jsonschema_description:"Craftsman 最大尝试次数，范围 1 到 3；为空时默认 3。"`
 	Critique        string                 `json:"critique" jsonschema_description:"可选的评审意见或用户修改意见，Craftsman 必须在 RenderPlan 中回应。"`
 	FixHints        []string               `json:"fix_hints" jsonschema_description:"可选的具体修复建议，例如保持行李箱银灰色、改成低机位跟拍。"`
@@ -28,7 +28,7 @@ type DispatchCraftsmanToolInput struct {
 
 type DispatchCraftsmanScope struct {
 	Type string `json:"type" jsonschema:"required,enum=shot,enum=key_element_state" jsonschema_description:"scope 类型。shot 用于分镜预览图或分镜视频；key_element_state 用于共享参考图。"`
-	ID   string `json:"id" jsonschema_description:"scope 对象引用。scope.type=key_element_state 时填写 key_element_state UUID 或 state_client_key；scope.type=shot 时可填写 shot UUID，也可留空并使用 shot_refs 批量派发。"`
+	ID   string `json:"id" jsonschema_description:"兼容旧字段。模型不要填写 UUID；请填写 read_project_context 返回的 semantic_key，或留空并用 shot_refs 批量派发 shot。"`
 }
 
 func NewDispatchCraftsmanNativeTool(store CraftsmanDispatcherStore, runtime CraftsmanRuntime, enqueuer CraftsmanTaskEnqueuer) DispatchCraftsmanNativeTool {
@@ -74,7 +74,7 @@ func (t DispatchCraftsmanNativeTool) InvokableRun(ctx context.Context, arguments
 		return NaturalToolError("dispatch_craftsman", err.Error(), "请读取项目上下文，确认分镜状态、mode 和 shot_refs 后重试。"), nil
 	}
 	return NaturalResult{
-		Title: "已派发 Craftsman 任务",
+		Title: "Craftsman 派发结果",
 		Items: []NaturalResultItem{
 			{Label: "阶段", Value: targetPhaseFromNativeInput(input)},
 			{Label: "摘要", Value: output.Summary},
@@ -95,7 +95,7 @@ func validateDispatchCraftsmanInput(input DispatchCraftsmanToolInput) error {
 		return err
 	}
 	if input.Scope.Type == "key_element_state" && input.Scope.ID == "" {
-		return fmt.Errorf("scope.id 必填；key_element_state 参考图任务请填写 key_element_state UUID 或 state_client_key")
+		return fmt.Errorf("scope.id 必填；key_element_state 参考图任务请填写 read_project_context 返回的 semantic_key")
 	}
 	if input.Scope.Type == "key_element_state" && targetPhase != "reference_image" {
 		return fmt.Errorf("key_element_state 只能派发 reference_image")

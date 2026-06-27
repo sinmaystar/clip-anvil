@@ -16,7 +16,7 @@ UPDATE media_node
 SET group_id = NULL,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 func (q *Queries) ClearMediaNodeGroup(ctx context.Context, id pgtype.UUID) (MediaNode, error) {
@@ -48,6 +48,10 @@ func (q *Queries) ClearMediaNodeGroup(ctx context.Context, id pgtype.UUID) (Medi
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -70,27 +74,35 @@ INSERT INTO media_node (
     model_provider,
     model_id,
     model_params,
-    metadata
+    metadata,
+    semantic_key,
+    display_name,
+    artifact_kind,
+    source_render_plan_id
 )
-VALUES ($1, $2, $3, $4, $4, $5, 'queued', 'agent', $6, $7, $8, $9, $10, $11, $12, $13, $14)
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+VALUES ($1, $2, $3, $4, $4, $5, 'queued', 'agent', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type CreateAgentGenerationNodeParams struct {
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	NodeType      NodeType    `json:"node_type"`
-	Title         string      `json:"title"`
-	Prompt        string      `json:"prompt"`
-	OperationType string      `json:"operation_type"`
-	CanvasX       float32     `json:"canvas_x"`
-	CanvasY       float32     `json:"canvas_y"`
-	CanvasW       float32     `json:"canvas_w"`
-	CanvasH       float32     `json:"canvas_h"`
-	ShotID        pgtype.UUID `json:"shot_id"`
-	ModelProvider pgtype.Text `json:"model_provider"`
-	ModelID       pgtype.Text `json:"model_id"`
-	ModelParams   []byte      `json:"model_params"`
-	Metadata      []byte      `json:"metadata"`
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	NodeType           NodeType    `json:"node_type"`
+	Title              string      `json:"title"`
+	Prompt             string      `json:"prompt"`
+	OperationType      string      `json:"operation_type"`
+	CanvasX            float32     `json:"canvas_x"`
+	CanvasY            float32     `json:"canvas_y"`
+	CanvasW            float32     `json:"canvas_w"`
+	CanvasH            float32     `json:"canvas_h"`
+	ShotID             pgtype.UUID `json:"shot_id"`
+	ModelProvider      pgtype.Text `json:"model_provider"`
+	ModelID            pgtype.Text `json:"model_id"`
+	ModelParams        []byte      `json:"model_params"`
+	Metadata           []byte      `json:"metadata"`
+	SemanticKey        string      `json:"semantic_key"`
+	DisplayName        string      `json:"display_name"`
+	ArtifactKind       string      `json:"artifact_kind"`
+	SourceRenderPlanID pgtype.UUID `json:"source_render_plan_id"`
 }
 
 func (q *Queries) CreateAgentGenerationNode(ctx context.Context, arg CreateAgentGenerationNodeParams) (MediaNode, error) {
@@ -109,6 +121,10 @@ func (q *Queries) CreateAgentGenerationNode(ctx context.Context, arg CreateAgent
 		arg.ModelID,
 		arg.ModelParams,
 		arg.Metadata,
+		arg.SemanticKey,
+		arg.DisplayName,
+		arg.ArtifactKind,
+		arg.SourceRenderPlanID,
 	)
 	var i MediaNode
 	err := row.Scan(
@@ -137,6 +153,10 @@ func (q *Queries) CreateAgentGenerationNode(ctx context.Context, arg CreateAgent
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -158,7 +178,7 @@ INSERT INTO media_node (
     canvas_h
 )
 VALUES ($1, $2, $3, $4, $4, 'upload', 'succeeded', 'agent', $5, $6, $7, $8, $9)
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type CreateAgentMediaNodeParams struct {
@@ -212,6 +232,10 @@ func (q *Queries) CreateAgentMediaNode(ctx context.Context, arg CreateAgentMedia
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -231,7 +255,7 @@ INSERT INTO media_node (
     canvas_h
 )
 VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type CreateMediaNodeParams struct {
@@ -287,6 +311,10 @@ func (q *Queries) CreateMediaNode(ctx context.Context, arg CreateMediaNodeParams
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -307,7 +335,7 @@ INSERT INTO media_node (
     canvas_h
 )
 VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type CreateMediaNodeWithIDParams struct {
@@ -365,6 +393,10 @@ func (q *Queries) CreateMediaNodeWithID(ctx context.Context, arg CreateMediaNode
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -380,7 +412,7 @@ func (q *Queries) DeleteMediaNode(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getMediaNodeByID = `-- name: GetMediaNodeByID :one
-SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 FROM media_node
 WHERE id = $1
 `
@@ -414,12 +446,16 @@ func (q *Queries) GetMediaNodeByID(ctx context.Context, id pgtype.UUID) (MediaNo
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
 
 const listDownstreamDependencyNodes = `-- name: ListDownstreamDependencyNodes :many
-SELECT media_node.id, media_node.workspace_id, media_node.node_type, media_node.title, media_node.status, media_node.prompt, media_node.source, media_node.canvas_x, media_node.canvas_y, media_node.canvas_w, media_node.canvas_h, media_node.created_at, media_node.updated_at, media_node.group_id, media_node.asset_id, media_node.operation_type, media_node.prompt_template, media_node.prompt_rich, media_node.prompt_refs, media_node.model_provider, media_node.model_id, media_node.model_params, media_node.current_version_id, media_node.metadata, media_node.shot_id
+SELECT media_node.id, media_node.workspace_id, media_node.node_type, media_node.title, media_node.status, media_node.prompt, media_node.source, media_node.canvas_x, media_node.canvas_y, media_node.canvas_w, media_node.canvas_h, media_node.created_at, media_node.updated_at, media_node.group_id, media_node.asset_id, media_node.operation_type, media_node.prompt_template, media_node.prompt_rich, media_node.prompt_refs, media_node.model_provider, media_node.model_id, media_node.model_params, media_node.current_version_id, media_node.metadata, media_node.shot_id, media_node.semantic_key, media_node.display_name, media_node.artifact_kind, media_node.source_render_plan_id
 FROM media_node
 JOIN media_edge ON media_edge.to_node_id = media_node.id
 WHERE media_edge.from_node_id = $1
@@ -461,6 +497,10 @@ func (q *Queries) ListDownstreamDependencyNodes(ctx context.Context, fromNodeID 
 			&i.CurrentVersionID,
 			&i.Metadata,
 			&i.ShotID,
+			&i.SemanticKey,
+			&i.DisplayName,
+			&i.ArtifactKind,
+			&i.SourceRenderPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -473,7 +513,7 @@ func (q *Queries) ListDownstreamDependencyNodes(ctx context.Context, fromNodeID 
 }
 
 const listMediaNodesByGroup = `-- name: ListMediaNodesByGroup :many
-SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 FROM media_node
 WHERE group_id = $1
 ORDER BY created_at
@@ -514,6 +554,10 @@ func (q *Queries) ListMediaNodesByGroup(ctx context.Context, groupID pgtype.UUID
 			&i.CurrentVersionID,
 			&i.Metadata,
 			&i.ShotID,
+			&i.SemanticKey,
+			&i.DisplayName,
+			&i.ArtifactKind,
+			&i.SourceRenderPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -526,7 +570,7 @@ func (q *Queries) ListMediaNodesByGroup(ctx context.Context, groupID pgtype.UUID
 }
 
 const listMediaNodesByShot = `-- name: ListMediaNodesByShot :many
-SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 FROM media_node
 WHERE workspace_id = $1
   AND shot_id = $2
@@ -573,6 +617,10 @@ func (q *Queries) ListMediaNodesByShot(ctx context.Context, arg ListMediaNodesBy
 			&i.CurrentVersionID,
 			&i.Metadata,
 			&i.ShotID,
+			&i.SemanticKey,
+			&i.DisplayName,
+			&i.ArtifactKind,
+			&i.SourceRenderPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -585,7 +633,7 @@ func (q *Queries) ListMediaNodesByShot(ctx context.Context, arg ListMediaNodesBy
 }
 
 const listMediaNodesByWorkspace = `-- name: ListMediaNodesByWorkspace :many
-SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 FROM media_node
 WHERE workspace_id = $1
 ORDER BY created_at
@@ -626,6 +674,10 @@ func (q *Queries) ListMediaNodesByWorkspace(ctx context.Context, workspaceID pgt
 			&i.CurrentVersionID,
 			&i.Metadata,
 			&i.ShotID,
+			&i.SemanticKey,
+			&i.DisplayName,
+			&i.ArtifactKind,
+			&i.SourceRenderPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -638,7 +690,7 @@ func (q *Queries) ListMediaNodesByWorkspace(ctx context.Context, workspaceID pgt
 }
 
 const listSourceMaterialNodesByWorkspace = `-- name: ListSourceMaterialNodesByWorkspace :many
-SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+SELECT id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 FROM media_node
 WHERE workspace_id = $1
   AND asset_id IS NOT NULL
@@ -682,6 +734,10 @@ func (q *Queries) ListSourceMaterialNodesByWorkspace(ctx context.Context, worksp
 			&i.CurrentVersionID,
 			&i.Metadata,
 			&i.ShotID,
+			&i.SemanticKey,
+			&i.DisplayName,
+			&i.ArtifactKind,
+			&i.SourceRenderPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -694,7 +750,7 @@ func (q *Queries) ListSourceMaterialNodesByWorkspace(ctx context.Context, worksp
 }
 
 const listUpstreamDependencyNodes = `-- name: ListUpstreamDependencyNodes :many
-SELECT media_node.id, media_node.workspace_id, media_node.node_type, media_node.title, media_node.status, media_node.prompt, media_node.source, media_node.canvas_x, media_node.canvas_y, media_node.canvas_w, media_node.canvas_h, media_node.created_at, media_node.updated_at, media_node.group_id, media_node.asset_id, media_node.operation_type, media_node.prompt_template, media_node.prompt_rich, media_node.prompt_refs, media_node.model_provider, media_node.model_id, media_node.model_params, media_node.current_version_id, media_node.metadata, media_node.shot_id
+SELECT media_node.id, media_node.workspace_id, media_node.node_type, media_node.title, media_node.status, media_node.prompt, media_node.source, media_node.canvas_x, media_node.canvas_y, media_node.canvas_w, media_node.canvas_h, media_node.created_at, media_node.updated_at, media_node.group_id, media_node.asset_id, media_node.operation_type, media_node.prompt_template, media_node.prompt_rich, media_node.prompt_refs, media_node.model_provider, media_node.model_id, media_node.model_params, media_node.current_version_id, media_node.metadata, media_node.shot_id, media_node.semantic_key, media_node.display_name, media_node.artifact_kind, media_node.source_render_plan_id
 FROM media_node
 JOIN media_edge ON media_edge.from_node_id = media_node.id
 WHERE media_edge.to_node_id = $1
@@ -736,6 +792,10 @@ func (q *Queries) ListUpstreamDependencyNodes(ctx context.Context, toNodeID pgty
 			&i.CurrentVersionID,
 			&i.Metadata,
 			&i.ShotID,
+			&i.SemanticKey,
+			&i.DisplayName,
+			&i.ArtifactKind,
+			&i.SourceRenderPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -752,7 +812,7 @@ UPDATE media_node
 SET asset_id = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type UpdateMediaNodeAssetParams struct {
@@ -789,6 +849,10 @@ func (q *Queries) UpdateMediaNodeAsset(ctx context.Context, arg UpdateMediaNodeA
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -799,7 +863,7 @@ SET current_version_id = $2,
     status = 'succeeded',
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type UpdateMediaNodeCurrentVersionParams struct {
@@ -836,6 +900,10 @@ func (q *Queries) UpdateMediaNodeCurrentVersion(ctx context.Context, arg UpdateM
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -845,7 +913,7 @@ UPDATE media_node
 SET group_id = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type UpdateMediaNodeGroupParams struct {
@@ -882,6 +950,10 @@ func (q *Queries) UpdateMediaNodeGroup(ctx context.Context, arg UpdateMediaNodeG
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -892,7 +964,7 @@ SET canvas_x = $2,
     canvas_y = $3,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type UpdateMediaNodePositionParams struct {
@@ -930,6 +1002,10 @@ func (q *Queries) UpdateMediaNodePosition(ctx context.Context, arg UpdateMediaNo
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -944,7 +1020,7 @@ SET operation_type = $2,
     model_params = $6,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type UpdateMediaNodeProductionConfigParams struct {
@@ -992,6 +1068,10 @@ func (q *Queries) UpdateMediaNodeProductionConfig(ctx context.Context, arg Updat
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -1004,7 +1084,7 @@ SET prompt = $2,
     prompt_rich = $4,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type UpdateMediaNodePromptParams struct {
@@ -1048,6 +1128,10 @@ func (q *Queries) UpdateMediaNodePrompt(ctx context.Context, arg UpdateMediaNode
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -1058,7 +1142,7 @@ SET shot_id = $2,
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $3
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type UpdateMediaNodeShotParams struct {
@@ -1096,6 +1180,10 @@ func (q *Queries) UpdateMediaNodeShot(ctx context.Context, arg UpdateMediaNodeSh
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -1105,7 +1193,7 @@ UPDATE media_node
 SET status = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type UpdateMediaNodeStatusParams struct {
@@ -1142,6 +1230,10 @@ func (q *Queries) UpdateMediaNodeStatus(ctx context.Context, arg UpdateMediaNode
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -1151,7 +1243,7 @@ UPDATE media_node
 SET title = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id
+RETURNING id, workspace_id, node_type, title, status, prompt, source, canvas_x, canvas_y, canvas_w, canvas_h, created_at, updated_at, group_id, asset_id, operation_type, prompt_template, prompt_rich, prompt_refs, model_provider, model_id, model_params, current_version_id, metadata, shot_id, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type UpdateMediaNodeTitleParams struct {
@@ -1188,6 +1280,10 @@ func (q *Queries) UpdateMediaNodeTitle(ctx context.Context, arg UpdateMediaNodeT
 		&i.CurrentVersionID,
 		&i.Metadata,
 		&i.ShotID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }

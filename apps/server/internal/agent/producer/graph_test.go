@@ -130,8 +130,11 @@ func TestProducerGraphExplicitToolLoopCapturesGraphInfo(t *testing.T) {
 	if !graphInfoHasEdge(info.Edges, "execute_tools", "append_tool_results") {
 		t.Fatalf("edge execute_tools -> append_tool_results missing from graph info: %#v", info.Edges)
 	}
-	if !graphInfoHasEdge(info.Edges, "append_tool_results", "before_model") {
-		t.Fatalf("edge append_tool_results -> before_model missing from graph info: %#v", info.Edges)
+	if !graphInfoHasBranchTarget(info.Branches, "append_tool_results", "before_model") {
+		t.Fatalf("branch append_tool_results -> before_model missing from graph info: %#v", info.Branches)
+	}
+	if !graphInfoHasBranchTarget(info.Branches, "append_tool_results", "finalize_response") {
+		t.Fatalf("branch append_tool_results -> finalize_response missing from graph info: %#v", info.Branches)
 	}
 	if !graphInfoHasEdge(info.Edges, "before_model", "call_model") {
 		t.Fatalf("edge before_model -> call_model missing from graph info: %#v", info.Edges)
@@ -194,7 +197,7 @@ func TestProducerGraphInjectsClaimedSignalRemindersBeforeModel(t *testing.T) {
 	}
 }
 
-func TestProducerGraphLeavesNewSignalsForNextTurnBeforeFinalize(t *testing.T) {
+func TestProducerGraphDrainsNewSignalsBeforeFinalize(t *testing.T) {
 	signalRuntime := &fakeProducerSignalRuntime{
 		pendingByClaimCall: [][]db.ProducerPendingSignal{
 			nil,
@@ -216,6 +219,7 @@ func TestProducerGraphLeavesNewSignalsForNextTurnBeforeFinalize(t *testing.T) {
 	}
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
 		{AssistantText: "本轮准备结束。"},
+		{AssistantText: "已处理新 signal。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
@@ -235,16 +239,19 @@ func TestProducerGraphLeavesNewSignalsForNextTurnBeforeFinalize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.AssistantText != "本轮准备结束。" {
+	if out.AssistantText != "已处理新 signal。" {
 		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
-	if len(responder.contexts) != 1 {
-		t.Fatalf("model calls = %d, want 1", len(responder.contexts))
+	if len(responder.contexts) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(responder.contexts))
 	}
 	if len(responder.contexts[0].PendingReminders) != 0 {
 		t.Fatalf("first model reminders = %#v", responder.contexts[0].PendingReminders)
 	}
-	if len(signalRuntime.claimed) != 0 || signalRuntime.claimCalls != 1 {
+	if len(responder.contexts[1].PendingReminders) != 1 || !strings.Contains(responder.contexts[1].PendingReminders[0], "craftsman_render_plan_ready") {
+		t.Fatalf("second model reminders = %#v", responder.contexts[1].PendingReminders)
+	}
+	if len(signalRuntime.claimed) != 1 || signalRuntime.claimCalls != 3 {
 		t.Fatalf("claimCalls=%d claimed=%#v", signalRuntime.claimCalls, signalRuntime.claimed)
 	}
 }
@@ -353,6 +360,42 @@ func TestProducerGraphExplicitToolLoopExecutesToolWithEinoToolNode(t *testing.T)
 	}
 	if sameTurn[1].Role != "tool" || sameTurn[1].ToolCallID != sameTurn[0].ToolCallID || !strings.Contains(sameTurn[1].Content, `"ok":true`) {
 		t.Fatalf("same-turn tool result = %#v", sameTurn[1])
+	}
+}
+
+func TestProducerGraphFinalizesAfterAsyncCraftsmanDispatch(t *testing.T) {
+	dispatchTool := &testNativeTool{
+		name:   "dispatch_craftsman",
+		result: "Craftsman 派发结果\n- 阶段：preview_image\n- 摘要：已将 1 个分镜的预览图 RenderPlan 任务加入队列。Craftsman 编译 RenderPlan 后，工程会自动提交 Worker 生成任务。 当前仅表示 Craftsman 任务已排队，不表示图片已经生成完成。",
+	}
+	responder := &recordingResponder{outputs: []ProducerTurnOutput{
+		nativeToolCallOutput("call-dispatch", "dispatch_craftsman", `{"brief":"派发预览图","scope":{"type":"shot","id":"shot_01"},"target_phase":"preview_image","execution_policy":"execute_immediately"}`),
+		nativeToolCallOutput("call-read", "read_project_context", `{"brief":"不应继续轮询"}`),
+	}}
+	graph, err := NewGraph(GraphConfig{
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "生成预览图"}},
+		Responder:          responder,
+		NativeToolRegistry: mustTestNativeToolRegistryWithTools(t, dispatchTool, &testNativeTool{name: "read_project_context"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{MaxToolCalls: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(responder.contexts) != 1 {
+		t.Fatalf("model calls = %d, want 1; Producer must not poll after async dispatch", len(responder.contexts))
+	}
+	if !strings.Contains(out.AssistantText, "已派发 Craftsman 生成任务") {
+		t.Fatalf("assistant text = %q", out.AssistantText)
+	}
+	if out.Metadata["finalized_after_async_craftsman_dispatch"] != true {
+		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+	if len(out.SameTurnMessages) != 2 || out.SameTurnMessages[1].ToolName != "dispatch_craftsman" {
+		t.Fatalf("same-turn messages = %#v", out.SameTurnMessages)
 	}
 }
 
@@ -496,10 +539,11 @@ func TestProducerGraphDoesNotPersistSignalReminderAcrossToolLoop(t *testing.T) {
 	}
 }
 
-func TestProducerGraphDoesNotAbsorbGrowingSignalReminderInSameTurn(t *testing.T) {
+func TestProducerGraphDrainsGrowingSignalReminderBeforeFinalize(t *testing.T) {
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
 		nativeToolCallOutput("call-read", "read_project_context", `{"brief":"读取项目","scope":{"type":"workspace","id":""}}`),
 		{AssistantText: "已处理最新 signal。"},
+		{AssistantText: "已吸收后续 signal。"},
 	}}
 	firstSignal := db.ProducerPendingSignal{
 		ID:               uuidWithByte(88),
@@ -555,8 +599,10 @@ func TestProducerGraphDoesNotAbsorbGrowingSignalReminderInSameTurn(t *testing.T)
 			t.Fatalf("same-turn messages must not persist signal reminder: %#v", out.SameTurnMessages)
 		}
 	}
-	if len(signalRuntime.claimed) != 1 || signalRuntime.claimed[0].RenderPlanID != firstSignal.RenderPlanID {
-		t.Fatalf("current turn should only claim initial signal batch: %#v", signalRuntime.claimed)
+	if len(signalRuntime.claimed) != 2 ||
+		signalRuntime.claimed[0].RenderPlanID != firstSignal.RenderPlanID ||
+		signalRuntime.claimed[1].RenderPlanID != secondSignal.RenderPlanID {
+		t.Fatalf("current turn should claim initial and finalize signal batches: %#v", signalRuntime.claimed)
 	}
 }
 
@@ -1031,6 +1077,7 @@ type testNativeTool struct {
 	interrupt  bool
 	calledName string
 	calledID   string
+	result     string
 }
 
 func (t *testNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -1063,6 +1110,9 @@ func (t *testNativeTool) InvokableRun(ctx context.Context, argumentsInJSON strin
 			"tool_call_id": runtime.ToolCallID,
 			"arguments":    argumentsInJSON,
 		})
+	}
+	if strings.TrimSpace(t.result) != "" {
+		return t.result, nil
 	}
 	return `{"ok":true}`, nil
 }

@@ -105,12 +105,16 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if err != nil {
 		return e.fail(ctx, input, "craftsman_invalid_input", err)
 	}
+	if strings.TrimSpace(taskInput.ScopeKey) == "" {
+		taskInput.ScopeKey = strings.TrimSpace(input.ScopeKey)
+	}
 	graphInput := GraphInput{
 		WorkspaceID:      input.WorkspaceID,
 		ThreadID:         input.ThreadID,
 		TaskID:           input.TaskID,
 		ScopeType:        input.ScopeType,
 		ScopeID:          input.ScopeID,
+		ScopeKey:         taskInput.ScopeKey,
 		ShotID:           input.ShotID,
 		Mode:             taskInput.Mode,
 		ExecutionPolicy:  taskInput.ExecutionPolicy,
@@ -288,6 +292,7 @@ func (t *craftsmanLiveToolTrace) NativeToolCallCompleted(ctx context.Context, ru
 type parsedTaskInput struct {
 	Mode             string
 	ExecutionPolicy  string
+	ScopeKey         string
 	ParentToolCallID string
 	ProducerThreadID pgtype.UUID
 	ProducerTaskID   pgtype.UUID
@@ -316,6 +321,9 @@ func parseTaskInput(raw []byte) (parsedTaskInput, error) {
 	}
 	if executionPolicy, ok := out.WorkerParams["execution_policy"].(string); ok && strings.TrimSpace(executionPolicy) != "" {
 		out.ExecutionPolicy = strings.TrimSpace(executionPolicy)
+	}
+	if scopeKey, ok := out.WorkerParams["scope_key"].(string); ok {
+		out.ScopeKey = strings.TrimSpace(scopeKey)
 	}
 	if parentToolCallID, ok := out.WorkerParams["parent_tool_call_id"].(string); ok {
 		out.ParentToolCallID = strings.TrimSpace(parentToolCallID)
@@ -373,9 +381,11 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 		Payload: mustJSON(map[string]any{
 			"target_phase":        taskInput.Mode,
 			"render_plan_id":      uuidString(renderPlan.ID),
+			"render_plan_key":     renderPlan.SemanticKey,
 			"render_plan_status":  renderPlan.Status,
 			"scope_type":          input.ScopeType,
 			"scope_id":            uuidString(input.ScopeID),
+			"scope_key":           taskInput.ScopeKey,
 			"shot_id":             uuidString(input.ShotID),
 			"craftsman_task_id":   uuidString(input.TaskID),
 			"craftsman_thread_id": uuidString(input.ThreadID),
@@ -392,7 +402,7 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 	for _, task := range activeTasks {
 		if task.Role == "producer" &&
 			(task.TaskType == "producer_turn" || task.TaskType == "decision_resume") &&
-			(task.Status == "queued" || task.Status == "waiting_for_user") {
+			(task.Status == "queued" || task.Status == "running" || task.Status == "waiting_for_user") {
 			return nil
 		}
 	}
@@ -403,9 +413,11 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, input RunTaskInput,
 		"producer_task_id":    uuidString(taskInput.ProducerTaskID),
 		"scope_type":          input.ScopeType,
 		"scope_id":            uuidString(input.ScopeID),
+		"scope_key":           taskInput.ScopeKey,
 		"shot_id":             uuidString(input.ShotID),
 		"target_phase":        taskInput.Mode,
 		"render_plan_id":      uuidString(renderPlan.ID),
+		"render_plan_key":     renderPlan.SemanticKey,
 	})
 	task, err := e.runtime.CreateTask(ctx, agentruntime.CreateTaskParams{
 		WorkspaceID: input.WorkspaceID,

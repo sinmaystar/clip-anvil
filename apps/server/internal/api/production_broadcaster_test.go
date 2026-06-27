@@ -140,7 +140,7 @@ func TestProductionBroadcasterCreatesProducerSignalOnAgentWorkerCompletion(t *te
 	}
 }
 
-func TestProductionBroadcasterQueuesNextProducerTurnWhenProducerRunning(t *testing.T) {
+func TestProductionBroadcasterDoesNotWakeProducerWhenProducerRunning(t *testing.T) {
 	store := &fakeProductionBroadcasterStore{
 		node: db.MediaNode{
 			ID:          broadcasterUUID(20),
@@ -187,7 +187,7 @@ func TestProductionBroadcasterQueuesNextProducerTurnWhenProducerRunning(t *testi
 	if len(sink.signals) != 1 {
 		t.Fatalf("signals = %#v", sink.signals)
 	}
-	if len(sink.enqueuedProducerTasks) != 1 {
+	if len(sink.enqueuedProducerTasks) != 0 {
 		t.Fatalf("enqueued producer tasks = %#v", sink.enqueuedProducerTasks)
 	}
 }

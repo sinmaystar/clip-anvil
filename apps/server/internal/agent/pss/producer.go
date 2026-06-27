@@ -310,7 +310,7 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeB
 		b.WriteString("- 无\n")
 	} else {
 		for _, node := range nodes {
-			fmt.Fprintf(&b, "- [node:%s] %s, %s, source=%s, status=%s\n", uuidString(node.ID), node.Title, node.NodeType, node.Source, node.Status)
+			fmt.Fprintf(&b, "- [%s] %s, %s, source=%s, status=%s\n", mediaNodeRef(node), node.Title, node.NodeType, node.Source, node.Status)
 		}
 	}
 	b.WriteString("\nStoryboard\n")
@@ -444,7 +444,7 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeB
 		for _, review := range reviews {
 			shotName := shotNames[review.ShotID]
 			if strings.TrimSpace(shotName) == "" {
-				shotName = uuidString(review.ShotID)
+				shotName = "shot_key_missing"
 			}
 			fmt.Fprintf(&b, "- Review: %s %s %s", shotName, review.TargetPhase, review.Status)
 			if review.OverallScore.Valid {
@@ -475,7 +475,7 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeB
 		b.WriteString("- 无\n")
 	} else {
 		for _, event := range events {
-			fmt.Fprintf(&b, "- %s: %s\n", uuidString(event.ID), event.EventType)
+			fmt.Fprintf(&b, "- %s status=%s\n", event.EventType, event.Status)
 		}
 	}
 	b.WriteString("\n正在运行\n")
@@ -483,14 +483,14 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeB
 		b.WriteString("- 无\n")
 	} else {
 		for _, task := range tasks {
-			fmt.Fprintf(&b, "- %s %s status=%s\n", task.TaskType, uuidString(task.ID), task.Status)
+			fmt.Fprintf(&b, "- %s status=%s\n", taskRef(task), task.Status)
 		}
 	}
 	return b.String()
 }
 
 func workspaceSummary(workspace db.Workspace) map[string]any {
-	return map[string]any{"id": uuidString(workspace.ID), "name": workspace.Name, "mode": string(workspace.Mode)}
+	return map[string]any{"ref": "workspace.current", "name": workspace.Name, "mode": string(workspace.Mode)}
 }
 
 func briefPointer(brief db.CreativeBrief, ok bool) *db.CreativeBrief {
@@ -512,7 +512,7 @@ func creativeBriefSummary(brief db.CreativeBrief, ok bool) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id":              uuidString(brief.ID),
+		"ref":             defaultString(brief.SemanticKey, "creative_brief.main"),
 		"title":           brief.Title,
 		"status":          brief.Status,
 		"video_type":      brief.VideoType,
@@ -531,7 +531,7 @@ func projectMemorySummary(memory db.ProjectMemory, ok bool) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id":          uuidString(memory.ID),
+		"ref":         defaultString(memory.SemanticKey, "project_memory.v1"),
 		"version":     memory.Version,
 		"status":      memory.Status,
 		"core_intent": memory.CoreIntent,
@@ -543,7 +543,7 @@ func keyElementSummaries(elements []db.KeyElement, states []db.KeyElementState) 
 	statesByElement := map[pgtype.UUID][]map[string]any{}
 	for _, state := range states {
 		statesByElement[state.KeyElementID] = append(statesByElement[state.KeyElementID], map[string]any{
-			"id":               uuidString(state.ID),
+			"ref":              defaultString(state.SemanticKey, state.ClientKey),
 			"client_key":       state.ClientKey,
 			"label":            state.Label,
 			"reference_status": state.ReferenceStatus,
@@ -553,7 +553,7 @@ func keyElementSummaries(elements []db.KeyElement, states []db.KeyElementState) 
 	out := make([]map[string]any, 0, len(elements))
 	for _, element := range elements {
 		out = append(out, map[string]any{
-			"id":           uuidString(element.ID),
+			"ref":          defaultString(element.SemanticKey, element.ClientKey),
 			"client_key":   element.ClientKey,
 			"element_type": element.ElementType,
 			"name":         element.Name,
@@ -568,7 +568,7 @@ func sceneSummaries(scenes []db.Scene) []map[string]any {
 	out := make([]map[string]any, 0, len(scenes))
 	for _, scene := range scenes {
 		out = append(out, map[string]any{
-			"id":          uuidString(scene.ID),
+			"ref":         defaultString(scene.SemanticKey, scene.ClientKey),
 			"client_key":  scene.ClientKey,
 			"sort_order":  scene.SortOrder,
 			"title":       scene.Title,
@@ -585,12 +585,11 @@ func nodeSummaries(nodes []db.MediaNode) []map[string]any {
 	out := make([]map[string]any, 0, len(nodes))
 	for _, node := range nodes {
 		out = append(out, map[string]any{
-			"id":      uuidString(node.ID),
-			"title":   node.Title,
-			"type":    string(node.NodeType),
-			"source":  node.Source,
-			"status":  string(node.Status),
-			"shot_id": uuidString(node.ShotID),
+			"ref":    mediaNodeRef(node),
+			"title":  node.Title,
+			"type":   string(node.NodeType),
+			"source": node.Source,
+			"status": string(node.Status),
 		})
 	}
 	return out
@@ -600,7 +599,7 @@ func shotSummaries(shots []db.Shot, previewByShot map[pgtype.UUID][]previewNodeS
 	out := make([]map[string]any, 0, len(shots))
 	for _, shot := range shots {
 		out = append(out, map[string]any{
-			"id":                uuidString(shot.ID),
+			"ref":               defaultString(shot.SemanticKey, shot.ClientKey),
 			"client_key":        shot.ClientKey,
 			"sort_order":        shot.SortOrder,
 			"title":             shot.Title,
@@ -618,19 +617,19 @@ func previewSummaries(previews []previewNodeState) []map[string]any {
 	out := make([]map[string]any, 0, len(previews))
 	for _, preview := range previews {
 		summary := map[string]any{
-			"node_id":   uuidString(preview.Node.ID),
+			"node_ref":  mediaNodeRef(preview.Node),
 			"title":     preview.Node.Title,
 			"status":    string(preview.Node.Status),
 			"operation": preview.Node.OperationType,
 		}
 		if len(preview.Jobs) > 0 {
 			latestJob := preview.Jobs[len(preview.Jobs)-1]
-			summary["job_id"] = uuidString(latestJob.ID)
+			summary["job_ref"] = generationJobRef(latestJob)
 			summary["job_status"] = string(latestJob.Status)
 		}
 		if len(preview.Versions) > 0 {
 			latestVersion := preview.Versions[len(preview.Versions)-1]
-			summary["version_id"] = uuidString(latestVersion.ID)
+			summary["version_ref"] = artifactVersionRef(latestVersion)
 			summary["version_status"] = string(latestVersion.Status)
 		}
 		out = append(out, summary)
@@ -645,15 +644,15 @@ func shotVideoSummaries(shotVideoByShot map[pgtype.UUID][]previewNodeState, shot
 		videos := shotVideoByShot[shot.ID]
 		if len(videos) == 0 {
 			out = append(out, map[string]any{
-				"shot_id": uuidString(shot.ID),
-				"shot":    shotNames[shot.ID],
-				"state":   "missing",
+				"shot_ref": defaultString(shotNames[shot.ID], "shot_key_missing"),
+				"shot":     shotNames[shot.ID],
+				"state":    "missing",
 			})
 			continue
 		}
 		for _, video := range videos {
 			summary := productionNodeSummary(video)
-			summary["shot_id"] = uuidString(shot.ID)
+			summary["shot_ref"] = defaultString(shotNames[shot.ID], "shot_key_missing")
 			summary["shot"] = shotNames[shot.ID]
 			out = append(out, summary)
 		}
@@ -679,7 +678,7 @@ func finalOutputSummaries(outputs []previewNodeState) []map[string]any {
 
 func productionNodeSummary(state previewNodeState) map[string]any {
 	summary := map[string]any{
-		"node_id":   uuidString(state.Node.ID),
+		"node_ref":  mediaNodeRef(state.Node),
 		"title":     state.Node.Title,
 		"state":     productionNodeState(state),
 		"status":    string(state.Node.Status),
@@ -687,12 +686,12 @@ func productionNodeSummary(state previewNodeState) map[string]any {
 	}
 	if len(state.Jobs) > 0 {
 		latestJob := state.Jobs[len(state.Jobs)-1]
-		summary["job_id"] = uuidString(latestJob.ID)
+		summary["job_ref"] = generationJobRef(latestJob)
 		summary["job_status"] = string(latestJob.Status)
 	}
 	if len(state.Versions) > 0 {
 		latestVersion := state.Versions[len(state.Versions)-1]
-		summary["version_id"] = uuidString(latestVersion.ID)
+		summary["version_ref"] = artifactVersionRef(latestVersion)
 		summary["version_status"] = string(latestVersion.Status)
 	}
 	return summary
@@ -744,10 +743,7 @@ func dependencySummaries(deps []db.ShotDependency, shots []db.Shot) []map[string
 	out := make([]map[string]any, 0, len(deps))
 	for _, dep := range deps {
 		out = append(out, map[string]any{
-			"id":             uuidString(dep.ID),
-			"from_shot_id":   uuidString(dep.FromShotID),
 			"from":           keys[dep.FromShotID],
-			"to_shot_id":     uuidString(dep.ToShotID),
 			"to":             keys[dep.ToShotID],
 			"type":           dep.DependencyType,
 			"blocking_phase": dep.BlockingPhase,
@@ -775,14 +771,11 @@ func dependencyStatusSummaries(events []db.AgentEvent, shots []db.Shot) []map[st
 		fromID, _ := scope["from_shot_id"].(string)
 		toID, _ := scope["to_shot_id"].(string)
 		summary := map[string]any{
-			"id":           uuidString(event.ID),
-			"event_type":   event.EventType,
-			"from_shot_id": fromID,
-			"from":         defaultString(keysByString[fromID], fromID),
-			"to_shot_id":   toID,
-			"to":           defaultString(keysByString[toID], toID),
-			"phase":        payload["phase"],
-			"ready":        payload["ready"],
+			"event_type": event.EventType,
+			"from":       defaultString(keysByString[fromID], "unknown_from_shot"),
+			"to":         defaultString(keysByString[toID], "unknown_to_shot"),
+			"phase":      payload["phase"],
+			"ready":      payload["ready"],
 		}
 		if reasons, exists := payload["blocked_reasons"]; exists {
 			summary["blocked_reasons"] = reasons
@@ -797,16 +790,13 @@ func reviewSummaries(reviews []db.ReviewRecord, shots []db.Shot) []map[string]an
 	out := make([]map[string]any, 0, len(reviews))
 	for _, review := range reviews {
 		summary := map[string]any{
-			"id":                  uuidString(review.ID),
-			"shot_id":             uuidString(review.ShotID),
-			"shot":                keys[review.ShotID],
-			"node_id":             uuidString(review.NodeID),
-			"artifact_version_id": uuidString(review.ArtifactVersionID),
-			"target_phase":        review.TargetPhase,
-			"status":              review.Status,
-			"attempt_no":          review.AttemptNo,
-			"max_attempts":        review.MaxAttempts,
-			"critique":            review.Critique,
+			"ref":          defaultString(review.SemanticKey, "review_record.semantic_key_missing"),
+			"shot":         keys[review.ShotID],
+			"target_phase": review.TargetPhase,
+			"status":       review.Status,
+			"attempt_no":   review.AttemptNo,
+			"max_attempts": review.MaxAttempts,
+			"critique":     review.Critique,
 		}
 		if review.OverallScore.Valid {
 			summary["overall_score"] = review.OverallScore.Float32
@@ -820,13 +810,11 @@ func issueSummaries(issues []db.ArtifactIssue) []map[string]any {
 	out := make([]map[string]any, 0, len(issues))
 	for _, issue := range issues {
 		out = append(out, map[string]any{
-			"id":                         uuidString(issue.ID),
-			"review_record_id":           uuidString(issue.ReviewRecordID),
+			"ref":                        defaultString(issue.SemanticKey, "artifact_issue.semantic_key_missing"),
 			"dimension":                  issue.Dimension,
 			"severity":                   issue.Severity,
 			"status":                     issue.Status,
 			"target_object_type":         issue.TargetObjectType,
-			"target_object_id":           uuidString(issue.TargetObjectID),
 			"title":                      issue.Title,
 			"suggested_fix":              issue.SuggestedFix,
 			"fix_hint":                   issue.FixHint,
@@ -839,7 +827,7 @@ func issueSummaries(issues []db.ArtifactIssue) []map[string]any {
 func taskSummaries(tasks []db.AgentTask) []map[string]any {
 	out := make([]map[string]any, 0, len(tasks))
 	for _, task := range tasks {
-		out = append(out, map[string]any{"id": uuidString(task.ID), "task_type": task.TaskType, "status": task.Status})
+		out = append(out, map[string]any{"ref": taskRef(task), "role": task.Role, "task_type": task.TaskType, "status": task.Status})
 	}
 	return out
 }
@@ -847,7 +835,7 @@ func taskSummaries(tasks []db.AgentTask) []map[string]any {
 func eventSummaries(events []db.AgentEvent) []map[string]any {
 	out := make([]map[string]any, 0, len(events))
 	for _, event := range events {
-		out = append(out, map[string]any{"id": uuidString(event.ID), "event_type": event.EventType, "status": event.Status})
+		out = append(out, map[string]any{"event_type": event.EventType, "source_role": event.SourceRole, "status": event.Status})
 	}
 	return out
 }
@@ -857,11 +845,27 @@ func shotKeyByID(shots []db.Shot) map[pgtype.UUID]string {
 	for _, shot := range shots {
 		key := strings.TrimSpace(shot.ClientKey)
 		if key == "" {
-			key = uuidString(shot.ID)
+			key = "shot_key_missing"
 		}
 		out[shot.ID] = key
 	}
 	return out
+}
+
+func mediaNodeRef(node db.MediaNode) string {
+	return defaultString(node.SemanticKey, defaultString(node.DisplayName, "media_node.semantic_key_missing"))
+}
+
+func generationJobRef(job db.GenerationJob) string {
+	return defaultString(job.SemanticKey, defaultString(job.DisplayName, "generation_job.semantic_key_missing"))
+}
+
+func artifactVersionRef(version db.ArtifactVersion) string {
+	return defaultString(version.SemanticKey, defaultString(version.DisplayName, "artifact_version.semantic_key_missing"))
+}
+
+func taskRef(task db.AgentTask) string {
+	return defaultString(task.SemanticKey, strings.TrimSpace(task.Role+"."+task.TaskType))
 }
 
 func briefSummary(raw []byte) string {

@@ -2,6 +2,7 @@ package pss
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -99,16 +100,17 @@ func TestProducerPSSListsPreviewGenerationState(t *testing.T) {
 		Status:        "queued",
 		OperationType: "text_to_image",
 		Metadata:      []byte(`{"agent_artifact_kind":"preview_image"}`),
+		SemanticKey:   "shot-01.preview_image.r1.node",
 	}
 	builder := NewBuilder(fakeStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Name: "agent-ws", Mode: db.WorkspaceModeAgent},
 		shots:     []db.Shot{shot},
 		nodes:     []db.MediaNode{node},
 		jobs: map[pgtype.UUID][]db.GenerationJob{
-			node.ID: {{ID: uuidWithByte(5), TargetNodeID: node.ID, OperationType: "text_to_image", Status: db.JobStatusQueued}},
+			node.ID: {{ID: uuidWithByte(5), TargetNodeID: node.ID, OperationType: "text_to_image", Status: db.JobStatusQueued, SemanticKey: "shot-01.preview_image.r1.job.a1"}},
 		},
 		versions: map[pgtype.UUID][]db.ArtifactVersion{
-			node.ID: {{ID: uuidWithByte(6), NodeID: node.ID, Status: db.JobStatusQueued}},
+			node.ID: {{ID: uuidWithByte(6), NodeID: node.ID, Status: db.JobStatusQueued, SemanticKey: "shot-01.preview_image.r1.artifact.v1"}},
 		},
 	})
 
@@ -125,6 +127,76 @@ func TestProducerPSSListsPreviewGenerationState(t *testing.T) {
 	previewNodes := shots[0]["preview_nodes"].([]map[string]any)
 	if len(previewNodes) != 1 || previewNodes[0]["job_status"] != "queued" {
 		t.Fatalf("preview_nodes = %#v", previewNodes)
+	}
+}
+
+func TestProducerPSSDoesNotExposeExecutableUUIDs(t *testing.T) {
+	shot := db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", SortOrder: 1, Title: "开场", Status: "planned", SemanticKey: "shot_01"}
+	node := db.MediaNode{
+		ID:            uuidWithByte(4),
+		WorkspaceID:   uuidWithByte(1),
+		ShotID:        shot.ID,
+		Title:         "shot_01 preview image",
+		NodeType:      db.NodeTypeImage,
+		Source:        "agent",
+		Status:        "queued",
+		OperationType: "text_to_image",
+		Metadata:      []byte(`{"agent_artifact_kind":"preview_image"}`),
+		SemanticKey:   "shot_01.preview_image.r1.node",
+	}
+	task := db.AgentTask{
+		ID:          uuidWithByte(9),
+		WorkspaceID: uuidWithByte(1),
+		Role:        "producer",
+		TaskType:    "producer_turn",
+		Status:      "running",
+		SemanticKey: "producer.workspace.agent-ws.producer_turn.t1",
+	}
+	event := db.AgentEvent{
+		ID:         uuidWithByte(10),
+		EventType:  "producer_turn_queued",
+		SourceRole: "system",
+		Status:     "pending",
+	}
+	builder := NewBuilder(fakeStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Name: "agent-ws", Mode: db.WorkspaceModeAgent},
+		shots:     []db.Shot{shot},
+		nodes:     []db.MediaNode{node},
+		tasks:     []db.AgentTask{task},
+		events:    []db.AgentEvent{event},
+		jobs: map[pgtype.UUID][]db.GenerationJob{
+			node.ID: {{ID: uuidWithByte(5), TargetNodeID: node.ID, OperationType: "text_to_image", Status: db.JobStatusQueued, SemanticKey: "shot_01.preview_image.r1.job.a1"}},
+		},
+		versions: map[pgtype.UUID][]db.ArtifactVersion{
+			node.ID: {{ID: uuidWithByte(6), NodeID: node.ID, Status: db.JobStatusQueued, SemanticKey: "shot_01.preview_image.r1.artifact.v1"}},
+		},
+	})
+
+	pss, err := builder.BuildProducerPSS(context.Background(), uuidWithByte(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	structured, err := json.Marshal(pss.Structured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined := pss.Text + "\n" + string(structured)
+	for _, leaked := range []string{
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000004",
+		"00000000-0000-0000-0000-000000000005",
+		"00000000-0000-0000-0000-000000000006",
+		"00000000-0000-0000-0000-000000000009",
+		"00000000-0000-0000-0000-000000000010",
+	} {
+		if strings.Contains(combined, leaked) {
+			t.Fatalf("PSS leaked executable UUID %s:\n%s", leaked, combined)
+		}
+	}
+	for _, want := range []string{"shot_01.preview_image.r1.node", "shot_01.preview_image.r1.job.a1", "producer.workspace.agent-ws.producer_turn.t1", "producer_turn_queued"} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("PSS missing semantic ref %q:\n%s", want, combined)
+		}
 	}
 }
 

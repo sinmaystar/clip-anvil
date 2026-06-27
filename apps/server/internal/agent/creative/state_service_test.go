@@ -166,6 +166,18 @@ func TestServiceBuildsYuexingAirportCreativeState(t *testing.T) {
 	if packet.Brief == nil || packet.Memory == nil || len(packet.Elements) != 2 || len(packet.Scenes) != 1 || len(packet.Shots) != 2 {
 		t.Fatalf("unexpected context packet: %#v", packet)
 	}
+	if packet.Brief.SemanticKey != "creative_brief.main" || packet.Brief.DisplayName == "" {
+		t.Fatalf("brief semantic identity missing: %#v", packet.Brief)
+	}
+	if packet.Memory.SemanticKey != "project_memory.v1" || packet.Memory.DisplayName == "" {
+		t.Fatalf("memory semantic identity missing: %#v", packet.Memory)
+	}
+	if packet.Elements[0].SemanticKey == "" || packet.ElementStates[0].SemanticKey == "" || packet.Scenes[0].SemanticKey == "" || packet.Shots[0].SemanticKey == "" {
+		t.Fatalf("semantic identity missing in context packet: %#v", packet)
+	}
+	if packet.Dependencies[0].SemanticKey == "" {
+		t.Fatalf("dependency semantic identity missing: %#v", packet.Dependencies[0])
+	}
 }
 
 func TestServiceReadProjectContextIncludesRenderPlansForProducerDecisions(t *testing.T) {
@@ -197,6 +209,30 @@ func TestServiceReadProjectContextIncludesRenderPlansForProducerDecisions(t *tes
 	}
 	if packet.RenderPlans[0].ID != planID || packet.RenderPlans[0].Status != "waiting_for_approval" {
 		t.Fatalf("unexpected render plan: %#v", packet.RenderPlans[0])
+	}
+}
+
+func TestServiceReadProjectContextIncludesObjectIndex(t *testing.T) {
+	workspaceID := testUUID(1)
+	store := newFakeStore(workspaceID, db.WorkspaceModeAgent)
+	store.objectIndex = []db.AgentObjectIndex{{
+		WorkspaceID: workspaceID,
+		ObjectType:  "shot",
+		ObjectID:    testUUID(2),
+		SemanticKey: "shot_01",
+		DisplayName: "产品开场",
+		Status:      "preview_ready",
+		Kind:        "lifestyle",
+		SortOrder:   1,
+	}}
+	service := NewService(store)
+
+	packet, err := service.ReadProjectContext(context.Background(), ReadContextInput{WorkspaceID: workspaceID})
+	if err != nil {
+		t.Fatalf("read context: %v", err)
+	}
+	if len(packet.ObjectIndex) != 1 || packet.ObjectIndex[0].SemanticKey != "shot_01" {
+		t.Fatalf("object index = %#v", packet.ObjectIndex)
 	}
 }
 
@@ -358,6 +394,7 @@ type fakeStore struct {
 	links       []db.ShotKeyElement
 	deps        []db.ShotDependency
 	renderPlans []db.RenderPlan
+	objectIndex []db.AgentObjectIndex
 }
 
 func newFakeStore(workspaceID pgtype.UUID, mode db.WorkspaceMode) *fakeStore {
@@ -414,6 +451,8 @@ func (s *fakeStore) CreateCreativeBrief(_ context.Context, arg db.CreateCreative
 		Constraints:       arg.Constraints,
 		Metadata:          arg.Metadata,
 		Status:            arg.Status,
+		SemanticKey:       arg.SemanticKey,
+		DisplayName:       arg.DisplayName,
 		CreatedByThreadID: arg.CreatedByThreadID,
 		CreatedByTaskID:   arg.CreatedByTaskID,
 	}
@@ -487,6 +526,8 @@ func (s *fakeStore) CreateProjectMemory(_ context.Context, arg db.CreateProjectM
 		Forbidden:            arg.Forbidden,
 		PromptInjectionHints: arg.PromptInjectionHints,
 		SourceRefs:           arg.SourceRefs,
+		SemanticKey:          arg.SemanticKey,
+		DisplayName:          arg.DisplayName,
 		CreatedByThreadID:    arg.CreatedByThreadID,
 		CreatedByTaskID:      arg.CreatedByTaskID,
 	}
@@ -525,6 +566,8 @@ func (s *fakeStore) CreateKeyElement(_ context.Context, arg db.CreateKeyElementP
 		SourceType:        arg.SourceType,
 		SourceRefs:        arg.SourceRefs,
 		Status:            arg.Status,
+		SemanticKey:       arg.SemanticKey,
+		DisplayName:       arg.DisplayName,
 		CreatedByThreadID: arg.CreatedByThreadID,
 		CreatedByTaskID:   arg.CreatedByTaskID,
 	}
@@ -599,6 +642,8 @@ func (s *fakeStore) CreateKeyElementState(_ context.Context, arg db.CreateKeyEle
 		StateFacts:         arg.StateFacts,
 		SourceRefs:         arg.SourceRefs,
 		Status:             arg.Status,
+		SemanticKey:        arg.SemanticKey,
+		DisplayName:        arg.DisplayName,
 		CreatedByThreadID:  arg.CreatedByThreadID,
 		CreatedByTaskID:    arg.CreatedByTaskID,
 	}
@@ -642,7 +687,7 @@ func (s *fakeStore) ListActiveScenesByWorkspace(context.Context, pgtype.UUID) ([
 }
 
 func (s *fakeStore) CreateScene(_ context.Context, arg db.CreateSceneParams) (db.Scene, error) {
-	scene := db.Scene{ID: testUUID(byte(len(s.scenes) + 100)), WorkspaceID: arg.WorkspaceID, ClientKey: arg.ClientKey, SortOrder: arg.SortOrder, Title: arg.Title, Description: arg.Description, Location: arg.Location, Mood: arg.Mood, Status: arg.Status, CreatedByThreadID: arg.CreatedByThreadID, CreatedByTaskID: arg.CreatedByTaskID}
+	scene := db.Scene{ID: testUUID(byte(len(s.scenes) + 100)), WorkspaceID: arg.WorkspaceID, ClientKey: arg.ClientKey, SortOrder: arg.SortOrder, Title: arg.Title, Description: arg.Description, Location: arg.Location, Mood: arg.Mood, Status: arg.Status, SemanticKey: arg.SemanticKey, DisplayName: arg.DisplayName, CreatedByThreadID: arg.CreatedByThreadID, CreatedByTaskID: arg.CreatedByTaskID}
 	s.scenes[scene.ClientKey] = scene
 	return scene, nil
 }
@@ -682,7 +727,7 @@ func (s *fakeStore) ListActiveShotsByWorkspace(context.Context, pgtype.UUID) ([]
 }
 
 func (s *fakeStore) CreateShot(_ context.Context, arg db.CreateShotParams) (db.Shot, error) {
-	shot := db.Shot{ID: testUUID(byte(len(s.shots) + 120)), WorkspaceID: arg.WorkspaceID, ClientKey: arg.ClientKey, SortOrder: arg.SortOrder, Title: arg.Title, Brief: arg.Brief, DurationSec: arg.DurationSec, NarrativePurpose: arg.NarrativePurpose, Status: arg.Status, SceneID: arg.SceneID, ShotKind: arg.ShotKind, CreativeText: arg.CreativeText, VisualIntent: arg.VisualIntent, ActionText: arg.ActionText, CameraIntent: arg.CameraIntent, Dialogue: arg.Dialogue, Narration: arg.Narration, AudioPlan: arg.AudioPlan}
+	shot := db.Shot{ID: testUUID(byte(len(s.shots) + 120)), WorkspaceID: arg.WorkspaceID, ClientKey: arg.ClientKey, SortOrder: arg.SortOrder, Title: arg.Title, Brief: arg.Brief, DurationSec: arg.DurationSec, NarrativePurpose: arg.NarrativePurpose, Status: arg.Status, SceneID: arg.SceneID, ShotKind: arg.ShotKind, CreativeText: arg.CreativeText, VisualIntent: arg.VisualIntent, ActionText: arg.ActionText, CameraIntent: arg.CameraIntent, Dialogue: arg.Dialogue, Narration: arg.Narration, AudioPlan: arg.AudioPlan, SemanticKey: arg.SemanticKey, DisplayName: arg.DisplayName}
 	s.shots[shot.ClientKey] = shot
 	return shot, nil
 }
@@ -768,7 +813,7 @@ func (s *fakeStore) DeleteShotDependenciesForShot(_ context.Context, arg db.Dele
 }
 
 func (s *fakeStore) CreateShotDependency(_ context.Context, arg db.CreateShotDependencyParams) (db.ShotDependency, error) {
-	dep := db.ShotDependency{ID: testUUID(byte(len(s.deps) + 160)), WorkspaceID: arg.WorkspaceID, FromShotID: arg.FromShotID, ToShotID: arg.ToShotID, DependencyType: arg.DependencyType, RequiredArtifact: arg.RequiredArtifact, InjectionRole: arg.InjectionRole, BlockingPhase: arg.BlockingPhase, StalePolicy: arg.StalePolicy, Reason: arg.Reason}
+	dep := db.ShotDependency{ID: testUUID(byte(len(s.deps) + 160)), WorkspaceID: arg.WorkspaceID, FromShotID: arg.FromShotID, ToShotID: arg.ToShotID, DependencyType: arg.DependencyType, RequiredArtifact: arg.RequiredArtifact, InjectionRole: arg.InjectionRole, BlockingPhase: arg.BlockingPhase, StalePolicy: arg.StalePolicy, Reason: arg.Reason, SemanticKey: arg.SemanticKey, DisplayName: arg.DisplayName}
 	s.deps = append(s.deps, dep)
 	return dep, nil
 }
@@ -789,6 +834,10 @@ func (s *fakeStore) ListRenderPlansByScope(_ context.Context, arg db.ListRenderP
 		}
 	}
 	return out, nil
+}
+
+func (s *fakeStore) ListAgentObjectsByWorkspace(context.Context, pgtype.UUID) ([]db.AgentObjectIndex, error) {
+	return append([]db.AgentObjectIndex(nil), s.objectIndex...), nil
 }
 
 func testUUID(seed byte) pgtype.UUID {

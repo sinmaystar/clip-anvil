@@ -35,7 +35,7 @@ SET status = 'claimed',
     last_error = NULL,
     updated_at = now()
 WHERE id IN (SELECT id FROM picked)
-RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at
+RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at, semantic_key, display_name
 `
 
 type ClaimProducerPendingSignalsParams struct {
@@ -84,6 +84,8 @@ func (q *Queries) ClaimProducerPendingSignals(ctx context.Context, arg ClaimProd
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -96,7 +98,16 @@ func (q *Queries) ClaimProducerPendingSignals(ctx context.Context, arg ClaimProd
 }
 
 const createProducerPendingSignal = `-- name: CreateProducerPendingSignal :one
+WITH proposed AS (
+    SELECT
+        gen_random_uuid() AS id,
+        COALESCE(
+            (SELECT render_plan.semantic_key FROM render_plan WHERE render_plan.id = $9),
+            $7 || '.' || left(COALESCE($8::uuid::text, $1::uuid::text), 8)
+        ) AS source_semantic_key
+)
 INSERT INTO producer_pending_signal (
+    id,
     workspace_id,
     producer_thread_id,
     source_role,
@@ -111,12 +122,21 @@ INSERT INTO producer_pending_signal (
     priority,
     dedupe_key,
     payload,
-    last_error
-) VALUES (
+    last_error,
+    semantic_key,
+    display_name
+)
+SELECT
+    proposed.id,
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10,
-    'pending', $11, $12, $13, NULL
-)
+    'pending', $11, $12, $13, NULL,
+    COALESCE(
+        NULLIF($14::text, ''),
+        'signal.' || proposed.source_semantic_key || '.' || $6 || '.' || left(proposed.id::text, 8)
+    ),
+    COALESCE(NULLIF($15::text, ''), $6)
+FROM proposed
 ON CONFLICT (workspace_id, dedupe_key) DO UPDATE
 SET producer_thread_id = EXCLUDED.producer_thread_id,
     source_role = EXCLUDED.source_role,
@@ -142,8 +162,10 @@ SET producer_thread_id = EXCLUDED.producer_thread_id,
         ELSE NULL
     END,
     last_error = NULL,
+    semantic_key = COALESCE(NULLIF($14::text, ''), EXCLUDED.semantic_key),
+    display_name = COALESCE(NULLIF($15::text, ''), EXCLUDED.display_name),
     updated_at = now()
-RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at
+RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at, semantic_key, display_name
 `
 
 type CreateProducerPendingSignalParams struct {
@@ -160,6 +182,8 @@ type CreateProducerPendingSignalParams struct {
 	Priority         int32       `json:"priority"`
 	DedupeKey        string      `json:"dedupe_key"`
 	Payload          []byte      `json:"payload"`
+	SemanticKey      string      `json:"semantic_key"`
+	DisplayName      string      `json:"display_name"`
 }
 
 func (q *Queries) CreateProducerPendingSignal(ctx context.Context, arg CreateProducerPendingSignalParams) (ProducerPendingSignal, error) {
@@ -177,6 +201,8 @@ func (q *Queries) CreateProducerPendingSignal(ctx context.Context, arg CreatePro
 		arg.Priority,
 		arg.DedupeKey,
 		arg.Payload,
+		arg.SemanticKey,
+		arg.DisplayName,
 	)
 	var i ProducerPendingSignal
 	err := row.Scan(
@@ -202,12 +228,14 @@ func (q *Queries) CreateProducerPendingSignal(ctx context.Context, arg CreatePro
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const listClaimedProducerSignalsByTask = `-- name: ListClaimedProducerSignalsByTask :many
-SELECT id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at
+SELECT id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at, semantic_key, display_name
 FROM producer_pending_signal
 WHERE workspace_id = $1
   AND producer_thread_id = $2
@@ -254,6 +282,8 @@ func (q *Queries) ListClaimedProducerSignalsByTask(ctx context.Context, arg List
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -266,7 +296,7 @@ func (q *Queries) ListClaimedProducerSignalsByTask(ctx context.Context, arg List
 }
 
 const listPendingProducerSignals = `-- name: ListPendingProducerSignals :many
-SELECT id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at
+SELECT id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at, semantic_key, display_name
 FROM producer_pending_signal
 WHERE workspace_id = $1
   AND status IN ('pending', 'claimed', 'failed')
@@ -311,6 +341,8 @@ func (q *Queries) ListPendingProducerSignals(ctx context.Context, arg ListPendin
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -332,7 +364,7 @@ SET status = 'ignored',
 WHERE id = $1
   AND workspace_id = $2
   AND status IN ('pending', 'claimed', 'failed')
-RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at
+RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at, semantic_key, display_name
 `
 
 type MarkProducerPendingSignalIgnoredParams struct {
@@ -373,6 +405,8 @@ func (q *Queries) MarkProducerPendingSignalIgnored(ctx context.Context, arg Mark
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -387,7 +421,7 @@ SET status = 'processed',
 WHERE id = $1
   AND workspace_id = $2
   AND status IN ('pending', 'claimed', 'failed')
-RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at
+RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at, semantic_key, display_name
 `
 
 type MarkProducerPendingSignalProcessedParams struct {
@@ -422,6 +456,8 @@ func (q *Queries) MarkProducerPendingSignalProcessed(ctx context.Context, arg Ma
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -437,7 +473,7 @@ WHERE workspace_id = $1
   AND render_plan_id = $2
   AND signal_type = 'craftsman_render_plan_ready'
   AND status IN ('pending', 'claimed', 'failed')
-RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at
+RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at, semantic_key, display_name
 `
 
 type MarkProducerPendingSignalsProcessedByRenderPlanParams struct {
@@ -478,6 +514,8 @@ func (q *Queries) MarkProducerPendingSignalsProcessedByRenderPlan(ctx context.Co
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -499,7 +537,7 @@ SET status = 'pending',
 WHERE workspace_id = $1
   AND claimed_by_task_id = $2
   AND status = 'claimed'
-RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at
+RETURNING id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at, semantic_key, display_name
 `
 
 type ReleaseProducerPendingSignalsForTaskParams struct {
@@ -540,6 +578,8 @@ func (q *Queries) ReleaseProducerPendingSignalsForTask(ctx context.Context, arg 
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}

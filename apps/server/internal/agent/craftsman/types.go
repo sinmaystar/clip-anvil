@@ -22,6 +22,7 @@ type RunTaskInput struct {
 	TaskID      pgtype.UUID
 	ScopeType   string
 	ScopeID     pgtype.UUID
+	ScopeKey    string
 	ShotID      pgtype.UUID
 	Input       []byte
 }
@@ -32,6 +33,7 @@ type GraphInput struct {
 	TaskID           pgtype.UUID
 	ScopeType        string
 	ScopeID          pgtype.UUID
+	ScopeKey         string
 	ShotID           pgtype.UUID
 	Mode             string
 	ExecutionPolicy  string

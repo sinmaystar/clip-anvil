@@ -279,7 +279,7 @@ func (b *ProductionBroadcaster) ensureProducerWakeTask(ctx context.Context, work
 	for _, task := range activeTasks {
 		if task.Role == "producer" &&
 			(task.TaskType == "producer_turn" || task.TaskType == "decision_resume") &&
-			(task.Status == "queued" || task.Status == "waiting_for_user") {
+			(task.Status == "queued" || task.Status == "running" || task.Status == "waiting_for_user") {
 			return
 		}
 	}

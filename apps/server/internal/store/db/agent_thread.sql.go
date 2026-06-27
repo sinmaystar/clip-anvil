@@ -12,17 +12,34 @@ import (
 )
 
 const createAgentThread = `-- name: CreateAgentThread :one
+WITH proposed AS (
+    SELECT gen_random_uuid() AS id
+)
 INSERT INTO agent_thread (
+    id,
     workspace_id,
     role,
     scope_type,
     scope_id,
     runtime_provider,
     runtime_agent_name,
-    summary
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
-) RETURNING id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+    summary,
+    semantic_key,
+    display_name
+)
+SELECT
+    proposed.id,
+    $1, $2, $3, $4, $5, $6, $7,
+    COALESCE(
+        NULLIF($8::text, ''),
+        $2 || '.' || $3 || '.' || left(COALESCE($4::uuid::text, $1::uuid::text), 8)
+    ),
+    COALESCE(
+        NULLIF($9::text, ''),
+        $2 || ' ' || $3
+    )
+FROM proposed
+RETURNING id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 `
 
 type CreateAgentThreadParams struct {
@@ -33,6 +50,8 @@ type CreateAgentThreadParams struct {
 	RuntimeProvider  string      `json:"runtime_provider"`
 	RuntimeAgentName string      `json:"runtime_agent_name"`
 	Summary          string      `json:"summary"`
+	SemanticKey      string      `json:"semantic_key"`
+	DisplayName      string      `json:"display_name"`
 }
 
 func (q *Queries) CreateAgentThread(ctx context.Context, arg CreateAgentThreadParams) (AgentThread, error) {
@@ -44,6 +63,8 @@ func (q *Queries) CreateAgentThread(ctx context.Context, arg CreateAgentThreadPa
 		arg.RuntimeProvider,
 		arg.RuntimeAgentName,
 		arg.Summary,
+		arg.SemanticKey,
+		arg.DisplayName,
 	)
 	var i AgentThread
 	err := row.Scan(
@@ -59,12 +80,14 @@ func (q *Queries) CreateAgentThread(ctx context.Context, arg CreateAgentThreadPa
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getActiveAgentThreadByScope = `-- name: GetActiveAgentThreadByScope :one
-SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 FROM agent_thread
 WHERE workspace_id = $1
   AND role = $2
@@ -103,12 +126,14 @@ func (q *Queries) GetActiveAgentThreadByScope(ctx context.Context, arg GetActive
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getActiveComposerThreadByWorkspace = `-- name: GetActiveComposerThreadByWorkspace :one
-SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 FROM agent_thread
 WHERE workspace_id = $1
   AND role = 'composer'
@@ -135,12 +160,14 @@ func (q *Queries) GetActiveComposerThreadByWorkspace(ctx context.Context, worksp
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getActiveProducerThreadByWorkspace = `-- name: GetActiveProducerThreadByWorkspace :one
-SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 FROM agent_thread
 WHERE workspace_id = $1
   AND role = 'producer'
@@ -166,12 +193,14 @@ func (q *Queries) GetActiveProducerThreadByWorkspace(ctx context.Context, worksp
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getAgentThreadByID = `-- name: GetAgentThreadByID :one
-SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 FROM agent_thread
 WHERE id = $1
 `
@@ -192,12 +221,14 @@ func (q *Queries) GetAgentThreadByID(ctx context.Context, id pgtype.UUID) (Agent
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getAgentThreadForWorkspace = `-- name: GetAgentThreadForWorkspace :one
-SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 FROM agent_thread
 WHERE id = $1
   AND workspace_id = $2
@@ -225,6 +256,8 @@ func (q *Queries) GetAgentThreadForWorkspace(ctx context.Context, arg GetAgentTh
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -257,7 +290,7 @@ func (q *Queries) GetLatestAgentMessageByThread(ctx context.Context, threadID pg
 }
 
 const getLatestAgentTaskByThread = `-- name: GetLatestAgentTaskByThread :one
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE thread_id = $1
 ORDER BY created_at DESC
@@ -286,12 +319,14 @@ func (q *Queries) GetLatestAgentTaskByThread(ctx context.Context, threadID pgtyp
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.RenderPlanID,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const listAgentThreadsByWorkspace = `-- name: ListAgentThreadsByWorkspace :many
-SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 FROM agent_thread
 WHERE workspace_id = $1
 ORDER BY created_at DESC
@@ -319,6 +354,8 @@ func (q *Queries) ListAgentThreadsByWorkspace(ctx context.Context, workspaceID p
 			&i.Summary,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -331,7 +368,7 @@ func (q *Queries) ListAgentThreadsByWorkspace(ctx context.Context, workspaceID p
 }
 
 const listObservableAgentThreadsByWorkspace = `-- name: ListObservableAgentThreadsByWorkspace :many
-SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+SELECT id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 FROM agent_thread
 WHERE workspace_id = $1
   AND ($2::boolean OR role <> 'producer')
@@ -365,6 +402,8 @@ func (q *Queries) ListObservableAgentThreadsByWorkspace(ctx context.Context, arg
 			&i.Summary,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -381,7 +420,7 @@ UPDATE agent_thread
 SET current_checkpoint_key = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+RETURNING id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 `
 
 type SetAgentThreadCheckpointParams struct {
@@ -405,6 +444,8 @@ func (q *Queries) SetAgentThreadCheckpoint(ctx context.Context, arg SetAgentThre
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -414,7 +455,7 @@ UPDATE agent_thread
 SET status = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at
+RETURNING id, workspace_id, role, scope_type, scope_id, runtime_provider, runtime_agent_name, current_checkpoint_key, status, summary, created_at, updated_at, semantic_key, display_name
 `
 
 type UpdateAgentThreadStatusParams struct {
@@ -438,6 +479,8 @@ func (q *Queries) UpdateAgentThreadStatus(ctx context.Context, arg UpdateAgentTh
 		&i.Summary,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }

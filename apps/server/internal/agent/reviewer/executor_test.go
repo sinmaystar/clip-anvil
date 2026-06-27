@@ -114,6 +114,51 @@ func TestReviewerExecutorSignalsProducerWhenReviewCompleted(t *testing.T) {
 	}
 }
 
+func TestReviewerExecutorDoesNotWakeProducerWhenProducerRunning(t *testing.T) {
+	runtime := &fakeReviewerExecutorRuntime{
+		activeTasks: []db.AgentTask{
+			{ID: uuidWithByte(91), Role: "producer", TaskType: "producer_turn", Status: "running"},
+		},
+	}
+	producerEnqueuer := &fakeProducerTaskEnqueuer{}
+	graph := &fakeReviewerRunner{output: GraphOutput{
+		Record:   db.ReviewRecord{ID: uuidWithByte(40)},
+		Decision: ReviewDecision{Status: ReviewStatusRejected, ShouldRetry: true},
+		Result:   ReviewResult{Critique: "Reviewer 发现阻塞问题，需要 Producer 决策。"},
+	}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph, ProducerEnqueuer: producerEnqueuer})
+	raw, _ := json.Marshal(TaskInput{
+		ReviewTask:        ReviewTaskPreviewImage,
+		TargetPhase:       TargetPhasePreviewImage,
+		ShotID:            uuidString(uuidWithByte(2)),
+		NodeID:            uuidString(uuidWithByte(3)),
+		ArtifactVersionID: uuidString(uuidWithByte(4)),
+		ProducerThreadID:  uuidString(uuidWithByte(7)),
+		AttemptNo:         1,
+		MaxAttempts:       3,
+	})
+	task := db.AgentTask{
+		ID:          uuidWithByte(9),
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(8),
+		Role:        "reviewer",
+		ScopeType:   "shot",
+		ScopeID:     uuidWithByte(2),
+		TaskType:    "reviewer_turn",
+		Input:       raw,
+	}
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.signals) != 1 {
+		t.Fatalf("signals = %#v", runtime.signals)
+	}
+	if len(runtime.createdTasks) != 0 || len(producerEnqueuer.tasks) != 0 {
+		t.Fatalf("created tasks = %#v enqueued=%#v", runtime.createdTasks, producerEnqueuer.tasks)
+	}
+}
+
 func TestReviewerExecutorPassesTraceCallbacksToGraph(t *testing.T) {
 	runtime := &fakeReviewerExecutorRuntime{}
 	graph := &fakeReviewerRunner{output: GraphOutput{Decision: ReviewDecision{Status: ReviewStatusAccepted}}}

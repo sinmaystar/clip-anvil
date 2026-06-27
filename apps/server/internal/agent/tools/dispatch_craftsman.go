@@ -31,6 +31,7 @@ type CraftsmanDispatcherStore interface {
 type CraftsmanRuntime interface {
 	GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error)
 	GetOrCreateCraftsmanThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error)
+	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
@@ -69,14 +70,14 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 					},
 					"id": map[string]any{
 						"type":        "string",
-						"description": "scope 对象引用。key_element_state 必须填写 UUID 或 state_client_key；shot 可为空并使用 shot_refs 批量派发。",
+						"description": "兼容旧字段。模型不要填写 UUID；请填写 read_project_context 返回的 semantic_key，或留空并用 shot_refs 批量派发 shot。",
 					},
 				},
 			},
 			"shot_refs": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
-				"description": "scope.type=shot 时的 Shot UUID 或稳定 client_key。为空表示所有可派发 active shots。scope.type=key_element_state 时不要填写 shot_refs。",
+				"description": "scope.type=shot 时的 Shot semantic_key 或稳定 client_key。为空表示所有可派发 active shots。scope.type=key_element_state 时不要填写 shot_refs。",
 			},
 			"target_phase": map[string]any{
 				"type":        "string",
@@ -95,7 +96,7 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 			},
 			"force": map[string]any{
 				"type":        "boolean",
-				"description": "为 true 时，即使已有结果也创建新的尝试；默认 false。",
+				"description": "为 true 时，即使已有完成结果也创建新的尝试；默认 false。注意：force 不能绕过正在排队或运行中的同 scope/target_phase Craftsman 任务。",
 			},
 			"max_attempts": map[string]any{
 				"type":        "integer",
@@ -155,7 +156,25 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 
 	dispatched := make([]map[string]any, 0, len(scopes))
 	skipped := []map[string]any{}
+	activeTasks, err := t.runtime.ListActiveAgentTasksByWorkspace(ctx, input.WorkspaceID)
+	if err != nil {
+		return ExecuteOutput{}, err
+	}
 	for _, scope := range scopes {
+		if active, ok := activeCraftsmanTaskForScopePhase(activeTasks, scope.ScopeType, scope.ScopeID, args.TargetPhase); ok {
+			skipped = append(skipped, map[string]any{
+				"scope_type":                scope.ScopeType,
+				"scope_id":                  uuidString(scope.ScopeID),
+				"scope_key":                 scope.ScopeKey,
+				"client_key":                scope.ClientKey,
+				"target_phase":              args.TargetPhase,
+				"reason":                    "active_craftsman_task_exists",
+				"active_craftsman_task_key": active.SemanticKey,
+				"active_craftsman_task_id":  uuidString(active.ID),
+				"active_status":             active.Status,
+			})
+			continue
+		}
 		thread, err := t.runtime.GetOrCreateCraftsmanThreadForScope(ctx, input.WorkspaceID, scope.ScopeType, scope.ScopeID)
 		if err != nil {
 			return ExecuteOutput{}, err
@@ -172,6 +191,7 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			"target_phase":           args.TargetPhase,
 			"scope_type":             scope.ScopeType,
 			"scope_id":               uuidString(scope.ScopeID),
+			"scope_key":              scope.ScopeKey,
 			"execution_policy":       args.ExecutionPolicy,
 			"shot_id":                "",
 			"shot_client_key":        "",
@@ -235,7 +255,7 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			EventType:   "craftsman_dispatched",
 			SourceRole:  "producer",
 			TargetRole:  "craftsman",
-			Scope:       mustJSON(map[string]any{"scope_type": scope.ScopeType, "scope_id": uuidString(scope.ScopeID), "client_key": scope.ClientKey}),
+			Scope:       mustJSON(map[string]any{"scope_type": scope.ScopeType, "scope_id": uuidString(scope.ScopeID), "scope_key": scope.ScopeKey, "client_key": scope.ClientKey}),
 			Payload:     mustJSON(map[string]any{"target_phase": args.TargetPhase, "execution_policy": args.ExecutionPolicy, "max_attempts": args.MaxAttempts}),
 		})
 		if t.enqueuer != nil {
@@ -244,6 +264,7 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		dispatched = append(dispatched, map[string]any{
 			"scope_type":          scope.ScopeType,
 			"scope_id":            uuidString(scope.ScopeID),
+			"scope_key":           scope.ScopeKey,
 			"client_key":          scope.ClientKey,
 			"craftsman_thread_id": uuidString(thread.ID),
 			"craftsman_task_id":   uuidString(task.ID),
@@ -252,12 +273,19 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 	}
 	summary := dispatchCraftsmanSummary(len(dispatched), len(skipped), args.ScopeType, args.TargetPhase, args.ExecutionPolicy)
 	return ExecuteOutput{Summary: summary, Result: map[string]any{
-		"status":       "queued",
+		"status":       dispatchStatus(len(dispatched), len(skipped)),
 		"target_phase": args.TargetPhase,
 		"summary":      summary,
 		"dispatched":   dispatched,
 		"skipped":      skipped,
 	}}, nil
+}
+
+func dispatchStatus(dispatched int, skipped int) string {
+	if dispatched == 0 && skipped > 0 {
+		return "skipped"
+	}
+	return "queued"
 }
 
 func (t DispatchCraftsmanTool) appendDelegationMessage(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID, taskID pgtype.UUID, scope craftsmanDispatchScope, args parsedDispatchCraftsmanArgs, taskInput map[string]any) error {
@@ -277,6 +305,7 @@ func (t DispatchCraftsmanTool) appendDelegationMessage(ctx context.Context, work
 			"target_role":  "craftsman",
 			"scope_type":   scope.ScopeType,
 			"scope_id":     uuidString(scope.ScopeID),
+			"scope_key":    scope.ScopeKey,
 			"client_key":   scope.ClientKey,
 			"target_phase": args.TargetPhase,
 			"task_input":   taskInput,
@@ -289,7 +318,7 @@ func (t DispatchCraftsmanTool) appendDelegationMessage(ctx context.Context, work
 func craftsmanDelegationText(scope craftsmanDispatchScope, args parsedDispatchCraftsmanArgs) string {
 	lines := []string{
 		"Producer 派发 Craftsman 任务。",
-		"- scope: " + scope.ScopeType + "=" + uuidString(scope.ScopeID),
+		"- scope: " + scope.ScopeType + "=" + scope.ScopeKey,
 		"- client_key: " + scope.ClientKey,
 		"- target_phase: " + args.TargetPhase,
 		"- execution_policy: " + args.ExecutionPolicy,
@@ -314,6 +343,9 @@ func dispatchCraftsmanSummary(dispatched int, skipped int, scopeType string, tar
 	if executionPolicy == "execute_immediately" {
 		tail = "Craftsman 编译 RenderPlan 后，工程会自动提交 Worker 生成任务。"
 	}
+	if dispatched == 0 && skipped > 0 {
+		return fmt.Sprintf("没有创建新的 Craftsman 任务：%d 个 scope 已存在同一 target_phase 的 Craftsman 任务正在排队或运行。请等待对应 signal，或稍后调用 read_project_context 查看真实状态；不要重复派发相同任务。", skipped)
+	}
 	if scopeType == "key_element_state" {
 		return fmt.Sprintf("已将 %d 个关键元素状态参考图 RenderPlan 任务加入队列。%s 当前仅表示 Craftsman 任务已排队，不表示参考图已经生成完成。", dispatched, tail)
 	}
@@ -327,6 +359,29 @@ func dispatchCraftsmanSummary(dispatched int, skipped int, scopeType string, tar
 		return fmt.Sprintf("已将 %d 个分镜的预览图 RenderPlan 任务加入队列，%d 个分镜因已有预览或状态不匹配被跳过。%s 当前仅表示 Craftsman 任务已排队，不表示图片已经生成完成。", dispatched, skipped, tail)
 	}
 	return fmt.Sprintf("已将 %d 个分镜的预览图 RenderPlan 任务加入队列。%s 当前仅表示 Craftsman 任务已排队，不表示图片已经生成完成。", dispatched, tail)
+}
+
+func activeCraftsmanTaskForScopePhase(tasks []db.AgentTask, scopeType string, scopeID pgtype.UUID, targetPhase string) (db.AgentTask, bool) {
+	for _, task := range tasks {
+		if task.Role != "craftsman" || task.TaskType != "craftsman_turn" {
+			continue
+		}
+		if task.ScopeType != scopeType || task.ScopeID != scopeID {
+			continue
+		}
+		var input map[string]any
+		if err := json.Unmarshal(task.Input, &input); err != nil {
+			continue
+		}
+		phase := strings.TrimSpace(stringValue(input, "target_phase"))
+		if phase == "" {
+			phase = strings.TrimSpace(stringValue(input, "mode"))
+		}
+		if phase == targetPhase {
+			return task, true
+		}
+	}
+	return db.AgentTask{}, false
 }
 
 type parsedDispatchCraftsmanArgs struct {
@@ -421,6 +476,7 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 type craftsmanDispatchScope struct {
 	ScopeType string
 	ScopeID   pgtype.UUID
+	ScopeKey  string
 	ClientKey string
 }
 
@@ -436,7 +492,7 @@ func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pg
 		if state.ReferenceStatus != "needs_reference" && !args.Force {
 			return nil, fmt.Errorf("key_element_state.reference_status=%s，不需要生成参考图；如需重做请设置 force=true", state.ReferenceStatus)
 		}
-		return []craftsmanDispatchScope{{ScopeType: "key_element_state", ScopeID: state.ID, ClientKey: state.ClientKey}}, nil
+		return []craftsmanDispatchScope{{ScopeType: "key_element_state", ScopeID: state.ID, ScopeKey: semanticScopeKey(state.SemanticKey, "key_element_state", state.ClientKey), ClientKey: state.ClientKey}}, nil
 	}
 	shots, err := t.resolveShots(ctx, workspaceID, args)
 	if err != nil {
@@ -444,9 +500,19 @@ func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pg
 	}
 	out := make([]craftsmanDispatchScope, 0, len(shots))
 	for _, shot := range shots {
-		out = append(out, craftsmanDispatchScope{ScopeType: "shot", ScopeID: shot.ID, ClientKey: shot.ClientKey})
+		out = append(out, craftsmanDispatchScope{ScopeType: "shot", ScopeID: shot.ID, ScopeKey: semanticScopeKey(shot.SemanticKey, "shot", shot.ClientKey), ClientKey: shot.ClientKey})
 	}
 	return out, nil
+}
+
+func semanticScopeKey(semanticKey string, scopeType string, clientKey string) string {
+	if value := strings.TrimSpace(semanticKey); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(clientKey); value != "" {
+		return strings.TrimSpace(scopeType) + "." + value
+	}
+	return strings.TrimSpace(scopeType) + ".semantic_key_missing"
 }
 
 func (t DispatchCraftsmanTool) resolveKeyElementStateRef(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) (db.KeyElementState, error) {
@@ -462,7 +528,7 @@ func (t DispatchCraftsmanTool) resolveKeyElementStateRef(ctx context.Context, wo
 	}
 	var matched *db.KeyElementState
 	for _, state := range states {
-		if state.ClientKey != args.ScopeRef {
+		if state.ClientKey != args.ScopeRef && state.SemanticKey != args.ScopeRef {
 			continue
 		}
 		current := state
@@ -472,7 +538,7 @@ func (t DispatchCraftsmanTool) resolveKeyElementStateRef(ctx context.Context, wo
 		matched = &current
 	}
 	if matched == nil {
-		return db.KeyElementState{}, fmt.Errorf("找不到 key_element_state client_key=%s，请先读取项目上下文确认真实 state_client_key", args.ScopeRef)
+		return db.KeyElementState{}, fmt.Errorf("找不到 key_element_state ref=%s，请先读取项目上下文确认真实 semantic_key", args.ScopeRef)
 	}
 	return *matched, nil
 }
@@ -534,6 +600,23 @@ func (t DispatchCraftsmanTool) resolveShotRef(ctx context.Context, workspaceID p
 			return db.Shot{}, errShotNotFound
 		}
 		return shot, nil
+	}
+	shots, err := t.store.ListActiveShotsByWorkspace(ctx, workspaceID)
+	if err == nil {
+		var matched *db.Shot
+		for _, shot := range shots {
+			if shot.SemanticKey != ref {
+				continue
+			}
+			current := shot
+			if matched != nil {
+				return db.Shot{}, fmt.Errorf("shot semantic_key=%s 不唯一，请读取项目上下文确认", ref)
+			}
+			matched = &current
+		}
+		if matched != nil {
+			return *matched, nil
+		}
 	}
 	return t.store.GetShotByClientKey(ctx, db.GetShotByClientKeyParams{
 		WorkspaceID: workspaceID,

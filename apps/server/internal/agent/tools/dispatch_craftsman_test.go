@@ -52,9 +52,9 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
 		shots: []db.Shot{
-			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", Title: "开场", Status: "planned"},
-			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", Title: "演示", Status: "draft"},
-			{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), ClientKey: "shot-03", Title: "收尾", Status: "failed"},
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SemanticKey: "scene_main.shot_01", Title: "开场", Status: "planned"},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SemanticKey: "scene_main.shot_02", Title: "演示", Status: "draft"},
+			{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), ClientKey: "shot-03", SemanticKey: "scene_main.shot_03", Title: "收尾", Status: "failed"},
 		},
 	}
 	runtime := &fakeCraftsmanRuntime{}
@@ -106,6 +106,9 @@ func TestDispatchCraftsmanDispatchesAllActiveShotsByDefault(t *testing.T) {
 		if input["target_phase"] != "preview_image" {
 			t.Fatalf("task input = %#v", input)
 		}
+		if !strings.HasPrefix(input["scope_key"].(string), "scene_main.shot_") {
+			t.Fatalf("task input missing semantic scope_key: %#v", input)
+		}
 		if input["execution_policy"] != "execute_immediately" {
 			t.Fatalf("execution_policy = %#v, want execute_immediately", input["execution_policy"])
 		}
@@ -116,7 +119,7 @@ func TestDispatchCraftsmanNativeCarriesParentToolCallID(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
 		shots: []db.Shot{
-			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", Title: "开场", Status: "planned"},
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SemanticKey: "scene_main.shot_01", Title: "开场", Status: "planned"},
 		},
 	}
 	runtime := &fakeCraftsmanRuntime{}
@@ -137,7 +140,7 @@ func TestDispatchCraftsmanNativeCarriesParentToolCallID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "已派发 Craftsman 任务") {
+	if !strings.Contains(got, "Craftsman 派发结果") {
 		t.Fatalf("result = %s", got)
 	}
 	if len(runtime.createdTasks) != 1 {
@@ -159,17 +162,20 @@ func TestDispatchCraftsmanNativeCarriesParentToolCallID(t *testing.T) {
 	if input["execution_policy"] != "execute_immediately" {
 		t.Fatalf("task input = %#v", input)
 	}
+	if input["scope_key"] != "scene_main.shot_01" {
+		t.Fatalf("task input missing semantic scope_key: %#v", input)
+	}
 }
 
 func TestDispatchCraftsmanNativeLimitsDispatchToShotRefs(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
 		shots: []db.Shot{
-			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", Title: "开场", Status: "preview_ready"},
-			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot_02", Title: "细节", Status: "preview_ready"},
-			{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), ClientKey: "shot_03", Title: "推行", Status: "preview_ready"},
-			{ID: uuidWithByte(14), WorkspaceID: uuidWithByte(1), ClientKey: "shot_04", Title: "转场", Status: "preview_ready"},
-			{ID: uuidWithByte(15), WorkspaceID: uuidWithByte(1), ClientKey: "shot_05", Title: "收尾", Status: "preview_ready"},
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", SemanticKey: "scene_main.shot_01", Title: "开场", Status: "preview_ready"},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot_02", SemanticKey: "scene_main.shot_02", Title: "细节", Status: "preview_ready"},
+			{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), ClientKey: "shot_03", SemanticKey: "scene_main.shot_03", Title: "推行", Status: "preview_ready"},
+			{ID: uuidWithByte(14), WorkspaceID: uuidWithByte(1), ClientKey: "shot_04", SemanticKey: "scene_main.shot_04", Title: "转场", Status: "preview_ready"},
+			{ID: uuidWithByte(15), WorkspaceID: uuidWithByte(1), ClientKey: "shot_05", SemanticKey: "scene_main.shot_05", Title: "收尾", Status: "preview_ready"},
 		},
 	}
 	runtime := &fakeCraftsmanRuntime{}
@@ -184,7 +190,7 @@ func TestDispatchCraftsmanNativeLimitsDispatchToShotRefs(t *testing.T) {
 	got, err := tool.InvokableRun(ctx, `{
 		"brief":"只重生成 shot_03 和 shot_04。",
 		"scope":{"type":"shot"},
-		"shot_refs":["shot_03","shot_04"],
+		"shot_refs":["scene_main.shot_03","scene_main.shot_04"],
 		"target_phase":"preview_image",
 		"execution_policy":"execute_immediately",
 		"force":true
@@ -205,9 +211,69 @@ func TestDispatchCraftsmanNativeLimitsDispatchToShotRefs(t *testing.T) {
 			t.Fatal(err)
 		}
 		gotKeys = append(gotKeys, input["shot_client_key"].(string))
+		if !strings.HasPrefix(input["scope_key"].(string), "scene_main.shot_") {
+			t.Fatalf("task input missing semantic scope_key: %#v", input)
+		}
 	}
 	if strings.Join(gotKeys, ",") != "shot_03,shot_04" {
 		t.Fatalf("shot keys = %#v", gotKeys)
+	}
+}
+
+func TestDispatchCraftsmanSkipsActiveSameScopePhaseTask(t *testing.T) {
+	shotID := uuidWithByte(11)
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		shots: []db.Shot{
+			{ID: shotID, WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", SemanticKey: "scene_main.shot_01", Title: "开场", Status: "planned"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{
+		activeTasks: []db.AgentTask{
+			{
+				ID:          uuidWithByte(71),
+				WorkspaceID: uuidWithByte(1),
+				Role:        "craftsman",
+				ScopeType:   "shot",
+				ScopeID:     shotID,
+				TaskType:    "craftsman_turn",
+				Status:      "running",
+				SemanticKey: "craftsman.shot.shot_01.preview_image.active",
+				Input:       []byte(`{"target_phase":"preview_image","scope_type":"shot"}`),
+			},
+		},
+	}
+	tool := NewDispatchCraftsmanTool(store, runtime, &fakeCraftsmanEnqueuer{})
+
+	out, err := tool.Execute(context.Background(), ExecuteInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		Arguments: map[string]any{
+			"brief":            "生成 shot_01 预览图。",
+			"target_phase":     "preview_image",
+			"execution_policy": "execute_immediately",
+			"force":            true,
+			"scope":            map[string]any{"type": "shot"},
+			"shot_refs":        []any{"scene_main.shot_01"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Result["status"] != "skipped" {
+		t.Fatalf("status = %#v", out.Result["status"])
+	}
+	if len(runtime.createdTasks) != 0 {
+		t.Fatalf("created duplicate tasks = %#v", runtime.createdTasks)
+	}
+	skipped := out.Result["skipped"].([]map[string]any)
+	if len(skipped) != 1 || skipped[0]["reason"] != "active_craftsman_task_exists" {
+		t.Fatalf("skipped = %#v", skipped)
+	}
+	summary := out.Result["summary"].(string)
+	if !strings.Contains(summary, "已存在同一 target_phase") || !strings.Contains(summary, "不要重复派发") {
+		t.Fatalf("summary = %q", summary)
 	}
 }
 
@@ -216,7 +282,7 @@ func TestDispatchCraftsmanDispatchesKeyElementStateReferenceTask(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
 		keyElementStates: []db.KeyElementState{
-			{ID: stateID, WorkspaceID: uuidWithByte(1), ClientKey: "state_airport_morning", ReferenceStatus: "needs_reference", Status: "active"},
+			{ID: stateID, WorkspaceID: uuidWithByte(1), ClientKey: "state_airport_morning", SemanticKey: "element_airport.state_morning", ReferenceStatus: "needs_reference", Status: "active"},
 		},
 	}
 	runtime := &fakeCraftsmanRuntime{}
@@ -255,6 +321,9 @@ func TestDispatchCraftsmanDispatchesKeyElementStateReferenceTask(t *testing.T) {
 	if input["target_phase"] != "reference_image" || input["scope_type"] != "key_element_state" || input["scope_id"] != uuidString(stateID) {
 		t.Fatalf("task input = %#v", input)
 	}
+	if input["scope_key"] != "element_airport.state_morning" {
+		t.Fatalf("task input missing semantic scope_key: %#v", input)
+	}
 	if len(store.statusUpdates) != 0 {
 		t.Fatalf("reference dispatch should not touch shot status: %#v", store.statusUpdates)
 	}
@@ -265,7 +334,7 @@ func TestDispatchCraftsmanResolvesKeyElementStateByClientKey(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
 		keyElementStates: []db.KeyElementState{
-			{ID: stateID, WorkspaceID: uuidWithByte(1), ClientKey: "state_airport_morning", ReferenceStatus: "needs_reference", Status: "active"},
+			{ID: stateID, WorkspaceID: uuidWithByte(1), ClientKey: "state_airport_morning", SemanticKey: "element_airport.state_morning", ReferenceStatus: "needs_reference", Status: "active"},
 		},
 	}
 	runtime := &fakeCraftsmanRuntime{}
@@ -292,14 +361,21 @@ func TestDispatchCraftsmanResolvesKeyElementStateByClientKey(t *testing.T) {
 	if len(runtime.createdTasks) != 1 || runtime.createdTasks[0].ScopeID != stateID {
 		t.Fatalf("created tasks = %#v", runtime.createdTasks)
 	}
+	var input map[string]any
+	if err := json.Unmarshal(runtime.createdTasks[0].Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["scope_key"] != "element_airport.state_morning" {
+		t.Fatalf("task input missing semantic scope_key: %#v", input)
+	}
 }
 
 func TestDispatchCraftsmanResolvesShotRefsAndCapsAttempts(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
 		shots: []db.Shot{
-			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", Title: "开场", Status: "planned"},
-			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", Title: "演示", Status: "planned"},
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SemanticKey: "scene_main.shot_01", Title: "开场", Status: "planned"},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SemanticKey: "scene_main.shot_02", Title: "演示", Status: "planned"},
 		},
 	}
 	runtime := &fakeCraftsmanRuntime{}
@@ -420,6 +496,7 @@ func (f *fakeCraftsmanDispatchStore) UpdateShotStatus(_ context.Context, params 
 
 type fakeCraftsmanRuntime struct {
 	createdTasks []db.AgentTask
+	activeTasks  []db.AgentTask
 	events       []agentruntime.CreateEventParams
 	appendSeq    int64
 	appended     []db.AgentMessage
@@ -431,6 +508,10 @@ func (f *fakeCraftsmanRuntime) GetOrCreateCraftsmanThread(_ context.Context, wor
 
 func (f *fakeCraftsmanRuntime) GetOrCreateCraftsmanThreadForScope(_ context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {
 	return db.AgentThread{ID: pgtype.UUID{Bytes: scopeID.Bytes, Valid: true}, WorkspaceID: workspaceID, Role: "craftsman", ScopeType: scopeType, ScopeID: scopeID}, nil
+}
+
+func (f *fakeCraftsmanRuntime) ListActiveAgentTasksByWorkspace(context.Context, pgtype.UUID) ([]db.AgentTask, error) {
+	return f.activeTasks, nil
 }
 
 func (f *fakeCraftsmanRuntime) CreateTask(_ context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {

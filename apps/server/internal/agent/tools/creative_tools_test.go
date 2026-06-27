@@ -52,3 +52,16 @@ func TestM1NativeToolReturnsNaturalValidationError(t *testing.T) {
 		t.Fatalf("unexpected result: %s", got)
 	}
 }
+
+func TestUpsertStoryboardSkipsSelfDependenciesBeforeService(t *testing.T) {
+	got, skipped := toCreativeShotDependencies([]ShotDependencyInput{
+		{FromShotClientKey: "shot_01", ToShotClientKey: "shot_01", DependencyType: "same_product_consistency", Reason: "单分镜不需要自依赖"},
+		{FromShotClientKey: "shot_01", ToShotClientKey: "shot_02", DependencyType: "same_product_consistency", Reason: "保持商品一致"},
+	})
+	if skipped != 1 {
+		t.Fatalf("skipped = %d", skipped)
+	}
+	if len(got) != 1 || got[0].FromShotClientKey != "shot_01" || got[0].ToShotClientKey != "shot_02" {
+		t.Fatalf("dependencies = %#v", got)
+	}
+}

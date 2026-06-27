@@ -61,6 +61,26 @@ func TestGenerationIntentJSONShape(t *testing.T) {
 	}
 }
 
+func TestAgentSemanticKeysForRenderPlanIntent(t *testing.T) {
+	intent := GenerationIntent{
+		OutputType: "image",
+		Semantic: SemanticInfo{
+			RenderPlanKey: "scene_main.shot_01.preview_image.r1",
+			ArtifactKind:  "preview_image",
+		},
+	}
+
+	if got := generationJobSemanticKey(intent, 2); got != "scene_main.shot_01.preview_image.r1.job.a2" {
+		t.Fatalf("job semantic key = %q", got)
+	}
+	if got := artifactVersionSemanticKey(intent, 3); got != "scene_main.shot_01.preview_image.r1.artifact.v3" {
+		t.Fatalf("artifact semantic key = %q", got)
+	}
+	if got := artifactKindForIntent(intent); got != "preview_image" {
+		t.Fatalf("artifact kind = %q", got)
+	}
+}
+
 func TestProviderRegistrySelectsMockProvider(t *testing.T) {
 	registry := NewProviderRegistry(ProviderConfig{
 		ProviderMode:     "mock",

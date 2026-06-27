@@ -49,16 +49,17 @@ const (
 )
 
 type ProducerLoopState struct {
-	Context              ProducerContext
-	LastOutput           ProducerTurnOutput
-	LastAssistantMessage *schema.Message
-	LastToolCalls        []schema.ToolCall
-	LastToolResults      []*schema.Message
-	ToolIterations       int
-	ReminderCooldowns    map[string]int
-	NewlyClaimedSignals  int
-	SignalReminderCount  int
-	SignalReminderKey    string
+	Context                    ProducerContext
+	LastOutput                 ProducerTurnOutput
+	LastAssistantMessage       *schema.Message
+	LastToolCalls              []schema.ToolCall
+	LastToolResults            []*schema.Message
+	ToolIterations             int
+	ReminderCooldowns          map[string]int
+	NewlyClaimedSignals        int
+	SignalReminderCount        int
+	SignalReminderKey          string
+	FinalizeAfterAsyncDispatch bool
 }
 
 func NewGraph(config GraphConfig) (*Graph, error) {
@@ -117,6 +118,10 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 		if err != nil {
 			return ProducerLoopState{}, err
 		}
+		if hasAsyncCraftsmanDispatchResult(state.LastToolResults) {
+			state.FinalizeAfterAsyncDispatch = true
+			state.LastOutput = asyncCraftsmanDispatchOutput(state.LastOutput)
+		}
 		appendNativeSameTurnMessages(&state.Context, state.LastOutput, state.LastAssistantMessage, state.LastToolResults)
 		state.ToolIterations++
 		state.LastToolResults = nil
@@ -169,7 +174,10 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 	if err := g.AddEdge("execute_tools", "append_tool_results"); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("append_tool_results", "before_model"); err != nil {
+	if err := g.AddBranch("append_tool_results", compose.NewGraphBranch(routeProducerAfterToolResults(), map[string]bool{
+		"before_model":      true,
+		"finalize_response": true,
+	})); err != nil {
 		return nil, err
 	}
 	if err := g.AddBranch("check_signals_before_finalize", compose.NewGraphBranch(routeProducerFinalizeCheck(), map[string]bool{
@@ -206,8 +214,15 @@ func applyProducerBeforeModel(ctx context.Context, signalRuntime ProducerSignalR
 	return state, nil
 }
 
-func applyProducerSignalCheck(_ context.Context, _ ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
-	state.NewlyClaimedSignals = 0
+func applyProducerSignalCheck(ctx context.Context, signalRuntime ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
+	signalReminders, newlyClaimed, err := producerSignalReminders(ctx, signalRuntime, state.Context.Input)
+	if err != nil {
+		return ProducerLoopState{}, err
+	}
+	state.NewlyClaimedSignals = newlyClaimed
+	state.SignalReminderCount = newlyClaimed
+	state.SignalReminderKey = signalReminderKey(signalReminders)
+	state.Context.PendingReminders = signalReminders
 	return state, nil
 }
 
@@ -215,17 +230,13 @@ func producerSignalReminders(ctx context.Context, runtime ProducerSignalRuntime,
 	if runtime == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid {
 		return nil, 0, nil
 	}
-	_, err := runtime.ClaimProducerPendingSignals(ctx, agentruntime.ClaimProducerPendingSignalsParams{
+	signals, err := runtime.ClaimProducerPendingSignals(ctx, agentruntime.ClaimProducerPendingSignalsParams{
 		WorkspaceID:       input.WorkspaceID,
 		ProducerThreadID:  input.ThreadID,
 		ClaimedByTaskID:   input.TaskID,
 		Limit:             20,
 		StaleAfterSeconds: 600,
 	})
-	if err != nil {
-		return nil, 0, err
-	}
-	signals, err := runtime.ListClaimedProducerSignalsByTask(ctx, input.WorkspaceID, input.ThreadID, input.TaskID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -328,6 +339,15 @@ func routeProducerModelOutput() compose.GraphBranchCondition[ProducerLoopState] 
 	}
 }
 
+func routeProducerAfterToolResults() compose.GraphBranchCondition[ProducerLoopState] {
+	return func(_ context.Context, state ProducerLoopState) (string, error) {
+		if state.FinalizeAfterAsyncDispatch {
+			return "finalize_response", nil
+		}
+		return "before_model", nil
+	}
+}
+
 func routeProducerFinalizeCheck() compose.GraphBranchCondition[ProducerLoopState] {
 	return func(_ context.Context, state ProducerLoopState) (string, error) {
 		if state.NewlyClaimedSignals > 0 {
@@ -335,6 +355,30 @@ func routeProducerFinalizeCheck() compose.GraphBranchCondition[ProducerLoopState
 		}
 		return "finalize_response", nil
 	}
+}
+
+func hasAsyncCraftsmanDispatchResult(toolResults []*schema.Message) bool {
+	for _, result := range toolResults {
+		if result == nil || strings.TrimSpace(result.ToolName) != "dispatch_craftsman" {
+			continue
+		}
+		content := strings.TrimSpace(result.Content)
+		if strings.Contains(content, "任务已排队") ||
+			strings.Contains(content, "任务加入队列") ||
+			strings.Contains(content, "已存在同一 target_phase 的 Craftsman 任务正在排队或运行") {
+			return true
+		}
+	}
+	return false
+}
+
+func asyncCraftsmanDispatchOutput(input ProducerTurnOutput) ProducerTurnOutput {
+	input.AssistantText = "已派发 Craftsman 生成任务，后续会由工程事件在 RenderPlan、预览图或视频状态变化后继续通知我处理。当前这一步不需要继续同步轮询，请在画布中观察生产进度，或稍后追问指定分镜状态。"
+	if input.Metadata == nil {
+		input.Metadata = map[string]any{}
+	}
+	input.Metadata["finalized_after_async_craftsman_dispatch"] = true
+	return input
 }
 
 func maxProducerToolCalls(value int) int {

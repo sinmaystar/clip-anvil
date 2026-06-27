@@ -163,7 +163,7 @@ func TestCraftsmanExecutorDoesNotWakeProducerWhenProducerWaitingForUser(t *testi
 	}
 }
 
-func TestCraftsmanExecutorQueuesNextProducerTurnWhenProducerRunning(t *testing.T) {
+func TestCraftsmanExecutorDoesNotWakeProducerWhenProducerRunning(t *testing.T) {
 	runtime := &fakeCraftsmanExecutorRuntime{
 		activeTasks: []db.AgentTask{
 			{ID: uuidWithByte(91), Role: "producer", TaskType: "producer_turn", Status: "running"},
@@ -193,7 +193,7 @@ func TestCraftsmanExecutorQueuesNextProducerTurnWhenProducerRunning(t *testing.T
 	if len(runtime.signals) != 1 {
 		t.Fatalf("signals = %#v", runtime.signals)
 	}
-	if len(runtime.createdTasks) != 1 || len(producerEnqueuer.tasks) != 1 {
+	if len(runtime.createdTasks) != 0 || len(producerEnqueuer.tasks) != 0 {
 		t.Fatalf("created tasks = %#v, enqueued = %#v", runtime.createdTasks, producerEnqueuer.tasks)
 	}
 }

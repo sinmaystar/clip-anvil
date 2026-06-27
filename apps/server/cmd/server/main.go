@@ -192,11 +192,13 @@ func main() {
 	productionRunner.Start(ctx)
 	agentCanvasBroadcaster := api.NewAgentCanvasNodeBroadcaster(canvasHub, queries, storageService)
 	workerExecutor := agentworker.NewExecutor(agentworker.ExecutorConfig{
-		Runtime:     agentRuntime,
-		Store:       queries,
-		Production:  productionService,
-		Broadcaster: agentCanvasBroadcaster,
-		Tracer:      agentTracing.Tracer,
+		Runtime:          agentRuntime,
+		Store:            queries,
+		Production:       productionService,
+		Broadcaster:      agentCanvasBroadcaster,
+		AgentBroadcaster: agentBroadcaster,
+		ProducerEnqueuer: producerEnqueuer,
+		Tracer:           agentTracing.Tracer,
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
 	renderPlanSubmitter := agenttools.NewRenderPlanSubmitter(queries, agentRuntime, workerEnqueuer)

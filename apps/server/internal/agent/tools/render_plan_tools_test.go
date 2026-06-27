@@ -130,10 +130,11 @@ func TestUpsertRenderPlanRuntimeDefaultsInferVideoOperationFromFirstFrame(t *tes
 	got := applyUpsertRenderPlanRuntimeDefaults(input, NativeRuntimeContext{
 		ScopeType:   "shot",
 		ScopeID:     uuidWithByte(4),
+		ScopeKey:    "scene_main.shot_02",
 		TargetPhase: "shot_video",
 	})
 
-	if got.Scope.Type != "shot" || got.Scope.ID != "04000000-0000-0000-0000-000000000000" {
+	if got.Scope.Type != "shot" || got.Scope.ID != "04000000-0000-0000-0000-000000000000" || got.Scope.Key != "scene_main.shot_02" {
 		t.Fatalf("scope defaults = %#v", got.Scope)
 	}
 	if got.TargetPhase != "shot_video" || got.TaskType != "generate" || got.ModelPromptProfile != "seedance_2_video" || got.Operation != "image_to_video_first_frame" {
@@ -266,6 +267,61 @@ func TestReadProjectContextSummarizesRenderPlansByTargetPhase(t *testing.T) {
 	for _, want := range []string{"3 个", "preview_image: succeeded=1", "shot_video: running=1 failed=1"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("summary missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestReadProjectContextRenderPlanSummaryUsesSemanticKeys(t *testing.T) {
+	got := summarizeRenderPlans([]db.RenderPlan{{
+		ID:          uuidWithByte(13),
+		ScopeType:   "shot",
+		ScopeID:     uuidWithByte(23),
+		TargetPhase: "preview_image",
+		Operation:   "text_to_image",
+		Status:      "waiting_for_approval",
+		SemanticKey: "shot_03.preview_image.rp1",
+	}})
+	if !strings.Contains(got, "shot_03.preview_image.rp1") {
+		t.Fatalf("summary missing semantic key: %s", got)
+	}
+	if strings.Contains(got, "00000000-0000-0000-0000-00000000000d") || strings.Contains(got, "00000000-0000-0000-0000-000000000017") {
+		t.Fatalf("summary leaked uuid: %s", got)
+	}
+}
+
+func TestReadProjectContextAcceptsLenientScopeRefs(t *testing.T) {
+	cases := []ReadProjectContextToolInput{
+		{Brief: "读取全局上下文", ScopeRef: ToolObjectRef{Type: "shot"}},
+		{Brief: "读取 brief 周边上下文", ScopeRef: ToolObjectRef{Type: "creative_brief", Key: "creative_brief.main"}},
+		{Brief: "读取产物上下文", ScopeRef: ToolObjectRef{Type: "artifact_version", Key: "shot_01.preview_image.current"}},
+	}
+	for _, input := range cases {
+		if err := validateReadProjectContextInput(input); err != nil {
+			t.Fatalf("validateReadProjectContextInput(%#v) error = %v", input, err)
+		}
+	}
+}
+
+func TestProductionStateDecisionTextDoesNotExposeExecutableUUIDs(t *testing.T) {
+	got := productionStateDecisionText(map[string]any{
+		"shots": []any{map[string]any{
+			"id":         "shot-uuid",
+			"client_key": "shot_03",
+			"preview_nodes": []any{map[string]any{
+				"node_id":        "node-uuid",
+				"version_id":     "version-uuid",
+				"version_status": "succeeded",
+			}},
+			"shot_video_nodes": []any{map[string]any{
+				"node_id":        "video-node-uuid",
+				"version_id":     "video-version-uuid",
+				"version_status": "succeeded",
+			}},
+		}},
+	})
+	for _, forbidden := range []string{"shot_id", "node_id", "version_id", "node-uuid", "version-uuid"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("production state leaked executable id %q: %s", forbidden, got)
 		}
 	}
 }

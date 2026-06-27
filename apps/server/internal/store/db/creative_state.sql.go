@@ -31,7 +31,7 @@ SET status = 'archived',
 WHERE id = $1
   AND workspace_id = $2
   AND archived_at IS NULL
-RETURNING id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+RETURNING id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type ArchiveCreativeBriefParams struct {
@@ -63,6 +63,8 @@ func (q *Queries) ArchiveCreativeBrief(ctx context.Context, arg ArchiveCreativeB
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -75,7 +77,7 @@ SET status = 'archived',
 WHERE id = $1
   AND workspace_id = $2
   AND archived_at IS NULL
-RETURNING id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+RETURNING id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type ArchiveKeyElementParams struct {
@@ -101,6 +103,8 @@ func (q *Queries) ArchiveKeyElement(ctx context.Context, arg ArchiveKeyElementPa
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -113,7 +117,7 @@ SET status = 'archived',
 WHERE id = $1
   AND workspace_id = $2
   AND archived_at IS NULL
-RETURNING id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+RETURNING id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type ArchiveSceneParams struct {
@@ -139,6 +143,8 @@ func (q *Queries) ArchiveScene(ctx context.Context, arg ArchiveSceneParams) (Sce
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -172,12 +178,14 @@ INSERT INTO creative_brief (
     constraints,
     metadata,
     status,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8,
-    $9, $10, $11, $12, $13, $14, $15, $16
-) RETURNING id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+    $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+) RETURNING id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type CreateCreativeBriefParams struct {
@@ -195,6 +203,8 @@ type CreateCreativeBriefParams struct {
 	Constraints       []byte        `json:"constraints"`
 	Metadata          []byte        `json:"metadata"`
 	Status            string        `json:"status"`
+	SemanticKey       string        `json:"semantic_key"`
+	DisplayName       string        `json:"display_name"`
 	CreatedByThreadID pgtype.UUID   `json:"created_by_thread_id"`
 	CreatedByTaskID   pgtype.UUID   `json:"created_by_task_id"`
 }
@@ -215,6 +225,8 @@ func (q *Queries) CreateCreativeBrief(ctx context.Context, arg CreateCreativeBri
 		arg.Constraints,
 		arg.Metadata,
 		arg.Status,
+		arg.SemanticKey,
+		arg.DisplayName,
 		arg.CreatedByThreadID,
 		arg.CreatedByTaskID,
 	)
@@ -240,6 +252,8 @@ func (q *Queries) CreateCreativeBrief(ctx context.Context, arg CreateCreativeBri
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -254,11 +268,13 @@ INSERT INTO key_element (
     source_type,
     source_refs,
     status,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-) RETURNING id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+) RETURNING id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type CreateKeyElementParams struct {
@@ -270,6 +286,8 @@ type CreateKeyElementParams struct {
 	SourceType        string      `json:"source_type"`
 	SourceRefs        []byte      `json:"source_refs"`
 	Status            string      `json:"status"`
+	SemanticKey       string      `json:"semantic_key"`
+	DisplayName       string      `json:"display_name"`
 	CreatedByThreadID pgtype.UUID `json:"created_by_thread_id"`
 	CreatedByTaskID   pgtype.UUID `json:"created_by_task_id"`
 }
@@ -284,6 +302,8 @@ func (q *Queries) CreateKeyElement(ctx context.Context, arg CreateKeyElementPara
 		arg.SourceType,
 		arg.SourceRefs,
 		arg.Status,
+		arg.SemanticKey,
+		arg.DisplayName,
 		arg.CreatedByThreadID,
 		arg.CreatedByTaskID,
 	)
@@ -303,6 +323,8 @@ func (q *Queries) CreateKeyElement(ctx context.Context, arg CreateKeyElementPara
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -321,12 +343,14 @@ INSERT INTO key_element_state (
     state_facts,
     source_refs,
     status,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
-    $8, $9, $10, $11, $12, $13, $14
-) RETURNING id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+    $8, $9, $10, $11, $12, $13, $14, $15, $16
+) RETURNING id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type CreateKeyElementStateParams struct {
@@ -342,6 +366,8 @@ type CreateKeyElementStateParams struct {
 	StateFacts         []byte      `json:"state_facts"`
 	SourceRefs         []byte      `json:"source_refs"`
 	Status             string      `json:"status"`
+	SemanticKey        string      `json:"semantic_key"`
+	DisplayName        string      `json:"display_name"`
 	CreatedByThreadID  pgtype.UUID `json:"created_by_thread_id"`
 	CreatedByTaskID    pgtype.UUID `json:"created_by_task_id"`
 }
@@ -360,6 +386,8 @@ func (q *Queries) CreateKeyElementState(ctx context.Context, arg CreateKeyElemen
 		arg.StateFacts,
 		arg.SourceRefs,
 		arg.Status,
+		arg.SemanticKey,
+		arg.DisplayName,
 		arg.CreatedByThreadID,
 		arg.CreatedByTaskID,
 	)
@@ -383,6 +411,8 @@ func (q *Queries) CreateKeyElementState(ctx context.Context, arg CreateKeyElemen
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -401,12 +431,14 @@ INSERT INTO project_memory (
     forbidden,
     prompt_injection_hints,
     source_refs,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
-    $8, $9, $10, $11, $12, $13, $14
-) RETURNING id, workspace_id, version, status, core_intent, soul, brand_facts, non_negotiables, visual_anchors, allowed, forbidden, prompt_injection_hints, source_refs, created_by_thread_id, created_by_task_id, created_at
+    $8, $9, $10, $11, $12, $13, $14, $15, $16
+) RETURNING id, workspace_id, version, status, core_intent, soul, brand_facts, non_negotiables, visual_anchors, allowed, forbidden, prompt_injection_hints, source_refs, created_by_thread_id, created_by_task_id, created_at, semantic_key, display_name
 `
 
 type CreateProjectMemoryParams struct {
@@ -422,6 +454,8 @@ type CreateProjectMemoryParams struct {
 	Forbidden            []byte      `json:"forbidden"`
 	PromptInjectionHints []byte      `json:"prompt_injection_hints"`
 	SourceRefs           []byte      `json:"source_refs"`
+	SemanticKey          string      `json:"semantic_key"`
+	DisplayName          string      `json:"display_name"`
 	CreatedByThreadID    pgtype.UUID `json:"created_by_thread_id"`
 	CreatedByTaskID      pgtype.UUID `json:"created_by_task_id"`
 }
@@ -440,6 +474,8 @@ func (q *Queries) CreateProjectMemory(ctx context.Context, arg CreateProjectMemo
 		arg.Forbidden,
 		arg.PromptInjectionHints,
 		arg.SourceRefs,
+		arg.SemanticKey,
+		arg.DisplayName,
 		arg.CreatedByThreadID,
 		arg.CreatedByTaskID,
 	)
@@ -461,6 +497,8 @@ func (q *Queries) CreateProjectMemory(ctx context.Context, arg CreateProjectMemo
 		&i.CreatedByThreadID,
 		&i.CreatedByTaskID,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -475,11 +513,13 @@ INSERT INTO scene (
     location,
     mood,
     status,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-) RETURNING id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+) RETURNING id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type CreateSceneParams struct {
@@ -491,6 +531,8 @@ type CreateSceneParams struct {
 	Location          string      `json:"location"`
 	Mood              string      `json:"mood"`
 	Status            string      `json:"status"`
+	SemanticKey       string      `json:"semantic_key"`
+	DisplayName       string      `json:"display_name"`
 	CreatedByThreadID pgtype.UUID `json:"created_by_thread_id"`
 	CreatedByTaskID   pgtype.UUID `json:"created_by_task_id"`
 }
@@ -505,6 +547,8 @@ func (q *Queries) CreateScene(ctx context.Context, arg CreateSceneParams) (Scene
 		arg.Location,
 		arg.Mood,
 		arg.Status,
+		arg.SemanticKey,
+		arg.DisplayName,
 		arg.CreatedByThreadID,
 		arg.CreatedByTaskID,
 	)
@@ -524,6 +568,8 @@ func (q *Queries) CreateScene(ctx context.Context, arg CreateSceneParams) (Scene
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -604,7 +650,7 @@ func (q *Queries) DeleteShotKeyElementsByWorkspace(ctx context.Context, workspac
 }
 
 const getActiveCreativeBriefByWorkspace = `-- name: GetActiveCreativeBriefByWorkspace :one
-SELECT id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM creative_brief
 WHERE workspace_id = $1
   AND archived_at IS NULL
@@ -637,12 +683,14 @@ func (q *Queries) GetActiveCreativeBriefByWorkspace(ctx context.Context, workspa
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getActiveProjectMemoryByWorkspace = `-- name: GetActiveProjectMemoryByWorkspace :one
-SELECT id, workspace_id, version, status, core_intent, soul, brand_facts, non_negotiables, visual_anchors, allowed, forbidden, prompt_injection_hints, source_refs, created_by_thread_id, created_by_task_id, created_at
+SELECT id, workspace_id, version, status, core_intent, soul, brand_facts, non_negotiables, visual_anchors, allowed, forbidden, prompt_injection_hints, source_refs, created_by_thread_id, created_by_task_id, created_at, semantic_key, display_name
 FROM project_memory
 WHERE workspace_id = $1
   AND status = 'active'
@@ -670,12 +718,14 @@ func (q *Queries) GetActiveProjectMemoryByWorkspace(ctx context.Context, workspa
 		&i.CreatedByThreadID,
 		&i.CreatedByTaskID,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getCreativeBriefByID = `-- name: GetCreativeBriefByID :one
-SELECT id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM creative_brief
 WHERE id = $1
   AND workspace_id = $2
@@ -710,12 +760,14 @@ func (q *Queries) GetCreativeBriefByID(ctx context.Context, arg GetCreativeBrief
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getDefaultKeyElementState = `-- name: GetDefaultKeyElementState :one
-SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM key_element_state
 WHERE key_element_id = $1
   AND is_default
@@ -745,12 +797,14 @@ func (q *Queries) GetDefaultKeyElementState(ctx context.Context, keyElementID pg
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getKeyElementByClientKey = `-- name: GetKeyElementByClientKey :one
-SELECT id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM key_element
 WHERE workspace_id = $1
   AND client_key = $2
@@ -780,12 +834,14 @@ func (q *Queries) GetKeyElementByClientKey(ctx context.Context, arg GetKeyElemen
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getKeyElementStateByClientKey = `-- name: GetKeyElementStateByClientKey :one
-SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM key_element_state
 WHERE key_element_id = $1
   AND client_key = $2
@@ -819,12 +875,14 @@ func (q *Queries) GetKeyElementStateByClientKey(ctx context.Context, arg GetKeyE
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getKeyElementStateByID = `-- name: GetKeyElementStateByID :one
-SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM key_element_state
 WHERE id = $1
   AND workspace_id = $2
@@ -858,12 +916,14 @@ func (q *Queries) GetKeyElementStateByID(ctx context.Context, arg GetKeyElementS
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getSceneByClientKey = `-- name: GetSceneByClientKey :one
-SELECT id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM scene
 WHERE workspace_id = $1
   AND client_key = $2
@@ -893,12 +953,14 @@ func (q *Queries) GetSceneByClientKey(ctx context.Context, arg GetSceneByClientK
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const listActiveKeyElementStatesByWorkspace = `-- name: ListActiveKeyElementStatesByWorkspace :many
-SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM key_element_state
 WHERE workspace_id = $1
   AND archived_at IS NULL
@@ -933,6 +995,8 @@ func (q *Queries) ListActiveKeyElementStatesByWorkspace(ctx context.Context, wor
 			&i.ArchivedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -945,7 +1009,7 @@ func (q *Queries) ListActiveKeyElementStatesByWorkspace(ctx context.Context, wor
 }
 
 const listActiveKeyElementsByWorkspace = `-- name: ListActiveKeyElementsByWorkspace :many
-SELECT id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM key_element
 WHERE workspace_id = $1
   AND archived_at IS NULL
@@ -976,6 +1040,8 @@ func (q *Queries) ListActiveKeyElementsByWorkspace(ctx context.Context, workspac
 			&i.ArchivedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -988,7 +1054,7 @@ func (q *Queries) ListActiveKeyElementsByWorkspace(ctx context.Context, workspac
 }
 
 const listActiveScenesByWorkspace = `-- name: ListActiveScenesByWorkspace :many
-SELECT id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM scene
 WHERE workspace_id = $1
   AND archived_at IS NULL
@@ -1019,6 +1085,8 @@ func (q *Queries) ListActiveScenesByWorkspace(ctx context.Context, workspaceID p
 			&i.ArchivedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -1031,7 +1099,7 @@ func (q *Queries) ListActiveScenesByWorkspace(ctx context.Context, workspaceID p
 }
 
 const listProjectMemoriesByWorkspace = `-- name: ListProjectMemoriesByWorkspace :many
-SELECT id, workspace_id, version, status, core_intent, soul, brand_facts, non_negotiables, visual_anchors, allowed, forbidden, prompt_injection_hints, source_refs, created_by_thread_id, created_by_task_id, created_at
+SELECT id, workspace_id, version, status, core_intent, soul, brand_facts, non_negotiables, visual_anchors, allowed, forbidden, prompt_injection_hints, source_refs, created_by_thread_id, created_by_task_id, created_at, semantic_key, display_name
 FROM project_memory
 WHERE workspace_id = $1
 ORDER BY version DESC
@@ -1063,6 +1131,8 @@ func (q *Queries) ListProjectMemoriesByWorkspace(ctx context.Context, workspaceI
 			&i.CreatedByThreadID,
 			&i.CreatedByTaskID,
 			&i.CreatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -1130,7 +1200,7 @@ SET title = $3,
 WHERE id = $1
   AND workspace_id = $2
   AND archived_at IS NULL
-RETURNING id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+RETURNING id, workspace_id, title, video_type, target_audience, tone, visual_style, duration_sec, aspect_ratio, language, objective, concept, constraints, metadata, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type UpdateCreativeBriefParams struct {
@@ -1191,6 +1261,8 @@ func (q *Queries) UpdateCreativeBrief(ctx context.Context, arg UpdateCreativeBri
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -1207,7 +1279,7 @@ SET element_type = $3,
 WHERE id = $1
   AND workspace_id = $2
   AND archived_at IS NULL
-RETURNING id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+RETURNING id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type UpdateKeyElementParams struct {
@@ -1248,6 +1320,8 @@ func (q *Queries) UpdateKeyElement(ctx context.Context, arg UpdateKeyElementPara
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -1267,7 +1341,7 @@ SET label = $3,
 WHERE id = $1
   AND workspace_id = $2
   AND archived_at IS NULL
-RETURNING id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+RETURNING id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type UpdateKeyElementStateParams struct {
@@ -1318,6 +1392,8 @@ func (q *Queries) UpdateKeyElementState(ctx context.Context, arg UpdateKeyElemen
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -1335,7 +1411,7 @@ SET client_key = $3,
 WHERE id = $1
   AND workspace_id = $2
   AND archived_at IS NULL
-RETURNING id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+RETURNING id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 `
 
 type UpdateSceneParams struct {
@@ -1378,6 +1454,8 @@ func (q *Queries) UpdateScene(ctx context.Context, arg UpdateSceneParams) (Scene
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }

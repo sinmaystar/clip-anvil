@@ -12,7 +12,7 @@ import (
 )
 
 const getAgentCanvasArtifactIssueByID = `-- name: GetAgentCanvasArtifactIssueByID :one
-SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at
+SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at, semantic_key, display_name
 FROM artifact_issue
 WHERE id = $1
   AND workspace_id = $2
@@ -45,12 +45,14 @@ func (q *Queries) GetAgentCanvasArtifactIssueByID(ctx context.Context, arg GetAg
 		&i.ResolvedByReviewRecordID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getAgentCanvasKeyElementByID = `-- name: GetAgentCanvasKeyElementByID :one
-SELECT id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, client_key, element_type, name, description, source_type, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM key_element
 WHERE id = $1
   AND workspace_id = $2
@@ -80,12 +82,14 @@ func (q *Queries) GetAgentCanvasKeyElementByID(ctx context.Context, arg GetAgent
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getAgentCanvasSceneByID = `-- name: GetAgentCanvasSceneByID :one
-SELECT id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at
+SELECT id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM scene
 WHERE id = $1
   AND workspace_id = $2
@@ -115,6 +119,8 @@ func (q *Queries) GetAgentCanvasSceneByID(ctx context.Context, arg GetAgentCanva
 		&i.ArchivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }

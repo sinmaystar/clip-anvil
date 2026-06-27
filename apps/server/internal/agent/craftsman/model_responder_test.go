@@ -40,14 +40,14 @@ func TestCraftsmanSystemPromptIncludesReviewerRepairRules(t *testing.T) {
 }
 
 func TestVolcengineCraftsmanResponderReturnsNativeToolCallingMessage(t *testing.T) {
-	streamer := &fakeCraftsmanArkStreamer{chunks: []*schema.Message{{
+	model := &fakeCraftsmanArkModel{message: &schema.Message{
 		Content: "已提交 RenderPlan。",
-	}}}
+	}}
 	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
 		APIKey: "test-key",
 		Model:  "doubao-test",
-		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatStreamer, error) {
-			return streamer, nil
+		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatModel, error) {
+			return model, nil
 		},
 	})
 
@@ -58,8 +58,42 @@ func TestVolcengineCraftsmanResponderReturnsNativeToolCallingMessage(t *testing.
 	if out.AssistantText != "已提交 RenderPlan。" || out.Metadata["model_id"] != "doubao-test" || out.ModelMessage == nil {
 		t.Fatalf("output = %#v", out)
 	}
-	if len(streamer.messages) != 2 || !strings.Contains(streamer.messages[1].Content, "shot-01") {
-		t.Fatalf("messages = %#v", streamer.messages)
+	if len(model.messages) != 2 || !strings.Contains(model.messages[1].Content, "shot-01") {
+		t.Fatalf("messages = %#v", model.messages)
+	}
+}
+
+func TestVolcengineCraftsmanResponderReturnsNativeToolCallFromGenerate(t *testing.T) {
+	model := &fakeCraftsmanArkModel{message: &schema.Message{
+		ToolCalls: []schema.ToolCall{{
+			ID:   "call-plan",
+			Type: "function",
+			Function: schema.FunctionCall{
+				Name:      "upsert_render_plan",
+				Arguments: `{"brief":"创建预览图计划","generation_text":"机场晨光中的银色行李箱"}`,
+			},
+		}},
+	}}
+	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
+		APIKey: "test-key",
+		Model:  "doubao-test",
+		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatModel, error) {
+			return model, nil
+		},
+	})
+
+	out, err := responder.Respond(context.Background(), Context{
+		Text:      "Current Task\n- target_phase: preview_image\n- shot: shot_01",
+		ToolInfos: []*schema.ToolInfo{{Name: "upsert_render_plan", Desc: "创建 RenderPlan"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ModelMessage == nil || len(out.ModelMessage.ToolCalls) != 1 || out.ModelMessage.ToolCalls[0].Function.Name != "upsert_render_plan" {
+		t.Fatalf("model message = %#v", out.ModelMessage)
+	}
+	if model.generateCalls != 1 {
+		t.Fatalf("generate calls = %d, want 1", model.generateCalls)
 	}
 }
 
@@ -111,12 +145,26 @@ func TestCraftsmanPromptIncludesHistoricalThreadMessages(t *testing.T) {
 	}
 }
 
-type fakeCraftsmanArkStreamer struct {
-	messages []*schema.Message
-	chunks   []*schema.Message
+type fakeCraftsmanArkModel struct {
+	messages      []*schema.Message
+	message       *schema.Message
+	chunks        []*schema.Message
+	generateCalls int
+	toolInfos     []*schema.ToolInfo
 }
 
-func (f *fakeCraftsmanArkStreamer) Stream(_ context.Context, messages []*schema.Message, _ ...einoModel.Option) (*schema.StreamReader[*schema.Message], error) {
+func (f *fakeCraftsmanArkModel) WithTools(tools []*schema.ToolInfo) (einoModel.ToolCallingChatModel, error) {
+	f.toolInfos = append([]*schema.ToolInfo(nil), tools...)
+	return f, nil
+}
+
+func (f *fakeCraftsmanArkModel) Generate(_ context.Context, messages []*schema.Message, _ ...einoModel.Option) (*schema.Message, error) {
+	f.messages = messages
+	f.generateCalls++
+	return f.message, nil
+}
+
+func (f *fakeCraftsmanArkModel) Stream(_ context.Context, messages []*schema.Message, _ ...einoModel.Option) (*schema.StreamReader[*schema.Message], error) {
 	f.messages = messages
 	sr, sw := schema.Pipe[*schema.Message](1)
 	go func() {

@@ -1,5 +1,14 @@
 -- name: CreateProducerPendingSignal :one
+WITH proposed AS (
+    SELECT
+        gen_random_uuid() AS id,
+        COALESCE(
+            (SELECT render_plan.semantic_key FROM render_plan WHERE render_plan.id = $9),
+            $7 || '.' || left(COALESCE($8::uuid::text, $1::uuid::text), 8)
+        ) AS source_semantic_key
+)
 INSERT INTO producer_pending_signal (
+    id,
     workspace_id,
     producer_thread_id,
     source_role,
@@ -14,12 +23,21 @@ INSERT INTO producer_pending_signal (
     priority,
     dedupe_key,
     payload,
-    last_error
-) VALUES (
+    last_error,
+    semantic_key,
+    display_name
+)
+SELECT
+    proposed.id,
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10,
-    'pending', $11, $12, $13, NULL
-)
+    'pending', $11, $12, $13, NULL,
+    COALESCE(
+        NULLIF(sqlc.arg(semantic_key)::text, ''),
+        'signal.' || proposed.source_semantic_key || '.' || $6 || '.' || left(proposed.id::text, 8)
+    ),
+    COALESCE(NULLIF(sqlc.arg(display_name)::text, ''), $6)
+FROM proposed
 ON CONFLICT (workspace_id, dedupe_key) DO UPDATE
 SET producer_thread_id = EXCLUDED.producer_thread_id,
     source_role = EXCLUDED.source_role,
@@ -45,6 +63,8 @@ SET producer_thread_id = EXCLUDED.producer_thread_id,
         ELSE NULL
     END,
     last_error = NULL,
+    semantic_key = COALESCE(NULLIF(sqlc.arg(semantic_key)::text, ''), EXCLUDED.semantic_key),
+    display_name = COALESCE(NULLIF(sqlc.arg(display_name)::text, ''), EXCLUDED.display_name),
     updated_at = now()
 RETURNING *;
 

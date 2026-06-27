@@ -29,7 +29,7 @@ INSERT INTO artifact_issue (
 ) VALUES (
     $1, $2, $3, $4, 'open',
     $5, $6, $7, $8, $9, $10, $11, $12
-) RETURNING id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at
+) RETURNING id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at, semantic_key, display_name
 `
 
 type CreateArtifactIssueParams struct {
@@ -82,12 +82,14 @@ func (q *Queries) CreateArtifactIssue(ctx context.Context, arg CreateArtifactIss
 		&i.ResolvedByReviewRecordID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const listArtifactIssuesByReviewRecord = `-- name: ListArtifactIssuesByReviewRecord :many
-SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at
+SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at, semantic_key, display_name
 FROM artifact_issue
 WHERE review_record_id = $1
 ORDER BY created_at ASC
@@ -121,6 +123,8 @@ func (q *Queries) ListArtifactIssuesByReviewRecord(ctx context.Context, reviewRe
 			&i.ResolvedByReviewRecordID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -133,7 +137,7 @@ func (q *Queries) ListArtifactIssuesByReviewRecord(ctx context.Context, reviewRe
 }
 
 const listArtifactIssuesByTarget = `-- name: ListArtifactIssuesByTarget :many
-SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at
+SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at, semantic_key, display_name
 FROM artifact_issue
 WHERE target_object_type = $1
   AND target_object_id = $2
@@ -173,6 +177,8 @@ func (q *Queries) ListArtifactIssuesByTarget(ctx context.Context, arg ListArtifa
 			&i.ResolvedByReviewRecordID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -185,7 +191,7 @@ func (q *Queries) ListArtifactIssuesByTarget(ctx context.Context, arg ListArtifa
 }
 
 const listArtifactIssuesByWorkspace = `-- name: ListArtifactIssuesByWorkspace :many
-SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at
+SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at, semantic_key, display_name
 FROM artifact_issue
 WHERE workspace_id = $1
 ORDER BY created_at DESC
@@ -225,6 +231,8 @@ func (q *Queries) ListArtifactIssuesByWorkspace(ctx context.Context, arg ListArt
 			&i.ResolvedByReviewRecordID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -237,7 +245,7 @@ func (q *Queries) ListArtifactIssuesByWorkspace(ctx context.Context, arg ListArt
 }
 
 const listOpenArtifactIssuesByWorkspace = `-- name: ListOpenArtifactIssuesByWorkspace :many
-SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at
+SELECT id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at, semantic_key, display_name
 FROM artifact_issue
 WHERE workspace_id = $1
   AND status = 'open'
@@ -278,6 +286,8 @@ func (q *Queries) ListOpenArtifactIssuesByWorkspace(ctx context.Context, arg Lis
 			&i.ResolvedByReviewRecordID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -295,7 +305,7 @@ SET status = 'resolved',
     resolved_by_review_record_id = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at
+RETURNING id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at, semantic_key, display_name
 `
 
 type MarkArtifactIssueResolvedParams struct {
@@ -325,6 +335,8 @@ func (q *Queries) MarkArtifactIssueResolved(ctx context.Context, arg MarkArtifac
 		&i.ResolvedByReviewRecordID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }

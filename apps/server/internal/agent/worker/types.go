@@ -20,6 +20,8 @@ type GenerationInput struct {
 	TargetPhase              string `json:"target_phase,omitempty"`
 	ScopeType                string `json:"scope_type,omitempty"`
 	ScopeID                  string `json:"scope_id,omitempty"`
+	ScopeKey                 string `json:"scope_key,omitempty"`
+	RenderPlanKey            string `json:"render_plan_key,omitempty"`
 	ShotID                   string `json:"shot_id"`
 	ShotClientKey            string `json:"shot_client_key,omitempty"`
 	ShotSortOrder            int    `json:"shot_sort_order,omitempty"`

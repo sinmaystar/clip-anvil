@@ -36,6 +36,7 @@ const (
 type Scope struct {
 	Type string
 	ID   pgtype.UUID
+	Key  string
 }
 
 type UpsertInput struct {

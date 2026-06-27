@@ -19,7 +19,7 @@ SET status = 'archived',
 WHERE id = $1
   AND workspace_id = $2
   AND archived_at IS NULL
-RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan
+RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan, semantic_key, display_name
 `
 
 type ArchiveShotParams struct {
@@ -53,6 +53,8 @@ func (q *Queries) ArchiveShot(ctx context.Context, arg ArchiveShotParams) (Shot,
 		&i.Dialogue,
 		&i.Narration,
 		&i.AudioPlan,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -75,11 +77,13 @@ INSERT INTO shot (
     camera_intent,
     dialogue,
     narration,
-    audio_plan
+    audio_plan,
+    semantic_key,
+    display_name
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8,
-    $9, $10, $11, $12, $13, $14, $15, $16, $17
-) RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan
+    $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+) RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan, semantic_key, display_name
 `
 
 type CreateShotParams struct {
@@ -100,6 +104,8 @@ type CreateShotParams struct {
 	Dialogue         string        `json:"dialogue"`
 	Narration        string        `json:"narration"`
 	AudioPlan        []byte        `json:"audio_plan"`
+	SemanticKey      string        `json:"semantic_key"`
+	DisplayName      string        `json:"display_name"`
 }
 
 func (q *Queries) CreateShot(ctx context.Context, arg CreateShotParams) (Shot, error) {
@@ -121,6 +127,8 @@ func (q *Queries) CreateShot(ctx context.Context, arg CreateShotParams) (Shot, e
 		arg.Dialogue,
 		arg.Narration,
 		arg.AudioPlan,
+		arg.SemanticKey,
+		arg.DisplayName,
 	)
 	var i Shot
 	err := row.Scan(
@@ -146,12 +154,14 @@ func (q *Queries) CreateShot(ctx context.Context, arg CreateShotParams) (Shot, e
 		&i.Dialogue,
 		&i.Narration,
 		&i.AudioPlan,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getShotByClientKey = `-- name: GetShotByClientKey :one
-SELECT id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan
+SELECT id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan, semantic_key, display_name
 FROM shot
 WHERE workspace_id = $1
   AND client_key = $2
@@ -189,12 +199,14 @@ func (q *Queries) GetShotByClientKey(ctx context.Context, arg GetShotByClientKey
 		&i.Dialogue,
 		&i.Narration,
 		&i.AudioPlan,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getShotByID = `-- name: GetShotByID :one
-SELECT id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan
+SELECT id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan, semantic_key, display_name
 FROM shot
 WHERE id = $1
 `
@@ -225,12 +237,14 @@ func (q *Queries) GetShotByID(ctx context.Context, id pgtype.UUID) (Shot, error)
 		&i.Dialogue,
 		&i.Narration,
 		&i.AudioPlan,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const listActiveShotsByWorkspace = `-- name: ListActiveShotsByWorkspace :many
-SELECT id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan
+SELECT id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan, semantic_key, display_name
 FROM shot
 WHERE workspace_id = $1
   AND archived_at IS NULL
@@ -269,6 +283,8 @@ func (q *Queries) ListActiveShotsByWorkspace(ctx context.Context, workspaceID pg
 			&i.Dialogue,
 			&i.Narration,
 			&i.AudioPlan,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -287,7 +303,7 @@ SET sort_order = $2,
 WHERE id = $1
   AND workspace_id = $3
   AND archived_at IS NULL
-RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan
+RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan, semantic_key, display_name
 `
 
 type ReorderShotParams struct {
@@ -322,6 +338,8 @@ func (q *Queries) ReorderShot(ctx context.Context, arg ReorderShotParams) (Shot,
 		&i.Dialogue,
 		&i.Narration,
 		&i.AudioPlan,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -332,7 +350,7 @@ SET craftsman_thread_id = $2,
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $3
-RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan
+RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan, semantic_key, display_name
 `
 
 type SetShotCraftsmanThreadParams struct {
@@ -367,6 +385,8 @@ func (q *Queries) SetShotCraftsmanThread(ctx context.Context, arg SetShotCraftsm
 		&i.Dialogue,
 		&i.Narration,
 		&i.AudioPlan,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -393,7 +413,7 @@ SET client_key = $2,
 WHERE id = $1
   AND workspace_id = $18
   AND archived_at IS NULL
-RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan
+RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan, semantic_key, display_name
 `
 
 type UpdateShotParams struct {
@@ -462,6 +482,8 @@ func (q *Queries) UpdateShot(ctx context.Context, arg UpdateShotParams) (Shot, e
 		&i.Dialogue,
 		&i.Narration,
 		&i.AudioPlan,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -473,7 +495,7 @@ SET status = $3,
 WHERE id = $1
   AND workspace_id = $2
   AND archived_at IS NULL
-RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan
+RETURNING id, workspace_id, client_key, sort_order, title, brief, duration_sec, narrative_purpose, status, craftsman_thread_id, archived_at, created_at, updated_at, scene_id, shot_kind, creative_text, visual_intent, action_text, camera_intent, dialogue, narration, audio_plan, semantic_key, display_name
 `
 
 type UpdateShotStatusParams struct {
@@ -508,6 +530,8 @@ func (q *Queries) UpdateShotStatus(ctx context.Context, arg UpdateShotStatusPara
 		&i.Dialogue,
 		&i.Narration,
 		&i.AudioPlan,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }

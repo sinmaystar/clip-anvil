@@ -371,6 +371,7 @@ func nativeCraftsmanToolRuntimeMiddleware(stateStore *craftsmanLoopToolStateStor
 							ExecutionPolicy: state.Context.Input.ExecutionPolicy,
 							ScopeType:       state.Context.Input.ScopeType,
 							ScopeID:         state.Context.Input.ScopeID,
+							ScopeKey:        state.Context.Input.ScopeKey,
 							TargetPhase:     state.Context.Input.Mode,
 						})
 					}

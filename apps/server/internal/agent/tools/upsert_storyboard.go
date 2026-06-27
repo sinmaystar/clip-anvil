@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -102,6 +103,7 @@ func (t *UpsertStoryboardNativeTool) InvokableRun(ctx context.Context, arguments
 	if !ok {
 		return msg, nil
 	}
+	dependencies, skippedSelfDependencies := toCreativeShotDependencies(input.Dependencies)
 	out, err := t.service.UpsertStoryboard(ctx, creative.UpsertStoryboardInput{
 		WorkspaceID:     runtime.WorkspaceID,
 		ThreadID:        runtime.ThreadID,
@@ -112,7 +114,7 @@ func (t *UpsertStoryboardNativeTool) InvokableRun(ctx context.Context, arguments
 		Scenes:          toCreativeScenes(input.Scenes),
 		Shots:           toCreativeShots(input.Shots),
 		ShotKeyElements: toCreativeShotKeyElements(input.ShotKeyElements),
-		Dependencies:    toCreativeShotDependencies(input.Dependencies),
+		Dependencies:    dependencies,
 		Reason:          input.Reason,
 	})
 	if err != nil {
@@ -125,6 +127,7 @@ func (t *UpsertStoryboardNativeTool) InvokableRun(ctx context.Context, arguments
 			{Label: "分镜", Value: fmt.Sprintf("创建 %d 个，更新 %d 个", out.ShotsCreated, out.ShotsUpdated)},
 			{Label: "引用", Value: fmt.Sprintf("%d 个 shot_key_element", out.ShotKeyElements)},
 			{Label: "依赖", Value: fmt.Sprintf("%d 个", out.DependenciesCreated)},
+			{Label: "跳过", Value: fmt.Sprintf("%d 个自依赖", skippedSelfDependencies)},
 		},
 		Next: "读取项目上下文确认 storyboard 和关键元素引用是否完整。",
 	}.String(), nil
@@ -178,10 +181,16 @@ func toCreativeShotKeyElements(input []ShotKeyElementInput) []creative.ShotKeyEl
 	return out
 }
 
-func toCreativeShotDependencies(input []ShotDependencyInput) []creative.ShotDependencyInput {
+func toCreativeShotDependencies(input []ShotDependencyInput) ([]creative.ShotDependencyInput, int) {
 	out := make([]creative.ShotDependencyInput, 0, len(input))
+	skippedSelfDependencies := 0
 	for _, item := range input {
+		if strings.TrimSpace(item.FromShotClientKey) != "" &&
+			strings.TrimSpace(item.FromShotClientKey) == strings.TrimSpace(item.ToShotClientKey) {
+			skippedSelfDependencies++
+			continue
+		}
 		out = append(out, creative.ShotDependencyInput{FromShotClientKey: item.FromShotClientKey, ToShotClientKey: item.ToShotClientKey, DependencyType: item.DependencyType, RequiredArtifact: item.RequiredArtifact, InjectionRole: item.InjectionRole, BlockingPhase: item.BlockingPhase, Reason: item.Reason})
 	}
-	return out
+	return out, skippedSelfDependencies
 }

@@ -21,9 +21,13 @@ INSERT INTO generation_job (
     requested_by_type,
     requested_by_id,
     started_at,
-    completed_at
+    completed_at,
+    semantic_key,
+    display_name,
+    source_render_plan_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+    , $23, $24, $25
 ) RETURNING *;
 
 -- name: MarkGenerationJobRunning :one
@@ -102,9 +106,14 @@ INSERT INTO artifact_version (
     provider_request,
     provider_response,
     started_at,
-    completed_at
+    completed_at,
+    semantic_key,
+    display_name,
+    artifact_kind,
+    source_render_plan_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+    , $18, $19, $20, $21
 ) RETURNING *;
 
 -- name: GetArtifactVersionByJobID :one

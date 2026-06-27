@@ -3,12 +3,14 @@ INSERT INTO render_plan (
     workspace_id, scope_type, scope_id, target_phase, task_type,
     model_prompt_profile, operation, status, revision, forked_from_render_plan_id,
     render_plan_key, reference_bindings, subject_bindings, prompt_parts, params,
-    audit_hints, blocker, rationale, created_by_thread_id, created_by_task_id
+    audit_hints, blocker, rationale, created_by_thread_id, created_by_task_id,
+    semantic_key, display_name
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10,
     $11, $12, $13, $14, $15,
-    $16, $17, $18, $19, $20
+    $16, $17, $18, $19, $20,
+    $21, $22
 ) RETURNING *;
 
 -- name: GetRenderPlanByID :one

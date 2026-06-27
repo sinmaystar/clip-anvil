@@ -1,5 +1,9 @@
 -- name: CreateAgentTask :one
+WITH proposed AS (
+    SELECT gen_random_uuid() AS id
+)
 INSERT INTO agent_task (
+    id,
     workspace_id,
     thread_id,
     role,
@@ -8,10 +12,23 @@ INSERT INTO agent_task (
     task_type,
     max_attempts,
     input,
-    render_plan_id
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
-) RETURNING *;
+    render_plan_id,
+    semantic_key,
+    display_name
+)
+SELECT
+    proposed.id,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+    COALESCE(
+        NULLIF(sqlc.arg(semantic_key)::text, ''),
+        $3 || '.' || $4 || '.' || left(COALESCE($5::uuid::text, $1::uuid::text), 8) || '.' || $6 || '.' || left(proposed.id::text, 8)
+    ),
+    COALESCE(
+        NULLIF(sqlc.arg(display_name)::text, ''),
+        $3 || ' ' || $6
+    )
+FROM proposed
+RETURNING *;
 
 -- name: GetAgentTaskByID :one
 SELECT *

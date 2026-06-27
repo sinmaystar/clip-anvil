@@ -1,15 +1,32 @@
 -- name: CreateAgentThread :one
+WITH proposed AS (
+    SELECT gen_random_uuid() AS id
+)
 INSERT INTO agent_thread (
+    id,
     workspace_id,
     role,
     scope_type,
     scope_id,
     runtime_provider,
     runtime_agent_name,
-    summary
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
-) RETURNING *;
+    summary,
+    semantic_key,
+    display_name
+)
+SELECT
+    proposed.id,
+    $1, $2, $3, $4, $5, $6, $7,
+    COALESCE(
+        NULLIF(sqlc.arg(semantic_key)::text, ''),
+        $2 || '.' || $3 || '.' || left(COALESCE($4::uuid::text, $1::uuid::text), 8)
+    ),
+    COALESCE(
+        NULLIF(sqlc.arg(display_name)::text, ''),
+        $2 || ' ' || $3
+    )
+FROM proposed
+RETURNING *;
 
 -- name: GetAgentThreadByID :one
 SELECT *

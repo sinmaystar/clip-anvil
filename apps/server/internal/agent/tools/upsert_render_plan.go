@@ -46,12 +46,13 @@ type UpsertRenderPlanToolInput struct {
 type RenderPlanScopeInput struct {
 	Type string `json:"type" jsonschema:"enum=key_element_state,enum=shot" jsonschema_description:"RenderPlan 归属类型。通常省略并继承当前 Craftsman task。key_element_state 通常对应 reference_image；shot 对应 preview_image 或 shot_video。"`
 	ID   string `json:"id" jsonschema_description:"归属对象 UUID。通常省略并继承当前 Craftsman task。"`
+	Key  string `json:"key" jsonschema_description:"归属对象语义键，例如 scene_main.shot_01 或 element_airport.state_morning。通常省略并继承当前 Craftsman task；模型不要编造。"`
 }
 
 type ReferenceBindingInput struct {
 	ClientKey      string `json:"client_key" jsonschema:"required" jsonschema_description:"稳定业务键，例如 ref_product_luggage_default、ref_airport_scene_morning。用于重试和审计。"`
 	SourceType     string `json:"source_type" jsonschema:"required,enum=key_element_state,enum=media_node,enum=artifact_version,enum=shot_output" jsonschema_description:"参考来源类型。优先使用 key_element_state 或 artifact_version，而不是裸素材。"`
-	SourceID       string `json:"source_id" jsonschema:"required" jsonschema_description:"参考来源 ID。media_node 必须是真实 UUID；如果只知道素材标题，可临时填写当前 workspace 内唯一标题，工具会校验并规范化为 UUID。不要编造 UUID。"`
+	SourceID       string `json:"source_id" jsonschema:"required" jsonschema_description:"参考来源标识。media_node 可填写真实 UUID 或当前 workspace 内唯一标题，工具会校验并规范化；shot_output 必须填写 read_project_context 返回的语义 selector，例如 shot_01.preview_image.current 或 shot_02.shot_video.current。不要编造 UUID 或 selector。"`
 	Role           string `json:"role" jsonschema:"required,enum=reference_image,enum=reference_video,enum=reference_audio,enum=first_frame,enum=last_frame,enum=source_video_to_edit,enum=source_video_to_extend,enum=style_reference,enum=product_reference,enum=scene_reference" jsonschema_description:"参考资源在模型调用中的角色。first_frame/last_frame 会影响 Seedance 首尾帧图生视频。"`
 	PromptAlias    string `json:"prompt_alias" jsonschema_description:"PromptCompiler 使用的可读别名，例如 图片1、视频1、音频1。不要手写 @图片1，交给编译器生成。"`
 	SemanticTarget string `json:"semantic_target" jsonschema_description:"该参考约束的对象，例如悦行行李箱外观、机场出发大厅空间、上一个分镜尾帧。"`
@@ -169,7 +170,7 @@ func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 		Mode:                 input.Mode,
 		RenderPlanID:         renderPlanID,
 		ForkFromRenderPlanID: forkID,
-		Scope:                renderplan.Scope{Type: input.Scope.Type, ID: scopeID},
+		Scope:                renderplan.Scope{Type: input.Scope.Type, ID: scopeID, Key: input.Scope.Key},
 		TargetPhase:          input.TargetPhase,
 		TaskType:             input.TaskType,
 		ModelPromptProfile:   input.ModelPromptProfile,
@@ -196,15 +197,15 @@ func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 			return NaturalToolError(toolUpsertRenderPlan, "RenderPlan 已编译，但提交 Worker 失败："+err.Error(), "请让 Producer 读取 RenderPlan 状态后使用 decide_render_plan 重试。"), nil
 		}
 		out = submitted
-		workerTask = dbAgentTaskSummary{ID: uuidString(task.ID), Status: task.Status}
+		workerTask = dbAgentTaskSummary{Ref: agentTaskResultLabel(task), Status: task.Status}
 	}
 	title := "已写入 RenderPlan"
 	if out.Status == renderplan.StatusBlocked {
 		title = "RenderPlan 已标记为 blocked"
 	}
 	items := []NaturalResultItem{
-		{Label: "RenderPlan", Value: uuidString(out.ID)},
-		{Label: "Scope", Value: out.ScopeType + "=" + uuidString(out.ScopeID)},
+		{Label: "RenderPlan", Value: renderPlanDecisionLabel(out)},
+		{Label: "Scope", Value: renderPlanScopeLabel(out)},
 		{Label: "阶段", Value: out.TargetPhase},
 		{Label: "Profile", Value: out.ModelPromptProfile},
 		{Label: "Operation", Value: out.Operation},
@@ -212,8 +213,8 @@ func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 		{Label: "CompiledPrompt", Value: fmt.Sprintf("%d 字符", len([]rune(out.CompiledPrompt)))},
 	}
 	next := "Producer 可读取项目上下文并决定 accept/reject 或派 Reviewer。"
-	if workerTask.ID != "" {
-		items = append(items, NaturalResultItem{Label: "WorkerTask", Value: workerTask.ID + " / " + workerTask.Status})
+	if workerTask.Ref != "" {
+		items = append(items, NaturalResultItem{Label: "WorkerTask", Value: workerTask.Ref + " / " + workerTask.Status})
 		next = "已根据 execute_immediately 提交 worker_generation。Producer 后续应读取 generation_job、artifact_version 和 RenderPlan 状态，不要把提交等同于产物完成。"
 	}
 	return NaturalResult{
@@ -224,8 +225,20 @@ func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 }
 
 type dbAgentTaskSummary struct {
-	ID     string
+	Ref    string
 	Status string
+}
+
+func renderPlanScopeLabel(plan db.RenderPlan) string {
+	semanticKey := strings.TrimSpace(plan.SemanticKey)
+	targetPhase := strings.TrimSpace(plan.TargetPhase)
+	if semanticKey != "" && targetPhase != "" {
+		marker := "." + targetPhase + "."
+		if index := strings.Index(semanticKey, marker); index > 0 {
+			return plan.ScopeType + "=" + semanticKey[:index]
+		}
+	}
+	return plan.ScopeType + "=semantic_key_missing"
 }
 
 func renderPlanExecutionPolicy(value string) string {
@@ -327,6 +340,9 @@ func applyUpsertRenderPlanRuntimeDefaults(input UpsertRenderPlanToolInput, runti
 	}
 	if strings.TrimSpace(input.Scope.ID) == "" && runtime.ScopeID.Valid {
 		input.Scope.ID = uuidString(runtime.ScopeID)
+	}
+	if strings.TrimSpace(input.Scope.Key) == "" {
+		input.Scope.Key = strings.TrimSpace(runtime.ScopeKey)
 	}
 	if strings.TrimSpace(input.TargetPhase) == "" {
 		input.TargetPhase = strings.TrimSpace(runtime.TargetPhase)

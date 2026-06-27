@@ -70,9 +70,13 @@ INSERT INTO media_node (
     model_provider,
     model_id,
     model_params,
-    metadata
+    metadata,
+    semantic_key,
+    display_name,
+    artifact_kind,
+    source_render_plan_id
 )
-VALUES ($1, $2, $3, $4, $4, $5, 'queued', 'agent', $6, $7, $8, $9, $10, $11, $12, $13, $14)
+VALUES ($1, $2, $3, $4, $4, $5, 'queued', 'agent', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 RETURNING *;
 
 -- name: ListMediaNodesByWorkspace :many

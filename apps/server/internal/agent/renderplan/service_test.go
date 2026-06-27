@@ -27,6 +27,15 @@ func TestServiceCreatesReferenceImageRenderPlanAndCompiles(t *testing.T) {
 	if strings.TrimSpace(plan.CompiledPrompt) == "" {
 		t.Fatalf("compiled prompt is empty")
 	}
+	if plan.SemanticKey != "element_airport.state_morning.reference_image.r1" {
+		t.Fatalf("semantic key = %q", plan.SemanticKey)
+	}
+	if plan.RenderPlanKey != plan.SemanticKey {
+		t.Fatalf("render plan key = %q, want semantic key", plan.RenderPlanKey)
+	}
+	if strings.Contains(plan.RenderPlanKey, "0000-") {
+		t.Fatalf("render plan key should not expose uuid: %q", plan.RenderPlanKey)
+	}
 }
 
 func TestServiceWaitForProducerMarksCompiledPlanWaiting(t *testing.T) {
@@ -124,7 +133,7 @@ func validReferenceInput() UpsertInput {
 		TaskID:             uuidWithByte(3),
 		Brief:              "创建机场参考图计划。",
 		Mode:               "create",
-		Scope:              Scope{Type: ScopeKeyElementState, ID: uuidWithByte(4)},
+		Scope:              Scope{Type: ScopeKeyElementState, ID: uuidWithByte(4), Key: "element_airport.state_morning"},
 		TargetPhase:        PhaseReferenceImage,
 		TaskType:           TaskGenerate,
 		ModelPromptProfile: ProfileSeedream5Image,
@@ -171,6 +180,8 @@ func (f *fakeStore) CreateRenderPlan(_ context.Context, arg db.CreateRenderPlanP
 		Rationale:              arg.Rationale,
 		CreatedByThreadID:      arg.CreatedByThreadID,
 		CreatedByTaskID:        arg.CreatedByTaskID,
+		SemanticKey:            arg.SemanticKey,
+		DisplayName:            arg.DisplayName,
 	}
 	f.plans = append(f.plans, plan)
 	return plan, nil

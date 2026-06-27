@@ -209,6 +209,7 @@ type ContextPacket struct {
 	ShotKeyElements []db.ShotKeyElement
 	Dependencies    []db.ShotDependency
 	RenderPlans     []db.RenderPlan
+	ObjectIndex     []db.AgentObjectIndex
 }
 
 type ReadContextInput struct {

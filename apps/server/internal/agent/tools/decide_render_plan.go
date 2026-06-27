@@ -14,6 +14,7 @@ import (
 
 type RenderPlanDecisionStore interface {
 	RenderPlanSubmitStore
+	GetRenderPlanBySemanticKey(ctx context.Context, params db.GetRenderPlanBySemanticKeyParams) (db.RenderPlan, error)
 	MarkRenderPlanRejected(ctx context.Context, params db.MarkRenderPlanRejectedParams) (db.RenderPlan, error)
 }
 
@@ -28,7 +29,8 @@ type RenderPlanDecisionSignalRuntime interface {
 
 type DecideRenderPlanInput struct {
 	Brief                string                    `json:"brief" jsonschema:"required" jsonschema_description:"一句话描述调用该工具的意图，例如批量接受本轮 Craftsman 提交的预览图 RenderPlan 并提交 Worker。不要超过 160 个中文字符。"`
-	RenderPlanID         string                    `json:"render_plan_id" jsonschema_description:"单条决策模式使用：Producer 要决策的 RenderPlan UUID。批量处理时请使用 decisions 数组。"`
+	RenderPlanRef        ToolObjectRef             `json:"render_plan_ref" jsonschema_description:"单条决策模式使用：Producer 要决策的 RenderPlan 语义引用。必须使用 read_project_context 返回的 type=render_plan,key=...；批量处理时请使用 decisions 数组。"`
+	RenderPlanID         string                    `json:"render_plan_id" jsonschema_description:"兼容旧字段：RenderPlan UUID。模型不要填写；请优先使用 render_plan_ref。"`
 	Decision             string                    `json:"decision" jsonschema:"enum=accept,enum=reject" jsonschema_description:"单条决策模式使用：accept 表示接受该 RenderPlan；reject 表示拒绝该 RenderPlan。批量处理时请使用 decisions 数组。"`
 	Reason               string                    `json:"reason" jsonschema_description:"单条决策模式使用：接受或拒绝的原因，面向用户和审计可读。批量处理时每个 decisions 项都要填写 reason。"`
 	NextAction           string                    `json:"next_action" jsonschema:"enum=submit_worker,enum=revise_with_craftsman,enum=no_action" jsonschema_description:"单条决策模式使用：accept 只能配 submit_worker；reject 可配 revise_with_craftsman 或 no_action。请求用户确认请另行调用 request_user_decision。"`
@@ -37,11 +39,12 @@ type DecideRenderPlanInput struct {
 }
 
 type RenderPlanDecisionInput struct {
-	RenderPlanID         string `json:"render_plan_id" jsonschema:"required" jsonschema_description:"本项要决策的 RenderPlan UUID。"`
-	Decision             string `json:"decision" jsonschema:"required,enum=accept,enum=reject" jsonschema_description:"本项决策。accept 表示接受该 RenderPlan；reject 表示拒绝该 RenderPlan。"`
-	Reason               string `json:"reason" jsonschema:"required" jsonschema_description:"本项接受或拒绝的原因，面向用户和审计可读。"`
-	NextAction           string `json:"next_action" jsonschema:"required,enum=submit_worker,enum=revise_with_craftsman,enum=no_action" jsonschema_description:"本项下一步动作。accept 只能配 submit_worker；reject 可配 revise_with_craftsman 或 no_action。"`
-	RevisionInstructions string `json:"revision_instructions" jsonschema_description:"本项 reject 且 next_action=revise_with_craftsman 时，给后续 Craftsman 修订 RenderPlan 的具体要求。"`
+	RenderPlanRef        ToolObjectRef `json:"render_plan_ref" jsonschema_description:"本项要决策的 RenderPlan 语义引用。必须使用 read_project_context 返回的 type=render_plan,key=...。"`
+	RenderPlanID         string        `json:"render_plan_id" jsonschema_description:"兼容旧字段：RenderPlan UUID。模型不要填写；请优先使用 render_plan_ref。"`
+	Decision             string        `json:"decision" jsonschema:"required,enum=accept,enum=reject" jsonschema_description:"本项决策。accept 表示接受该 RenderPlan；reject 表示拒绝该 RenderPlan。"`
+	Reason               string        `json:"reason" jsonschema:"required" jsonschema_description:"本项接受或拒绝的原因，面向用户和审计可读。"`
+	NextAction           string        `json:"next_action" jsonschema:"required,enum=submit_worker,enum=revise_with_craftsman,enum=no_action" jsonschema_description:"本项下一步动作。accept 只能配 submit_worker；reject 可配 revise_with_craftsman 或 no_action。"`
+	RevisionInstructions string        `json:"revision_instructions" jsonschema_description:"本项 reject 且 next_action=revise_with_craftsman 时，给后续 Craftsman 修订 RenderPlan 的具体要求。"`
 }
 
 func NewDecideRenderPlanNativeTool(store RenderPlanDecisionStore, runtime RenderPlanSubmitRuntime, enqueuer WorkerTaskEnqueuer) *DecideRenderPlanNativeTool {
@@ -83,7 +86,11 @@ func (t *DecideRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 }
 
 func (t *DecideRenderPlanNativeTool) runSingleDecision(ctx context.Context, runtime NativeRuntimeContext, input RenderPlanDecisionInput) (string, error) {
-	renderPlanID, _ := pgUUIDFromString(input.RenderPlanID)
+	plan, errText := t.resolveDecisionRenderPlan(ctx, runtime, input)
+	if errText != "" {
+		return NaturalToolError(toolDecideRenderPlan, errText, "请读取项目上下文，使用 ObjectIndex 中真实存在的 render_plan_ref。"), nil
+	}
+	renderPlanID := plan.ID
 	switch input.Decision {
 	case "accept":
 		task, _, err := t.submitter.SubmitRenderPlan(ctx, runtime.WorkspaceID, renderPlanID, runtime.ThreadID, input.Reason)
@@ -98,8 +105,8 @@ func (t *DecideRenderPlanNativeTool) runSingleDecision(ctx context.Context, runt
 		return NaturalResult{
 			Title: "已接受 RenderPlan 并提交 worker_generation",
 			Items: []NaturalResultItem{
-				{Label: "RenderPlan", Value: input.RenderPlanID},
-				{Label: "WorkerTask", Value: uuidString(task.ID)},
+				{Label: "RenderPlan", Value: renderPlanDecisionLabel(plan)},
+				{Label: "WorkerTask", Value: agentTaskResultLabel(task)},
 				{Label: "原因", Value: input.Reason},
 			},
 			Next: next,
@@ -132,7 +139,7 @@ func (t *DecideRenderPlanNativeTool) runSingleDecision(ctx context.Context, runt
 		return NaturalResult{
 			Title: "已拒绝 RenderPlan",
 			Items: []NaturalResultItem{
-				{Label: "RenderPlan", Value: input.RenderPlanID},
+				{Label: "RenderPlan", Value: renderPlanDecisionLabel(plan)},
 				{Label: "下一步", Value: input.NextAction},
 				{Label: "原因", Value: input.Reason},
 			},
@@ -142,7 +149,11 @@ func (t *DecideRenderPlanNativeTool) runSingleDecision(ctx context.Context, runt
 }
 
 func (t *DecideRenderPlanNativeTool) applyDecision(ctx context.Context, runtime NativeRuntimeContext, input RenderPlanDecisionInput) (string, string) {
-	renderPlanID, _ := pgUUIDFromString(input.RenderPlanID)
+	plan, errText := t.resolveDecisionRenderPlan(ctx, runtime, input)
+	if errText != "" {
+		return "", errText
+	}
+	renderPlanID := plan.ID
 	switch input.Decision {
 	case "accept":
 		task, _, err := t.submitter.SubmitRenderPlan(ctx, runtime.WorkspaceID, renderPlanID, runtime.ThreadID, input.Reason)
@@ -150,7 +161,7 @@ func (t *DecideRenderPlanNativeTool) applyDecision(ctx context.Context, runtime 
 			return "", err.Error()
 		}
 		signalNote := t.markRenderPlanReadySignalProcessed(ctx, runtime, renderPlanID)
-		parts := []string{input.RenderPlanID, "accept", "worker=" + uuidString(task.ID)}
+		parts := []string{renderPlanDecisionLabel(plan), "accept", "worker=" + agentTaskResultLabel(task)}
 		if signalNote != "" {
 			parts = append(parts, signalNote)
 		}
@@ -176,11 +187,70 @@ func (t *DecideRenderPlanNativeTool) applyDecision(ctx context.Context, runtime 
 			return "", err.Error()
 		}
 		signalNote := t.markRenderPlanReadySignalProcessed(ctx, runtime, renderPlanID)
-		parts := []string{input.RenderPlanID, "reject", input.NextAction}
+		parts := []string{renderPlanDecisionLabel(plan), "reject", input.NextAction}
 		if signalNote != "" {
 			parts = append(parts, signalNote)
 		}
 		return strings.Join(parts, " / "), ""
+	}
+}
+
+func (t *DecideRenderPlanNativeTool) resolveDecisionRenderPlan(ctx context.Context, runtime NativeRuntimeContext, input RenderPlanDecisionInput) (db.RenderPlan, string) {
+	if strings.TrimSpace(input.RenderPlanRef.Key) != "" {
+		if t == nil || t.store == nil {
+			return db.RenderPlan{}, "render plan decision store 未配置"
+		}
+		if strings.TrimSpace(input.RenderPlanRef.Type) != "render_plan" {
+			return db.RenderPlan{}, "render_plan_ref.type 必须是 render_plan"
+		}
+		plan, err := t.store.GetRenderPlanBySemanticKey(ctx, db.GetRenderPlanBySemanticKeyParams{
+			WorkspaceID: runtime.WorkspaceID,
+			SemanticKey: strings.TrimSpace(input.RenderPlanRef.Key),
+		})
+		if err != nil {
+			return db.RenderPlan{}, err.Error()
+		}
+		return plan, ""
+	}
+	renderPlanID, ok := pgUUIDFromString(input.RenderPlanID)
+	if !ok {
+		return db.RenderPlan{}, "必须填写 render_plan_ref；兼容字段 render_plan_id 只接受真实 UUID"
+	}
+	plan, err := t.store.GetRenderPlanByID(ctx, db.GetRenderPlanByIDParams{ID: renderPlanID, WorkspaceID: runtime.WorkspaceID})
+	if err != nil {
+		return db.RenderPlan{}, err.Error()
+	}
+	return plan, ""
+}
+
+func renderPlanDecisionLabel(plan db.RenderPlan) string {
+	if value := strings.TrimSpace(plan.SemanticKey); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(plan.RenderPlanKey); value != "" {
+		return value
+	}
+	return "render_plan.semantic_key_missing"
+}
+
+func agentTaskResultLabel(task db.AgentTask) string {
+	if value := strings.TrimSpace(task.SemanticKey); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(task.DisplayName); value != "" {
+		return value
+	}
+	role := strings.TrimSpace(task.Role)
+	taskType := strings.TrimSpace(task.TaskType)
+	switch {
+	case role != "" && taskType != "":
+		return role + "." + taskType
+	case taskType != "":
+		return taskType
+	case role != "":
+		return role
+	default:
+		return "agent_task.semantic_key_missing"
 	}
 }
 
@@ -229,6 +299,7 @@ func normalizedRenderPlanDecisions(input DecideRenderPlanInput) []RenderPlanDeci
 		return nil
 	}
 	return []RenderPlanDecisionInput{{
+		RenderPlanRef:        input.RenderPlanRef,
 		RenderPlanID:         input.RenderPlanID,
 		Decision:             input.Decision,
 		Reason:               input.Reason,
@@ -241,8 +312,15 @@ func validateRenderPlanDecisionInput(input RenderPlanDecisionInput, fieldPrefix 
 	if fieldPrefix == "" {
 		fieldPrefix = "decision"
 	}
-	if _, ok := pgUUIDFromString(input.RenderPlanID); !ok {
-		return fmt.Errorf("%s.render_plan_id 必须是 UUID", fieldPrefix)
+	if strings.TrimSpace(input.RenderPlanRef.Key) != "" {
+		if err := validateObjectRef(input.RenderPlanRef, fieldPrefix+".render_plan_ref"); err != nil {
+			return err
+		}
+		if strings.TrimSpace(input.RenderPlanRef.Type) != "render_plan" {
+			return fmt.Errorf("%s.render_plan_ref.type 必须是 render_plan", fieldPrefix)
+		}
+	} else if _, ok := pgUUIDFromString(input.RenderPlanID); !ok {
+		return fmt.Errorf("%s.render_plan_ref 必填，请使用 read_project_context 返回的 render_plan semantic_key，不要填写或编造 UUID", fieldPrefix)
 	}
 	if err := requireMode(input.Decision, "accept", "reject"); err != nil {
 		return fmt.Errorf("%s.decision %w", fieldPrefix, err)

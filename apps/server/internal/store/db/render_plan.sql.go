@@ -16,13 +16,15 @@ INSERT INTO render_plan (
     workspace_id, scope_type, scope_id, target_phase, task_type,
     model_prompt_profile, operation, status, revision, forked_from_render_plan_id,
     render_plan_key, reference_bindings, subject_bindings, prompt_parts, params,
-    audit_hints, blocker, rationale, created_by_thread_id, created_by_task_id
+    audit_hints, blocker, rationale, created_by_thread_id, created_by_task_id,
+    semantic_key, display_name
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10,
     $11, $12, $13, $14, $15,
-    $16, $17, $18, $19, $20
-) RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+    $16, $17, $18, $19, $20,
+    $21, $22
+) RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
 
 type CreateRenderPlanParams struct {
@@ -46,6 +48,8 @@ type CreateRenderPlanParams struct {
 	Rationale              string      `json:"rationale"`
 	CreatedByThreadID      pgtype.UUID `json:"created_by_thread_id"`
 	CreatedByTaskID        pgtype.UUID `json:"created_by_task_id"`
+	SemanticKey            string      `json:"semantic_key"`
+	DisplayName            string      `json:"display_name"`
 }
 
 func (q *Queries) CreateRenderPlan(ctx context.Context, arg CreateRenderPlanParams) (RenderPlan, error) {
@@ -70,6 +74,8 @@ func (q *Queries) CreateRenderPlan(ctx context.Context, arg CreateRenderPlanPara
 		arg.Rationale,
 		arg.CreatedByThreadID,
 		arg.CreatedByTaskID,
+		arg.SemanticKey,
+		arg.DisplayName,
 	)
 	var i RenderPlan
 	err := row.Scan(
@@ -107,12 +113,14 @@ func (q *Queries) CreateRenderPlan(ctx context.Context, arg CreateRenderPlanPara
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getLatestRenderPlanByScopePhase = `-- name: GetLatestRenderPlanByScopePhase :one
-SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at FROM render_plan
+SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name FROM render_plan
 WHERE workspace_id = $1
   AND scope_type = $2
   AND scope_id = $3
@@ -172,12 +180,14 @@ func (q *Queries) GetLatestRenderPlanByScopePhase(ctx context.Context, arg GetLa
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getLatestRenderPlanByTaskScopePhase = `-- name: GetLatestRenderPlanByTaskScopePhase :one
-SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at FROM render_plan
+SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name FROM render_plan
 WHERE workspace_id = $1
   AND scope_type = $2
   AND scope_id = $3
@@ -240,12 +250,14 @@ func (q *Queries) GetLatestRenderPlanByTaskScopePhase(ctx context.Context, arg G
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getRenderPlanByID = `-- name: GetRenderPlanByID :one
-SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at FROM render_plan
+SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name FROM render_plan
 WHERE id = $1 AND workspace_id = $2 AND archived_at IS NULL
 `
 
@@ -292,12 +304,14 @@ func (q *Queries) GetRenderPlanByID(ctx context.Context, arg GetRenderPlanByIDPa
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const listRenderPlansByScope = `-- name: ListRenderPlansByScope :many
-SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at FROM render_plan
+SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name FROM render_plan
 WHERE workspace_id = $1
   AND scope_type = $2
   AND scope_id = $3
@@ -355,6 +369,8 @@ func (q *Queries) ListRenderPlansByScope(ctx context.Context, arg ListRenderPlan
 			&i.CompiledAt,
 			&i.SubmittedAt,
 			&i.CompletedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -367,7 +383,7 @@ func (q *Queries) ListRenderPlansByScope(ctx context.Context, arg ListRenderPlan
 }
 
 const listRenderPlansByWorkspace = `-- name: ListRenderPlansByWorkspace :many
-SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at FROM render_plan
+SELECT id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name FROM render_plan
 WHERE workspace_id = $1 AND archived_at IS NULL
 ORDER BY updated_at DESC, created_at DESC
 `
@@ -416,6 +432,8 @@ func (q *Queries) ListRenderPlansByWorkspace(ctx context.Context, workspaceID pg
 			&i.CompiledAt,
 			&i.SubmittedAt,
 			&i.CompletedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -437,7 +455,7 @@ WHERE id = $1
   AND workspace_id = $2
   AND status IN ('draft', 'blocked')
   AND archived_at IS NULL
-RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
 
 type MarkRenderPlanBlockedParams struct {
@@ -490,6 +508,8 @@ func (q *Queries) MarkRenderPlanBlocked(ctx context.Context, arg MarkRenderPlanB
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -507,7 +527,7 @@ WHERE id = $1
   AND workspace_id = $2
   AND status = 'draft'
   AND archived_at IS NULL
-RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
 
 type MarkRenderPlanCompiledParams struct {
@@ -564,6 +584,8 @@ func (q *Queries) MarkRenderPlanCompiled(ctx context.Context, arg MarkRenderPlan
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -579,7 +601,7 @@ WHERE id = $1
   AND workspace_id = $2
   AND status IN ('submitted', 'running')
   AND archived_at IS NULL
-RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
 
 type MarkRenderPlanCompletedParams struct {
@@ -634,6 +656,8 @@ func (q *Queries) MarkRenderPlanCompleted(ctx context.Context, arg MarkRenderPla
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -648,7 +672,7 @@ WHERE id = $1
   AND workspace_id = $2
   AND status IN ('compiled', 'waiting_for_approval')
   AND archived_at IS NULL
-RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
 
 type MarkRenderPlanRejectedParams struct {
@@ -701,6 +725,8 @@ func (q *Queries) MarkRenderPlanRejected(ctx context.Context, arg MarkRenderPlan
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -716,7 +742,7 @@ WHERE id = $1
   AND workspace_id = $2
   AND status IN ('compiled', 'waiting_for_approval')
   AND archived_at IS NULL
-RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
 
 type MarkRenderPlanSubmittedParams struct {
@@ -769,6 +795,8 @@ func (q *Queries) MarkRenderPlanSubmitted(ctx context.Context, arg MarkRenderPla
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -781,7 +809,7 @@ WHERE id = $1
   AND workspace_id = $2
   AND status = 'compiled'
   AND archived_at IS NULL
-RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
 
 type MarkRenderPlanWaitingForApprovalParams struct {
@@ -827,6 +855,8 @@ func (q *Queries) MarkRenderPlanWaitingForApproval(ctx context.Context, arg Mark
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -842,7 +872,7 @@ WHERE workspace_id = $1
   AND submitted_worker_task_id = $2
   AND status IN ('submitted', 'running')
   AND archived_at IS NULL
-RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
 
 type MarkSubmittedRenderPlanCompletedByWorkerTaskParams struct {
@@ -897,6 +927,8 @@ func (q *Queries) MarkSubmittedRenderPlanCompletedByWorkerTask(ctx context.Conte
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -948,7 +980,7 @@ WHERE id = $1
   AND workspace_id = $2
   AND status IN ('draft', 'blocked')
   AND archived_at IS NULL
-RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at
+RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
 
 type UpdateRenderPlanDraftParams struct {
@@ -1019,6 +1051,8 @@ func (q *Queries) UpdateRenderPlanDraft(ctx context.Context, arg UpdateRenderPla
 		&i.CompiledAt,
 		&i.SubmittedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }

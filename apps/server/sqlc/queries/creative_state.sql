@@ -29,11 +29,13 @@ INSERT INTO creative_brief (
     constraints,
     metadata,
     status,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8,
-    $9, $10, $11, $12, $13, $14, $15, $16
+    $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 ) RETURNING *;
 
 -- name: UpdateCreativeBrief :one
@@ -101,11 +103,13 @@ INSERT INTO project_memory (
     forbidden,
     prompt_injection_hints,
     source_refs,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
-    $8, $9, $10, $11, $12, $13, $14
+    $8, $9, $10, $11, $12, $13, $14, $15, $16
 ) RETURNING *;
 
 -- name: GetKeyElementByClientKey :one
@@ -132,10 +136,12 @@ INSERT INTO key_element (
     source_type,
     source_refs,
     status,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 ) RETURNING *;
 
 -- name: UpdateKeyElement :one
@@ -212,11 +218,13 @@ INSERT INTO key_element_state (
     state_facts,
     source_refs,
     status,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
-    $8, $9, $10, $11, $12, $13, $14
+    $8, $9, $10, $11, $12, $13, $14, $15, $16
 ) RETURNING *;
 
 -- name: UpdateKeyElementState :one
@@ -260,10 +268,12 @@ INSERT INTO scene (
     location,
     mood,
     status,
+    semantic_key,
+    display_name,
     created_by_thread_id,
     created_by_task_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 ) RETURNING *;
 
 -- name: UpdateScene :one

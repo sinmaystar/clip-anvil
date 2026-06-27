@@ -2,9 +2,7 @@ package craftsman
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -16,11 +14,12 @@ import (
 	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
 )
 
-type arkChatStreamer interface {
+type arkChatModel interface {
+	Generate(ctx context.Context, in []*schema.Message, opts ...einoModel.Option) (*schema.Message, error)
 	Stream(ctx context.Context, in []*schema.Message, opts ...einoModel.Option) (*schema.StreamReader[*schema.Message], error)
 }
 
-type arkChatModelFactory func(ctx context.Context, config *ark.ChatModelConfig) (arkChatStreamer, error)
+type arkChatModelFactory func(ctx context.Context, config *ark.ChatModelConfig) (arkChatModel, error)
 
 type VolcengineModelResponderConfig struct {
 	APIKey      string
@@ -40,7 +39,7 @@ type VolcengineModelResponder struct {
 func NewVolcengineModelResponder(cfg VolcengineModelResponderConfig) VolcengineModelResponder {
 	factory := cfg.Factory
 	if factory == nil {
-		factory = func(ctx context.Context, config *ark.ChatModelConfig) (arkChatStreamer, error) {
+		factory = func(ctx context.Context, config *ark.ChatModelConfig) (arkChatModel, error) {
 			return ark.NewChatModel(ctx, config)
 		}
 	}
@@ -73,7 +72,7 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, craftsmanContext 
 	if err != nil {
 		return CraftsmanTurnOutput{}, fmt.Errorf("create craftsman ark chat model: %w", err)
 	}
-	streamer := model
+	generator := model
 	if len(craftsmanContext.ToolInfos) > 0 {
 		toolCallingModel, ok := model.(einoModel.ToolCallingChatModel)
 		if !ok {
@@ -83,30 +82,14 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, craftsmanContext 
 		if err != nil {
 			return CraftsmanTurnOutput{}, fmt.Errorf("bind craftsman tools: %w", err)
 		}
-		streamer = boundModel
+		generator = boundModel
 	}
-	stream, err := streamer.Stream(ctx, craftsmanToolPromptMessages(craftsmanContext))
+	final, err := generator.Generate(ctx, craftsmanToolPromptMessages(craftsmanContext))
 	if err != nil {
-		return CraftsmanTurnOutput{}, fmt.Errorf("stream craftsman ark chat model: %w", err)
+		return CraftsmanTurnOutput{}, fmt.Errorf("generate craftsman ark chat model: %w", err)
 	}
-	defer stream.Close()
-
-	chunks := []*schema.Message{}
-	for {
-		chunk, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return CraftsmanTurnOutput{}, fmt.Errorf("receive craftsman ark chat stream: %w", err)
-		}
-		if chunk != nil {
-			chunks = append(chunks, chunk)
-		}
-	}
-	final, err := schema.ConcatMessages(chunks)
-	if err != nil {
-		return CraftsmanTurnOutput{}, fmt.Errorf("concatenate craftsman ark chat stream: %w", err)
+	if final == nil {
+		return CraftsmanTurnOutput{}, fmt.Errorf("generate craftsman ark chat model returned nil message")
 	}
 	return CraftsmanTurnOutput{
 		AssistantText: strings.TrimSpace(final.Content),

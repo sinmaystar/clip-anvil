@@ -134,6 +134,8 @@ func workerInputForShotRenderPlan(plan db.RenderPlan, shot db.Shot) agentworker.
 		TargetPhase:       plan.TargetPhase,
 		ScopeType:         plan.ScopeType,
 		ScopeID:           uuidString(plan.ScopeID),
+		ScopeKey:          shot.SemanticKey,
+		RenderPlanKey:     plan.SemanticKey,
 		ShotID:            uuidString(plan.ScopeID),
 		ShotClientKey:     shot.ClientKey,
 		ShotSortOrder:     int(shot.SortOrder),
@@ -158,6 +160,8 @@ func workerInputForKeyElementStateRenderPlan(plan db.RenderPlan, state db.KeyEle
 		TargetPhase:              plan.TargetPhase,
 		ScopeType:                plan.ScopeType,
 		ScopeID:                  uuidString(plan.ScopeID),
+		ScopeKey:                 state.SemanticKey,
+		RenderPlanKey:            plan.SemanticKey,
 		KeyElementStateClientKey: state.ClientKey,
 		CraftsmanThreadID:        uuidString(plan.CreatedByThreadID),
 		CraftsmanTaskID:          uuidString(plan.CreatedByTaskID),
@@ -195,7 +199,8 @@ func renderPlanInputNodeRefs(raw []byte) []string {
 	}
 	out := make([]string, 0, len(refs))
 	for _, ref := range refs {
-		if ref.SourceType == "media_node" && strings.TrimSpace(ref.SourceID) != "" {
+		sourceType := strings.TrimSpace(ref.SourceType)
+		if (sourceType == "media_node" || sourceType == "shot_output") && strings.TrimSpace(ref.SourceID) != "" {
 			out = append(out, strings.TrimSpace(ref.SourceID))
 		}
 	}

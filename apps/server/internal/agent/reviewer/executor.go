@@ -202,7 +202,7 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, task db.AgentTask, 
 	for _, activeTask := range activeTasks {
 		if activeTask.Role == "producer" &&
 			(activeTask.TaskType == "producer_turn" || activeTask.TaskType == "decision_resume") &&
-			(activeTask.Status == "queued" || activeTask.Status == "waiting_for_user") {
+			(activeTask.Status == "queued" || activeTask.Status == "running" || activeTask.Status == "waiting_for_user") {
 			return nil
 		}
 	}
