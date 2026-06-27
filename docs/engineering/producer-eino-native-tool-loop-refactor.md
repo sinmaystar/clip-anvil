@@ -1,8 +1,10 @@
 # ProducerGraph Eino 原生工具循环迁移设计
 
-**Status**: Draft for review
+**Status**: Historical design record; implemented and superseded by current Agent v1 code facts
 **Date**: 2026-06-24
 **Scope**: Agent 模式 ProducerGraph 迁移重构
+
+> 当前代码已经落地显式 Eino tool loop，Producer、Craftsman、Reviewer 都通过 `compose.ToolsNode` 执行 native typed tools。本文保留当时的迁移设计和决策背景；当前事实以 `apps/server/internal/agent/producer/graph.go`、`apps/server/internal/agent/craftsman/native_tool_loop.go`、`apps/server/internal/agent/reviewer/native_tool_loop.go` 和 [`agent-multiagent-architecture.md`](./agent-multiagent-architecture.md) 为准。
 
 ## 背景
 

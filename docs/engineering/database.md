@@ -29,13 +29,16 @@
 
 ### 2.0 当前迁移快照
 
-当前 goose 迁移包含 `001_init_schema.sql` 到 `022_add_doubao_seed_thinking_text_models.sql`，已覆盖 M3-M6 的 Studio / Agent 生产链路：
+当前 goose 迁移包含 `001_init_schema.sql` 到 `030_agent_semantic_identity.sql`，已覆盖 Studio 生产底座、Agent 三角色主链路、RenderPlan、Reviewer gate、Producer signal 和语义身份层：
 
 - 枚举：`workspace_mode`、`node_type`、`asset_type`、`node_status`、`job_status`
 - 核心表：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`
 - 沙箱表：`workspace_sandbox`、`sandbox_job`
 - 生产表：`generation_job`、`artifact_version`、`model_provider`、`model_capability`、`node_stale_reason`、`reference_pack_item`
-- Agent 表：`agent_thread`、`agent_message`、`agent_task`、`agent_event`、`eino_checkpoint`、`shot`、`shot_dependency`、`review_record`
+- Agent runtime 表：`agent_thread`、`agent_message`、`agent_task`、`agent_event`、`eino_checkpoint`、`producer_pending_signal`
+- Agent 创作事实表：`creative_brief`、`project_memory`、`key_element`、`key_element_state`、`scene`、`shot`、`shot_key_element`、`shot_dependency`
+- Agent 生产计划与评审表：`render_plan`、`review_record`、`artifact_issue`
+- Agent 语义身份视图：`agent_object_index`
 - 已收敛：`media_edge` 当前只表达 dependency，不再存 `edge_type` / transition 字段。
 - 已扩展：`media_node` 当前包含 `operation_type`、`prompt_template`、`prompt_rich`、`prompt_refs`、`model_provider`、`model_id`、`model_params`、`current_version_id`、`metadata`。
 - 已扩展：`artifact_version` 当前支持 queued/running/succeeded/failed/cancelled 生命周期，并通过 `job_id` 与 `generation_job` 一一绑定。
@@ -647,7 +650,7 @@ WebSocket /ws/agent?workspaceId=xxx
 apps/server/migrations/
 ├── 001_init_schema.sql
 ├── ...
-└── 022_add_doubao_seed_thinking_text_models.sql
+└── 030_agent_semantic_identity.sql
 ```
 
 goose 的 SQL-first 方式与 sqlc 配合最自然——sqlc 直接读迁移文件作为 schema 源，无需维护两份 schema 定义。
@@ -686,9 +689,9 @@ sqlc 从迁移文件读取 schema，从 `sqlc/queries/*.sql` 读取查询，生�
 make sqlc-generate    # 生成 Go 代码
 ```
 
-## 6. Agent / M6 表结构
+## 6. Agent 三角色与语义身份层
 
-以下对象已经通过 M6 迁移落地，作为 Agent 模式、Eino runtime、Storyboard、评审和 Composer 的数据支撑。
+以下对象已经通过迁移 `015` 到 `030` 落地，支撑当前 Producer / Craftsman / Reviewer 三角色主链路。Composer 代码仍保留，但当前 Agent 主路径以创作事实源、RenderPlan、Worker、Reviewer gate 和 Producer pending signal 为核心。
 
 ### 6.1 workspace 表 mode 字段
 
@@ -702,7 +705,7 @@ ALTER TABLE workspace ADD COLUMN mode workspace_mode NOT NULL DEFAULT 'studio';
 ### 6.2 agent_thread / agent_task / agent_event / agent_message / eino_checkpoint
 
 ```sql
-CREATE TABLE agent_thread (
+agent_thread (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     role TEXT NOT NULL,
@@ -714,10 +717,11 @@ CREATE TABLE agent_thread (
     status TEXT NOT NULL DEFAULT 'active',
     summary TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE agent_task (
+agent_task (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
@@ -732,12 +736,15 @@ CREATE TABLE agent_task (
     output JSONB NOT NULL DEFAULT '{}',
     error_code TEXT,
     error_message TEXT,
+    render_plan_id UUID REFERENCES render_plan(id) ON DELETE SET NULL,
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ
 );
 
-CREATE TABLE agent_event (
+agent_event (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
@@ -752,7 +759,7 @@ CREATE TABLE agent_event (
     handled_at TIMESTAMPTZ
 );
 
-CREATE TABLE agent_message (
+agent_message (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     thread_id UUID NOT NULL REFERENCES agent_thread(id) ON DELETE CASCADE,
@@ -766,7 +773,7 @@ CREATE TABLE agent_message (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE eino_checkpoint (
+eino_checkpoint (
     key TEXT PRIMARY KEY,
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
@@ -778,28 +785,140 @@ CREATE TABLE eino_checkpoint (
 );
 ```
 
-`agent_thread` 表示 Producer/Craftsman/Reviewer/Composer 的持久运行上下文；`agent_task` 记录 Producer turn、tool call、Craftsman/Worker/Reviewer/Composer 等任务；`agent_event` 支撑 HITL 决策、工具事件和任务事件；`agent_message` 是对话历史；`eino_checkpoint` 是 Eino native checkpoint/resume 的 DB 存储。
+`agent_thread` 表示 Producer/Craftsman/Reviewer 的持久运行上下文；`agent_task` 记录 Producer turn、Craftsman/Reviewer turn、Worker generation、tool call、decision resume 等任务；`agent_event` 支撑 HITL 决策、工具事件和任务事件；`agent_message` 是对话历史和工具调用/工具结果历史；`eino_checkpoint` 是 Eino native checkpoint/resume 的 DB 存储。
 
-### 6.3 shot / shot_dependency
+消息持久化口径：
+
+- 用户消息、assistant 文本、assistant tool_call、tool_result、decision card 都写入 `agent_message`。
+- 前端流式 delta 不重复落库为完整 assistant 消息；最终消息以 DB 为准。
+- Agent 历史消息最大轮次当前放大到开发期足够大，避免多轮生产链路丢上下文。
+
+### 6.3 创作事实源
 
 ```sql
-CREATE TABLE shot (
+creative_brief (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT '',
+    video_type TEXT NOT NULL DEFAULT '',
+    target_audience TEXT NOT NULL DEFAULT '',
+    tone TEXT NOT NULL DEFAULT '',
+    visual_style TEXT NOT NULL DEFAULT '',
+    duration_sec DOUBLE PRECISION,
+    aspect_ratio TEXT NOT NULL DEFAULT '',
+    language TEXT NOT NULL DEFAULT '',
+    objective TEXT NOT NULL DEFAULT '',
+    concept TEXT NOT NULL DEFAULT '',
+    constraints JSONB NOT NULL DEFAULT '[]',
+    metadata JSONB NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'draft',
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT ''
+);
+
+project_memory (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    version INT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    core_intent TEXT NOT NULL DEFAULT '',
+    soul TEXT NOT NULL DEFAULT '',
+    brand_facts JSONB NOT NULL DEFAULT '[]',
+    non_negotiables JSONB NOT NULL DEFAULT '[]',
+    visual_anchors JSONB NOT NULL DEFAULT '[]',
+    allowed JSONB NOT NULL DEFAULT '[]',
+    forbidden JSONB NOT NULL DEFAULT '[]',
+    prompt_injection_hints JSONB NOT NULL DEFAULT '[]',
+    source_refs JSONB NOT NULL DEFAULT '[]',
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT ''
+);
+
+key_element (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    client_key TEXT NOT NULL DEFAULT '',
+    element_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    source_type TEXT NOT NULL DEFAULT '',
+    source_refs JSONB NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active',
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT ''
+);
+
+key_element_state (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    key_element_id UUID NOT NULL REFERENCES key_element(id) ON DELETE CASCADE,
+    client_key TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL DEFAULT 'default',
+    visual_description TEXT NOT NULL DEFAULT '',
+    reference_status TEXT NOT NULL DEFAULT 'none',
+    reference_node_id UUID REFERENCES media_node(id) ON DELETE SET NULL,
+    reference_version_id UUID REFERENCES artifact_version(id) ON DELETE SET NULL,
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    state_facts JSONB NOT NULL DEFAULT '[]',
+    source_refs JSONB NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active',
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT ''
+);
+
+scene (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     client_key TEXT NOT NULL DEFAULT '',
     sort_order INT NOT NULL,
     title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    location TEXT NOT NULL DEFAULT '',
+    mood TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'planned',
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT ''
+);
+
+shot (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    scene_id UUID REFERENCES scene(id) ON DELETE SET NULL,
+    client_key TEXT NOT NULL DEFAULT '',
+    sort_order INT NOT NULL,
+    title TEXT NOT NULL,
     brief JSONB NOT NULL DEFAULT '{}',
+    shot_kind TEXT NOT NULL DEFAULT '',
+    creative_text TEXT NOT NULL DEFAULT '',
+    visual_intent TEXT NOT NULL DEFAULT '',
+    action_text TEXT NOT NULL DEFAULT '',
+    camera_intent TEXT NOT NULL DEFAULT '',
+    dialogue TEXT NOT NULL DEFAULT '',
+    narration TEXT NOT NULL DEFAULT '',
+    audio_plan JSONB NOT NULL DEFAULT '{}',
     duration_sec DOUBLE PRECISION,
     narrative_purpose TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'planned',
     craftsman_thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
     archived_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE shot_dependency (
+shot_key_element (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    shot_id UUID NOT NULL REFERENCES shot(id) ON DELETE CASCADE,
+    key_element_id UUID NOT NULL REFERENCES key_element(id) ON DELETE CASCADE,
+    key_element_state_id UUID REFERENCES key_element_state(id) ON DELETE SET NULL,
+    role TEXT NOT NULL DEFAULT '',
+    required BOOLEAN NOT NULL DEFAULT true,
+    sort_order INT NOT NULL DEFAULT 0
+);
+
+shot_dependency (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     from_shot_id UUID NOT NULL REFERENCES shot(id) ON DELETE CASCADE,
@@ -810,65 +929,205 @@ CREATE TABLE shot_dependency (
     blocking_phase TEXT NOT NULL DEFAULT '',
     stale_policy TEXT NOT NULL DEFAULT 'mark_downstream_stale',
     reason TEXT NOT NULL DEFAULT '',
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-ALTER TABLE media_node
-    ADD COLUMN shot_id UUID REFERENCES shot(id) ON DELETE SET NULL;
 ```
 
-`shot` 是 Agent 模式的分镜语义表，不把 sequence/transition 塞回 Studio 的 `media_edge`。`media_node.shot_id` 把画布产物节点挂回分镜，`shot_dependency` 支撑跨分镜连续性、资源复用和调度阻塞。
+这些表是 Producer 写入的全局创作事实源。`ProjectMemory` 是项目级创作宪法；`KeyElement` / `KeyElementState` 是一致性锚点；`Scene` / `Shot` / `shot_dependency` 是分镜结构和连续性；`shot_key_element` 记录分镜使用哪些关键元素或状态。
 
-### 6.4 review_record
+### 6.4 RenderPlan / Worker 生产链路
 
 ```sql
-CREATE TABLE review_record (
+render_plan (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    scope_type TEXT NOT NULL,          -- key_element_state / shot
+    scope_id UUID NOT NULL,
+    target_phase TEXT NOT NULL,        -- reference_image / preview_image / shot_video
+    task_type TEXT NOT NULL DEFAULT 'generate',
+    model_prompt_profile TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    revision INT NOT NULL DEFAULT 1,
+    forked_from_render_plan_id UUID REFERENCES render_plan(id) ON DELETE SET NULL,
+    render_plan_key TEXT NOT NULL DEFAULT '',
+    reference_bindings JSONB NOT NULL DEFAULT '[]',
+    subject_bindings JSONB NOT NULL DEFAULT '[]',
+    prompt_parts JSONB NOT NULL DEFAULT '{}',
+    params JSONB NOT NULL DEFAULT '{}',
+    compiled_prompt TEXT NOT NULL DEFAULT '',
+    compiled_request JSONB NOT NULL DEFAULT '{}',
+    prompt_audit JSONB NOT NULL DEFAULT '{}',
+    blocker JSONB NOT NULL DEFAULT '{}',
+    rationale TEXT NOT NULL DEFAULT '',
+    submitted_worker_task_id UUID REFERENCES agent_task(id) ON DELETE SET NULL,
+    output_node_id UUID REFERENCES media_node(id) ON DELETE SET NULL,
+    output_version_id UUID REFERENCES artifact_version(id) ON DELETE SET NULL,
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT ''
+);
+
+media_node (
+    -- 既有字段省略
+    shot_id UUID REFERENCES shot(id) ON DELETE SET NULL,
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    artifact_kind TEXT NOT NULL DEFAULT '',
+    source_render_plan_id UUID REFERENCES render_plan(id) ON DELETE SET NULL
+);
+
+generation_job (
+    -- 既有字段省略
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    source_render_plan_id UUID REFERENCES render_plan(id) ON DELETE SET NULL
+);
+
+artifact_version (
+    -- 既有字段省略
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    artifact_kind TEXT NOT NULL DEFAULT '',
+    source_render_plan_id UUID REFERENCES render_plan(id) ON DELETE SET NULL
+);
+```
+
+Craftsman 只写 `render_plan`。Producer 通过 `decide_render_plan` accept 后，工程代码创建 `worker_generation` task，Worker 构造 `GenerationIntent` 并复用共享 production service 写 `generation_job` / `artifact_version`。`media_node.source_render_plan_id`、`generation_job.source_render_plan_id` 和 `artifact_version.source_render_plan_id` 让画布、日志和 Agent 上下文能追溯到具体 RenderPlan。
+
+### 6.5 review_record / artifact_issue
+
+```sql
+review_record (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
     shot_id UUID REFERENCES shot(id) ON DELETE SET NULL,
-    node_id UUID NOT NULL REFERENCES media_node(id) ON DELETE CASCADE,
-    artifact_version_id UUID NOT NULL REFERENCES artifact_version(id) ON DELETE CASCADE,
+    node_id UUID REFERENCES media_node(id) ON DELETE CASCADE,
+    artifact_version_id UUID REFERENCES artifact_version(id) ON DELETE CASCADE,
     generation_job_id UUID REFERENCES generation_job(id) ON DELETE SET NULL,
     reviewer_thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
     reviewer_task_id UUID REFERENCES agent_task(id) ON DELETE SET NULL,
     parent_review_record_id UUID REFERENCES review_record(id) ON DELETE SET NULL,
     target_phase TEXT NOT NULL,
+    review_task TEXT NOT NULL DEFAULT 'preview_image_review',
+    target_object_type TEXT NOT NULL DEFAULT 'artifact_version',
+    target_object_id UUID,
+    render_plan_id UUID REFERENCES render_plan(id) ON DELETE SET NULL,
     status TEXT NOT NULL,
     attempt_no INT NOT NULL DEFAULT 1,
     max_attempts INT NOT NULL DEFAULT 3,
     overall_score REAL,
+    required_axes JSONB NOT NULL DEFAULT '[]',
     rubric JSONB NOT NULL DEFAULT '{}',
     critique TEXT NOT NULL DEFAULT '',
     retry_recommendation JSONB NOT NULL DEFAULT '{}',
+    escalation JSONB NOT NULL DEFAULT '{}',
     model_provider TEXT NOT NULL DEFAULT '',
     model_id TEXT NOT NULL DEFAULT '',
     error_code TEXT NOT NULL DEFAULT '',
     error_message TEXT NOT NULL DEFAULT '',
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ
 );
-```
 
-`review_record` 记录预览图、分镜视频和成片的评审结果，并通过 `parent_review_record_id` 串起重试链路。Reviewer 可以根据 critique 触发 retry generation，最终仍复用 `generation_job` / `artifact_version` 的版本事实。
-
-### 6.5 skill 表（后续）
-
-```sql
-CREATE TABLE skill (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name         TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
-    description  TEXT NOT NULL,
-    config       JSONB NOT NULL,  -- Skill YAML 的 JSON 表示
-    is_builtin   BOOLEAN NOT NULL DEFAULT false,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+artifact_issue (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    review_record_id UUID NOT NULL REFERENCES review_record(id) ON DELETE CASCADE,
+    dimension TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    target_object_type TEXT NOT NULL,
+    target_object_id UUID NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '',
+    suggested_fix TEXT NOT NULL DEFAULT 'none',
+    fix_hint TEXT NOT NULL DEFAULT '',
+    requires_user_confirmation BOOLEAN NOT NULL DEFAULT false,
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT ''
 );
 ```
 
-内置 Skill 在系统初始化时写入。`config` 存储完整定义（phases、review_rubric、gates、style_constraints 等）。
+Reviewer 只写 `review_record` 和 `artifact_issue`，不直接重跑、不直接选择 winner。Producer 读取评审结果后决定 accept、派 Craftsman fork 新 RenderPlan、请求用户确认或停止自动重试。`ArtifactIssue.dimension` 覆盖 10 轴 rubric 和 pre-render 专用维度，例如 `faithfulness`、`subject_consistency`、`motion_physics`、`continuity`、`audio_sync`、`model_capability`、`prompt_validity`。
 
-### 6.6 旧 agent_session 方案
+### 6.6 producer_pending_signal
+
+```sql
+producer_pending_signal (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    producer_thread_id UUID NOT NULL REFERENCES agent_thread(id) ON DELETE CASCADE,
+    source_role TEXT NOT NULL,
+    source_task_id UUID REFERENCES agent_task(id) ON DELETE SET NULL,
+    source_thread_id UUID REFERENCES agent_thread(id) ON DELETE SET NULL,
+    signal_type TEXT NOT NULL,
+    scope_type TEXT NOT NULL,
+    scope_id UUID,
+    render_plan_id UUID REFERENCES render_plan(id) ON DELETE SET NULL,
+    message_id UUID REFERENCES agent_message(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    priority INT NOT NULL DEFAULT 100,
+    dedupe_key TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    claimed_by_task_id UUID REFERENCES agent_task(id) ON DELETE SET NULL,
+    claimed_at TIMESTAMPTZ,
+    processed_by_task_id UUID REFERENCES agent_task(id) ON DELETE SET NULL,
+    processed_at TIMESTAMPTZ,
+    last_error TEXT,
+    semantic_key TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT ''
+);
+```
+
+后台任务不会直接继续“冒充 Producer”做决策。Craftsman、Reviewer、Worker 或系统服务完成后写 `producer_pending_signal`，再创建或唤醒 Producer task。Producer 在模型轮次里读取 pending signal 文本，并通过 `read_project_context` 读取 DB 事实源做下一步决策。
+
+信号语义：
+
+- `craftsman_render_plan_ready`：Craftsman 已提交等待 Producer 决策的 RenderPlan。
+- `worker_generation_completed` / `worker_generation_failed`：Worker 或 production broadcaster 通知产物成功/失败。
+- `reviewer_result_submitted`：Reviewer 已提交 `review_record` / `artifact_issue`。
+- dedupe key 保证同一生产事实不会重复唤醒 Producer。
+
+### 6.7 semantic_key / agent_object_index
+
+`030_agent_semantic_identity.sql` 给 Agent 相关领域对象、生产对象、消息线程和信号补充 `semantic_key` / `display_name`，并创建统一视图：
+
+```sql
+CREATE VIEW agent_object_index AS
+SELECT workspace_id, 'shot' AS object_type, id AS object_id, semantic_key, display_name, ...
+UNION ALL
+SELECT workspace_id, 'render_plan' AS object_type, id AS object_id, semantic_key, display_name, ...
+UNION ALL
+SELECT workspace_id, 'artifact_version' AS object_type, id AS object_id, semantic_key, display_name, ...
+-- creative_brief / project_memory / key_element / key_element_state / scene /
+-- shot_dependency / media_node / generation_job / review_record /
+-- artifact_issue / agent_thread / agent_task / producer_pending_signal
+```
+
+长期原则：提供给 Agent 的上下文和工具入参优先使用语义键，不要求模型记 UUID。工具内部通过 `agent_object_index`、sqlc 查询和对象归属校验把语义键解析回真实 UUID。
+
+常见语义键示例：
+
+| 对象 | 示例 |
+|---|---|
+| creative brief | `creative_brief.main` |
+| project memory | `project_memory.v1` |
+| key element | `product_luggage` |
+| key element state | `product_luggage.state_silver_reference` |
+| scene | `scene_airport_departure` |
+| shot | `shot_01` |
+| render plan | `shot_01.preview_image.rp1.ab12cd34` |
+| artifact | `shot_01.preview_image.rp1.ab12cd34.output.ef56ab78.v1` |
+| producer signal | `signal.shot_01.preview_image.rp1.ab12cd34.worker_generation_completed...` |
+
+这层解决的是 Agent 工具参数容易幻觉 UUID 的问题。`read_project_context` 会返回 ObjectIndex 和 production state 里的语义引用；`dispatch_craftsman`、`decide_render_plan`、`dispatch_reviewer`、`upsert_render_plan` 等工具优先接受这些语义引用。
+
+### 6.8 旧 agent_session 方案
 
 早期设计曾提过 `agent_session`，当前实现没有采用这张表。实际运行态由 `agent_thread`、`agent_task`、`agent_event`、`agent_message` 和 `eino_checkpoint` 组合表达。
 

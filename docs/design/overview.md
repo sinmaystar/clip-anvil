@@ -10,7 +10,7 @@
 
 1. **业务 DB 为唯一事实源，React Flow 只做投影** — Workspace、媒体资源、依赖关系、生成任务、版本、评审结果存储在业务数据库。React Flow node data 只保存渲染所需的业务字段映射（nodeId、缩略图、状态），画布坐标直接存在业务表的 `canvas_x/y/w/h` 字段中。Agent 后台执行时画布可以不打开；画布损坏不丢失业务数据。
 
-2. **Agent 不知道画布的存在** — Agent 调用生产级工具（如 `update_storyboard`、`dispatch_craftsman`、`compose_final`），生产翻译层自动将其翻译为业务状态和画布投影。Agent 眼中只有分镜、素材、进度，没有节点、连线、分组。
+2. **Agent 不知道前端画布快照的存在** — Agent 调用语义工具和生产工具（如 `upsert_storyboard`、`dispatch_craftsman`、`decide_render_plan`、`dispatch_reviewer`），系统自动将其翻译为业务状态和画布投影。Agent 眼中主要是 brief、memory、key element、scene、shot、RenderPlan、artifact、review 和 issue，而不是 React Flow 节点坐标。
 
 3. **不弹框，不打断画布流** — 节点详情和编辑在画布附近的节点浮层完成，不使用常驻右侧 Inspector，也不把用户带回传统管理系统布局。
 
@@ -34,26 +34,27 @@
 ┌───────────────────┴──────────────────────────────────┐
 │                 生产翻译层（系统自动）                   │
 │                                                      │
-│  Agent 调用: update_storyboard(shots)                 │
-│  系统翻译: batch_create_nodes + batch_create_edges     │
-│           + create_group + auto_layout                │
+│  Agent 调用: upsert_storyboard(scenes, shots)          │
+│  系统翻译: 写 scene / shot / dependency               │
+│           + 更新 Agent Workbench 投影                  │
 │                                                      │
-│  Agent 调用: dispatch_craftsman(shot_id, mode)         │
-│  系统翻译: load shot context + submit generation       │
-│           + update tasks / versions                   │
+│  Agent 调用: dispatch_craftsman(scope, phase)          │
+│  系统翻译: 创建 Craftsman task → RenderPlan            │
+│           + Producer decide → Worker production        │
 │                                                      │
 │  生成完成（回调）:                                     │
 │  系统自动: create_asset + create_version               │
 │           + update_node(status, thumbnail)             │
 └───────────────────┬──────────────────────────────────┘
                     ▲ 生产级工具（Agent 调用）
-                    │ get_production_state（Agent 读取）
+                    │ read_project_context（Agent 读取）
 ┌───────────────────┴──────────────────────────────────┐
 │              Agent 层（Eino Agents）                   │
-│   Producer → Craftsman / Reviewer / Composer          │
-│   读取 Skill + Production State                       │
-│   调用生产级工具                                       │
-│   不知道画布、节点、连线、布局的存在                      │
+│   Producer → Craftsman / Reviewer                     │
+│   Worker / Scheduler / PromptCompiler 为确定性服务      │
+│   读取 ProjectContext + ObjectIndex                    │
+│   调用语义工具和生产级工具                              │
+│   不操作前端画布快照                                    │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -66,7 +67,7 @@
 | 生产翻译层 | 生产操作 ↔ 业务命令的映射规则 | React Flow、Agent 提示词 |
 | Agent 层 | 分镜、素材、生成、评审、拼接 | 节点、连线、分组、画布坐标、布局 |
 
-**为什么需要生产翻译层**：一个生产操作 = 多个业务命令。例如 `update_storyboard(5个分镜)` 在业务层需要：写入 5 个 shot、必要的 shot_dependency、关联后续生成任务和画布投影。如果让 Agent 逐一调用底层命令，Agent 就变成了画布操作员，认知负荷高且容易出错。
+**为什么需要生产翻译层**：一个生产操作 = 多个业务命令。例如 `upsert_storyboard(5个分镜)` 在业务层需要：写入 scene、shot、shot_key_element、shot_dependency，并更新 Agent Workbench 投影；`decide_render_plan(accept)` 需要入队 Worker、提交 production intent、写 job/version、广播状态。如果让 Agent 逐一调用底层命令，Agent 就变成了数据库操作员，认知负荷高且容易出错。
 
 ## 4. 双模式概要
 
@@ -298,16 +299,17 @@ Agent 在**成本不可逆**的节点暂停等待用户确认。只设 2 个 Gat
 - TOS provider 输入暂存、sandbox-backed 远程图片/视频下载入 MinIO。
 - 用户源素材节点：手动文本、上传图片/视频/音频，不提供模型运行入口，可作为依赖或参考包成员。
 
-### M6: Agent 自动生产模式（阶段性闭环已完成）
+### M6 / Agent v1: Agent 自动生产模式（主干已落地）
 
-目标：Producer / Craftsman / Worker / Composer 复用 M4 生产底座完成分镜到成片。
+目标：Producer 维护全局创作事实源，Craftsman 生成 RenderPlan，Worker 复用 M4 生产底座执行生成，Reviewer 通过 10 轴 rubric 写 review / issue，Producer 通过 pending signal 继续决策。
 
 交付：
 - Agent runtime 存储、Eino checkpoint/resume、Agent message/event/task 持久化
 - `/ws/agent` 对话通道、Producer 对话面板、附件上传、模型选择和 HITL 决策卡片
-- Storyboard / shot / shot dependency、PSS 和生产状态读取工具
-- Craftsman + Worker 预览生成、Reviewer 评审重试、依赖调度
-- Composer sandbox-backed 成片合成
+- CreativeBrief、ProjectMemory、KeyElement、Scene、Shot、shot dependency、RenderPlan、ArtifactIssue 和语义 ObjectIndex
+- Producer/Craftsman/Reviewer 原生 Eino tool loop，工具结果和 tool message 持久化
+- Craftsman + Worker 预览图/分镜视频生成、Reviewer gate、Producer pending signal、依赖调度
+- Agent Workbench 场景/分镜/产物/问题投影
 - Studio / Agent 复制导入仍是后续，当前继续保持 workspace mode 分离
 
 ## 8. 开放问题

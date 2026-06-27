@@ -7,22 +7,22 @@
 Agent 模式已经不是纯设计稿。当前服务端已落地：
 
 - Agent 对话入口、消息持久化、附件节点、WebSocket 广播和 Producer 后台任务。
-- Eino 图主路径：`producer_turn`、`craftsman_render_plan`、`reviewer_gate`、`composer_final`。`craftsman_generation` / `reviewer_preview` 仍保留为旧兼容路径或历史命名，不是当前三 Agent v1 的默认执行口径。
+- Eino 图主路径：`producer_turn`、`craftsman_render_plan`、`reviewer_gate`。`composer_final` 代码仍保留并可构建，但当前三 Agent v1 主链路不依赖 Composer 做日常分镜生产闭环。
 - 原生 Eino checkpoint/resume：`agent:eino:<graph>:<workspace>:<thread>:<task>`，存入 `eino_checkpoint`。
 - 创作与生产事实表：`creative_brief`、`project_memory`、`key_element`、`key_element_state`、`scene`、`shot`、`shot_key_element`、`shot_dependency`、`render_plan`、`review_record`、`artifact_issue`。
 - Agent runtime 表：`agent_thread`、`agent_task`、`agent_event`、`agent_message`。
-- Producer、Craftsman、Reviewer 的新工具链都通过 Eino `compose.ToolsNode` 执行。Producer 仍保留旧 registry 工具作为兼容/历史能力，但三 Agent v1 主路径使用 Eino-native typed tools。
+- Producer、Craftsman、Reviewer 的新工具链都通过 Eino `compose.ToolsNode` 执行，主路径使用 Eino-native typed tools。旧 registry 工具文件仍可在代码中看到，但当前 `main.go` 注册的三 Agent 主链路不再依赖旧 registry 执行工具。
 
 当前角色分工如下：
 
 | 角色 | 作用域 | Eino 图 | 运行时线程 | 主要职责 | 对应 Studio 能力 |
 |---|---|---|---|---|---|
-| Producer | workspace | `producer_turn` | `role='producer'`, `scope_type='workspace'` | 对话总控、全局创作状态 owner、读取 PSS、维护 brief/memory/key elements/storyboard、派发 Craftsman/Reviewer、请求用户决策 | 读取画布/资源树/生产状态；把创意事实投影到画布；发起分镜生成、评审和 HITL |
+| Producer | workspace | `producer_turn` | `role='producer'`, `scope_type='workspace'` | 对话总控、全局创作状态 owner、读取 ObjectIndex / ProjectContext、维护 brief/memory/key elements/storyboard、派发 Craftsman/Reviewer、决策 RenderPlan、请求用户决策 | 读取画布/资源树/生产状态；把创意事实投影到画布；发起分镜生成、评审和 HITL |
 | Craftsman | 当前主要为 shot；目标包含 key_element_state / render_plan | `craftsman_render_plan` | `role='craftsman'`, 当前主要 `scope_type='shot'` | 将 Producer 的创意事实翻译成 `RenderPlan`，组织 reference bindings、subject bindings、prompt parts 和 model params | 对应 Studio 里“配置节点 prompt/operation/model 后点击运行”的策划部分，但不直接写 UI 属性面板 |
 | Worker | shot/node | 无 | 只有 task，`role='worker'` | 执行实际 `GenerationIntent`，复用共享 production service | 对应 Studio 的 production run、输入引用解析、dependency edge 自动建立、generation_job/artifact_version 写入 |
 | Reviewer | 当前支持 shot artifact；schema 已覆盖 render_plan / final_output | `reviewer_gate` | `role='reviewer'`, `scope_type='shot'|'render_plan'|'final_output'` | 质量 gate。读取目标上下文，提交 10 轴 rubric、`review_record`、`artifact_issue` 和 retry recommendation；不直接重跑、不直接选择 winner | 对应 Studio 的结果审阅/问题标注能力，并把评审和问题投影到制作画布 |
-| Composer | final_output | `composer_final` | `role='composer'`, `scope_type='final_output'` | 创建成片节点，提交 `internal_ffmpeg` 合成任务 | 对应 Studio 的视频节点生成和版本产出，但固定为最终成片合成场景 |
-| System scheduler | workspace | 无 | 只有事件，预留 task type | 计算分镜依赖是否就绪，并把事件发给 Producer | 对应 Studio 的 stale/依赖传播观察面，但当前只在 Agent 后台计算 readiness |
+| 留存 Composer | final_output | `composer_final` | `role='composer'`, `scope_type='final_output'` | 旧 M6 成片合成能力，创建成片节点并提交 `internal_ffmpeg` 合成任务 | 当前不是三 Agent v1 主角色；商业级 TimelinePlan / Composer 后续再设计 |
+| System scheduler / signal | workspace | 无 | `producer_pending_signal` + task | 计算依赖、接收 Worker/Reviewer/Craftsman 结果并唤醒 Producer | 对应 Studio 的 stale/依赖传播观察面，决策仍回到 Producer |
 
 ## 运行时入口
 
@@ -69,7 +69,7 @@ Studio 前端当前实际支持 5 类节点。节点创建入口在画布右键�
 
 | Studio 功能 | Studio 入口/行为 | Agent 所属角色与工具 | 覆盖状态 |
 |---|---|---|---|
-| 读取画布与资源 | canvas query、资源树、节点计数、生产状态 | Producer: `read_workspace_context`、`get_production_state` | 已覆盖核心读取；Agent 读取的是 PSS/结构化生产状态，不是完整 Studio UI 状态 |
+| 读取画布与资源 | canvas query、资源树、节点计数、生产状态 | Producer: `read_project_context(include=["object_index","production_state"])` | 已覆盖核心读取；Agent 读取的是语义对象索引和生产状态，不是完整 Studio UI 状态 |
 | 创建节点 | 右键创建 text/image/video/audio/reference_pack | Producer: `create_agent_text_node`；Agent attachment API 创建 text/image/video source node；Worker/Composer 创建生成节点 | 部分覆盖；缺少通用节点 CRUD 和 audio/reference_pack |
 | 上传素材 | Studio drag upload image/video/audio | Agent attachment API 支持 image/video/text | 部分覆盖；附件不是 Producer 工具，且不支持 audio |
 | 编辑 Prompt 与参数 | 属性面板编辑 prompt、operation、model、duration、temperature | Craftsman 生成策略；Worker 按策略构造 `GenerationIntent` | 部分覆盖；Agent 不能直接 patch 任意节点 prompt/参数 |
@@ -77,9 +77,9 @@ Studio 前端当前实际支持 5 类节点。节点创建入口在画布右键�
 | Reference Pack 管理 | 属性面板替换成员 | 无直接 Agent 工具 | 未覆盖 |
 | 分组与资源组织 | group 创建、重命名、成员移动、筛选搜索 | 无直接 Agent 工具 | 未覆盖 |
 | 布局与相机 | 节点拖拽、自动布局、viewport 持久化 | 后端按固定坐标创建 Agent 节点；Agent 画布可展示结果 | 基本未覆盖；没有 Agent 布局工具 |
-| 生产运行 | `POST /api/nodes/:id/run` 提交通用 run | Producer: `dispatch_craftsman`、`generate_shot_video`、`compose_final`；Worker/Composer 提交 `GenerationIntent` | 已覆盖分镜生产场景；不是通用 runNode |
-| 版本选择 | 属性面板选择 current version | Producer: `select_version`；Reviewer 只给 verdict / recommendation，不直接选择版本 | 已覆盖 Agent-owned production node |
-| 失败重试 | 属性面板 retry failed job | Producer: `retry_generation` 或基于 Reviewer critique 再次 `dispatch_craftsman` | 部分覆盖；当前主要覆盖 preview image |
+| 生产运行 | `POST /api/nodes/:id/run` 提交通用 run | Producer 派 `dispatch_craftsman`，Craftsman 写 `RenderPlan`，Producer 用 `decide_render_plan` accept 后 Worker 提交 `GenerationIntent` | 已覆盖分镜生产场景；不是通用 runNode |
+| 版本选择 | 属性面板选择 current version | 当前主要由 production current winner 和 artifact 语义引用承载；旧 `select_version` 文件仍留存 | 三 Agent 主链路还没有把版本选择作为 Producer native tool 完整收口 |
+| 失败重试 | 属性面板 retry failed job | Producer 基于 Reviewer critique 再次 `dispatch_craftsman`，Craftsman `fork_from` 新 RenderPlan | 部分覆盖；自动 repair 完整闭环还需更多 E2E |
 | 评审 | Studio 查看结果与诊断，人工判断 | Producer: `dispatch_reviewer`；Reviewer: `submit_review_result` 写 `review_record` / `artifact_issue` | Agent 更强；提供自动评审记录、问题节点和修复建议；是否修复由 Producer 决策 |
 | 用户决策 | Studio 直接 UI 操作 | Producer: `request_user_decision`；HITL resume | 已覆盖 Agent 暂停/恢复 |
 
@@ -87,11 +87,11 @@ Studio 前端当前实际支持 5 类节点。节点创建入口在画布右键�
 
 | Agent | 已具备的 Studio 能力子集 | 通过哪些工具/内部接口实现 | 不具备的 Studio 能力 |
 |---|---|---|---|
-| Producer | 读取 project/canvas/production；维护创意事实源；派发预览图、分镜视频和评审；请求用户决策 | 新主路径：`read_project_context`、`upsert_project_brief`、`update_project_memory`、`upsert_key_elements`、`upsert_storyboard`、`dispatch_craftsman`、`dispatch_reviewer`。旧兼容路径仍有 `read_workspace_context`、`get_production_state`、`create_agent_text_node`、`select_version`、`retry_generation`、`compose_final`、`request_user_decision` | 不直接做通用节点 CRUD、prompt patch、edge 管理、Reference Pack 管理、分组管理、布局管理；Composer/版本选择仍主要走旧工具链 |
+| Producer | 读取 project/canvas/production；维护创意事实源；派发预览图、分镜视频和评审；请求用户决策 | 主路径：`read_project_context`、`upsert_project_brief`、`update_project_memory`、`upsert_key_elements`、`upsert_storyboard`、`dispatch_craftsman`、`decide_render_plan`、`dispatch_reviewer`、`request_user_decision` | 不直接做通用节点 CRUD、prompt patch、edge 管理、Reference Pack 管理、分组管理、布局管理；商业级成片和版本选择仍需后续 native 化 |
 | Craftsman | 相当于 Studio 运行前的“生产配置/提示词策划”；为 reference image、preview image 或 shot video 生成 RenderPlan | `craftsman_render_plan` graph；`read_project_memory`、`upsert_render_plan`；`render_plan` + `worker_generation` task | 当前执行入口仍主要是 shot-scoped；key_element_state reference image 的端到端派发和绑定还没完整打通 |
 | Worker | 相当于 Studio run 的执行层；创建/复用目标节点；解析输入引用；提交 production；写 job/version；建立 dependency edge | `GenerationIntent`、`production.Service.SubmitGenerationIntent`、`CreateAgentGenerationNode`、`input_node_refs` 解析 | 不处理 UI 交互；不做用户可控的任意 operation 菜单 |
 | Reviewer | 相当于 Studio 结果审片和问题标注，但自动化程度更高 | `reviewer_gate` graph；`read_project_context`、`read_project_memory`、`submit_review_result`；`review_record`、`artifact_issue` | 不直接选择版本、不直接触发重试；`pre_render_plan_review` 和 `final_video_review` 仍是 schema/类型先行，loader 尚未完整支持 |
-| Composer | 相当于 Studio 里把多个视频节点合成为最终视频的专用生产节点 | `composer_final` graph；`compose_final` tool；`internal_ffmpeg` provider | 不支持手动指定任意合成顺序/转场/音频轨；不做通用视频节点编辑 |
+| 留存 Composer | 相当于 Studio 里把多个视频节点合成为最终视频的专用生产节点 | `composer_final` graph；`internal_ffmpeg` provider | 不在当前三 Agent v1 主路径内；后续需要 TimelinePlan 后再重新设计 |
 | HITL | 相当于 Studio 里需要用户拍板的手工操作，但通过 decision card 挂起/恢复 Agent | `request_user_decision`、`decision_requested` event、Eino checkpoint/resume | 只覆盖明确决策，不覆盖所有 Studio 手工编辑动作 |
 | System scheduler | 相当于 Studio 依赖/stale 状态传播的后台观察者 | dependency dispatcher、`NotifyShotUpdated`、readiness event | 当前 video/composer readiness 仍未完整实现 |
 
@@ -132,7 +132,7 @@ flowchart TD
 - `finalize_response`: 修剪 assistant 文本；如果模型只有 thinking 没有可展示内容，写回退文案。
 - `fail_turn`: `MaxToolCalls` 超限时返回 `agent_tool_loop_exhausted`。
 
-Producer 是当前唯一的 ReAct/tool-loop Agent。Craftsman、Reviewer、Composer 仍是固定 Eino graph；Worker 是后台 executor，不是 ReAct。
+Producer、Craftsman、Reviewer 当前都是 Eino-native tool loop。差异在权限和边界：Producer 是 workspace 级 Full ReAct；Craftsman 是只读 ProjectMemory、只写 RenderPlan 的 bounded ReAct；Reviewer 是只读上下文、只写 review / issue 的 bounded ReAct。Worker 是后台 executor，不是 ReAct；Composer 是留存图，不属于当前三 Agent v1 主角色。
 
 模型工具绑定流程：
 
@@ -258,10 +258,10 @@ flowchart TD
 
 当前工具分两层：
 
-1. **三 Agent v1 native typed tools**：Producer、Craftsman、Reviewer 的主路径工具。每个工具是一个 Go 实现类，实现 Eino 标准工具接口，`Info` 返回 `schema.ToolInfo`，执行返回中文自然语言字符串。工具 schema 由 struct + tag 生成，工具内部继续做必填、枚举、UUID、对象归属、workspace mode 和跨字段校验；业务错误返回自然语言错误，不直接抛给模型。
-2. **Legacy registry tools**：早期 Agent 生产工具，仍在 `apps/server/cmd/server/main.go` 的 `agenttools.NewRegistry` 中注册，用于兼容旧流程和 Composer/版本选择/HITL 等尚未完全迁入 native typed tools 的能力。
+1. **三 Agent v1 native typed tools**：Producer、Craftsman、Reviewer 的主路径工具。每个工具是一个 Go 实现类，实现 Eino 标准工具接口，`Info` 返回 `schema.ToolInfo`，执行返回中文自然语言字符串。工具 schema 由 struct + tag 生成，工具内部继续做必填、枚举、语义引用解析、对象归属、workspace mode 和跨字段校验；业务错误返回自然语言错误，不直接抛给模型。
+2. **历史 legacy 工具文件**：早期 Agent 生产工具仍保留在代码目录中，便于回溯和少量留存能力迁移。但当前 `apps/server/cmd/server/main.go` 的三 Agent 主注册路径使用 `NewNativeRegistry(...)`，不再用旧 `RegistryToolExecutor` 作为工具执行入口。
 
-当前默认 ProducerGraph 使用 `ProducerGraphModeExplicitToolLoop`，并注册 native typed tools：
+当前 ProducerGraph 使用显式 Eino tool loop，并注册 native typed tools：
 
 | 工具 | 调用者 | 当前用途 |
 |---|---|---|
@@ -270,19 +270,21 @@ flowchart TD
 | `update_project_memory` | Producer | 创建或更新项目级创作宪法 `ProjectMemory`。 |
 | `upsert_key_elements` | Producer | 创建或更新 `KeyElement` / `KeyElementState`。 |
 | `upsert_storyboard` | Producer | 创建或更新 `Scene`、`Shot`、`shot_key_element`、`shot_dependency`。 |
-| `dispatch_craftsman` | Producer | 派发 Craftsman 创建或修订 RenderPlan；当前端到端主路径是 shot-scoped preview image / shot video。 |
+| `dispatch_craftsman` | Producer | 派发 Craftsman 创建或修订 RenderPlan；当前端到端主路径是 shot-scoped preview image / shot video，也支持 key_element_state scope 的设计入口。 |
+| `decide_render_plan` | Producer | 对一个或多个 waiting_for_approval RenderPlan 做 accept/reject。accept 会入队 Worker；reject 只标记计划并把修订决策留给 Producer。 |
 | `dispatch_reviewer` | Producer | 派发 Reviewer 做 pre-render、preview image、shot video 或 final video review；当前实际 loader 支持 preview image / shot video。 |
+| `request_user_decision` | Producer | 一等 HITL 工具，写 decision card、checkpoint 和 waiting_for_user 状态。 |
 | `read_project_memory` | Craftsman / Reviewer | 读取 ProjectMemory，给 RenderPlan 或评审提供全局约束。 |
-| `upsert_render_plan` | Craftsman | 创建、更新草稿或 fork `RenderPlan`，并触发工程内部 compile / validation / submit 链路。 |
+| `upsert_render_plan` | Craftsman | 创建、更新草稿或 fork `RenderPlan`，并触发工程内部 compile / validation；是否提交执行由 Producer 后续 `decide_render_plan` 决定。 |
 | `submit_review_result` | Reviewer | 提交 verdict、10 轴 rubric、critique、retry recommendation；工具内部写 `review_record` 和 `artifact_issue`。 |
 
-仍保留的 legacy registry tools：
+历史 legacy 工具文件：
 
 | 工具 | 当前状态 |
 |---|---|
 | `read_workspace_context`、`get_production_state` | 旧 PSS / workspace 读取工具。新 prompt 更推荐 `read_project_context`。 |
 | `create_agent_text_node`、`update_storyboard` | 旧创作工具。M1 后由 `upsert_project_brief` / `upsert_storyboard` 等替代。 |
-| `generate_shot_video`、`review_shot`、`select_version`、`retry_generation`、`compose_final`、`request_user_decision` | 兼容生产、成片、版本选择和 HITL 的旧工具集。其中 `request_user_decision` 仍是一等 HITL 工具；Composer/版本选择尚未完全 native 化。 |
+| `generate_shot_video`、`review_shot`、`select_version`、`retry_generation`、`compose_final` | 兼容生产、成片和版本选择的旧工具集。当前主路径用 RenderPlan + `decide_render_plan` + `dispatch_reviewer`，Composer/版本选择尚未完全 native 化。 |
 
 下面保留旧工具 schema，作为历史兼容能力说明；三 Agent v1 新开发优先查看上面的 native typed tools。
 
@@ -1291,9 +1293,9 @@ v1 工具设计应遵循一个边界：**Agent 只调用语义工具；编译、
 | `upsert_key_elements` | Producer | 写 `KeyElement` / `KeyElementState`。用户上传素材、素材分析结果和 prompt 派生元素都由 Producer 统一收敛为一致性锚点。 |
 | `upsert_storyboard` | Producer | 写 `Scene`、`ShotPlan`、`shot_key_element`、`ContinuityLink`。局部改 shot 也走这个工具的 `mode='patch'`，不再单独提供 `update_shot_plan`。 |
 | `dispatch_craftsman` | Producer | 派 Craftsman 为 `key_element_state` 或 shot 创建 / 修订 RenderPlan。支持 reference image、preview image、shot video、edit、extend、bridge。 |
+| `decide_render_plan` | Producer | 对一个或多个 waiting_for_approval RenderPlan 做 accept/reject；accept 后由工程代码入队 Worker。 |
 | `dispatch_reviewer` | Producer | 派 Reviewer 做 pre-render、preview image、shot video、final video review。 |
 | `request_user_decision` | Producer | HITL，确认参考图、storyboard、高成本生成、关键约束变化或歧义。 |
-| `select_artifact_version` | Producer | 选择 winner 或把某个 artifact 绑定为 `KeyElementState` reference。 |
 | `upsert_render_plan` | Craftsman | Craftsman 唯一写工具。创建、更新草稿或 fork 历史 RenderPlan；内嵌 reference bindings / reference roles / prompt parts / params。 |
 | `submit_review_result` | Reviewer | Reviewer 唯一写工具。提交 verdict、10 轴 rubric、critique、retry recommendation；工具内部写 `review_record` 和必要的 `ArtifactIssue`。 |
 
@@ -1303,11 +1305,11 @@ v1 工具设计应遵循一个边界：**Agent 只调用语义工具；编译、
 {
   "brief": "为机场出发大厅状态创建 Seedream reference image 的生成计划，供后续多个分镜复用。",
   "mode": "create|update_draft|fork_from",
-  "render_plan_id": "uuid",
-  "fork_from_render_plan_id": "uuid",
+  "render_plan_ref": {"type": "render_plan", "key": "shot_01.preview_image.rp1.ab12cd34"},
+  "fork_from_render_plan_ref": {"type": "render_plan", "key": "shot_01.preview_image.rp1.ab12cd34"},
   "scope": {
     "type": "key_element_state|shot",
-    "id": "uuid"
+    "key": "product_luggage.state_silver_reference|shot_01"
   },
   "target_phase": "reference_image|preview_image|shot_video",
   "task_type": "generate|edit|extend|bridge",
@@ -1471,10 +1473,10 @@ v1 明确删除或不暴露这些工具：
 
 | 模块 | 当前状态 | 说明 |
 |---|---|---|
-| Producer Eino-native tool loop | 已实现 | 默认 `ProducerGraphModeExplicitToolLoop`，图中有 `call_model -> execute_tools -> append_tool_results -> call_model`。旧文本 JSON 工具解析已删除。 |
-| M1 创作事实源 | 已实现主干 | `creative_brief`、`project_memory`、`key_element`、`key_element_state`、`scene`、`shot`、`shot_key_element`、`shot_dependency` 已有迁移、sqlc、工具、PSS 和画布投影。 |
-| Producer native tools | 已实现主干 | `read_project_context`、`upsert_project_brief`、`update_project_memory`、`upsert_key_elements`、`upsert_storyboard`、`dispatch_craftsman`、`dispatch_reviewer` 已注册。`request_user_decision`、Composer、版本选择仍主要在 legacy 工具层。 |
-| M2 Craftsman RenderPlan | 已实现主干 | Craftsman 已是 bounded native tool loop，使用 `read_project_memory` / `upsert_render_plan` 写 RenderPlan，并触发工程内部编译和生产链路。 |
+| Producer Eino-native tool loop | 已实现 | 显式图中有 `call_model -> execute_tools -> append_tool_results -> call_model`，`execute_tools` 是真实 `compose.ToolsNode`。旧文本 JSON 工具解析已删除。 |
+| M1 创作事实源 | 已实现主干 | `creative_brief`、`project_memory`、`key_element`、`key_element_state`、`scene`、`shot`、`shot_key_element`、`shot_dependency` 已有迁移、sqlc、工具、ObjectIndex/PSS 和画布投影。 |
+| Producer native tools | 已实现主干 | `read_project_context`、`upsert_project_brief`、`update_project_memory`、`upsert_key_elements`、`upsert_storyboard`、`dispatch_craftsman`、`decide_render_plan`、`dispatch_reviewer`、`request_user_decision` 已注册。 |
+| M2 Craftsman RenderPlan | 已实现主干 | Craftsman 已是 bounded native tool loop，使用 `read_project_memory` / `upsert_render_plan` 写 RenderPlan，并触发工程内部编译和校验；执行提交由 Producer `decide_render_plan` accept 后触发。 |
 | PromptCompiler / Seedream / Seedance profile | 已实现基础版 | 已有 `seedream_5_image`、`seedance_2_video` profile、RenderPlan prompt parts / params / bindings 和相关单测；更完整的 video/audio refs、首尾帧链路仍需扩展。 |
 | Worker production substrate | 已实现主干 | Worker 继续复用 `production.GenerationIntent`、`generation_job`、`artifact_version`、dependency edge 写入。 |
 | M3 Reviewer Gate | 已实现 preview/shot-video 主干 | Reviewer 已是 `reviewer_gate` bounded native tool loop，使用 `submit_review_result` 写 `review_record` / `artifact_issue`；E2E 已验证 preview image review + issue 投影。 |
@@ -1482,6 +1484,7 @@ v1 明确删除或不暴露这些工具：
 | `pre_render_plan_review` | 部分实现 | schema、枚举、review_record 结构和 dispatch target 支持已存在；Reviewer `ContextLoader` 尚未支持 render_plan target，未做 E2E。 |
 | `final_video_review` | 部分实现 | schema、枚举和 target 类型已存在；final video context loader / E2E 未完成。 |
 | ArtifactIssue 画布投影 | 已实现基础版 | `artifact_issue` 表、sqlc、PSS、domain canvas review/issue 节点和边已落地。 |
+| 语义身份层 | 已实现主干 | `semantic_key` / `display_name` 已扩展到主要 Agent 对象，`agent_object_index` 统一给 Agent 提供语义引用，工具入参优先使用 semantic key 而不是 UUID。 |
 | Producer 自动 repair 闭环 | 部分实现 | Reviewer 能输出 issue / retry recommendation，Craftsman 支持 `mode=fork_from`；但“Producer 读取 issue 后自动派 Craftsman fork -> 新版本生成 -> 再评审”的完整自动闭环未做端到端验收。 |
 | KeyElementState reference image 闭环 | 部分实现 | 数据模型和 RenderPlan scope 支持存在；Producer -> Craftsman key_element_state scoped 派发、生成后绑定 reference artifact、用户确认 gate 还未完整打通。 |
 | Chain group / last frame continuity | 未完成 | `shot_dependency` / RenderPlan params 有基础表达，但 last frame return、下游 first frame 注入、stale propagation、串并行 scheduler E2E 未完成。 |
@@ -1490,7 +1493,7 @@ v1 明确删除或不暴露这些工具：
 ## 当前限制与规划提示
 
 - Producer graph 已改为显式 Eino tool loop，并把 `execute_tools` 作为真实 `compose.ToolsNode` 暴露在 GraphInfo 中；条件分支记录在 Eino `GraphInfo.Branches`，不是普通 `Edges`。
-- 部分 legacy 工具 schema 有意保持轻量。三 Agent v1 native tools 已改成 struct tag + ToolInfo，但复杂数组字段仍需要持续审视描述质量。
+- 旧工具文件仍有留存。三 Agent v1 native tools 已改成 struct tag + ToolInfo，但复杂数组字段仍需要持续审视描述质量。
 - `dispatch_craftsman` native schema 已支持 `preview_image` / `shot_video`；key_element_state / reference_image scoped 派发还未端到端打通。
 - Reviewer graph compile name 已是 `reviewer_gate`；但 `reviewer.Executor` 的 checkpoint key 仍使用历史 `"reviewer_preview"`，需要后续改名并兼容旧 checkpoint。
 - Reviewer 类型和工具输入支持 `pre_render_plan_review` / `final_video_review`，但当前 loader 还不支持 render_plan / final target。
@@ -1499,5 +1502,5 @@ v1 明确删除或不暴露这些工具：
 - `request_user_decision` 是当前唯一一等的暂停/恢复工具。其他后台任务通过 goroutine 和 queued task recovery 继续执行。
 - 当前队列是进程内 goroutine 加启动时 queued task recovery；还没有外部 worker queue。
 - Dependency scheduler 当前处理 preview/review readiness；`video` 和 `composer` phase 仍返回 unsupported readiness。
-- Agent 生成媒体输入引用时，Worker/Composer 会在解析 `input_node_refs` 时自动创建 dependency edges。
+- Agent 生成媒体输入引用时，Worker 会在解析 RenderPlan 输入引用时自动创建 dependency edges；留存 Composer 也有类似输入解析，但不是当前主链路。
 - Agent workspace 写入 API 继续和 Studio mode 分离；Agent tools/services 通过后端控制的 production 和 canvas helpers 写数据。

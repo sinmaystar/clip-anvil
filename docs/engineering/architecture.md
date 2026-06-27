@@ -5,7 +5,7 @@
 面向中小电商商家的营销视频生成平台，提供两种模式：
 
 - **Studio 模式**：用户主导的自由创作空间，在无限画布上创建媒体节点、建立依赖连线、提交生成
-- **Agent 模式**：Agent 主导的自动化生产，画布只读，用户通过对话驱动修改。Agent 调用生产级工具（如 `update_storyboard`、`dispatch_craftsman`、`compose_final`），系统自动翻译为业务状态和画布投影
+- **Agent 模式**：Agent 主导的自动化生产，用户通过对话驱动修改。Producer 维护创作事实源，Craftsman 生成 RenderPlan，Reviewer 写评审与问题，Worker 复用共享 production service 执行生成，画布把场景、分镜、产物和问题投影为可浏览工作台
 
 两种模式共享同一套业务数据层（PostgreSQL）和画布投影层（React Flow）。详见 [整体业务交互设计](../design/overview.md)。
 
@@ -54,14 +54,14 @@
 
 ## 模块边界
 
-### 当前实现快照（M6 阶段性闭环已完成）
+### 当前实现快照（三 Agent 主链路已落地）
 
-截至 2026-06-24，当前代码已落地 M3-M6 的核心 Studio/Agent 生产能力，并已接入真实 Volcengine provider：
+截至 2026-06-27，当前代码已落地 Studio 生产底座和 Agent 三角色主链路，并已接入真实 Volcengine provider：
 
-- 前端：登录/注册页、项目列表/创建弹窗、Studio/Agent mode 路由分流、Studio/Agent 共享 React Flow 画布、可折叠左侧资源树、明暗外观切换、统一媒体节点卡片、文本/图片/视频/音频/参考包节点、用户源素材节点、依赖连线、分组、Dagre 自动布局、浮层 Inspector、Prompt `@`、Reference Pack 成员管理、手动运行、版本预览/选择、调用记录详情、全屏素材查看、Agent 对话面板、附件上传、模型选择、HITL 决策卡、任务时间线、Storyboard 面板、`/ws/canvas` 和 `/ws/agent` 连接状态与重连。
+- 前端：登录/注册页、项目列表/创建弹窗、Studio/Agent mode 路由分流、Studio React Flow 画布、Agent Workbench 场景/分镜工作台、可折叠左侧资源树、明暗外观切换、统一媒体节点卡片、文本/图片/视频/音频/参考包节点、用户源素材节点、依赖连线、分组、Dagre 自动布局、浮层 Inspector、Prompt `@`、Reference Pack 成员管理、手动运行、版本预览/选择、调用记录详情、全屏素材查看、Agent 对话面板、附件上传、模型选择、HITL 决策卡、任务时间线、线程观察面板、`/ws/canvas` 和 `/ws/agent` 连接状态与重连。
 - 后端：JWT 鉴权、Workspace API、Canvas API、MediaNode API、MediaEdge API、MediaGroup API、Upload/Storage API、Canvas WebSocket Hub、Agent WebSocket Hub、Production API、Agent API、Prompt Reference API、Reference Pack API、goose 迁移、sqlc 查询生成、MinIO 上传与预签名访问 URL、OpenSandbox workspace manager、sandbox exec、artifact submit、sandbox-backed remote asset ingest、mock provider、Volcengine provider adapter、TOS staging。
-- 数据库：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`、`workspace_sandbox`、`generation_job`、`artifact_version`、`model_provider`、`model_capability`、`node_stale_reason`、`reference_pack_item`、`sandbox_job`、`agent_thread`、`agent_message`、`agent_task`、`agent_event`、`eino_checkpoint`、`shot`、`shot_dependency`、`review_record`。
-- 后续完善：Studio/Agent 复制导入、Agent 长期记忆/Skill 配置化、生产级并发/成本控制、完整音频生成链路和更多真实端到端回归。
+- 数据库：`account`、`workspace`、`canvas_document`、`media_node`、`media_edge`、`media_group`、`media_asset`、`workspace_sandbox`、`generation_job`、`artifact_version`、`model_provider`、`model_capability`、`node_stale_reason`、`reference_pack_item`、`sandbox_job`、`agent_thread`、`agent_message`、`agent_task`、`agent_event`、`eino_checkpoint`、`creative_brief`、`project_memory`、`key_element`、`key_element_state`、`scene`、`shot`、`shot_key_element`、`shot_dependency`、`render_plan`、`review_record`、`artifact_issue`、`producer_pending_signal`、`agent_object_index`。
+- 后续完善：Studio/Agent 复制导入、Agent 长期 Skill 配置化、生产级并发/成本控制、完整音频生成链路、TimelinePlan/商业级 Composer、Seedance 首尾帧/视频/音频参考深度支持和更多真实端到端回归。
 
 ### `apps/web/src/components/canvas-flow`（画布契约层）
 
@@ -83,7 +83,7 @@ apps/server/internal/
 ├── store/          sqlc 生成 + 仓储层
 ├── production/     GenerationIntent、模型能力校验、异步 runner、provider 适配、版本和 stale
 ├── promptrefs/     Prompt @ 引用解析、渲染和校验
-├── agent/          Eino runtime、Producer、Craftsman、Worker、Reviewer、Composer、HITL 和生产工具
+├── agent/          Eino runtime、Producer、Craftsman、Reviewer、Worker、HITL、语义身份、RenderPlan 和生产工具
 ├── sandbox/        OpenSandbox SDK 封装、workspace sandbox、exec、文件预置、artifact submit
 ├── storage/        MinIO 上传、预签名 URL、对象访问
 └── media/          媒体资产和生成产物管理边界
@@ -111,13 +111,15 @@ Prompt `@` 渲染时，文本输入会内联进 `rendered_prompt`；图片/视�
 
 ```
 用户对话 → POST /api/agent/workspaces/:id/messages
-  → agent 模块（Eino Producer + 工具 registry）
-  → Producer 调用生产级工具（update_storyboard / dispatch_craftsman / review_shot / compose_final / request_user_decision 等）
-  → Agent 工具复用 production、sandbox、canvas broadcaster 和 Agent runtime
-  → 写 DB → 广播事件
+  → agent 模块（Eino Producer 原生 tool loop）
+  → Producer 调用语义工具（read_project_context / upsert_* / dispatch_craftsman / decide_render_plan / dispatch_reviewer / request_user_decision）
+  → Craftsman 以 bounded ReAct 写 RenderPlan
+  → Producer accept 后 Worker 复用 production service 提交 generation_job / artifact_version
+  → Reviewer 以 bounded ReAct 写 review_record / artifact_issue
+  → Producer pending signal 唤醒 Producer 做下一步决策
   → /ws/agent 推送对话、工具、任务和 HITL 状态
-  → /ws/canvas 推送画布变更（节点创建/状态更新/连线等）
-  → Agent 不直接操作画布，画布为只读投影
+  → /ws/canvas 推送媒体节点和 Agent Workbench 投影变更
+  → Agent 不操作前端画布快照，画布由业务 DB/API 状态投影
 ```
 
 详见 [画布设计 — 前后端数据通路](../design/canvas.md)。
@@ -134,8 +136,8 @@ Prompt `@` 渲染时，文本输入会内联进 `rendered_prompt`；图片/视�
 ## 设计原则
 
 - 业务 DB 为唯一事实源，React Flow 只做投影（不存前端画布 snapshot）
-- Agent 调用生产级工具，不直接操作画布；生产翻译层自动将生产操作映射为业务命令
-- Studio 和 Agent 共用同一套业务命令层（command 模块），数据一致性有保障
+- Agent 调用语义工具和生产级工具，不直接操作画布；工具和生产服务自动将创作对象、RenderPlan、任务和产物映射为业务状态
+- Studio 和 Agent 共享 production substrate，但用户运行 API 与 Agent 执行 API 保持边界清晰
 - eino 只负责推理 + 工具选择 + 状态机，业务能力不耦合到框架
 - 代码层无状态，未来可平滑切到多副本/云端
 - 本地优先，单机 docker Compose 一键启动
@@ -153,6 +155,7 @@ Prompt `@` 渲染时，文本输入会内联进 `rendered_prompt`；图片/视�
 | M3 Workspace 模式入口 | Studio / Agent Workspace 入口、路由分流和权限边界 | ✅ 已完成 |
 | M4 共享生产底座 | GenerationIntent、Provider Bridge、Sandbox Job Service、版本、stale、失败重试、Production Read API | ✅ 已完成 |
 | M5 Studio 专业手动模式 | 浮层 Inspector、Prompt `@`、Reference Pack、手动运行、版本/调用记录、真实 Volcengine 文本/图片/视频、源素材节点 | ✅ 已完成 |
-| M6 Agent 自动生产模式 | Producer / Craftsman / Worker / Reviewer / Composer 复用 M4 生产底座完成自动生产 | ✅ 阶段性闭环已完成 |
+| M6 Agent 自动生产模式 | Producer / Craftsman / Worker / Reviewer / Composer 复用 M4 生产底座完成自动生产 | ✅ 旧闭环已完成；当前已演进为 Producer / Craftsman / Reviewer 三 Agent 主链路 |
+| Agent v1 三角色重构 | 创作事实源、RenderPlan、Reviewer Gate、Producer signal、语义键、Agent Workbench | ✅ 主干已落地；音频、TimelinePlan、复杂连续性和商业级 Composer 后续 |
 
 详见 [整体业务交互设计 — 实施路线](../design/overview.md)。

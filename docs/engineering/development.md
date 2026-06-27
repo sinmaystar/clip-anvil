@@ -10,9 +10,9 @@ clip-anvil/
 │   │   │   ├── App.tsx               RouterProvider 路由入口
 │   │   │   ├── main.tsx              入口
 │   │   │   ├── main.css              Tailwind 入口 + 视觉 token + 页面样式
-│   │   │   ├── components/           Layout、路由守卫、资源树、属性面板、上传、自动布局控件、React Flow 画布
-│   │   │   ├── pages/                Login/Register/Workspace/Studio 页面
-│   │   │   ├── lib/                  API client、canvas helper、布局、WebSocket
+│   │   │   ├── components/           Layout、路由守卫、资源树、属性面板、上传、自动布局控件、Studio/Agent React Flow 画布
+│   │   │   ├── pages/                Login/Register/Workspace/Studio/Agent 页面
+│   │   │   ├── lib/                  API client、canvas helper、Agent workbench、布局、WebSocket
 │   │   │   └── stores/               auth、appearance 状态
 │   │   ├── package.json              @clip-anvil/web
 │   │   ├── vite.config.ts
@@ -20,9 +20,13 @@ clip-anvil/
 │   └── server/                       后端应用
 │       ├── cmd/server/main.go        Hertz 启动入口
 │       ├── internal/
-│       │   ├── api/                  REST handler + /ws/canvas
+│       │   ├── api/                  REST handler + /ws/canvas + /ws/agent
+│       │   ├── agent/                Eino runtime、Producer、Craftsman、Reviewer、Worker、RenderPlan、HITL、语义身份层
 │       │   ├── auth/                 JWT 鉴权
 │       │   ├── config/              viper 配置加载
+│       │   ├── production/           GenerationIntent、Provider、版本、stale、异步 runner
+│       │   ├── sandbox/              OpenSandbox workspace、exec、artifact submit、sandbox job
+│       │   ├── storage/              MinIO 上传、预签名 URL、对象访问
 │       │   └── store/               sqlc + 仓储层
 │       ├── migrations/               goose SQL 迁移
 │       ├── sqlc/queries/             sqlc 查询定义
