@@ -506,6 +506,79 @@ func TestWorkerResolvesInputNodeRefsIntoGenerationIntentAndEdges(t *testing.T) {
 	}
 }
 
+func TestWorkerResolvesInputBindingsIntoRoleAwareGenerationIntent(t *testing.T) {
+	sourceNode := db.MediaNode{
+		ID:               uuidWithByte(52),
+		WorkspaceID:      uuidWithByte(1),
+		NodeType:         db.NodeTypeImage,
+		Title:            "shot_01 preview image",
+		Status:           db.NodeStatusSucceeded,
+		Source:           "agent",
+		OperationType:    "text_to_image",
+		AssetID:          uuidWithByte(62),
+		CurrentVersionID: uuidWithByte(72),
+		ArtifactKind:     "preview_image",
+		SemanticKey:      "shot_01.preview_image.r1.node",
+	}
+	store := &fakeWorkerStore{
+		nodes: []db.MediaNode{sourceNode},
+		assets: map[pgtype.UUID]db.MediaAsset{
+			uuidWithByte(62): {
+				ID:          uuidWithByte(62),
+				WorkspaceID: uuidWithByte(1),
+				Type:        db.AssetTypeImage,
+				Mime:        "image/png",
+				StorageUrl:  pgtype.Text{String: "workspace/shot_01_preview.png", Valid: true},
+			},
+		},
+		versions: map[pgtype.UUID]db.ArtifactVersion{
+			uuidWithByte(72): {
+				ID:          uuidWithByte(72),
+				WorkspaceID: uuidWithByte(1),
+				NodeID:      uuidWithByte(52),
+				AssetID:     uuidWithByte(62),
+				Status:      db.JobStatusSucceeded,
+				InputHash:   "preview-hash",
+			},
+		},
+	}
+	productionService := &fakeProductionSubmitter{result: production.RunResult{
+		Node:    db.MediaNode{ID: uuidWithByte(20), WorkspaceID: uuidWithByte(1)},
+		Job:     db.GenerationJob{ID: uuidWithByte(30)},
+		Version: db.ArtifactVersion{ID: uuidWithByte(40)},
+	}}
+	executor := NewExecutor(ExecutorConfig{Runtime: &fakeWorkerRuntime{}, Store: store, Production: productionService})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:          "shot_video",
+		ShotID:        uuidString(uuidWithByte(2)),
+		ShotClientKey: "shot-01",
+		Prompt:        "turn the preview image into a video",
+		InputBindings: []InputBinding{{
+			ClientKey:   "shot_01_preview_as_first_frame",
+			SourceType:  "shot_output",
+			SourceID:    "shot_01.preview_image.current",
+			ContentType: "image_url",
+			ModelRole:   "first_frame",
+			Required:    true,
+		}},
+		MaxAttempts: 3,
+	})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	refs := productionService.intent.InputRefs
+	if len(refs) != 1 {
+		t.Fatalf("input refs = %#v", refs)
+	}
+	if refs[0].ContentType != "image_url" || refs[0].ModelRole != "first_frame" || !refs[0].Required {
+		t.Fatalf("input ref role binding = %#v", refs[0])
+	}
+	if refs[0].NodeID != sourceNode.ID || refs[0].StorageURL != "workspace/shot_01_preview.png" {
+		t.Fatalf("input ref source = %#v", refs[0])
+	}
+}
+
 func TestWorkerRetriesSynchronousSubmitFailure(t *testing.T) {
 	store := &fakeWorkerStore{}
 	runtime := &fakeWorkerRuntime{}

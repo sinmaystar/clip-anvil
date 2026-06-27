@@ -44,6 +44,8 @@ type InputRef struct {
 	AssetType        string      `json:"asset_type,omitempty"`
 	Mime             string      `json:"mime,omitempty"`
 	StorageURL       string      `json:"storage_url,omitempty"`
+	ContentType      string      `json:"content_type,omitempty"`
+	ModelRole        string      `json:"model_role,omitempty"`
 	InputHash        string      `json:"input_hash,omitempty"`
 	TextContent      string      `json:"-"`
 }

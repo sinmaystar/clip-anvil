@@ -121,7 +121,8 @@ func TestUpsertRenderPlanRuntimeDefaultsInferVideoOperationFromFirstFrame(t *tes
 			ClientKey:      "ref_shot_02_preview",
 			SourceType:     "artifact_version",
 			SourceID:       "05000000-0000-0000-0000-000000000000",
-			Role:           "first_frame",
+			ContentType:    "image_url",
+			ModelRole:      "first_frame",
 			SemanticTarget: "shot_02 首帧预览图",
 		}},
 		Params: RenderPlanParamsInput{DurationSec: 5, Ratio: "9:16"},
@@ -233,14 +234,15 @@ func TestUpsertRenderPlanToolRejectsMissingMediaNodeReferenceBeforeService(t *te
 		"task_type":"generate",
 		"model_prompt_profile":"seedream_5_image",
 		"operation":"image_to_image",
-		"reference_bindings":[{
-			"client_key":"ref_product_luggage",
-			"source_type":"media_node",
-			"source_id":"123e4567-e89b-12d3-a456-426614174000",
-			"role":"product_reference",
-			"semantic_target":"悦行行李箱",
-			"priority":1,
-			"required":true
+			"reference_bindings":[{
+				"client_key":"ref_product_luggage",
+				"source_type":"media_node",
+				"source_id":"123e4567-e89b-12d3-a456-426614174000",
+				"content_type":"image_url",
+				"model_role":"reference_image",
+				"semantic_target":"悦行行李箱",
+				"priority":1,
+				"required":true
 		}]
 	}`)
 	if err != nil {
@@ -328,10 +330,11 @@ func TestProductionStateDecisionTextDoesNotExposeExecutableUUIDs(t *testing.T) {
 
 func TestUpsertRenderPlanNormalizesMediaNodeTitleReference(t *testing.T) {
 	input := UpsertRenderPlanToolInput{ReferenceBindings: []ReferenceBindingInput{{
-		ClientKey:  "ref_product_luggage",
-		SourceType: "media_node",
-		SourceID:   "box.png",
-		Role:       "product_reference",
+		ClientKey:   "ref_product_luggage",
+		SourceType:  "media_node",
+		SourceID:    "box.png",
+		ContentType: "image_url",
+		ModelRole:   "reference_image",
 	}}}
 	got, msg, ok := normalizeMediaNodeReferenceBindings(input, []db.MediaNode{{
 		ID:          uuidWithByte(9),

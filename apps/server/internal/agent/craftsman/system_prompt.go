@@ -42,7 +42,7 @@ Seedance 视频计划：
 - duration_sec 只能填写 5 或 10；不要填写 4、6、8、15 等当前模型能力不支持的时长。
 - 每个视频分镜只放一个主要动作和一个主要运镜。
 - 必须写清 sequence、action、camera、composition、audio 或 narration。
-- 如果依赖上一分镜尾帧，需要用 reference_bindings 标注 first_frame 或 last_frame。
+- 如果依赖上一分镜尾帧，需要在 reference_bindings 中填写 content_type=image_url、model_role=first_frame；如果需要严格首尾帧生成，首帧和尾帧分别使用 model_role=first_frame 与 model_role=last_frame。
 
 Reviewer 驱动的修复：
 - 如果 Producer 派发的是 repair / revise 任务，你需要读取 Reviewer 的 artifact_issue、rubric、critique 和 retry_recommendation。

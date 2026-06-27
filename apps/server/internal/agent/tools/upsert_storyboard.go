@@ -68,7 +68,7 @@ type ShotKeyElementInput struct {
 	ShotClientKey    string `json:"shot_client_key" jsonschema:"required" jsonschema_description:"分镜 client_key。"`
 	ElementClientKey string `json:"element_client_key" jsonschema:"required" jsonschema_description:"关键元素 client_key。"`
 	StateClientKey   string `json:"state_client_key" jsonschema_description:"关键元素状态 client_key。为空时使用默认状态。"`
-	Role             string `json:"role" jsonschema:"required" jsonschema_description:"该元素在分镜中的角色，例如 hero_product、main_character、location、prop、style_reference。"`
+	Role             string `json:"role" jsonschema:"required" jsonschema_description:"该元素在分镜中的创意角色，例如 hero_product、main_character、location、prop、visual_style。"`
 	Required         bool   `json:"required" jsonschema_description:"是否为分镜必须出现的元素。"`
 	SortOrder        int32  `json:"sort_order" jsonschema_description:"引用排序，越小越重要。"`
 }
@@ -78,7 +78,7 @@ type ShotDependencyInput struct {
 	ToShotClientKey   string `json:"to_shot_client_key" jsonschema:"required" jsonschema_description:"依赖目标分镜 client_key。"`
 	DependencyType    string `json:"dependency_type" jsonschema:"required,enum=story_order,enum=last_frame_chain,enum=same_subject_consistency,enum=same_product_consistency,enum=same_scene_consistency,enum=visual_reference,enum=asset_reuse" jsonschema_description:"依赖类型。last_frame_chain 表示目标分镜需要来源分镜尾帧。same_product_consistency 表示商品外观必须一致。"`
 	RequiredArtifact  string `json:"required_artifact" jsonschema_description:"依赖需要的产物，例如 last_frame、preview_image、shot_video。M1 可为空。"`
-	InjectionRole     string `json:"injection_role" jsonschema_description:"后续 RenderPlan 使用该依赖时的角色，例如 product_reference、first_frame、scene_reference。"`
+	InjectionRole     string `json:"injection_role" jsonschema_description:"后续 RenderPlan 使用该依赖时的创意级提示，例如 last_frame_chain、same_product_consistency。它不是 Seedance content.role；模型原生角色必须在 RenderPlan reference_bindings.model_role 中填写。"`
 	BlockingPhase     string `json:"blocking_phase" jsonschema:"enum=planning,enum=reference_generation,enum=preview_generation,enum=video_generation,enum=review,enum=composition" jsonschema_description:"该依赖阻塞哪个阶段。"`
 	Reason            string `json:"reason" jsonschema:"required" jsonschema_description:"为什么需要这个依赖，必须具体说明。"`
 }

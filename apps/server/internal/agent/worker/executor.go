@@ -136,7 +136,7 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr erro
 	if created && e.broadcaster != nil {
 		e.broadcaster.BroadcastAgentNodeCreated(task.WorkspaceID, node)
 	}
-	inputRefs, err := ResolveInputRefs(ctx, e.store, task.WorkspaceID, node.ID, workerInput.InputNodeRefs)
+	inputRefs, err := resolveWorkerInputRefs(ctx, e.store, task.WorkspaceID, node.ID, workerInput)
 	if err != nil {
 		return e.fail(ctx, task, "worker_generation_input_refs_failed", err)
 	}
@@ -195,6 +195,13 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr erro
 		})
 	}
 	return nil
+}
+
+func resolveWorkerInputRefs(ctx context.Context, store inputRefStore, workspaceID pgtype.UUID, targetNodeID pgtype.UUID, input GenerationInput) ([]production.InputRef, error) {
+	if len(input.InputBindings) > 0 {
+		return ResolveInputBindings(ctx, store, workspaceID, targetNodeID, input.InputBindings)
+	}
+	return ResolveInputRefs(ctx, store, workspaceID, targetNodeID, input.InputNodeRefs)
 }
 
 func (e *Executor) startSpan(ctx context.Context, task db.AgentTask, input GenerationInput) (context.Context, trace.Span) {
@@ -330,7 +337,7 @@ func parseGenerationInput(raw []byte) (GenerationInput, error) {
 	if strings.TrimSpace(input.Prompt) == "" {
 		return GenerationInput{}, ErrInvalidInput
 	}
-	if input.Mode == "shot_video" && len(input.InputNodeRefs) == 0 {
+	if input.Mode == "shot_video" && len(input.InputNodeRefs) == 0 && len(input.InputBindings) == 0 {
 		return GenerationInput{}, ErrInvalidInput
 	}
 	if input.MaxAttempts <= 0 {

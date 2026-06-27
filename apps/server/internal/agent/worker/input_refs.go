@@ -52,6 +52,39 @@ func ResolveInputRefs(ctx context.Context, store inputRefStore, workspaceID pgty
 	return refs, nil
 }
 
+func ResolveInputBindings(ctx context.Context, store inputRefStore, workspaceID pgtype.UUID, targetNodeID pgtype.UUID, values []InputBinding) ([]production.InputRef, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	if store == nil || !workspaceID.Valid || !targetNodeID.Valid {
+		return nil, ErrInvalidConfig
+	}
+	nodes, err := store.ListMediaNodesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]production.InputRef, 0, len(values))
+	for _, value := range values {
+		node, err := resolveInputNode(nodes, value.SourceID)
+		if err != nil {
+			return nil, err
+		}
+		ref, err := inputRefForNode(ctx, store, node)
+		if err != nil {
+			return nil, err
+		}
+		ref.Kind = production.InputKindExplicit
+		ref.Required = value.Required
+		ref.ContentType = strings.TrimSpace(value.ContentType)
+		ref.ModelRole = strings.TrimSpace(value.ModelRole)
+		if err := ensureDependencyEdge(ctx, store, workspaceID, node.ID, targetNodeID); err != nil {
+			return nil, err
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
+}
+
 func resolveInputNode(nodes []db.MediaNode, value string) (db.MediaNode, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

@@ -53,7 +53,8 @@ type ReferenceBindingInput struct {
 	ClientKey      string `json:"client_key" jsonschema:"required" jsonschema_description:"稳定业务键，例如 ref_product_luggage_default、ref_airport_scene_morning。用于重试和审计。"`
 	SourceType     string `json:"source_type" jsonschema:"required,enum=key_element_state,enum=media_node,enum=artifact_version,enum=shot_output" jsonschema_description:"参考来源类型。优先使用 key_element_state 或 artifact_version，而不是裸素材。"`
 	SourceID       string `json:"source_id" jsonschema:"required" jsonschema_description:"参考来源标识。media_node 可填写真实 UUID 或当前 workspace 内唯一标题，工具会校验并规范化；shot_output 必须填写 read_project_context 返回的语义 selector，例如 shot_01.preview_image.current 或 shot_02.shot_video.current。不要编造 UUID 或 selector。"`
-	Role           string `json:"role" jsonschema:"required,enum=reference_image,enum=reference_video,enum=reference_audio,enum=first_frame,enum=last_frame,enum=source_video_to_edit,enum=source_video_to_extend,enum=style_reference,enum=product_reference,enum=scene_reference" jsonschema_description:"参考资源在模型调用中的角色。first_frame/last_frame 会影响 Seedance 首尾帧图生视频。"`
+	ContentType    string `json:"content_type" jsonschema:"required,enum=image_url,enum=video_url,enum=audio_url" jsonschema_description:"官方 Seedance content item type。图片必须填 image_url；视频参考填 video_url；音频参考填 audio_url。"`
+	ModelRole      string `json:"model_role" jsonschema:"required,enum=first_frame,enum=last_frame,enum=reference_image,enum=reference_video,enum=reference_audio" jsonschema_description:"官方 Seedance content.role。image_url 只能用 first_frame、last_frame 或 reference_image；video_url 只能用 reference_video；audio_url 只能用 reference_audio。商品/场景/风格语义写入 semantic_target 或 notes，不要写进 model_role。"`
 	PromptAlias    string `json:"prompt_alias" jsonschema_description:"PromptCompiler 使用的可读别名，例如 图片1、视频1、音频1。不要手写 @图片1，交给编译器生成。"`
 	SemanticTarget string `json:"semantic_target" jsonschema_description:"该参考约束的对象，例如悦行行李箱外观、机场出发大厅空间、上一个分镜尾帧。"`
 	Priority       int    `json:"priority" jsonschema_description:"参考优先级，1 最高。重要素材应优先。"`
@@ -145,11 +146,11 @@ func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 		return msg, nil
 	}
 	input = applyUpsertRenderPlanRuntimeDefaults(input, runtime)
-	if err := validateUpsertRenderPlanInput(input); err != nil {
-		return NaturalToolError(toolUpsertRenderPlan, err.Error(), "请修正参数后重试，不要重复提交相同错误参数。"), nil
-	}
 	if msg, ok := validateUpsertRenderPlanRuntime(runtime, input); !ok {
 		return msg, nil
+	}
+	if err := validateUpsertRenderPlanInput(input); err != nil {
+		return NaturalToolError(toolUpsertRenderPlan, err.Error(), "请修正参数后重试，不要重复提交相同错误参数。"), nil
 	}
 	if normalized, msg, ok := t.validateAndNormalizeReferenceBindings(ctx, runtime, input); !ok {
 		return msg, nil
@@ -288,6 +289,9 @@ func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {
 	if err := requireMode(input.Operation, "text_to_image", "image_to_image", "multi_image_to_image", "text_to_video", "image_to_video_first_frame", "image_to_video_first_last_frame", "multi_modal_reference_video", "video_edit", "video_extend", "video_bridge"); err != nil {
 		return err
 	}
+	if err := validateReferenceBindingContent(input.ReferenceBindings, input.Operation); err != nil {
+		return err
+	}
 	if input.Mode == "mark_blocked" {
 		if input.Blocker.BlockerType == "" || input.Blocker.Message == "" {
 			return fmt.Errorf("mark_blocked 需要 blocker.blocker_type 和 blocker.message")
@@ -298,6 +302,84 @@ func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {
 		return err
 	}
 	return nil
+}
+
+func validateReferenceBindingContent(bindings []ReferenceBindingInput, operation string) error {
+	for index, binding := range bindings {
+		if strings.TrimSpace(binding.ContentType) == "" {
+			return fmt.Errorf("reference_bindings[%d].content_type 必填", index)
+		}
+		if strings.TrimSpace(binding.ModelRole) == "" {
+			return fmt.Errorf("reference_bindings[%d].model_role 必填", index)
+		}
+		if err := validateContentModelRole(binding.ContentType, binding.ModelRole); err != nil {
+			return fmt.Errorf("reference_bindings[%d]: %w", index, err)
+		}
+	}
+	switch strings.TrimSpace(operation) {
+	case "image_to_video_first_frame":
+		if len(bindings) != 1 || bindings[0].ContentType != "image_url" || bindings[0].ModelRole != "first_frame" {
+			return fmt.Errorf("image_to_video_first_frame 需要且只需要 1 个 reference_binding: content_type=image_url, model_role=first_frame")
+		}
+	case "image_to_video_first_last_frame":
+		firstFrames, lastFrames := 0, 0
+		for _, binding := range bindings {
+			if binding.ContentType != "image_url" {
+				return fmt.Errorf("image_to_video_first_last_frame 只能使用 image_url")
+			}
+			switch binding.ModelRole {
+			case "first_frame":
+				firstFrames++
+			case "last_frame":
+				lastFrames++
+			default:
+				return fmt.Errorf("image_to_video_first_last_frame 只能使用 model_role=first_frame 或 last_frame")
+			}
+		}
+		if len(bindings) != 2 || firstFrames != 1 || lastFrames != 1 {
+			return fmt.Errorf("image_to_video_first_last_frame 必须提供 2 个 image_url，分别是 first_frame 和 last_frame")
+		}
+	case "multi_modal_reference_video":
+		if len(bindings) == 0 {
+			return fmt.Errorf("multi_modal_reference_video 至少需要 1 个 reference_binding")
+		}
+		imageRefs := 0
+		for _, binding := range bindings {
+			switch binding.ModelRole {
+			case "reference_image":
+				imageRefs++
+			case "reference_video", "reference_audio":
+			default:
+				return fmt.Errorf("multi_modal_reference_video 只能使用 reference_image、reference_video 或 reference_audio")
+			}
+		}
+		if imageRefs > 9 {
+			return fmt.Errorf("multi_modal_reference_video 最多支持 9 张 reference_image")
+		}
+	}
+	return nil
+}
+
+func validateContentModelRole(contentType string, modelRole string) error {
+	switch strings.TrimSpace(contentType) {
+	case "image_url":
+		if modelRole == "first_frame" || modelRole == "last_frame" || modelRole == "reference_image" {
+			return nil
+		}
+		return fmt.Errorf("image_url 只能使用 model_role=first_frame、last_frame 或 reference_image")
+	case "video_url":
+		if modelRole == "reference_video" {
+			return nil
+		}
+		return fmt.Errorf("video_url 只能使用 model_role=reference_video")
+	case "audio_url":
+		if modelRole == "reference_audio" {
+			return nil
+		}
+		return fmt.Errorf("audio_url 只能使用 model_role=reference_audio")
+	default:
+		return fmt.Errorf("content_type 只能是 image_url、video_url 或 audio_url")
+	}
 }
 
 func validateUpsertRenderPlanRuntime(runtime NativeRuntimeContext, input UpsertRenderPlanToolInput) (string, bool) {
@@ -376,7 +458,7 @@ func inferRenderPlanOperation(targetPhase string, bindings []ReferenceBindingInp
 		hasFirstFrame := false
 		hasLastFrame := false
 		for _, binding := range bindings {
-			switch strings.TrimSpace(binding.Role) {
+			switch strings.TrimSpace(binding.ModelRole) {
 			case "first_frame":
 				hasFirstFrame = true
 			case "last_frame":
@@ -501,7 +583,7 @@ func describeAvailableMediaNodes(nodes []db.MediaNode) string {
 func toRenderPlanReferenceBindings(input []ReferenceBindingInput) []renderplan.ReferenceBinding {
 	out := make([]renderplan.ReferenceBinding, 0, len(input))
 	for _, item := range input {
-		out = append(out, renderplan.ReferenceBinding{ClientKey: item.ClientKey, SourceType: item.SourceType, SourceID: item.SourceID, Role: item.Role, PromptAlias: item.PromptAlias, SemanticTarget: item.SemanticTarget, Priority: item.Priority, Required: item.Required, Notes: item.Notes})
+		out = append(out, renderplan.ReferenceBinding{ClientKey: item.ClientKey, SourceType: item.SourceType, SourceID: item.SourceID, ContentType: item.ContentType, ModelRole: item.ModelRole, PromptAlias: item.PromptAlias, SemanticTarget: item.SemanticTarget, Priority: item.Priority, Required: item.Required, Notes: item.Notes})
 	}
 	return out
 }

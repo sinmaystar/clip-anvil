@@ -90,6 +90,9 @@ func TestVideoRuntimeCreatesPollsAndReturnsURLForSandboxPersistence(t *testing.T
 	if len(client.createReq.Content) != 2 || client.createReq.Content[1].ImageURL.URL != "https://assets.example/input.png" {
 		t.Fatalf("content = %#v", client.createReq.Content)
 	}
+	if client.createReq.Content[1].Role == nil || *client.createReq.Content[1].Role != "first_frame" {
+		t.Fatalf("image content role = %#v, want first_frame", client.createReq.Content[1].Role)
+	}
 }
 
 func TestVideoRuntimeResolvesImageRefsBeforeCreatingTask(t *testing.T) {
@@ -264,8 +267,10 @@ func videoIntent() GenerationIntent {
 		PromptTemplate: "A slow camera move through a quiet neon studio.",
 		OutputType:     "video",
 		InputRefs: []InputRef{{
-			NodeType:   "image",
-			StorageURL: "https://assets.example/input.png",
+			NodeType:    "image",
+			StorageURL:  "https://assets.example/input.png",
+			ContentType: "image_url",
+			ModelRole:   "first_frame",
 		}},
 		Model: ModelSpec{Provider: "volcengine", ModelID: "doubao-seedance-1-0-pro-fast-251015"},
 		Params: map[string]any{
