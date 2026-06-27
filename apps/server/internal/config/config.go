@@ -121,7 +121,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if cfg.Agent.ProducerMaxToolCalls <= 0 {
-		cfg.Agent.ProducerMaxToolCalls = 50
+		cfg.Agent.ProducerMaxToolCalls = 1000
 	}
 	if cfg.Agent.ToolTimeoutSeconds <= 0 {
 		cfg.Agent.ToolTimeoutSeconds = 300

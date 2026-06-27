@@ -42,6 +42,9 @@ describe("React Flow canvas foundation", () => {
     assert.match(source, /id:\s*group\.id/);
     assert.match(source, /source:\s*edge\.from_node_id/);
     assert.match(source, /target:\s*edge\.to_node_id/);
+    assert.match(source, /domain_projection/);
+    assert.match(source, /domainNodeToFlowNode/);
+    assert.match(source, /type:\s*"domain"/);
     assert.match(source, /mediaNodeDisplaySize/);
   });
 
@@ -92,11 +95,15 @@ describe("React Flow canvas foundation", () => {
   it("defines group and dependency edge renderers for the shared surface", async () => {
     const groupSource = await readCanvasFlowSource("GroupFlowNode.tsx");
     const edgeSource = await readCanvasFlowSource("DependencyFlowEdge.tsx");
+    const domainNodeSource = await readCanvasFlowSource("DomainFlowNode.tsx");
+    const domainEdgeSource = await readCanvasFlowSource("DomainFlowEdge.tsx");
 
     assert.match(groupSource, /group-flow-node/);
     assert.match(groupSource, /nodeCount/);
     assert.match(edgeSource, /BaseEdge/);
     assert.match(edgeSource, /getBezierPath/);
     assert.match(edgeSource, /dependency-flow-edge/);
+    assert.match(domainNodeSource, /domain-node-shell/);
+    assert.match(domainEdgeSource, /domain-flow-edge/);
   });
 });

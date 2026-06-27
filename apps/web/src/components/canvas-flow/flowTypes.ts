@@ -1,5 +1,11 @@
 import type { Edge, Node } from "@xyflow/react";
-import type { MediaEdge, MediaGroup, MediaNode } from "../../lib/api";
+import type {
+  DomainCanvasEdge,
+  DomainCanvasNode,
+  MediaEdge,
+  MediaGroup,
+  MediaNode,
+} from "../../lib/api";
 import type { MediaDimensions } from "../../lib/nodePreviewLayout";
 
 export type CanvasFlowMode = "studio" | "agent";
@@ -20,12 +26,26 @@ export interface CanvasFlowGroupData extends Record<string, unknown> {
   nodeIds: string[];
 }
 
+export interface CanvasFlowDomainData extends Record<string, unknown> {
+  kind: "domain";
+  node: DomainCanvasNode;
+}
+
 export interface CanvasFlowEdgeData extends Record<string, unknown> {
   edge: MediaEdge;
 }
 
+export interface CanvasFlowDomainEdgeData extends Record<string, unknown> {
+  edge: DomainCanvasEdge;
+}
+
 export type CanvasFlowNode =
   | Node<CanvasFlowNodeData, "media">
-  | Node<CanvasFlowGroupData, "group">;
+  | Node<CanvasFlowGroupData, "group">
+  | Node<CanvasFlowDomainData, "domain">;
 
-export type CanvasFlowEdge = Edge<CanvasFlowEdgeData, "dependency">;
+export type CanvasFlowDomainEdge = Edge<CanvasFlowDomainEdgeData, "domain">;
+
+export type CanvasFlowEdge =
+  | Edge<CanvasFlowEdgeData, "dependency">
+  | CanvasFlowDomainEdge;

@@ -6,7 +6,7 @@ Agent 模式是"默认由 Agent 主导生产，用户在关键节点确认、随
 
 画布只读——用户看到 Agent 的工作成果在画布上实时呈现，所有修改通过对话驱动。
 
-当前 M6 已完成阶段性闭环：Agent Workspace 已有 `/ws/agent` 对话通道、消息/事件/任务持久化、Eino checkpoint/resume、Producer 工具调用、HITL 决策卡、Storyboard/PSS、Craftsman/Worker 预览生成、Reviewer 重试调度、Composer 成片合成和只读 React Flow 画布。本文仍保留部分目标态交互说明；判断当前事实时以代码、迁移和 `docs/engineering/` 为准。
+当前三 Agent 主链路已落地：Agent Workspace 已有 `/ws/agent` 对话通道、消息/事件/任务持久化、Eino checkpoint/resume、Producer/Craftsman/Reviewer 原生 Eino tool loop、HITL 决策卡、创作事实源、RenderPlan、Worker 执行、Reviewer gate、Producer pending signal、语义键和 Agent Workbench 场景/分镜画布投影。本文仍保留部分目标态交互说明；判断当前事实时以代码、迁移和 `docs/engineering/` 为准。
 
 ## 2. 界面布局
 
@@ -155,21 +155,20 @@ Agent 无需主动刷新，除非上下文窗口被压缩。
 
 | 工具 | 用途 | 返回 |
 |---|---|---|
-| `get_production_state` | 获取全量 PSS 快照 | 完整文本 |
-| `get_shot_detail(shotId)` | 单个分镜完整信息 | Prompt 全文、模型参数、所有版本及评审 |
-| `get_asset_detail(assetId)` | 素材详细信息 | 文本内容、图片 URL、视频 URL |
+| `read_project_context` | 读取创作事实源和按需生产状态 | Brief、ProjectMemory、KeyElement、Scene、Shot、RenderPlan、review、issue、ObjectIndex、production_state |
+| `read_project_memory` | 读取当前项目创作宪法 | 核心意图、soul、品牌事实、不可破坏约束、视觉锚点、允许/禁止项 |
 
 ### 5.5 Sub-Agent 的状态可见性
 
-- Producer 将 PSS 的相关子集传给 Sub-Agent（如 Craftsman 只需当前分镜 + 可用素材列表）
-- Sub-Agent 执行完毕后，Producer 通过工具返回值的增量更新感知变化
-- 需要全局视图时 Producer 调用 `get_production_state` 刷新
+- Producer 可以通过 `read_project_context(include=["production_state"])` 读取完整状态；普通规划优先读取 summary，关键决策再读 full。
+- Craftsman / Reviewer 有自己的局部 context loader，并通过 `read_project_memory` 读取全局约束；它们不依赖 Producer 手写摘要作为事实源。
+- Sub-Agent 完成后通过 `producer_pending_signal` 唤醒 Producer；Producer 再读取 DB 事实源做下一步决策。
 
 ## 6. 生产级工具
 
 ### 6.1 设计原则
 
-Agent 的工具不是画布操作（create_node、create_edge），而是**生产操作**（update_storyboard、dispatch_craftsman、review_shot、compose_final）。每个生产工具在内部自动翻译为多个业务命令，Agent 完全不感知底层操作。
+Agent 的工具不是画布操作（create_node、create_edge），而是**语义创作和生产操作**（upsert brief/memory/key elements/storyboard、dispatch Craftsman、decide RenderPlan、dispatch Reviewer、request HITL）。每个工具在内部自动翻译为多个业务命令，Agent 不感知前端画布快照。
 
 典型调用：
 
@@ -185,33 +184,29 @@ dispatch_craftsman({
 
 ### 6.2 工具列表
 
-**规划类**：
+**Producer 规划与调度类**：
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `read_workspace_context` | 无 | 读取 workspace、源素材、画布摘要和任务摘要 |
-| `update_storyboard` | shots[], dependencies[] | 创建或修改 Agent storyboard，只写 shot / shot_dependency 事实 |
-| `create_agent_text_node` | title, text | 创建 Agent 拥有的文本源素材节点，用于 brief、脚本、notes |
+| `read_project_context` | brief, include[], scope_ref?, detail_level | 读取创作事实源、ObjectIndex 和按需 production_state。工具返回语义键，避免模型编造 UUID |
+| `upsert_project_brief` | brief, fields | 创建或修改 `CreativeBrief` |
+| `update_project_memory` | brief, fields | 创建或更新 `ProjectMemory`，由 Producer 维护全局约束和 soul |
+| `upsert_key_elements` | brief, elements[] | 创建或修改 `KeyElement` / `KeyElementState` |
+| `upsert_storyboard` | brief, scenes[], shots[], dependencies[] | 创建或修改 `Scene`、`Shot`、`shot_key_element`、`shot_dependency` |
+| `dispatch_craftsman` | brief, scope_refs[], target_phase, mode | 派发 Craftsman 为 key element state 或 shot 创建/修订 RenderPlan |
+| `decide_render_plan` | brief, render_plan_ref 或 decisions[] | Producer 对 waiting_for_approval RenderPlan 做 accept/reject；accept 后入队 Worker |
+| `dispatch_reviewer` | brief, target, review_task | 派发 Reviewer 做 pre-render、preview image、shot video 或 final video review |
+| `request_user_decision` | title, message, options[] | 请求用户确认并通过 Eino checkpoint/resume 挂起恢复 |
 
-**生成类**：
-
-| 工具 | 参数 | 说明 |
-|---|---|---|
-| `dispatch_craftsman` | shot_id, mode, instruction? | 调度分镜级预览生成，持久化 Craftsman/Worker 任务并复用生产链路 |
-| `generate_shot_video` | shot_id | 基于当前预览 winner 生成分镜视频 |
-| `compose_final` | shot_ids_in_order, bgm_asset_id? | 拼接成片，创建 ComposerGraph 任务并走 `internal_ffmpeg` provider |
-
-**评审与版本**：
+**Craftsman / Reviewer 写入类**：
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `review_shot` | shot_id, rubric? | 质量评审。返回评分和批评 |
-| `select_version` | shot_id, version_id | 设为 winner。系统自动：更新缩略图 + 标记下游 Stale |
-| `retry_generation` | shot_id, revised_prompt, reason | 改写 Prompt 重新生成。系统自动：创建新版本 |
+| `read_project_memory` | brief | Craftsman / Reviewer 读取全局创作宪法 |
+| `upsert_render_plan` | brief, mode, scope, target_phase, operation, prompt_parts, params, bindings | Craftsman 唯一写工具；创建/更新/fork RenderPlan，工具内部完成编译、能力校验和必要的提交准备 |
+| `submit_review_result` | brief, verdict, rubric, critique, issues, retry_recommendation | Reviewer 唯一写工具；写 `review_record` 和 `artifact_issue` |
 
-**状态查询**：`get_production_state`（见 §5.4）
-
-**流程控制**：`request_user_decision(summary, options)` — 请求用户确认，Agent 写入决策事件并暂停，用户响应后 resume。
+旧 `read_workspace_context`、`get_production_state`、`update_storyboard`、`generate_shot_video`、`review_shot`、`select_version`、`retry_generation`、`compose_final` 仍可在历史文档或留存代码中看到。当前三 Agent 主链路优先使用上表的 native typed tools。
 
 ### 6.3 工具执行流程
 
@@ -234,7 +229,7 @@ Agent 调用生产工具（如 dispatch_craftsman）
   │
   └── 返回结果给 Agent（生产语言）:
         ├── {shot_id, status: "generating", job_id}
-        └── PSS 增量: "[开始] shot-01 开始生成, 模型 qwen-vl-max"
+        └── 自然语言工具结果 + DB 事实更新 + producer_pending_signal
 ```
 
 ### 6.4 连线的自动派生
@@ -243,8 +238,8 @@ Agent 不创建连线。所有连线从两个来源自动派生：
 
 | 连线类型 | 派生来源 | 时机 |
 |---|---|---|
-| **dependency** | `dispatch_craftsman` / `generate_shot_video` 使用的生产输入 | 提交生成时自动创建或复用 |
-| **storyboard dependency** | `update_storyboard` 的 shot dependencies | 写入 `shot_dependency`，不污染 Studio dependency |
+| **dependency** | Worker 解析 RenderPlan 输入引用后的生产输入 | 提交生成时自动创建或复用 |
+| **storyboard dependency** | `upsert_storyboard` 的 shot dependencies | 写入 `shot_dependency`，不污染 Studio dependency |
 | **reference** | 用户在 Studio 模式手动拖拽 | 仅 Studio 模式 |
 
 好处：
@@ -262,33 +257,32 @@ Agent 不创建连线。所有连线从两个来源自动派生：
   ▼
 Producer Agent（顶层编排）
   │
-  ├── 读取 Skill（领域知识）
-  ├── 读取 PSS（当前进度）
+  ├── 读取 ProjectContext / ObjectIndex
+  ├── 维护 ProjectMemory（全局约束）
   ├── 管理 Gate（用户确认）
   ├── 处理用户对话修改
   │
-  ├── 规划 storyboard
-  │           └── 调用：update_storyboard
+  ├── 写创作事实源
+  │           └── 调用：upsert_project_brief / update_project_memory / upsert_key_elements / upsert_storyboard
   │
-  ├── 调度 → Craftsman / Worker（每个镜头一个，可并行）
-  │           └── 调用：dispatch_craftsman / generate_shot_video
+  ├── 调度 → Craftsman（按 key_element_state / shot scope，可并行）
+  │           └── 调用：dispatch_craftsman
   │
-  ├── 调度 → Review Sub-Agent
-  │           └── 调用：review_shot, select_version, retry_generation
+  ├── 决策 → Worker
+  │           └── 调用：decide_render_plan accept/reject
   │
-  └── 调度 → Composer
-              └── 调用：compose_final
+  └── 调度 → Reviewer
+              └── 调用：dispatch_reviewer
 ```
 
 ### 7.2 角色分工
 
 | 角色 | 职责 | 工具权限 |
 |---|---|---|
-| **Producer** | 解析需求、加载 Skill、生成分镜、编排任务、管理决策卡、处理用户修改 | 全部生产工具 + 调度 Craftsman/Reviewer/Composer |
-| **Craftsman / Worker** | 为单个镜头生成 Prompt 并提交生成 | 由 `dispatch_craftsman` / `generate_shot_video` 调度 |
-| **Prompt Rewrite** | 评审不通过时改写 Prompt | `retry_generation` |
-| **Review** | 评审生成结果 | `review_shot`, `select_version` |
-| **Composer** | 拼接成片 | `compose_final` |
+| **Producer** | 解析需求、维护全局创作事实源、编排任务、管理决策卡、处理用户修改、读取 signal 决策下一步 | `read_project_context`、`upsert_*`、`dispatch_craftsman`、`decide_render_plan`、`dispatch_reviewer`、`request_user_decision` |
+| **Craftsman** | 为 key element state 或 shot 生成 Seedream/Seedance 结构化 RenderPlan | `read_project_memory`、`upsert_render_plan` |
+| **Worker** | 确定性执行 RenderPlan 对应的 production intent | 无模型工具；由 `decide_render_plan` accept 后入队 |
+| **Reviewer** | 按 10 轴 rubric 评审 RenderPlan 或产物，提交问题和修复建议 | `read_project_context`、`read_project_memory`、`submit_review_result` |
 
 ### 7.3 模型选择策略
 
@@ -296,9 +290,8 @@ Producer Agent（顶层编排）
 |---|---|---|
 | Producer | 强推理 | 理解复杂需求、全局规划 |
 | Craftsman | 领域知识 + 创意 | 为单个分镜制定 Prompt 和生成策略 |
-| Prompt Rewrite | 领域知识 + 推理 | 分析失败原因并改写 |
 | Reviewer | 多模态理解 | 需要"看"生成的图片/视频并给出 critique |
-| Composer | 工具调用 | 主要编排 FFmpeg，逻辑简单 |
+| Worker / Scheduler | 不使用 LLM | 执行确定性生产、依赖等待和 signal 派发 |
 
 ## 8. Skill 体系
 
@@ -471,8 +464,8 @@ Producer Agent:
 
 Producer:
   1. 匹配 Skill → marketing-ad-short
-  2. get_production_state() → 检查已有素材
-  3. 解析需求 → Brief
+  2. read_project_context(include=["object_index","production_state"]) → 检查已有素材和状态
+  3. upsert_project_brief + update_project_memory → 固化目标和约束
   4. 回复: "收到！先规划分镜，请稍等..."
 ```
 
@@ -481,7 +474,14 @@ Producer:
 ```
 Producer:
 
-  update_storyboard({
+  upsert_key_elements({
+    elements: [
+      {semantic_key: "product_oat_latte", type: "product", name: "低糖燕麦拿铁"}
+    ]
+  })
+
+  upsert_storyboard({
+    scenes: [{client_key: "scene_main", title: "时尚咖啡馆主场景"}],
     shots: [
       {title: "01-产品特写", duration: 3, narrative_purpose: "抓注意力",
        description: "微距拍摄燕麦拿铁表面拉花"},
@@ -489,16 +489,12 @@ Producer:
        description: "年轻女性在咖啡馆端起拿铁"},
       ... 共5个镜头
     ],
-    transitions: [
-      {from_index: 0, to_index: 1, type: "crossfade", duration: 0.5},
-      {from_index: 1, to_index: 2, type: "cut"},
-      ...
-    ]
+    dependencies: []
   })
 
   → 系统自动（Agent 不感知）:
     写入 5 个 shot + 必要的 shot_dependency
-    + 后续生成任务创建/更新画布投影 + 广播 WebSocket → 画布出现分镜产物
+    + 更新 Agent Workbench 投影 + 广播 WebSocket → 画布出现场景和分镜
 ```
 
 ### Gate 1: 分镜确认
@@ -509,7 +505,7 @@ request_user_decision("共5个镜头，总时长30s，预估¥3-5")
   对话面板显示确认卡片，画布上可见分镜排列。
 
   ├── 用户"开始生成" → 进入阶段3
-  ├── 用户"第三个改成倒咖啡" → update_storyboard → 重新展示 Gate
+  ├── 用户"第三个改成倒咖啡" → upsert_storyboard patch → 重新展示 Gate
   └── 用户点击画布卡片 → 查看详情 → 在对话中修改
 ```
 
@@ -518,16 +514,22 @@ request_user_decision("共5个镜头，总时长30s，预估¥3-5")
 ```
 Producer 并行调度:
 
-  Producer:
-    create_agent_text_node({title: "产品 brief", text: "低糖燕麦拿铁..."})
-
-  Craftsman / Worker × 5（无阻塞依赖的可并行）:
+  Craftsman × 5（无阻塞依赖的可并行）:
     dispatch_craftsman({
-      shot_id,
-      mode: "preview_image",
-      prompt: "微距拍摄燕麦拿铁拉花...",
-      references: [{asset_id: "产品主图ID", role: "product"}]
+      scope_refs: [{type: "shot", key: "shot_01"}],
+      target_phase: "preview_image",
+      instructions: "生成符合 ProjectMemory 和 shot 描述的 Seedream 预览图计划"
     })
+
+  Craftsman:
+    upsert_render_plan(...)
+
+  Producer:
+    read_project_context(include=["render_plans"])
+    decide_render_plan({decisions: [{render_plan_ref: ..., action: "accept"}]})
+
+  Worker:
+    提交 generation_job / artifact_version
 
   画布实时更新:
     生成中 → 蓝色边框 + 进度条
@@ -538,18 +540,22 @@ Producer 并行调度:
 ### 阶段 4: 评审与重试
 
 ```
-Review Sub-Agent:
-  review_shot(shot_id, rubric)
-  → 通过: select_version(shot_id, version_id)
-  → 不通过: retry_generation(shot_id, revised_prompt, reason)
-  → 3次不通过: 对话中请求用户帮助
+Producer:
+  dispatch_reviewer({review_task: "preview_image_review", target: ...})
+
+Reviewer:
+  submit_review_result(...)
+
+Producer:
+  → 通过: 继续派 shot_video RenderPlan
+  → 不通过: dispatch_craftsman(mode="fork_from", critique / fix_hints)
+  → 多次不通过: request_user_decision 请求用户帮助
 ```
 
 ### 阶段 5: 拼接成片
 
 ```
-Composer:
-  compose_final({shot_ids_in_order: [s1,s2,s3,s4,s5], bgm_asset_id: "BGM_ID"})
+当前商业级 TimelinePlan / Composer 仍是后续方向。已有留存 Composer 能力可通过内部 ffmpeg provider 拼接视频，但三 Agent 主链路当前重点是分镜图、分镜视频、评审和局部修复。
 ```
 
 ### Gate 2: 成片预览
@@ -566,11 +572,11 @@ Agent 运行过程中，用户随时可通过对话干预：
 |---|---|
 | "停一下" / "暂停" | 暂停所有 Sub-Agent，不取消已提交的生成任务 |
 | "继续" | 恢复暂停的流程 |
-| "第二个镜头改成户外场景" | 修改分镜描述 → mark_stale 下游 → 重新生成 |
-| "换个模型试试" | 修改生成参数 → 重新提交 |
-| "这个产品图不好，我上传一张新的" | 等待上传 → 更新 asset → mark_stale 下游 |
-| "第3和第4个镜头合并成一个" | 删除一个节点 + 更新另一个 + 调整连线 |
-| "整体风格偏暖色调" | 更新 mood_anchor → 所有镜头 mark_stale → 提示确认重新生成范围 |
+| "第二个镜头改成户外场景" | Producer patch Shot → 下游 RenderPlan/artifact stale → 请求确认重跑范围 |
+| "换个模型试试" | Producer 派 Craftsman fork RenderPlan，修改 model profile / params |
+| "这个产品图不好，我上传一张新的" | 等待上传 → Producer 更新 KeyElementState reference → 下游依赖 stale |
+| "第3和第4个镜头合并成一个" | Producer patch Storyboard / dependency，旧分镜归档或标记不再使用 |
+| "整体风格偏暖色调" | Producer 更新 ProjectMemory visual anchors → 提示确认影响范围 |
 
 ## 12. Stale 处理
 
@@ -594,7 +600,7 @@ Agent: "第2个镜头有 3 个版本：
        - v3: 评分 8.2 ★当前选中
        要切换到其他版本吗？"
 用户: "切到 v2 看看"
-Agent: [select_version] "已切换到 v2。成片需要重新拼接，要现在拼接吗？"
+Agent: "我会把第2个镜头切到 v2，并标记依赖它的视频/成片需要重新生成。要现在继续吗？"
 ```
 
 ## 14. 跨镜头一致性

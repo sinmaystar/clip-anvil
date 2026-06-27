@@ -8,9 +8,11 @@ INSERT INTO shot_dependency (
     injection_role,
     blocking_phase,
     stale_policy,
-    reason
+    reason,
+    semantic_key,
+    display_name
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 ) RETURNING *;
 
 -- name: ListShotDependenciesByWorkspace :many

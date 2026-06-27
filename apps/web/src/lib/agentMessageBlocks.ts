@@ -4,6 +4,7 @@ export const agentMessageSchemaV1 = "clipanvil.agent.message.v1";
 
 export type AgentMessageBlock =
   | AgentMarkdownBlock
+  | AgentSystemReminderBlock
   | AgentThinkingBlock
   | AgentDecisionCardBlock
   | AgentReviewCardBlock
@@ -22,6 +23,11 @@ export interface AgentBaseBlock {
 
 export interface AgentMarkdownBlock extends AgentBaseBlock {
   type: "markdown";
+  text: string;
+}
+
+export interface AgentSystemReminderBlock extends AgentBaseBlock {
+  type: "system_reminder";
   text: string;
 }
 
@@ -128,7 +134,7 @@ export function agentMessageBlocks(
   ) {
     return [];
   }
-  return envelope.blocks.filter(isAgentBlock);
+  return envelope.blocks.filter(isAgentBlock).map(normalizeAgentBlock);
 }
 
 export function isUnsupportedAgentMessage(message: { content: unknown }) {
@@ -232,6 +238,27 @@ function isAgentBlock(value: unknown): value is AgentMessageBlock {
   }
   const block = value as Partial<AgentBaseBlock>;
   return typeof block.id === "string" && typeof block.type === "string";
+}
+
+function normalizeAgentBlock(block: AgentMessageBlock): AgentMessageBlock {
+  if (block.type !== "markdown" || typeof block.text !== "string") {
+    return block;
+  }
+  const systemReminder = extractSystemReminderText(block.text);
+  if (!systemReminder) {
+    return block;
+  }
+  return {
+    id: block.id,
+    type: "system_reminder",
+    text: systemReminder,
+    visibility: block.visibility,
+  };
+}
+
+export function extractSystemReminderText(text: string) {
+  const match = text.match(/<system-reminder>([\s\S]*?)<\/system-reminder>/i);
+  return (match?.[1] ?? "").trim();
 }
 
 function isAgentAttachment(value: unknown): value is AgentAttachment {

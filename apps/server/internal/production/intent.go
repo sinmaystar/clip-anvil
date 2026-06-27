@@ -24,6 +24,14 @@ type GenerationIntent struct {
 	Model          ModelSpec      `json:"model"`
 	Params         map[string]any `json:"params"`
 	RequestedBy    RequestedBy    `json:"requested_by"`
+	Semantic       SemanticInfo   `json:"semantic,omitempty"`
+}
+
+type SemanticInfo struct {
+	ScopeKey           string      `json:"scope_key,omitempty"`
+	RenderPlanKey      string      `json:"render_plan_key,omitempty"`
+	ArtifactKind       string      `json:"artifact_kind,omitempty"`
+	SourceRenderPlanID pgtype.UUID `json:"source_render_plan_id,omitempty"`
 }
 
 type InputRef struct {

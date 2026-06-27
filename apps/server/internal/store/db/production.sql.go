@@ -41,30 +41,39 @@ INSERT INTO artifact_version (
     provider_request,
     provider_response,
     started_at,
-    completed_at
+    completed_at,
+    semantic_key,
+    display_name,
+    artifact_kind,
+    source_render_plan_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
-) RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+    , $18, $19, $20, $21
+) RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type CreateArtifactVersionParams struct {
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	NodeID           pgtype.UUID        `json:"node_id"`
-	JobID            pgtype.UUID        `json:"job_id"`
-	AssetID          pgtype.UUID        `json:"asset_id"`
-	VersionNo        int32              `json:"version_no"`
-	Winner           bool               `json:"winner"`
-	Output           []byte             `json:"output"`
-	ReviewScore      pgtype.Float4      `json:"review_score"`
-	InputHash        string             `json:"input_hash"`
-	Status           JobStatus          `json:"status"`
-	Progress         int32              `json:"progress"`
-	ErrorCode        pgtype.Text        `json:"error_code"`
-	ErrorMessage     pgtype.Text        `json:"error_message"`
-	ProviderRequest  []byte             `json:"provider_request"`
-	ProviderResponse []byte             `json:"provider_response"`
-	StartedAt        pgtype.Timestamptz `json:"started_at"`
-	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	NodeID             pgtype.UUID        `json:"node_id"`
+	JobID              pgtype.UUID        `json:"job_id"`
+	AssetID            pgtype.UUID        `json:"asset_id"`
+	VersionNo          int32              `json:"version_no"`
+	Winner             bool               `json:"winner"`
+	Output             []byte             `json:"output"`
+	ReviewScore        pgtype.Float4      `json:"review_score"`
+	InputHash          string             `json:"input_hash"`
+	Status             JobStatus          `json:"status"`
+	Progress           int32              `json:"progress"`
+	ErrorCode          pgtype.Text        `json:"error_code"`
+	ErrorMessage       pgtype.Text        `json:"error_message"`
+	ProviderRequest    []byte             `json:"provider_request"`
+	ProviderResponse   []byte             `json:"provider_response"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	SemanticKey        string             `json:"semantic_key"`
+	DisplayName        string             `json:"display_name"`
+	ArtifactKind       string             `json:"artifact_kind"`
+	SourceRenderPlanID pgtype.UUID        `json:"source_render_plan_id"`
 }
 
 func (q *Queries) CreateArtifactVersion(ctx context.Context, arg CreateArtifactVersionParams) (ArtifactVersion, error) {
@@ -86,6 +95,10 @@ func (q *Queries) CreateArtifactVersion(ctx context.Context, arg CreateArtifactV
 		arg.ProviderResponse,
 		arg.StartedAt,
 		arg.CompletedAt,
+		arg.SemanticKey,
+		arg.DisplayName,
+		arg.ArtifactKind,
+		arg.SourceRenderPlanID,
 	)
 	var i ArtifactVersion
 	err := row.Scan(
@@ -108,6 +121,10 @@ func (q *Queries) CreateArtifactVersion(ctx context.Context, arg CreateArtifactV
 		&i.ProviderResponse,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -135,35 +152,42 @@ INSERT INTO generation_job (
     requested_by_type,
     requested_by_id,
     started_at,
-    completed_at
+    completed_at,
+    semantic_key,
+    display_name,
+    source_render_plan_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
-) RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+    , $23, $24, $25
+) RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 `
 
 type CreateGenerationJobParams struct {
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	TargetNodeID     pgtype.UUID        `json:"target_node_id"`
-	ParentJobID      pgtype.UUID        `json:"parent_job_id"`
-	OperationType    string             `json:"operation_type"`
-	Provider         string             `json:"provider"`
-	ModelID          string             `json:"model_id"`
-	Intent           []byte             `json:"intent"`
-	RenderedPrompt   string             `json:"rendered_prompt"`
-	ProviderRequest  []byte             `json:"provider_request"`
-	ProviderResponse []byte             `json:"provider_response"`
-	Status           JobStatus          `json:"status"`
-	Progress         int32              `json:"progress"`
-	Attempt          int32              `json:"attempt"`
-	MaxAttempts      int32              `json:"max_attempts"`
-	RetryPolicy      []byte             `json:"retry_policy"`
-	CostCents        pgtype.Int4        `json:"cost_cents"`
-	ErrorCode        pgtype.Text        `json:"error_code"`
-	ErrorMessage     pgtype.Text        `json:"error_message"`
-	RequestedByType  string             `json:"requested_by_type"`
-	RequestedByID    pgtype.Text        `json:"requested_by_id"`
-	StartedAt        pgtype.Timestamptz `json:"started_at"`
-	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	TargetNodeID       pgtype.UUID        `json:"target_node_id"`
+	ParentJobID        pgtype.UUID        `json:"parent_job_id"`
+	OperationType      string             `json:"operation_type"`
+	Provider           string             `json:"provider"`
+	ModelID            string             `json:"model_id"`
+	Intent             []byte             `json:"intent"`
+	RenderedPrompt     string             `json:"rendered_prompt"`
+	ProviderRequest    []byte             `json:"provider_request"`
+	ProviderResponse   []byte             `json:"provider_response"`
+	Status             JobStatus          `json:"status"`
+	Progress           int32              `json:"progress"`
+	Attempt            int32              `json:"attempt"`
+	MaxAttempts        int32              `json:"max_attempts"`
+	RetryPolicy        []byte             `json:"retry_policy"`
+	CostCents          pgtype.Int4        `json:"cost_cents"`
+	ErrorCode          pgtype.Text        `json:"error_code"`
+	ErrorMessage       pgtype.Text        `json:"error_message"`
+	RequestedByType    string             `json:"requested_by_type"`
+	RequestedByID      pgtype.Text        `json:"requested_by_id"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	SemanticKey        string             `json:"semantic_key"`
+	DisplayName        string             `json:"display_name"`
+	SourceRenderPlanID pgtype.UUID        `json:"source_render_plan_id"`
 }
 
 func (q *Queries) CreateGenerationJob(ctx context.Context, arg CreateGenerationJobParams) (GenerationJob, error) {
@@ -190,6 +214,9 @@ func (q *Queries) CreateGenerationJob(ctx context.Context, arg CreateGenerationJ
 		arg.RequestedByID,
 		arg.StartedAt,
 		arg.CompletedAt,
+		arg.SemanticKey,
+		arg.DisplayName,
+		arg.SourceRenderPlanID,
 	)
 	var i GenerationJob
 	err := row.Scan(
@@ -217,12 +244,15 @@ func (q *Queries) CreateGenerationJob(ctx context.Context, arg CreateGenerationJ
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
 
 const getArtifactVersionByID = `-- name: GetArtifactVersionByID :one
-SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at, semantic_key, display_name, artifact_kind, source_render_plan_id
 FROM artifact_version
 WHERE id = $1
 `
@@ -250,12 +280,16 @@ func (q *Queries) GetArtifactVersionByID(ctx context.Context, id pgtype.UUID) (A
 		&i.ProviderResponse,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
 
 const getArtifactVersionByJobID = `-- name: GetArtifactVersionByJobID :one
-SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at, semantic_key, display_name, artifact_kind, source_render_plan_id
 FROM artifact_version
 WHERE job_id = $1
 `
@@ -283,12 +317,16 @@ func (q *Queries) GetArtifactVersionByJobID(ctx context.Context, jobID pgtype.UU
 		&i.ProviderResponse,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
 
 const getCurrentArtifactVersionForNode = `-- name: GetCurrentArtifactVersionForNode :one
-SELECT artifact_version.id, artifact_version.workspace_id, artifact_version.node_id, artifact_version.job_id, artifact_version.asset_id, artifact_version.version_no, artifact_version.winner, artifact_version.output, artifact_version.review_score, artifact_version.input_hash, artifact_version.created_at, artifact_version.status, artifact_version.progress, artifact_version.error_code, artifact_version.error_message, artifact_version.provider_request, artifact_version.provider_response, artifact_version.started_at, artifact_version.completed_at
+SELECT artifact_version.id, artifact_version.workspace_id, artifact_version.node_id, artifact_version.job_id, artifact_version.asset_id, artifact_version.version_no, artifact_version.winner, artifact_version.output, artifact_version.review_score, artifact_version.input_hash, artifact_version.created_at, artifact_version.status, artifact_version.progress, artifact_version.error_code, artifact_version.error_message, artifact_version.provider_request, artifact_version.provider_response, artifact_version.started_at, artifact_version.completed_at, artifact_version.semantic_key, artifact_version.display_name, artifact_version.artifact_kind, artifact_version.source_render_plan_id
 FROM artifact_version
 JOIN media_node ON media_node.current_version_id = artifact_version.id
 WHERE media_node.id = $1
@@ -317,12 +355,16 @@ func (q *Queries) GetCurrentArtifactVersionForNode(ctx context.Context, id pgtyp
 		&i.ProviderResponse,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
 
 const getGenerationJobByID = `-- name: GetGenerationJobByID :one
-SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 FROM generation_job
 WHERE id = $1
 `
@@ -355,12 +397,15 @@ func (q *Queries) GetGenerationJobByID(ctx context.Context, id pgtype.UUID) (Gen
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
 
 const latestGenerationJobByNode = `-- name: LatestGenerationJobByNode :one
-SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 FROM generation_job
 WHERE target_node_id = $1
 ORDER BY created_at DESC
@@ -395,51 +440,57 @@ func (q *Queries) LatestGenerationJobByNode(ctx context.Context, targetNodeID pg
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
 
 const latestGenerationJobInChain = `-- name: LatestGenerationJobInChain :one
 WITH RECURSIVE chain AS (
-    SELECT generation_job.id, generation_job.workspace_id, generation_job.target_node_id, generation_job.parent_job_id, generation_job.operation_type, generation_job.provider, generation_job.model_id, generation_job.intent, generation_job.rendered_prompt, generation_job.provider_request, generation_job.provider_response, generation_job.status, generation_job.progress, generation_job.attempt, generation_job.max_attempts, generation_job.retry_policy, generation_job.cost_cents, generation_job.error_code, generation_job.error_message, generation_job.requested_by_type, generation_job.requested_by_id, generation_job.started_at, generation_job.completed_at, generation_job.created_at
+    SELECT generation_job.id, generation_job.workspace_id, generation_job.target_node_id, generation_job.parent_job_id, generation_job.operation_type, generation_job.provider, generation_job.model_id, generation_job.intent, generation_job.rendered_prompt, generation_job.provider_request, generation_job.provider_response, generation_job.status, generation_job.progress, generation_job.attempt, generation_job.max_attempts, generation_job.retry_policy, generation_job.cost_cents, generation_job.error_code, generation_job.error_message, generation_job.requested_by_type, generation_job.requested_by_id, generation_job.started_at, generation_job.completed_at, generation_job.created_at, generation_job.semantic_key, generation_job.display_name, generation_job.source_render_plan_id
     FROM generation_job
     WHERE generation_job.id = $1
     UNION ALL
-    SELECT child.id, child.workspace_id, child.target_node_id, child.parent_job_id, child.operation_type, child.provider, child.model_id, child.intent, child.rendered_prompt, child.provider_request, child.provider_response, child.status, child.progress, child.attempt, child.max_attempts, child.retry_policy, child.cost_cents, child.error_code, child.error_message, child.requested_by_type, child.requested_by_id, child.started_at, child.completed_at, child.created_at
+    SELECT child.id, child.workspace_id, child.target_node_id, child.parent_job_id, child.operation_type, child.provider, child.model_id, child.intent, child.rendered_prompt, child.provider_request, child.provider_response, child.status, child.progress, child.attempt, child.max_attempts, child.retry_policy, child.cost_cents, child.error_code, child.error_message, child.requested_by_type, child.requested_by_id, child.started_at, child.completed_at, child.created_at, child.semantic_key, child.display_name, child.source_render_plan_id
     FROM generation_job child
     JOIN chain parent ON child.parent_job_id = parent.id
 )
-SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 FROM chain
 ORDER BY attempt DESC, created_at DESC
 LIMIT 1
 `
 
 type LatestGenerationJobInChainRow struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	TargetNodeID     pgtype.UUID        `json:"target_node_id"`
-	ParentJobID      pgtype.UUID        `json:"parent_job_id"`
-	OperationType    string             `json:"operation_type"`
-	Provider         string             `json:"provider"`
-	ModelID          string             `json:"model_id"`
-	Intent           []byte             `json:"intent"`
-	RenderedPrompt   string             `json:"rendered_prompt"`
-	ProviderRequest  []byte             `json:"provider_request"`
-	ProviderResponse []byte             `json:"provider_response"`
-	Status           JobStatus          `json:"status"`
-	Progress         int32              `json:"progress"`
-	Attempt          int32              `json:"attempt"`
-	MaxAttempts      int32              `json:"max_attempts"`
-	RetryPolicy      []byte             `json:"retry_policy"`
-	CostCents        pgtype.Int4        `json:"cost_cents"`
-	ErrorCode        pgtype.Text        `json:"error_code"`
-	ErrorMessage     pgtype.Text        `json:"error_message"`
-	RequestedByType  string             `json:"requested_by_type"`
-	RequestedByID    pgtype.Text        `json:"requested_by_id"`
-	StartedAt        pgtype.Timestamptz `json:"started_at"`
-	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	TargetNodeID       pgtype.UUID        `json:"target_node_id"`
+	ParentJobID        pgtype.UUID        `json:"parent_job_id"`
+	OperationType      string             `json:"operation_type"`
+	Provider           string             `json:"provider"`
+	ModelID            string             `json:"model_id"`
+	Intent             []byte             `json:"intent"`
+	RenderedPrompt     string             `json:"rendered_prompt"`
+	ProviderRequest    []byte             `json:"provider_request"`
+	ProviderResponse   []byte             `json:"provider_response"`
+	Status             JobStatus          `json:"status"`
+	Progress           int32              `json:"progress"`
+	Attempt            int32              `json:"attempt"`
+	MaxAttempts        int32              `json:"max_attempts"`
+	RetryPolicy        []byte             `json:"retry_policy"`
+	CostCents          pgtype.Int4        `json:"cost_cents"`
+	ErrorCode          pgtype.Text        `json:"error_code"`
+	ErrorMessage       pgtype.Text        `json:"error_message"`
+	RequestedByType    string             `json:"requested_by_type"`
+	RequestedByID      pgtype.Text        `json:"requested_by_id"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	SemanticKey        string             `json:"semantic_key"`
+	DisplayName        string             `json:"display_name"`
+	SourceRenderPlanID pgtype.UUID        `json:"source_render_plan_id"`
 }
 
 func (q *Queries) LatestGenerationJobInChain(ctx context.Context, id pgtype.UUID) (LatestGenerationJobInChainRow, error) {
@@ -470,6 +521,9 @@ func (q *Queries) LatestGenerationJobInChain(ctx context.Context, id pgtype.UUID
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -514,7 +568,7 @@ func (q *Queries) ListActiveStaleReasonsByNode(ctx context.Context, nodeID pgtyp
 }
 
 const listArtifactVersionsByNode = `-- name: ListArtifactVersionsByNode :many
-SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+SELECT id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at, semantic_key, display_name, artifact_kind, source_render_plan_id
 FROM artifact_version
 WHERE node_id = $1
 ORDER BY version_no
@@ -549,6 +603,10 @@ func (q *Queries) ListArtifactVersionsByNode(ctx context.Context, nodeID pgtype.
 			&i.ProviderResponse,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
+			&i.ArtifactKind,
+			&i.SourceRenderPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -561,7 +619,7 @@ func (q *Queries) ListArtifactVersionsByNode(ctx context.Context, nodeID pgtype.
 }
 
 const listGenerationJobsByNode = `-- name: ListGenerationJobsByNode :many
-SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 FROM generation_job
 WHERE target_node_id = $1
 ORDER BY created_at
@@ -601,6 +659,9 @@ func (q *Queries) ListGenerationJobsByNode(ctx context.Context, targetNodeID pgt
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.CreatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
+			&i.SourceRenderPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -613,7 +674,7 @@ func (q *Queries) ListGenerationJobsByNode(ctx context.Context, targetNodeID pgt
 }
 
 const listGenerationJobsByParent = `-- name: ListGenerationJobsByParent :many
-SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+SELECT id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 FROM generation_job
 WHERE parent_job_id = $1
 ORDER BY attempt
@@ -653,6 +714,9 @@ func (q *Queries) ListGenerationJobsByParent(ctx context.Context, parentJobID pg
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.CreatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
+			&i.SourceRenderPlanID,
 		); err != nil {
 			return nil, err
 		}
@@ -673,7 +737,7 @@ SET status = 'failed',
     error_message = $5,
     completed_at = now()
 WHERE job_id = $1
-RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type MarkArtifactVersionFailedByJobParams struct {
@@ -713,6 +777,10 @@ func (q *Queries) MarkArtifactVersionFailedByJob(ctx context.Context, arg MarkAr
 		&i.ProviderResponse,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -722,7 +790,7 @@ UPDATE artifact_version
 SET progress = $2,
     provider_response = $3
 WHERE job_id = $1
-RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type MarkArtifactVersionProgressByJobParams struct {
@@ -754,6 +822,10 @@ func (q *Queries) MarkArtifactVersionProgressByJob(ctx context.Context, arg Mark
 		&i.ProviderResponse,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -765,7 +837,7 @@ SET status = 'running',
     provider_response = $3,
     started_at = COALESCE(started_at, now())
 WHERE job_id = $1
-RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type MarkArtifactVersionRunningByJobParams struct {
@@ -797,6 +869,10 @@ func (q *Queries) MarkArtifactVersionRunningByJob(ctx context.Context, arg MarkA
 		&i.ProviderResponse,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -815,7 +891,7 @@ SET status = 'succeeded',
     error_message = NULL,
     completed_at = now()
 WHERE job_id = $1
-RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type MarkArtifactVersionSucceededByJobParams struct {
@@ -857,6 +933,10 @@ func (q *Queries) MarkArtifactVersionSucceededByJob(ctx context.Context, arg Mar
 		&i.ProviderResponse,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -868,7 +948,7 @@ WHERE id = $1
   AND node_id = $2
   AND status = 'succeeded'
   AND asset_id IS NOT NULL
-RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at
+RETURNING id, workspace_id, node_id, job_id, asset_id, version_no, winner, output, review_score, input_hash, created_at, status, progress, error_code, error_message, provider_request, provider_response, started_at, completed_at, semantic_key, display_name, artifact_kind, source_render_plan_id
 `
 
 type MarkArtifactVersionWinnerParams struct {
@@ -899,6 +979,10 @@ func (q *Queries) MarkArtifactVersionWinner(ctx context.Context, arg MarkArtifac
 		&i.ProviderResponse,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArtifactKind,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -912,7 +996,7 @@ SET status = 'failed',
     error_message = $5,
     completed_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 `
 
 type MarkGenerationJobFailedParams struct {
@@ -957,6 +1041,9 @@ func (q *Queries) MarkGenerationJobFailed(ctx context.Context, arg MarkGeneratio
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -966,7 +1053,7 @@ UPDATE generation_job
 SET progress = $2,
     provider_response = $3
 WHERE id = $1
-RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 `
 
 type MarkGenerationJobProgressParams struct {
@@ -1003,6 +1090,9 @@ func (q *Queries) MarkGenerationJobProgress(ctx context.Context, arg MarkGenerat
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -1014,7 +1104,7 @@ SET status = 'running',
     provider_response = $3,
     started_at = COALESCE(started_at, now())
 WHERE id = $1
-RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 `
 
 type MarkGenerationJobRunningParams struct {
@@ -1051,6 +1141,9 @@ func (q *Queries) MarkGenerationJobRunning(ctx context.Context, arg MarkGenerati
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }
@@ -1064,7 +1157,7 @@ SET status = 'succeeded',
     provider_response = $4,
     completed_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at
+RETURNING id, workspace_id, target_node_id, parent_job_id, operation_type, provider, model_id, intent, rendered_prompt, provider_request, provider_response, status, progress, attempt, max_attempts, retry_policy, cost_cents, error_code, error_message, requested_by_type, requested_by_id, started_at, completed_at, created_at, semantic_key, display_name, source_render_plan_id
 `
 
 type MarkGenerationJobSucceededParams struct {
@@ -1107,6 +1200,9 @@ func (q *Queries) MarkGenerationJobSucceeded(ctx context.Context, arg MarkGenera
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.SourceRenderPlanID,
 	)
 	return i, err
 }

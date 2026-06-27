@@ -37,6 +37,18 @@ func (b *AgentCanvasNodeBroadcaster) BroadcastAgentNodeCreated(workspaceID pgtyp
 	b.hub.Broadcast(workspaceID, CanvasEvent{Type: "NodeCreated", Payload: map[string]any{"node": response}})
 }
 
+func (b *AgentCanvasNodeBroadcaster) BroadcastAgentNodeUpdated(workspaceID pgtype.UUID, node db.MediaNode) {
+	if b == nil || b.hub == nil {
+		return
+	}
+	response, err := b.canvasNodeResponse(context.Background(), workspaceID, node)
+	if err != nil {
+		b.hub.Broadcast(workspaceID, CanvasEvent{Type: "NodeUpdated", Payload: map[string]any{"node": node}})
+		return
+	}
+	b.hub.Broadcast(workspaceID, CanvasEvent{Type: "NodeUpdated", Payload: map[string]any{"node": response}})
+}
+
 func (b *AgentCanvasNodeBroadcaster) canvasNodeResponse(ctx context.Context, workspaceID pgtype.UUID, node db.MediaNode) (canvasNodeResponse, error) {
 	if b.queries == nil {
 		responses := toCanvasNodeResponses([]db.MediaNode{node}, nil, nil, nil, nil)

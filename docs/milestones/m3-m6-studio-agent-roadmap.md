@@ -1,7 +1,7 @@
 # M3-M6 Studio / Agent 生产体系路线图
 
-**状态**：M3-M6 阶段性闭环已完成
-**日期**：2026-06-18；M6 状态更新于 2026-06-24
+**状态**：M3-M6 阶段性闭环已完成；Agent v1 三角色主链路已在此基础上继续演进
+**日期**：2026-06-18；M6 状态更新于 2026-06-24；Agent v1 当前事实更新于 2026-06-27
 **目标**：自底向上建设 Studio / Agent 双模式：先明确 Workspace 入口和权限边界，再建设共享生产底座，随后分别完成专业手动 Studio 和自动化 Agent 模式。
 
 参考设计见本文末尾附录。本文只保留里程碑拆分、目标、工作项、可验收标准和 E2E 测试，不重复展开完整设计细节。
@@ -22,7 +22,8 @@
 | M3 | 已完成 | Workspace 模式入口 | 从创建入口、路由和权限上区分 Studio / Agent | `workspace.mode`、创建入口、路由分流、Agent 只读画布 |
 | M4 | 已完成 | 共享生产底座 | 建立 Studio / Agent 共用的生产数据和执行链路 | 节点目标态、GenerationIntent、Provider Bridge、Sandbox Job Service、版本、Stale、失败重试、Production Read API |
 | M5 | 已完成 | Studio 专业手动模式 | 让专业用户可手动创建、引用、运行和重跑节点 | 浮层 Inspector、Prompt `@`、Reference Pack、手动运行、版本/调用记录、真实 Volcengine、源素材节点、级联 Stale |
-| M6 | 阶段性完成 | Agent 自动生产模式 | Producer/Craftsman/Worker/Reviewer/Composer 复用共享底座完成分镜到成片 | Eino runtime、PSS、shot、HITL、Craftsman、评审重试、Composer、`/ws/agent` |
+| M6 | 阶段性完成 | Agent 自动生产模式 | Producer/Craftsman/Worker/Reviewer/Composer 复用共享底座完成旧闭环 | Eino runtime、PSS、shot、HITL、Craftsman、评审重试、Composer、`/ws/agent` |
+| Agent v1 | 主干已落地 | 三角色生产链路 | Producer/Craftsman/Reviewer + Worker 以创作事实源、RenderPlan、Reviewer gate 和 pending signal 驱动分镜生产 | `creative_brief`、`project_memory`、`key_element`、`scene`、`shot`、`render_plan`、`artifact_issue`、`producer_pending_signal`、语义 ObjectIndex、Agent Workbench |
 
 ---
 
@@ -426,7 +427,9 @@ git diff --check
 
 # M6 Agent 自动生产模式
 
-**状态**：阶段性完成（2026-06-24）
+**状态**：阶段性完成（2026-06-24）；当前主线已演进为三 Agent v1（2026-06-27）
+
+> 本节记录 M6 原始里程碑目标和完成记录。当前代码事实以 Producer / Craftsman / Reviewer 三角色主链路为准：Producer 维护创作事实源并决策 RenderPlan，Craftsman 写 RenderPlan，Worker 执行 production，Reviewer 写 review/issue，Producer pending signal 唤醒下一轮决策。
 
 ## 目标
 
@@ -582,13 +585,13 @@ git diff --check
 
 ## 完成记录
 
-- 数据库已新增 `agent_thread`、`agent_message`、`agent_task`、`agent_event`、`eino_checkpoint`、`shot`、`shot_dependency`、`review_record`，并把迁移推进到 `022_add_doubao_seed_thinking_text_models.sql`。
+- 数据库已推进到 `030_agent_semantic_identity.sql`。除 `agent_thread`、`agent_message`、`agent_task`、`agent_event`、`eino_checkpoint`、`shot`、`shot_dependency`、`review_record` 外，当前还包括 `creative_brief`、`project_memory`、`key_element`、`key_element_state`、`scene`、`shot_key_element`、`render_plan`、`artifact_issue`、`producer_pending_signal` 和 `agent_object_index`。
 - 后端已注册 `/api/agent/workspaces/:workspaceID/...` 系列 API 和 `/ws/agent`，支持对话消息、附件、模型选择、生产概览、HITL 决策响应和 Agent 事件推送。
-- Agent runtime 已使用 Eino native checkpoint/resume，Producer、Craftsman、Reviewer、Composer 图都通过共享 checkpoint store 编译运行。
-- Producer 工具 registry 已包含读取 workspace 上下文、获取生产状态、更新 storyboard、创建 Agent 文本节点、dispatch Craftsman、生成分镜视频、评审分镜、选择版本、重试生成、成片合成和 `request_user_decision`。
-- Craftsman/Worker 已复用 M4 生产底座生成预览和视频，Reviewer 可写入评审记录并触发重试调度，Composer 通过 sandbox-backed internal ffmpeg 合成成片。
-- 前端 Agent Workspace 已有只读 React Flow 画布、浮动对话面板、流式消息、附件上传、模型选择、决策卡、Storyboard 面板、任务时间线、生产状态条和 Composer 入口。
-- 仍未收口：Studio/Agent 复制导入、长期 Memory/Skill 配置化、生产级并发/成本策略、完整音频生成链路和更多真实 provider 的端到端回归。
+- Agent runtime 已使用 Eino native checkpoint/resume。Producer、Craftsman、Reviewer 当前都是 Eino-native tool loop；Composer 代码仍保留，但不是三 Agent v1 主角色。
+- Producer native tools 已切换为 `read_project_context`、`upsert_project_brief`、`update_project_memory`、`upsert_key_elements`、`upsert_storyboard`、`dispatch_craftsman`、`decide_render_plan`、`dispatch_reviewer` 和 `request_user_decision`。
+- Craftsman/Worker 已复用 M4 生产底座生成预览图和分镜视频；Reviewer 通过 `submit_review_result` 写入 `review_record` / `artifact_issue`；Worker/Reviewer/Craftsman 结果通过 `producer_pending_signal` 唤醒 Producer。
+- 前端 Agent Workspace 已从旧只读媒体画布演进为 Agent Workbench，按 overview、scene、shot、artifact、review/issue 组织制作过程，并保留对话面板、流式消息、附件上传、模型选择、决策卡、线程观察和任务状态。
+- 仍未收口：Studio/Agent 复制导入、长期 Skill 配置化、生产级并发/成本策略、完整音频生成链路、TimelinePlan/商业级 Composer、Seedance 首尾帧/视频/音频参考深度支持和更多真实 provider 的端到端回归。
 
 ---
 

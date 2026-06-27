@@ -276,6 +276,21 @@ type AgentMessage struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type AgentObjectIndex struct {
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ObjectType        string             `json:"object_type"`
+	ObjectID          pgtype.UUID        `json:"object_id"`
+	SemanticKey       string             `json:"semantic_key"`
+	DisplayName       string             `json:"display_name"`
+	ParentObjectType  string             `json:"parent_object_type"`
+	ParentObjectID    pgtype.UUID        `json:"parent_object_id"`
+	ParentSemanticKey string             `json:"parent_semantic_key"`
+	Status            string             `json:"status"`
+	Kind              string             `json:"kind"`
+	SortOrder         int32              `json:"sort_order"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentTask struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
@@ -294,6 +309,9 @@ type AgentTask struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	StartedAt    pgtype.Timestamptz `json:"started_at"`
 	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+	RenderPlanID pgtype.UUID        `json:"render_plan_id"`
+	SemanticKey  string             `json:"semantic_key"`
+	DisplayName  string             `json:"display_name"`
 }
 
 type AgentThread struct {
@@ -309,28 +327,57 @@ type AgentThread struct {
 	Summary              string             `json:"summary"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	SemanticKey          string             `json:"semantic_key"`
+	DisplayName          string             `json:"display_name"`
+}
+
+type ArtifactIssue struct {
+	ID                       pgtype.UUID        `json:"id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	ReviewRecordID           pgtype.UUID        `json:"review_record_id"`
+	Dimension                string             `json:"dimension"`
+	Severity                 string             `json:"severity"`
+	Status                   string             `json:"status"`
+	TargetObjectType         string             `json:"target_object_type"`
+	TargetObjectID           pgtype.UUID        `json:"target_object_id"`
+	Title                    string             `json:"title"`
+	Description              string             `json:"description"`
+	Evidence                 string             `json:"evidence"`
+	SuggestedFix             string             `json:"suggested_fix"`
+	FixHint                  string             `json:"fix_hint"`
+	RequiresUserConfirmation bool               `json:"requires_user_confirmation"`
+	SupersededByIssueID      pgtype.UUID        `json:"superseded_by_issue_id"`
+	ResolvedByReviewRecordID pgtype.UUID        `json:"resolved_by_review_record_id"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	SemanticKey              string             `json:"semantic_key"`
+	DisplayName              string             `json:"display_name"`
 }
 
 type ArtifactVersion struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	NodeID           pgtype.UUID        `json:"node_id"`
-	JobID            pgtype.UUID        `json:"job_id"`
-	AssetID          pgtype.UUID        `json:"asset_id"`
-	VersionNo        int32              `json:"version_no"`
-	Winner           bool               `json:"winner"`
-	Output           []byte             `json:"output"`
-	ReviewScore      pgtype.Float4      `json:"review_score"`
-	InputHash        string             `json:"input_hash"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	Status           JobStatus          `json:"status"`
-	Progress         int32              `json:"progress"`
-	ErrorCode        pgtype.Text        `json:"error_code"`
-	ErrorMessage     pgtype.Text        `json:"error_message"`
-	ProviderRequest  []byte             `json:"provider_request"`
-	ProviderResponse []byte             `json:"provider_response"`
-	StartedAt        pgtype.Timestamptz `json:"started_at"`
-	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	NodeID             pgtype.UUID        `json:"node_id"`
+	JobID              pgtype.UUID        `json:"job_id"`
+	AssetID            pgtype.UUID        `json:"asset_id"`
+	VersionNo          int32              `json:"version_no"`
+	Winner             bool               `json:"winner"`
+	Output             []byte             `json:"output"`
+	ReviewScore        pgtype.Float4      `json:"review_score"`
+	InputHash          string             `json:"input_hash"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	Status             JobStatus          `json:"status"`
+	Progress           int32              `json:"progress"`
+	ErrorCode          pgtype.Text        `json:"error_code"`
+	ErrorMessage       pgtype.Text        `json:"error_message"`
+	ProviderRequest    []byte             `json:"provider_request"`
+	ProviderResponse   []byte             `json:"provider_response"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	SemanticKey        string             `json:"semantic_key"`
+	DisplayName        string             `json:"display_name"`
+	ArtifactKind       string             `json:"artifact_kind"`
+	SourceRenderPlanID pgtype.UUID        `json:"source_render_plan_id"`
 }
 
 type CanvasDocument struct {
@@ -341,6 +388,31 @@ type CanvasDocument struct {
 	CameraZoom    float32            `json:"camera_zoom"`
 	LayoutVersion int32              `json:"layout_version"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type CreativeBrief struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	Title             string             `json:"title"`
+	VideoType         string             `json:"video_type"`
+	TargetAudience    string             `json:"target_audience"`
+	Tone              string             `json:"tone"`
+	VisualStyle       string             `json:"visual_style"`
+	DurationSec       pgtype.Float8      `json:"duration_sec"`
+	AspectRatio       string             `json:"aspect_ratio"`
+	Language          string             `json:"language"`
+	Objective         string             `json:"objective"`
+	Concept           string             `json:"concept"`
+	Constraints       []byte             `json:"constraints"`
+	Metadata          []byte             `json:"metadata"`
+	Status            string             `json:"status"`
+	CreatedByThreadID pgtype.UUID        `json:"created_by_thread_id"`
+	CreatedByTaskID   pgtype.UUID        `json:"created_by_task_id"`
+	ArchivedAt        pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	SemanticKey       string             `json:"semantic_key"`
+	DisplayName       string             `json:"display_name"`
 }
 
 type EinoCheckpoint struct {
@@ -355,30 +427,75 @@ type EinoCheckpoint struct {
 }
 
 type GenerationJob struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	TargetNodeID     pgtype.UUID        `json:"target_node_id"`
-	ParentJobID      pgtype.UUID        `json:"parent_job_id"`
-	OperationType    string             `json:"operation_type"`
-	Provider         string             `json:"provider"`
-	ModelID          string             `json:"model_id"`
-	Intent           []byte             `json:"intent"`
-	RenderedPrompt   string             `json:"rendered_prompt"`
-	ProviderRequest  []byte             `json:"provider_request"`
-	ProviderResponse []byte             `json:"provider_response"`
-	Status           JobStatus          `json:"status"`
-	Progress         int32              `json:"progress"`
-	Attempt          int32              `json:"attempt"`
-	MaxAttempts      int32              `json:"max_attempts"`
-	RetryPolicy      []byte             `json:"retry_policy"`
-	CostCents        pgtype.Int4        `json:"cost_cents"`
-	ErrorCode        pgtype.Text        `json:"error_code"`
-	ErrorMessage     pgtype.Text        `json:"error_message"`
-	RequestedByType  string             `json:"requested_by_type"`
-	RequestedByID    pgtype.Text        `json:"requested_by_id"`
-	StartedAt        pgtype.Timestamptz `json:"started_at"`
-	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	TargetNodeID       pgtype.UUID        `json:"target_node_id"`
+	ParentJobID        pgtype.UUID        `json:"parent_job_id"`
+	OperationType      string             `json:"operation_type"`
+	Provider           string             `json:"provider"`
+	ModelID            string             `json:"model_id"`
+	Intent             []byte             `json:"intent"`
+	RenderedPrompt     string             `json:"rendered_prompt"`
+	ProviderRequest    []byte             `json:"provider_request"`
+	ProviderResponse   []byte             `json:"provider_response"`
+	Status             JobStatus          `json:"status"`
+	Progress           int32              `json:"progress"`
+	Attempt            int32              `json:"attempt"`
+	MaxAttempts        int32              `json:"max_attempts"`
+	RetryPolicy        []byte             `json:"retry_policy"`
+	CostCents          pgtype.Int4        `json:"cost_cents"`
+	ErrorCode          pgtype.Text        `json:"error_code"`
+	ErrorMessage       pgtype.Text        `json:"error_message"`
+	RequestedByType    string             `json:"requested_by_type"`
+	RequestedByID      pgtype.Text        `json:"requested_by_id"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	SemanticKey        string             `json:"semantic_key"`
+	DisplayName        string             `json:"display_name"`
+	SourceRenderPlanID pgtype.UUID        `json:"source_render_plan_id"`
+}
+
+type KeyElement struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ClientKey         string             `json:"client_key"`
+	ElementType       string             `json:"element_type"`
+	Name              string             `json:"name"`
+	Description       string             `json:"description"`
+	SourceType        string             `json:"source_type"`
+	SourceRefs        []byte             `json:"source_refs"`
+	Status            string             `json:"status"`
+	CreatedByThreadID pgtype.UUID        `json:"created_by_thread_id"`
+	CreatedByTaskID   pgtype.UUID        `json:"created_by_task_id"`
+	ArchivedAt        pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	SemanticKey       string             `json:"semantic_key"`
+	DisplayName       string             `json:"display_name"`
+}
+
+type KeyElementState struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	KeyElementID       pgtype.UUID        `json:"key_element_id"`
+	ClientKey          string             `json:"client_key"`
+	Label              string             `json:"label"`
+	VisualDescription  string             `json:"visual_description"`
+	ReferenceStatus    string             `json:"reference_status"`
+	ReferenceNodeID    pgtype.UUID        `json:"reference_node_id"`
+	ReferenceVersionID pgtype.UUID        `json:"reference_version_id"`
+	IsDefault          bool               `json:"is_default"`
+	StateFacts         []byte             `json:"state_facts"`
+	SourceRefs         []byte             `json:"source_refs"`
+	Status             string             `json:"status"`
+	CreatedByThreadID  pgtype.UUID        `json:"created_by_thread_id"`
+	CreatedByTaskID    pgtype.UUID        `json:"created_by_task_id"`
+	ArchivedAt         pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	SemanticKey        string             `json:"semantic_key"`
+	DisplayName        string             `json:"display_name"`
 }
 
 type MediaAsset struct {
@@ -415,31 +532,35 @@ type MediaGroup struct {
 }
 
 type MediaNode struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	NodeType         NodeType           `json:"node_type"`
-	Title            string             `json:"title"`
-	Status           NodeStatus         `json:"status"`
-	Prompt           string             `json:"prompt"`
-	Source           string             `json:"source"`
-	CanvasX          float32            `json:"canvas_x"`
-	CanvasY          float32            `json:"canvas_y"`
-	CanvasW          float32            `json:"canvas_w"`
-	CanvasH          float32            `json:"canvas_h"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	GroupID          pgtype.UUID        `json:"group_id"`
-	AssetID          pgtype.UUID        `json:"asset_id"`
-	OperationType    string             `json:"operation_type"`
-	PromptTemplate   string             `json:"prompt_template"`
-	PromptRich       []byte             `json:"prompt_rich"`
-	PromptRefs       []byte             `json:"prompt_refs"`
-	ModelProvider    pgtype.Text        `json:"model_provider"`
-	ModelID          pgtype.Text        `json:"model_id"`
-	ModelParams      []byte             `json:"model_params"`
-	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
-	Metadata         []byte             `json:"metadata"`
-	ShotID           pgtype.UUID        `json:"shot_id"`
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	NodeType           NodeType           `json:"node_type"`
+	Title              string             `json:"title"`
+	Status             NodeStatus         `json:"status"`
+	Prompt             string             `json:"prompt"`
+	Source             string             `json:"source"`
+	CanvasX            float32            `json:"canvas_x"`
+	CanvasY            float32            `json:"canvas_y"`
+	CanvasW            float32            `json:"canvas_w"`
+	CanvasH            float32            `json:"canvas_h"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	GroupID            pgtype.UUID        `json:"group_id"`
+	AssetID            pgtype.UUID        `json:"asset_id"`
+	OperationType      string             `json:"operation_type"`
+	PromptTemplate     string             `json:"prompt_template"`
+	PromptRich         []byte             `json:"prompt_rich"`
+	PromptRefs         []byte             `json:"prompt_refs"`
+	ModelProvider      pgtype.Text        `json:"model_provider"`
+	ModelID            pgtype.Text        `json:"model_id"`
+	ModelParams        []byte             `json:"model_params"`
+	CurrentVersionID   pgtype.UUID        `json:"current_version_id"`
+	Metadata           []byte             `json:"metadata"`
+	ShotID             pgtype.UUID        `json:"shot_id"`
+	SemanticKey        string             `json:"semantic_key"`
+	DisplayName        string             `json:"display_name"`
+	ArtifactKind       string             `json:"artifact_kind"`
+	SourceRenderPlanID pgtype.UUID        `json:"source_render_plan_id"`
 }
 
 type ModelCapability struct {
@@ -481,6 +602,54 @@ type NodeStaleReason struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
+type ProducerPendingSignal struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProducerThreadID  pgtype.UUID        `json:"producer_thread_id"`
+	SourceRole        string             `json:"source_role"`
+	SourceTaskID      pgtype.UUID        `json:"source_task_id"`
+	SourceThreadID    pgtype.UUID        `json:"source_thread_id"`
+	SignalType        string             `json:"signal_type"`
+	ScopeType         string             `json:"scope_type"`
+	ScopeID           pgtype.UUID        `json:"scope_id"`
+	RenderPlanID      pgtype.UUID        `json:"render_plan_id"`
+	MessageID         pgtype.UUID        `json:"message_id"`
+	Status            string             `json:"status"`
+	Priority          int32              `json:"priority"`
+	DedupeKey         string             `json:"dedupe_key"`
+	Payload           []byte             `json:"payload"`
+	ClaimedByTaskID   pgtype.UUID        `json:"claimed_by_task_id"`
+	ClaimedAt         pgtype.Timestamptz `json:"claimed_at"`
+	ProcessedByTaskID pgtype.UUID        `json:"processed_by_task_id"`
+	ProcessedAt       pgtype.Timestamptz `json:"processed_at"`
+	LastError         pgtype.Text        `json:"last_error"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	SemanticKey       string             `json:"semantic_key"`
+	DisplayName       string             `json:"display_name"`
+}
+
+type ProjectMemory struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	Version              int32              `json:"version"`
+	Status               string             `json:"status"`
+	CoreIntent           string             `json:"core_intent"`
+	Soul                 string             `json:"soul"`
+	BrandFacts           []byte             `json:"brand_facts"`
+	NonNegotiables       []byte             `json:"non_negotiables"`
+	VisualAnchors        []byte             `json:"visual_anchors"`
+	Allowed              []byte             `json:"allowed"`
+	Forbidden            []byte             `json:"forbidden"`
+	PromptInjectionHints []byte             `json:"prompt_injection_hints"`
+	SourceRefs           []byte             `json:"source_refs"`
+	CreatedByThreadID    pgtype.UUID        `json:"created_by_thread_id"`
+	CreatedByTaskID      pgtype.UUID        `json:"created_by_task_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	SemanticKey          string             `json:"semantic_key"`
+	DisplayName          string             `json:"display_name"`
+}
+
 type ReferencePackItem struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
@@ -490,6 +659,45 @@ type ReferencePackItem struct {
 	Metadata     []byte             `json:"metadata"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RenderPlan struct {
+	ID                     pgtype.UUID        `json:"id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	ScopeType              string             `json:"scope_type"`
+	ScopeID                pgtype.UUID        `json:"scope_id"`
+	TargetPhase            string             `json:"target_phase"`
+	TaskType               string             `json:"task_type"`
+	ModelPromptProfile     string             `json:"model_prompt_profile"`
+	Operation              string             `json:"operation"`
+	Status                 string             `json:"status"`
+	Revision               int32              `json:"revision"`
+	ForkedFromRenderPlanID pgtype.UUID        `json:"forked_from_render_plan_id"`
+	RenderPlanKey          string             `json:"render_plan_key"`
+	ReferenceBindings      []byte             `json:"reference_bindings"`
+	SubjectBindings        []byte             `json:"subject_bindings"`
+	PromptParts            []byte             `json:"prompt_parts"`
+	Params                 []byte             `json:"params"`
+	AuditHints             []byte             `json:"audit_hints"`
+	Blocker                []byte             `json:"blocker"`
+	CompiledPrompt         string             `json:"compiled_prompt"`
+	CompiledRequest        []byte             `json:"compiled_request"`
+	PromptAudit            []byte             `json:"prompt_audit"`
+	CostEstimate           []byte             `json:"cost_estimate"`
+	Rationale              string             `json:"rationale"`
+	CreatedByThreadID      pgtype.UUID        `json:"created_by_thread_id"`
+	CreatedByTaskID        pgtype.UUID        `json:"created_by_task_id"`
+	SubmittedWorkerTaskID  pgtype.UUID        `json:"submitted_worker_task_id"`
+	OutputNodeID           pgtype.UUID        `json:"output_node_id"`
+	OutputVersionID        pgtype.UUID        `json:"output_version_id"`
+	ArchivedAt             pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	CompiledAt             pgtype.Timestamptz `json:"compiled_at"`
+	SubmittedAt            pgtype.Timestamptz `json:"submitted_at"`
+	CompletedAt            pgtype.Timestamptz `json:"completed_at"`
+	SemanticKey            string             `json:"semantic_key"`
+	DisplayName            string             `json:"display_name"`
 }
 
 type ReviewRecord struct {
@@ -516,6 +724,14 @@ type ReviewRecord struct {
 	ErrorMessage         string             `json:"error_message"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+	ReviewTask           string             `json:"review_task"`
+	TargetObjectType     string             `json:"target_object_type"`
+	TargetObjectID       pgtype.UUID        `json:"target_object_id"`
+	RenderPlanID         pgtype.UUID        `json:"render_plan_id"`
+	RequiredAxes         []byte             `json:"required_axes"`
+	Escalation           []byte             `json:"escalation"`
+	SemanticKey          string             `json:"semantic_key"`
+	DisplayName          string             `json:"display_name"`
 }
 
 type SandboxJob struct {
@@ -542,6 +758,25 @@ type SandboxJob struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
+type Scene struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ClientKey         string             `json:"client_key"`
+	SortOrder         int32              `json:"sort_order"`
+	Title             string             `json:"title"`
+	Description       string             `json:"description"`
+	Location          string             `json:"location"`
+	Mood              string             `json:"mood"`
+	Status            string             `json:"status"`
+	CreatedByThreadID pgtype.UUID        `json:"created_by_thread_id"`
+	CreatedByTaskID   pgtype.UUID        `json:"created_by_task_id"`
+	ArchivedAt        pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	SemanticKey       string             `json:"semantic_key"`
+	DisplayName       string             `json:"display_name"`
+}
+
 type Shot struct {
 	ID                pgtype.UUID        `json:"id"`
 	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
@@ -556,6 +791,17 @@ type Shot struct {
 	ArchivedAt        pgtype.Timestamptz `json:"archived_at"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	SceneID           pgtype.UUID        `json:"scene_id"`
+	ShotKind          string             `json:"shot_kind"`
+	CreativeText      string             `json:"creative_text"`
+	VisualIntent      string             `json:"visual_intent"`
+	ActionText        string             `json:"action_text"`
+	CameraIntent      string             `json:"camera_intent"`
+	Dialogue          string             `json:"dialogue"`
+	Narration         string             `json:"narration"`
+	AudioPlan         []byte             `json:"audio_plan"`
+	SemanticKey       string             `json:"semantic_key"`
+	DisplayName       string             `json:"display_name"`
 }
 
 type ShotDependency struct {
@@ -570,6 +816,20 @@ type ShotDependency struct {
 	StalePolicy      string             `json:"stale_policy"`
 	Reason           string             `json:"reason"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	SemanticKey      string             `json:"semantic_key"`
+	DisplayName      string             `json:"display_name"`
+}
+
+type ShotKeyElement struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ShotID            pgtype.UUID        `json:"shot_id"`
+	KeyElementID      pgtype.UUID        `json:"key_element_id"`
+	KeyElementStateID pgtype.UUID        `json:"key_element_state_id"`
+	Role              string             `json:"role"`
+	Required          bool               `json:"required"`
+	SortOrder         int32              `json:"sort_order"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
 type Workspace struct {

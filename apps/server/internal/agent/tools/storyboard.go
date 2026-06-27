@@ -224,15 +224,24 @@ func storyboardBriefValue(values map[string]any) map[string]any {
 }
 
 func stringSliceValue(values map[string]any, key string) []string {
-	raw, ok := values[key].([]any)
-	if !ok {
+	switch raw := values[key].(type) {
+	case []string:
+		out := make([]string, 0, len(raw))
+		for _, item := range raw {
+			if value := strings.TrimSpace(item); value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(raw))
+		for _, item := range raw {
+			if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
+				out = append(out, strings.TrimSpace(value))
+			}
+		}
+		return out
+	default:
 		return nil
 	}
-	out := []string{}
-	for _, item := range raw {
-		if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
-			out = append(out, strings.TrimSpace(value))
-		}
-	}
-	return out
 }

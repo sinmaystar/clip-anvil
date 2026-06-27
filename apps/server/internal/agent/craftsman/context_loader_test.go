@@ -32,6 +32,7 @@ func TestContextLoaderBuildsShotScopedContext(t *testing.T) {
 		ThreadID:    uuidWithByte(4),
 		TaskID:      uuidWithByte(5),
 		ShotID:      uuidWithByte(2),
+		Mode:        "preview_image",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +45,9 @@ func TestContextLoaderBuildsShotScopedContext(t *testing.T) {
 	}
 	if !strings.Contains(out.Text, "shot-01") || !strings.Contains(out.Text, "shot preview") || !strings.Contains(out.Text, "queued") {
 		t.Fatalf("context text = %q", out.Text)
+	}
+	if !strings.Contains(out.Text, "target_phase: preview_image") {
+		t.Fatalf("context text missing current target phase: %q", out.Text)
 	}
 	if strings.Contains(out.Text, "other shot") {
 		t.Fatalf("context leaked other shot: %q", out.Text)
@@ -98,16 +102,21 @@ func TestContextLoaderIncludesDependenciesAndSourceMaterials(t *testing.T) {
 }
 
 type fakeContextStore struct {
-	shot         db.Shot
-	nodes        []db.MediaNode
-	sourceNodes  []db.MediaNode
-	dependencies []db.ShotDependency
-	jobs         map[pgtype.UUID][]db.GenerationJob
-	versions     map[pgtype.UUID][]db.ArtifactVersion
+	shot            db.Shot
+	keyElementState db.KeyElementState
+	nodes           []db.MediaNode
+	sourceNodes     []db.MediaNode
+	dependencies    []db.ShotDependency
+	jobs            map[pgtype.UUID][]db.GenerationJob
+	versions        map[pgtype.UUID][]db.ArtifactVersion
 }
 
 func (f *fakeContextStore) GetShotByID(context.Context, pgtype.UUID) (db.Shot, error) {
 	return f.shot, nil
+}
+
+func (f *fakeContextStore) GetKeyElementStateByID(context.Context, db.GetKeyElementStateByIDParams) (db.KeyElementState, error) {
+	return f.keyElementState, nil
 }
 
 func (f *fakeContextStore) ListMediaNodesByShot(_ context.Context, params db.ListMediaNodesByShotParams) ([]db.MediaNode, error) {

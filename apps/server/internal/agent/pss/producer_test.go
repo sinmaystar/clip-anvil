@@ -2,9 +2,11 @@ package pss
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -23,6 +25,35 @@ func TestProducerPSSMentionsEmptyStoryboard(t *testing.T) {
 		t.Fatalf("PSS text = %s", pss.Text)
 	}
 	if pss.Structured["workspace"] == nil || pss.Structured["shots"] == nil {
+		t.Fatalf("structured = %#v", pss.Structured)
+	}
+}
+
+func TestProducerPSSListsM1CreativeState(t *testing.T) {
+	brief := db.CreativeBrief{ID: uuidWithByte(10), WorkspaceID: uuidWithByte(1), Title: "悦行行李箱机场广告", Status: "active", Concept: "机场轻松出行广告"}
+	memory := db.ProjectMemory{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), Version: 1, Status: "active", CoreIntent: "突出短途商务出行", Soul: "轻松出门，行程有掌控感"}
+	element := db.KeyElement{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "product_yuexing_luggage", ElementType: "product", Name: "悦行行李箱"}
+	state := db.KeyElementState{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), KeyElementID: element.ID, ClientKey: "state_uploaded_front", Label: "用户上传素材状态", ReferenceStatus: "ready", IsDefault: true}
+	scene := db.Scene{ID: uuidWithByte(14), WorkspaceID: uuidWithByte(1), ClientKey: "scene_airport_departure_hall", SortOrder: 1, Title: "机场出发大厅", Location: "机场出发大厅", Mood: "明亮、轻快"}
+	builder := NewBuilder(fakeStore{
+		workspace:     db.Workspace{ID: uuidWithByte(1), Name: "agent-ws", Mode: db.WorkspaceModeAgent},
+		creativeBrief: &brief,
+		projectMemory: &memory,
+		elements:      []db.KeyElement{element},
+		elementStates: []db.KeyElementState{state},
+		scenes:        []db.Scene{scene},
+	})
+
+	pss, err := builder.BuildProducerPSS(context.Background(), uuidWithByte(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"CreativeBrief", "悦行行李箱机场广告", "ProjectMemory", "轻松出门", "关键元素", "product_yuexing_luggage", "机场出发大厅"} {
+		if !strings.Contains(pss.Text, want) {
+			t.Fatalf("PSS missing %q:\n%s", want, pss.Text)
+		}
+	}
+	if pss.Structured["creative_brief"] == nil || pss.Structured["project_memory"] == nil || pss.Structured["key_elements"] == nil || pss.Structured["scenes"] == nil {
 		t.Fatalf("structured = %#v", pss.Structured)
 	}
 }
@@ -69,16 +100,17 @@ func TestProducerPSSListsPreviewGenerationState(t *testing.T) {
 		Status:        "queued",
 		OperationType: "text_to_image",
 		Metadata:      []byte(`{"agent_artifact_kind":"preview_image"}`),
+		SemanticKey:   "shot-01.preview_image.r1.node",
 	}
 	builder := NewBuilder(fakeStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Name: "agent-ws", Mode: db.WorkspaceModeAgent},
 		shots:     []db.Shot{shot},
 		nodes:     []db.MediaNode{node},
 		jobs: map[pgtype.UUID][]db.GenerationJob{
-			node.ID: {{ID: uuidWithByte(5), TargetNodeID: node.ID, OperationType: "text_to_image", Status: db.JobStatusQueued}},
+			node.ID: {{ID: uuidWithByte(5), TargetNodeID: node.ID, OperationType: "text_to_image", Status: db.JobStatusQueued, SemanticKey: "shot-01.preview_image.r1.job.a1"}},
 		},
 		versions: map[pgtype.UUID][]db.ArtifactVersion{
-			node.ID: {{ID: uuidWithByte(6), NodeID: node.ID, Status: db.JobStatusQueued}},
+			node.ID: {{ID: uuidWithByte(6), NodeID: node.ID, Status: db.JobStatusQueued, SemanticKey: "shot-01.preview_image.r1.artifact.v1"}},
 		},
 	})
 
@@ -98,6 +130,76 @@ func TestProducerPSSListsPreviewGenerationState(t *testing.T) {
 	}
 }
 
+func TestProducerPSSDoesNotExposeExecutableUUIDs(t *testing.T) {
+	shot := db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", SortOrder: 1, Title: "开场", Status: "planned", SemanticKey: "shot_01"}
+	node := db.MediaNode{
+		ID:            uuidWithByte(4),
+		WorkspaceID:   uuidWithByte(1),
+		ShotID:        shot.ID,
+		Title:         "shot_01 preview image",
+		NodeType:      db.NodeTypeImage,
+		Source:        "agent",
+		Status:        "queued",
+		OperationType: "text_to_image",
+		Metadata:      []byte(`{"agent_artifact_kind":"preview_image"}`),
+		SemanticKey:   "shot_01.preview_image.r1.node",
+	}
+	task := db.AgentTask{
+		ID:          uuidWithByte(9),
+		WorkspaceID: uuidWithByte(1),
+		Role:        "producer",
+		TaskType:    "producer_turn",
+		Status:      "running",
+		SemanticKey: "producer.workspace.agent-ws.producer_turn.t1",
+	}
+	event := db.AgentEvent{
+		ID:         uuidWithByte(10),
+		EventType:  "producer_turn_queued",
+		SourceRole: "system",
+		Status:     "pending",
+	}
+	builder := NewBuilder(fakeStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Name: "agent-ws", Mode: db.WorkspaceModeAgent},
+		shots:     []db.Shot{shot},
+		nodes:     []db.MediaNode{node},
+		tasks:     []db.AgentTask{task},
+		events:    []db.AgentEvent{event},
+		jobs: map[pgtype.UUID][]db.GenerationJob{
+			node.ID: {{ID: uuidWithByte(5), TargetNodeID: node.ID, OperationType: "text_to_image", Status: db.JobStatusQueued, SemanticKey: "shot_01.preview_image.r1.job.a1"}},
+		},
+		versions: map[pgtype.UUID][]db.ArtifactVersion{
+			node.ID: {{ID: uuidWithByte(6), NodeID: node.ID, Status: db.JobStatusQueued, SemanticKey: "shot_01.preview_image.r1.artifact.v1"}},
+		},
+	})
+
+	pss, err := builder.BuildProducerPSS(context.Background(), uuidWithByte(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	structured, err := json.Marshal(pss.Structured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined := pss.Text + "\n" + string(structured)
+	for _, leaked := range []string{
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000004",
+		"00000000-0000-0000-0000-000000000005",
+		"00000000-0000-0000-0000-000000000006",
+		"00000000-0000-0000-0000-000000000009",
+		"00000000-0000-0000-0000-000000000010",
+	} {
+		if strings.Contains(combined, leaked) {
+			t.Fatalf("PSS leaked executable UUID %s:\n%s", leaked, combined)
+		}
+	}
+	for _, want := range []string{"shot_01.preview_image.r1.node", "shot_01.preview_image.r1.job.a1", "producer.workspace.agent-ws.producer_turn.t1", "producer_turn_queued"} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("PSS missing semantic ref %q:\n%s", want, combined)
+		}
+	}
+}
+
 func TestProducerPSSListsReviewState(t *testing.T) {
 	shot := db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SortOrder: 1, Title: "开场", Status: "preview_ready"}
 	builder := NewBuilder(fakeStore{
@@ -114,13 +216,26 @@ func TestProducerPSSListsReviewState(t *testing.T) {
 			OverallScore: pgtype.Float4{Float32: 0.52, Valid: true},
 			Critique:     "商品不够清晰",
 		}},
+		issues: []db.ArtifactIssue{{
+			ID:               uuidWithByte(8),
+			WorkspaceID:      uuidWithByte(1),
+			ReviewRecordID:   uuidWithByte(7),
+			Dimension:        "subject_consistency",
+			Severity:         "blocking",
+			Status:           "open",
+			TargetObjectType: "artifact_version",
+			TargetObjectID:   uuidWithByte(9),
+			Title:            "商品外观漂移",
+			SuggestedFix:     "revise_render_plan",
+			FixHint:          "强化悦行银灰色硬壳行李箱 reference binding。",
+		}},
 	})
 
 	pss, err := builder.BuildProducerPSS(context.Background(), uuidWithByte(1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Review: shot-01 preview_image rejected", "score=0.52", "商品不够清晰", "retry=1/3"} {
+	for _, want := range []string{"Review: shot-01 preview_image rejected", "score=0.52", "商品不够清晰", "retry=1/3", "Issue: subject_consistency blocking 商品外观漂移", "强化悦行银灰色硬壳行李箱"} {
 		if !strings.Contains(pss.Text, want) {
 			t.Fatalf("PSS missing %q:\n%s", want, pss.Text)
 		}
@@ -128,6 +243,10 @@ func TestProducerPSSListsReviewState(t *testing.T) {
 	reviews := pss.Structured["reviews"].([]map[string]any)
 	if len(reviews) != 1 || reviews[0]["status"] != "rejected" {
 		t.Fatalf("reviews = %#v", reviews)
+	}
+	issues := pss.Structured["open_issues"].([]map[string]any)
+	if len(issues) != 1 || issues[0]["severity"] != "blocking" {
+		t.Fatalf("open_issues = %#v", issues)
 	}
 }
 
@@ -187,6 +306,70 @@ func TestProducerPSSListsShotVideosAndFinalOutputs(t *testing.T) {
 	}
 }
 
+func TestProducerPSSListsShotVideoMissingAndFailedPerShot(t *testing.T) {
+	shotMissing := db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SortOrder: 1, Title: "开场", Status: "preview_ready"}
+	shotFailed := db.Shot{ID: uuidWithByte(3), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SortOrder: 2, Title: "卖点", Status: "failed"}
+	shotRunning := db.Shot{ID: uuidWithByte(4), WorkspaceID: uuidWithByte(1), ClientKey: "shot-03", SortOrder: 3, Title: "行动", Status: "video_running"}
+	failedVideo := db.MediaNode{
+		ID:            uuidWithByte(5),
+		WorkspaceID:   uuidWithByte(1),
+		ShotID:        shotFailed.ID,
+		Title:         "shot-02 shot video",
+		NodeType:      db.NodeTypeVideo,
+		Source:        "agent",
+		Status:        "failed",
+		OperationType: "image_to_video",
+		Metadata:      []byte(`{"agent_artifact_kind":"shot_video"}`),
+	}
+	runningVideo := db.MediaNode{
+		ID:            uuidWithByte(6),
+		WorkspaceID:   uuidWithByte(1),
+		ShotID:        shotRunning.ID,
+		Title:         "shot-03 shot video",
+		NodeType:      db.NodeTypeVideo,
+		Source:        "agent",
+		Status:        "queued",
+		OperationType: "image_to_video",
+		Metadata:      []byte(`{"agent_artifact_kind":"shot_video"}`),
+	}
+	builder := NewBuilder(fakeStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Name: "agent-ws", Mode: db.WorkspaceModeAgent},
+		shots:     []db.Shot{shotMissing, shotFailed, shotRunning},
+		nodes:     []db.MediaNode{failedVideo, runningVideo},
+		jobs: map[pgtype.UUID][]db.GenerationJob{
+			failedVideo.ID:  {{ID: uuidWithByte(7), TargetNodeID: failedVideo.ID, OperationType: "image_to_video", Status: db.JobStatusFailed}},
+			runningVideo.ID: {{ID: uuidWithByte(8), TargetNodeID: runningVideo.ID, OperationType: "image_to_video", Status: db.JobStatusRunning}},
+		},
+		versions: map[pgtype.UUID][]db.ArtifactVersion{
+			failedVideo.ID:  {{ID: uuidWithByte(9), NodeID: failedVideo.ID, Status: db.JobStatusFailed}},
+			runningVideo.ID: {{ID: uuidWithByte(10), NodeID: runningVideo.ID, Status: db.JobStatusQueued}},
+		},
+	})
+
+	pss, err := builder.BuildProducerPSS(context.Background(), uuidWithByte(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"[shot-01] 开场",
+		"ShotVideo: missing",
+		"shot-02 ShotVideo: shot-02 shot video, state=failed",
+		"shot-03 ShotVideo: shot-03 shot video, state=running",
+	} {
+		if !strings.Contains(pss.Text, want) {
+			t.Fatalf("PSS missing %q:\n%s", want, pss.Text)
+		}
+	}
+	shots := pss.Structured["shots"].([]map[string]any)
+	if shots[0]["shot_video_state"] != "missing" || shots[1]["shot_video_state"] != "failed" || shots[2]["shot_video_state"] != "running" {
+		t.Fatalf("structured shots = %#v", shots)
+	}
+	shotVideos := pss.Structured["shot_videos"].([]map[string]any)
+	if len(shotVideos) != 3 || shotVideos[0]["state"] != "missing" || shotVideos[1]["state"] != "failed" || shotVideos[2]["state"] != "running" {
+		t.Fatalf("shot_videos = %#v", shotVideos)
+	}
+}
+
 func TestProducerPSSListsDependencyStatus(t *testing.T) {
 	shot1 := db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SortOrder: 1, Title: "开场"}
 	shot2 := db.Shot{ID: uuidWithByte(3), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SortOrder: 2, Title: "演示"}
@@ -218,15 +401,21 @@ func TestProducerPSSListsDependencyStatus(t *testing.T) {
 }
 
 type fakeStore struct {
-	workspace    db.Workspace
-	nodes        []db.MediaNode
-	shots        []db.Shot
-	dependencies []db.ShotDependency
-	tasks        []db.AgentTask
-	events       []db.AgentEvent
-	jobs         map[pgtype.UUID][]db.GenerationJob
-	versions     map[pgtype.UUID][]db.ArtifactVersion
-	reviews      []db.ReviewRecord
+	workspace     db.Workspace
+	nodes         []db.MediaNode
+	shots         []db.Shot
+	dependencies  []db.ShotDependency
+	creativeBrief *db.CreativeBrief
+	projectMemory *db.ProjectMemory
+	elements      []db.KeyElement
+	elementStates []db.KeyElementState
+	scenes        []db.Scene
+	tasks         []db.AgentTask
+	events        []db.AgentEvent
+	jobs          map[pgtype.UUID][]db.GenerationJob
+	versions      map[pgtype.UUID][]db.ArtifactVersion
+	reviews       []db.ReviewRecord
+	issues        []db.ArtifactIssue
 }
 
 func (f fakeStore) GetWorkspaceByID(context.Context, pgtype.UUID) (db.Workspace, error) {
@@ -235,6 +424,32 @@ func (f fakeStore) GetWorkspaceByID(context.Context, pgtype.UUID) (db.Workspace,
 
 func (f fakeStore) ListMediaNodesByWorkspace(context.Context, pgtype.UUID) ([]db.MediaNode, error) {
 	return f.nodes, nil
+}
+
+func (f fakeStore) GetActiveCreativeBriefByWorkspace(context.Context, pgtype.UUID) (db.CreativeBrief, error) {
+	if f.creativeBrief == nil {
+		return db.CreativeBrief{}, pgx.ErrNoRows
+	}
+	return *f.creativeBrief, nil
+}
+
+func (f fakeStore) GetActiveProjectMemoryByWorkspace(context.Context, pgtype.UUID) (db.ProjectMemory, error) {
+	if f.projectMemory == nil {
+		return db.ProjectMemory{}, pgx.ErrNoRows
+	}
+	return *f.projectMemory, nil
+}
+
+func (f fakeStore) ListActiveKeyElementsByWorkspace(context.Context, pgtype.UUID) ([]db.KeyElement, error) {
+	return f.elements, nil
+}
+
+func (f fakeStore) ListActiveKeyElementStatesByWorkspace(context.Context, pgtype.UUID) ([]db.KeyElementState, error) {
+	return f.elementStates, nil
+}
+
+func (f fakeStore) ListActiveScenesByWorkspace(context.Context, pgtype.UUID) ([]db.Scene, error) {
+	return f.scenes, nil
 }
 
 func (f fakeStore) ListActiveShotsByWorkspace(context.Context, pgtype.UUID) ([]db.Shot, error) {
@@ -263,6 +478,10 @@ func (f fakeStore) ListArtifactVersionsByNode(_ context.Context, nodeID pgtype.U
 
 func (f fakeStore) ListReviewRecordsByWorkspace(context.Context, db.ListReviewRecordsByWorkspaceParams) ([]db.ReviewRecord, error) {
 	return f.reviews, nil
+}
+
+func (f fakeStore) ListOpenArtifactIssuesByWorkspace(context.Context, db.ListOpenArtifactIssuesByWorkspaceParams) ([]db.ArtifactIssue, error) {
+	return f.issues, nil
 }
 
 func uuidWithByte(b byte) pgtype.UUID {

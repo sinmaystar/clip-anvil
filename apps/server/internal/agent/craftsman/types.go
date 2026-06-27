@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -19,35 +20,58 @@ type RunTaskInput struct {
 	WorkspaceID pgtype.UUID
 	ThreadID    pgtype.UUID
 	TaskID      pgtype.UUID
+	ScopeType   string
+	ScopeID     pgtype.UUID
+	ScopeKey    string
 	ShotID      pgtype.UUID
 	Input       []byte
 }
 
 type GraphInput struct {
-	WorkspaceID  pgtype.UUID
-	ThreadID     pgtype.UUID
-	TaskID       pgtype.UUID
-	ShotID       pgtype.UUID
-	Mode         string
-	MaxAttempts  int
-	WorkerParams map[string]any
+	WorkspaceID      pgtype.UUID
+	ThreadID         pgtype.UUID
+	TaskID           pgtype.UUID
+	ScopeType        string
+	ScopeID          pgtype.UUID
+	ScopeKey         string
+	ShotID           pgtype.UUID
+	Mode             string
+	ExecutionPolicy  string
+	ParentToolCallID string
+	MaxAttempts      int
+	WorkerParams     map[string]any
 }
 
 type GraphOutput struct {
-	Strategy   Strategy
-	WorkerTask db.AgentTask
-	Metadata   map[string]any
+	AssistantText    string
+	Strategy         Strategy
+	WorkerTask       db.AgentTask
+	Metadata         map[string]any
+	SameTurnMessages []CraftsmanSameTurnMessage
 }
 
 type Context struct {
-	Input           GraphInput
-	Shot            db.Shot
-	Messages        []db.AgentMessage
-	Nodes           []NodeState
-	Dependencies    []db.ShotDependency
-	SourceMaterials []NodeState
-	Text            string
-	Structured      map[string]any
+	Input            GraphInput
+	Shot             db.Shot
+	KeyElementState  db.KeyElementState
+	Messages         []db.AgentMessage
+	Nodes            []NodeState
+	Dependencies     []db.ShotDependency
+	SourceMaterials  []NodeState
+	Text             string
+	Structured       map[string]any
+	ToolInfos        []*schema.ToolInfo
+	SameTurnMessages []CraftsmanSameTurnMessage
+	PendingReminders []string
+}
+
+type CraftsmanSameTurnMessage struct {
+	Role          string
+	MessageType   string
+	Content       string
+	ToolCallID    string
+	ToolName      string
+	ToolArguments map[string]any
 }
 
 type NodeState struct {
@@ -74,6 +98,12 @@ type ModelSpec struct {
 	ModelID  string `json:"model_id,omitempty"`
 }
 
-type ModelResponder interface {
-	DraftPreviewStrategy(ctx context.Context, context Context) (Strategy, map[string]any, error)
+type ToolCallingResponder interface {
+	Respond(ctx context.Context, context Context) (CraftsmanTurnOutput, error)
+}
+
+type CraftsmanTurnOutput struct {
+	AssistantText string
+	Metadata      map[string]any
+	ModelMessage  *schema.Message
 }

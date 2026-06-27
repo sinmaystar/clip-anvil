@@ -21,10 +21,12 @@ INSERT INTO shot_dependency (
     injection_role,
     blocking_phase,
     stale_policy,
-    reason
+    reason,
+    semantic_key,
+    display_name
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
-) RETURNING id, workspace_id, from_shot_id, to_shot_id, dependency_type, required_artifact, injection_role, blocking_phase, stale_policy, reason, created_at
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+) RETURNING id, workspace_id, from_shot_id, to_shot_id, dependency_type, required_artifact, injection_role, blocking_phase, stale_policy, reason, created_at, semantic_key, display_name
 `
 
 type CreateShotDependencyParams struct {
@@ -37,6 +39,8 @@ type CreateShotDependencyParams struct {
 	BlockingPhase    string      `json:"blocking_phase"`
 	StalePolicy      string      `json:"stale_policy"`
 	Reason           string      `json:"reason"`
+	SemanticKey      string      `json:"semantic_key"`
+	DisplayName      string      `json:"display_name"`
 }
 
 func (q *Queries) CreateShotDependency(ctx context.Context, arg CreateShotDependencyParams) (ShotDependency, error) {
@@ -50,6 +54,8 @@ func (q *Queries) CreateShotDependency(ctx context.Context, arg CreateShotDepend
 		arg.BlockingPhase,
 		arg.StalePolicy,
 		arg.Reason,
+		arg.SemanticKey,
+		arg.DisplayName,
 	)
 	var i ShotDependency
 	err := row.Scan(
@@ -64,6 +70,8 @@ func (q *Queries) CreateShotDependency(ctx context.Context, arg CreateShotDepend
 		&i.StalePolicy,
 		&i.Reason,
 		&i.CreatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -95,7 +103,7 @@ func (q *Queries) DeleteShotDependenciesForShot(ctx context.Context, arg DeleteS
 }
 
 const listShotDependenciesByWorkspace = `-- name: ListShotDependenciesByWorkspace :many
-SELECT id, workspace_id, from_shot_id, to_shot_id, dependency_type, required_artifact, injection_role, blocking_phase, stale_policy, reason, created_at
+SELECT id, workspace_id, from_shot_id, to_shot_id, dependency_type, required_artifact, injection_role, blocking_phase, stale_policy, reason, created_at, semantic_key, display_name
 FROM shot_dependency
 WHERE workspace_id = $1
 ORDER BY created_at
@@ -122,6 +130,8 @@ func (q *Queries) ListShotDependenciesByWorkspace(ctx context.Context, workspace
 			&i.StalePolicy,
 			&i.Reason,
 			&i.CreatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}

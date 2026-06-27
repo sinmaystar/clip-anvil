@@ -24,7 +24,7 @@ Studio 是用户主导的 AI 视频生成画布。用户可以像使用 Figma �
 - 删除节点、撤销恢复、拖拽位置、Camera 持久化已和后端同步。
 - `/ws/canvas` 用于节点、连线、分组事件广播；前端断线重连后重新拉取画布。
 - 生产链路已落地：Prompt `@` 引用、Reference Pack、手动运行、异步状态、版本列表、current 选择、调用记录详情、stale reason、真实 Volcengine 文本/图片/视频 provider、sandbox-backed 生成素材入库。
-- Agent 生产模式已经完成 M6 阶段性闭环：`/ws/agent` 对话通道、Producer/Craftsman/Reviewer/Worker/Composer、HITL 决策卡、只读画布和成片 Composer 已接入；音频生成模型暂时 hold，Studio/Agent 复制导入和长期记忆/Skill 配置化仍属后续。
+- Agent 生产模式已经演进到三角色主链路：`/ws/agent` 对话通道、Producer/Craftsman/Reviewer 原生 Eino tool loop、Worker 生产执行、HITL 决策卡、创作事实源、RenderPlan、Reviewer gate、Producer pending signal 和 Agent Workbench 已接入；音频生成、TimelinePlan/商业级 Composer、Studio/Agent 复制导入和长期 Skill 配置化仍属后续。
 
 ## 2. 界面布局
 

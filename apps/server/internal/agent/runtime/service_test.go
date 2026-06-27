@@ -171,6 +171,42 @@ func TestListQueuedProducerTasksRejectsMissingWorkspace(t *testing.T) {
 	}
 }
 
+func TestRuntimeListAgentThreadsByWorkspaceRejectsInvalidWorkspace(t *testing.T) {
+	svc, err := NewService(&fakeBeginner{}, db.New(fakeDBTX{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.ListAgentThreadsByWorkspace(context.Background(), pgtype.UUID{}, false)
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+func TestRuntimeGetThreadForWorkspaceRejectsInvalidThread(t *testing.T) {
+	svc, err := NewService(&fakeBeginner{}, db.New(fakeDBTX{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.GetThreadForWorkspace(context.Background(), pgtype.UUID{}, uuidWithByte(1))
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+func TestRuntimeListThreadMessagesRejectsInvalidThread(t *testing.T) {
+	svc, err := NewService(&fakeBeginner{}, db.New(fakeDBTX{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.ListThreadMessages(context.Background(), pgtype.UUID{}, 0, 100)
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("error = %v, want ErrInvalidRequest", err)
+	}
+}
+
 func TestCheckpointKeyUsesWorkspaceThreadAndTask(t *testing.T) {
 	key := CheckpointKey(uuidWithByte(1), uuidWithByte(2), uuidWithByte(3))
 
@@ -222,6 +258,9 @@ func (fakeDBTX) QueryRow(_ context.Context, query string, args ...interface{}) p
 			pgtype.Timestamptz{Time: time.Unix(1, 0), Valid: true},
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},
+			pgtype.UUID{},
+			"",
+			"",
 		}}
 	}
 	return fakeRow{}

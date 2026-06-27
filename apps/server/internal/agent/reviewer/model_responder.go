@@ -2,7 +2,6 @@ package reviewer
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +11,9 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	agentprompt "github.com/sinmaystar/clip-anvil/internal/agent/prompt"
+	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
 )
 
 type arkChatStreamer interface {
@@ -45,14 +47,14 @@ func NewVolcengineModelResponder(cfg VolcengineModelResponderConfig) VolcengineM
 	return VolcengineModelResponder{cfg: cfg, factory: factory}
 }
 
-func (r VolcengineModelResponder) Review(ctx context.Context, reviewContext Context) (ReviewResult, map[string]any, error) {
+func (r VolcengineModelResponder) Respond(ctx context.Context, reviewContext Context) (ReviewerTurnOutput, error) {
 	apiKey := strings.TrimSpace(r.cfg.APIKey)
 	if apiKey == "" {
-		return ReviewResult{}, nil, fmt.Errorf("CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY is required for Reviewer model")
+		return ReviewerTurnOutput{}, fmt.Errorf("CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY is required for Reviewer model")
 	}
 	modelID := strings.TrimSpace(r.cfg.Model)
 	if modelID == "" {
-		return ReviewResult{}, nil, fmt.Errorf("reviewer model is required")
+		return ReviewerTurnOutput{}, fmt.Errorf("reviewer model is required")
 	}
 	config := &ark.ChatModelConfig{
 		APIKey:  apiKey,
@@ -69,11 +71,23 @@ func (r VolcengineModelResponder) Review(ctx context.Context, reviewContext Cont
 	}
 	model, err := r.factory(ctx, config)
 	if err != nil {
-		return ReviewResult{}, nil, fmt.Errorf("create reviewer ark chat model: %w", err)
+		return ReviewerTurnOutput{}, fmt.Errorf("create reviewer ark chat model: %w", err)
 	}
-	stream, err := model.Stream(ctx, reviewPromptMessages(reviewContext))
+	streamer := model
+	if len(reviewContext.ToolInfos) > 0 {
+		toolCallingModel, ok := model.(einoModel.ToolCallingChatModel)
+		if !ok {
+			return ReviewerTurnOutput{}, fmt.Errorf("selected Reviewer model does not support tool calling")
+		}
+		boundModel, err := toolCallingModel.WithTools(reviewContext.ToolInfos)
+		if err != nil {
+			return ReviewerTurnOutput{}, fmt.Errorf("bind reviewer tools: %w", err)
+		}
+		streamer = boundModel
+	}
+	stream, err := streamer.Stream(ctx, reviewToolPromptMessages(reviewContext))
 	if err != nil {
-		return ReviewResult{}, nil, fmt.Errorf("stream reviewer ark chat model: %w", err)
+		return ReviewerTurnOutput{}, fmt.Errorf("stream reviewer ark chat model: %w", err)
 	}
 	defer stream.Close()
 
@@ -84,7 +98,7 @@ func (r VolcengineModelResponder) Review(ctx context.Context, reviewContext Cont
 			break
 		}
 		if err != nil {
-			return ReviewResult{}, nil, fmt.Errorf("receive reviewer ark chat stream: %w", err)
+			return ReviewerTurnOutput{}, fmt.Errorf("receive reviewer ark chat stream: %w", err)
 		}
 		if chunk != nil {
 			chunks = append(chunks, chunk)
@@ -92,38 +106,58 @@ func (r VolcengineModelResponder) Review(ctx context.Context, reviewContext Cont
 	}
 	final, err := schema.ConcatMessages(chunks)
 	if err != nil {
-		return ReviewResult{}, nil, fmt.Errorf("concatenate reviewer ark chat stream: %w", err)
+		return ReviewerTurnOutput{}, fmt.Errorf("concatenate reviewer ark chat stream: %w", err)
 	}
-	result, err := ParseReviewResult(final.Content)
-	if err != nil {
-		return ReviewResult{}, nil, err
-	}
-	return result, map[string]any{"provider": "volcengine", "model_id": modelID}, nil
+	return ReviewerTurnOutput{
+		AssistantText: strings.TrimSpace(final.Content),
+		Metadata: map[string]any{
+			"provider":               "volcengine",
+			"model_id":               modelID,
+			"native_tool_call_count": len(final.ToolCalls),
+		},
+		ModelMessage: final,
+	}, nil
 }
 
-func ParseReviewResult(raw string) (ReviewResult, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ReviewResult{}, fmt.Errorf("%w: empty review result", ErrInvalidRubric)
+func reviewToolPromptMessages(reviewContext Context) []*schema.Message {
+	messages := []*schema.Message{
+		{
+			Role:    schema.System,
+			Content: SystemPrompt(),
+		},
 	}
-	var result ReviewResult
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		return ReviewResult{}, fmt.Errorf("%w: %v", ErrInvalidRubric, err)
+	for _, reminder := range reviewContext.PendingReminders {
+		if text := toolloop.NormalizeSystemReminder(reminder); text != "" {
+			messages = append(messages, schema.SystemMessage(text))
+		}
 	}
-	if _, err := ValidateRubric(result, DefaultReviewPolicy()); err != nil {
-		return ReviewResult{}, err
+	messages = append(messages, agentprompt.HistoryMessages(reviewContext.Messages)...)
+	messages = append(messages, reviewUserMessage(reviewContext))
+	for _, message := range reviewContext.SameTurnMessages {
+		switch message.Role {
+		case "assistant":
+			messages = append(messages, &schema.Message{
+				Role:    schema.Assistant,
+				Content: message.Content,
+				ToolCalls: []schema.ToolCall{{
+					ID:   message.ToolCallID,
+					Type: "function",
+					Function: schema.FunctionCall{
+						Name:      message.ToolName,
+						Arguments: string(mustJSON(message.ToolArguments)),
+					},
+				}},
+			})
+		case "tool":
+			messages = append(messages, &schema.Message{
+				Role:       schema.Tool,
+				Content:    message.Content,
+				ToolCallID: message.ToolCallID,
+				ToolName:   message.ToolName,
+			})
+		}
 	}
-	return result, nil
-}
-
-func reviewPromptMessages(reviewContext Context) []*schema.Message {
-	system := schema.SystemMessage(strings.TrimSpace(`You are ClipAnvil ReviewerGraph for generated short-video production artifacts.
-Return strict JSON only. Do not include markdown.
-Required JSON fields: overall_score, rubric, critique, retry_recommendation.
-Rubric must include: proportion, physics, style, visual_quality, product_visibility, selling_power, platform_fit.
-Each rubric axis must include score, pass, reason, fix_hint.`))
-	user := reviewUserMessage(reviewContext)
-	return []*schema.Message{system, user}
+	return messages
 }
 
 func reviewUserMessage(reviewContext Context) *schema.Message {

@@ -1,15 +1,32 @@
 -- name: CreateAgentThread :one
+WITH proposed AS (
+    SELECT gen_random_uuid() AS id
+)
 INSERT INTO agent_thread (
+    id,
     workspace_id,
     role,
     scope_type,
     scope_id,
     runtime_provider,
     runtime_agent_name,
-    summary
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
-) RETURNING *;
+    summary,
+    semantic_key,
+    display_name
+)
+SELECT
+    proposed.id,
+    $1, $2, $3, $4, $5, $6, $7,
+    COALESCE(
+        NULLIF(sqlc.arg(semantic_key)::text, ''),
+        $2 || '.' || $3 || '.' || left(COALESCE($4::uuid::text, $1::uuid::text), 8)
+    ),
+    COALESCE(
+        NULLIF(sqlc.arg(display_name)::text, ''),
+        $2 || ' ' || $3
+    )
+FROM proposed
+RETURNING *;
 
 -- name: GetAgentThreadByID :one
 SELECT *
@@ -53,6 +70,34 @@ SELECT *
 FROM agent_thread
 WHERE workspace_id = $1
 ORDER BY created_at DESC;
+
+-- name: ListObservableAgentThreadsByWorkspace :many
+SELECT *
+FROM agent_thread
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND (sqlc.arg(include_producer)::boolean OR role <> 'producer')
+ORDER BY updated_at DESC, created_at DESC;
+
+-- name: GetAgentThreadForWorkspace :one
+SELECT *
+FROM agent_thread
+WHERE id = sqlc.arg(id)
+  AND workspace_id = sqlc.arg(workspace_id)
+LIMIT 1;
+
+-- name: GetLatestAgentTaskByThread :one
+SELECT *
+FROM agent_task
+WHERE thread_id = $1
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: GetLatestAgentMessageByThread :one
+SELECT *
+FROM agent_message
+WHERE thread_id = $1
+ORDER BY seq DESC
+LIMIT 1;
 
 -- name: UpdateAgentThreadStatus :one
 UPDATE agent_thread

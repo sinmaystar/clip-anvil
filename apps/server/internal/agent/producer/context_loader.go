@@ -14,8 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
-	agentpss "github.com/sinmaystar/clip-anvil/internal/agent/pss"
-	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -23,25 +21,27 @@ import (
 
 const maxAgentVisionImageBytes = 10 << 20
 const minAgentVisionImageDimension = 14
+const producerContextMessageLimit int32 = 1000
 
 type ImageObjectReader interface {
 	ReadObject(ctx context.Context, workspaceID pgtype.UUID, key string, maxBytes int64) ([]byte, storage.ObjectRef, error)
 }
 
+type ProducerMessageRuntime interface {
+	ListMessages(ctx context.Context, threadID pgtype.UUID, afterSeq int64, limit int32) ([]db.AgentMessage, error)
+}
+
 type RuntimeContextLoader struct {
-	Runtime        *agentruntime.Service
+	Runtime        ProducerMessageRuntime
 	Queries        *db.Queries
 	ImageReader    ImageObjectReader
 	ModelSelection interface {
 		ResolveProducerModel(ctx context.Context, workspace db.Workspace) (modelselection.Option, error)
 	}
-	PSSBuilder interface {
-		BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID) (agentpss.ProducerPSS, error)
-	}
 }
 
 func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input ProducerTurnInput) (ProducerContext, error) {
-	messages, err := l.Runtime.ListMessages(ctx, input.ThreadID, 0, 20)
+	messages, err := l.Runtime.ListMessages(ctx, input.ThreadID, producerMessageWindowAfterSeq(input.TriggerMessageSeq, int64(producerContextMessageLimit)), producerContextMessageLimit)
 	if err != nil {
 		return ProducerContext{}, err
 	}
@@ -50,31 +50,26 @@ func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input Pro
 		return ProducerContext{}, err
 	}
 	imageAttachments := l.loadImageAttachments(ctx, messages)
-	pssText, structuredState, err := l.loadProductionState(ctx, input.WorkspaceID)
-	if err != nil {
-		return ProducerContext{}, err
-	}
 	return ProducerContext{
-		Input:               input,
-		Messages:            messages,
-		LatestUserText:      latestUserTextFromMessages(messages),
-		Model:               model,
-		ImageAttachments:    imageAttachments,
-		ProductionStateText: pssText,
-		ProductionState:     structuredState,
-		EmitDelta:           input.EmitDelta,
+		Input:              input,
+		Messages:           messages,
+		LatestUserText:     latestUserTextFromMessages(messages),
+		RuntimeTriggerText: strings.TrimSpace(input.RuntimeTriggerText),
+		Model:              model,
+		ImageAttachments:   imageAttachments,
+		EmitDelta:          input.EmitDelta,
 	}, nil
 }
 
-func (l RuntimeContextLoader) loadProductionState(ctx context.Context, workspaceID pgtype.UUID) (string, map[string]any, error) {
-	if l.PSSBuilder == nil {
-		return "", nil, nil
+func producerMessageWindowAfterSeq(triggerSeq int64, limit int64) int64 {
+	if triggerSeq <= 0 || limit <= 0 {
+		return 0
 	}
-	state, err := l.PSSBuilder.BuildProducerPSS(ctx, workspaceID)
-	if err != nil {
-		return "", nil, AgentError{Code: "agent_pss_unavailable", Message: "build Producer PSS", Cause: err}
+	afterSeq := triggerSeq - limit
+	if afterSeq < 0 {
+		return 0
 	}
-	return state.Text, state.Structured, nil
+	return afterSeq
 }
 
 func (l RuntimeContextLoader) loadModel(ctx context.Context, workspaceID pgtype.UUID) (ProducerModelSelection, error) {

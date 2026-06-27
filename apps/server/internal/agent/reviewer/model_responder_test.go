@@ -9,34 +9,14 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
-func TestParseReviewResult(t *testing.T) {
-	result, err := ParseReviewResult(`{
-		"overall_score": 0.82,
-		"rubric": {
-			"proportion": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"physics": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"style": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"visual_quality": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"product_visibility": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"selling_power": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""},
-			"platform_fit": {"score": 0.8, "pass": true, "reason": "ok", "fix_hint": ""}
-		},
-		"critique": "画面可用",
-		"retry_recommendation": {"should_retry": false}
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.OverallScore != 0.82 || result.Critique != "画面可用" {
-		t.Fatalf("result = %#v", result)
-	}
-}
-
-func TestVolcengineReviewResponderParsesStreamedResult(t *testing.T) {
+func TestVolcengineReviewerResponderReturnsNativeToolCallingMessage(t *testing.T) {
 	streamer := &fakeReviewArkStreamer{chunks: []*schema.Message{{
-		Content: `{"overall_score":0.82,"rubric":{"proportion":{"score":0.8,"pass":true,"reason":"ok"},"physics":{"score":0.8,"pass":true,"reason":"ok"},"style":{"score":0.8,"pass":true,"reason":"ok"},"visual_quality":{"score":0.8,"pass":true,"reason":"ok"},"product_visibility":{"score":0.8,"pass":true,"reason":"ok"},"selling_power":{"score":0.8,"pass":true,"reason":"ok"},"platform_fit":{"score":0.8,"pass":true,"reason":"ok"}},"critique":"画面可用","retry_recommendation":{"should_retry":false}}`,
+		Content: "已提交 Reviewer 评审结果。",
 	}}}
 	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
 		APIKey: "test-key",
@@ -46,15 +26,22 @@ func TestVolcengineReviewResponderParsesStreamedResult(t *testing.T) {
 		},
 	})
 
-	result, metadata, err := responder.Review(context.Background(), Context{
+	out, err := responder.Respond(context.Background(), Context{
 		Text:     "Review Target\n- shot: shot-01",
 		AssetURL: "data:image/png;base64,iVBORw0KGgo=",
+		ToolInfos: []*schema.ToolInfo{{
+			Name: "submit_review_result",
+			Desc: "提交 Reviewer 评审结果。",
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Critique != "画面可用" || metadata["model_id"] != "doubao-reviewer" {
-		t.Fatalf("result=%#v metadata=%#v", result, metadata)
+	if out.AssistantText != "已提交 Reviewer 评审结果。" || out.Metadata["model_id"] != "doubao-reviewer" || out.ModelMessage == nil {
+		t.Fatalf("output = %#v", out)
+	}
+	if len(streamer.boundTools) != 1 || streamer.boundTools[0].Name != "submit_review_result" {
+		t.Fatalf("bound tools = %#v", streamer.boundTools)
 	}
 	if len(streamer.messages) != 2 || !strings.Contains(streamer.messages[1].UserInputMultiContent[0].Text, "shot-01") {
 		t.Fatalf("messages = %#v", streamer.messages)
@@ -64,9 +51,58 @@ func TestVolcengineReviewResponderParsesStreamedResult(t *testing.T) {
 	}
 }
 
+func TestReviewerPromptIncludesHistoricalThreadMessages(t *testing.T) {
+	userContent, err := uimessage.BuildUserMessageContent(uimessage.UserMessageInput{Text: "用户要求 Reviewer 重点检查产品一致性"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assistantContent, err := uimessage.BuildAssistantMessageContent(uimessage.AssistantMessageInput{Text: "已将产品一致性设为评审重点"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := reviewToolPromptMessages(Context{
+		Text: "Review Target\n- shot: shot_01\n- phase: preview_image",
+		Messages: []db.AgentMessage{
+			{Role: "user", MessageType: "text", Content: userContent},
+			{Role: "assistant", MessageType: "text", Content: assistantContent},
+			{
+				Role:        "assistant",
+				MessageType: "tool_call",
+				RawMessage:  []byte(`{"tool_call_id":"call_review_old","tool_name":"submit_review_result","arguments":{"verdict":"accepted_with_warnings"}}`),
+			},
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				Content:     []byte(`{"text":"工具返回：Reviewer 结果已提交"}`),
+				RawMessage:  []byte(`{"tool_call_id":"call_review_old","tool_name":"submit_review_result","result_text":"Reviewer 结果已提交"}`),
+			},
+		},
+	})
+
+	if len(messages) != 6 {
+		t.Fatalf("message count = %d, messages = %#v", len(messages), messages)
+	}
+	if messages[1].Role != schema.User || !strings.Contains(messages[1].Content, "重点检查产品一致性") {
+		t.Fatalf("historical user message missing: %#v", messages[1])
+	}
+	if messages[2].Role != schema.Assistant || !strings.Contains(messages[2].Content, "产品一致性设为评审重点") {
+		t.Fatalf("historical assistant message missing: %#v", messages[2])
+	}
+	if messages[3].Role != schema.Assistant || len(messages[3].ToolCalls) != 1 || messages[3].ToolCalls[0].ID != "call_review_old" || messages[3].ToolCalls[0].Function.Name != "submit_review_result" {
+		t.Fatalf("historical tool call missing: %#v", messages[3])
+	}
+	if messages[4].Role != schema.Tool || messages[4].ToolCallID != "call_review_old" || !strings.Contains(messages[4].Content, "Reviewer 结果已提交") {
+		t.Fatalf("historical tool result missing: %#v", messages[4])
+	}
+	if messages[5].Role != schema.User || !strings.Contains(messages[5].Content, "phase: preview_image") {
+		t.Fatalf("current review target should be last user message before same-turn tools: %#v", messages[5])
+	}
+}
+
 type fakeReviewArkStreamer struct {
-	messages []*schema.Message
-	chunks   []*schema.Message
+	messages   []*schema.Message
+	chunks     []*schema.Message
+	boundTools []*schema.ToolInfo
 }
 
 func (f *fakeReviewArkStreamer) Stream(_ context.Context, messages []*schema.Message, _ ...einoModel.Option) (*schema.StreamReader[*schema.Message], error) {
@@ -80,4 +116,16 @@ func (f *fakeReviewArkStreamer) Stream(_ context.Context, messages []*schema.Mes
 		sw.Send(nil, io.EOF)
 	}()
 	return sr, nil
+}
+
+func (f *fakeReviewArkStreamer) WithTools(tools []*schema.ToolInfo) (einoModel.ToolCallingChatModel, error) {
+	f.boundTools = tools
+	return f, nil
+}
+
+func (f *fakeReviewArkStreamer) Generate(context.Context, []*schema.Message, ...einoModel.Option) (*schema.Message, error) {
+	if len(f.chunks) == 0 {
+		return &schema.Message{}, nil
+	}
+	return schema.ConcatMessages(f.chunks)
 }

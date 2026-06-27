@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -108,15 +109,19 @@ func (s *Service) GetOrCreateComposerThread(ctx context.Context, workspaceID pgt
 }
 
 func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
-	if !workspaceID.Valid || !shotID.Valid {
+	return s.GetOrCreateCraftsmanThreadForScope(ctx, workspaceID, "shot", shotID)
+}
+
+func (s *Service) GetOrCreateCraftsmanThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {
+	if !workspaceID.Valid || !scopeID.Valid || scopeType == "" {
 		return db.AgentThread{}, ErrInvalidRequest
 	}
 
 	params := db.GetActiveAgentThreadByScopeParams{
 		WorkspaceID: workspaceID,
 		Role:        "craftsman",
-		ScopeType:   "shot",
-		ScopeID:     shotID,
+		ScopeType:   scopeType,
+		ScopeID:     scopeID,
 	}
 	thread, err := s.queries.GetActiveAgentThreadByScope(ctx, params)
 	if err == nil {
@@ -129,8 +134,8 @@ func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, s
 	thread, err = s.CreateThread(ctx, CreateThreadParams{
 		WorkspaceID:      workspaceID,
 		Role:             "craftsman",
-		ScopeType:        "shot",
-		ScopeID:          shotID,
+		ScopeType:        scopeType,
+		ScopeID:          scopeID,
 		RuntimeProvider:  "eino",
 		RuntimeAgentName: "CraftsmanGraph",
 	})
@@ -146,15 +151,40 @@ func (s *Service) GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, s
 }
 
 func (s *Service) GetOrCreateReviewerThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error) {
-	if !workspaceID.Valid || !shotID.Valid {
+	return s.GetOrCreateReviewerThreadForScope(ctx, workspaceID, "shot", shotID)
+}
+
+func (s *Service) UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error) {
+	if s == nil || s.queries == nil {
+		return db.Shot{}, ErrInvalidConfig
+	}
+	return s.queries.UpdateShotStatus(ctx, params)
+}
+
+func (s *Service) GetLatestRenderPlanByTaskScopePhase(ctx context.Context, params db.GetLatestRenderPlanByTaskScopePhaseParams) (db.RenderPlan, error) {
+	if s == nil || s.queries == nil {
+		return db.RenderPlan{}, ErrInvalidConfig
+	}
+	if !params.WorkspaceID.Valid || !params.ScopeID.Valid || !params.CreatedByTaskID.Valid || strings.TrimSpace(params.ScopeType) == "" || strings.TrimSpace(params.TargetPhase) == "" {
+		return db.RenderPlan{}, ErrInvalidRequest
+	}
+	return s.queries.GetLatestRenderPlanByTaskScopePhase(ctx, params)
+}
+
+func (s *Service) GetOrCreateReviewerThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {
+	if !workspaceID.Valid {
+		return db.AgentThread{}, ErrInvalidRequest
+	}
+	scopeType = defaultString(scopeType, "shot")
+	if !validThreadScope(scopeType) || !scopeID.Valid {
 		return db.AgentThread{}, ErrInvalidRequest
 	}
 
 	params := db.GetActiveAgentThreadByScopeParams{
 		WorkspaceID: workspaceID,
 		Role:        "reviewer",
-		ScopeType:   "shot",
-		ScopeID:     shotID,
+		ScopeType:   scopeType,
+		ScopeID:     scopeID,
 	}
 	thread, err := s.queries.GetActiveAgentThreadByScope(ctx, params)
 	if err == nil {
@@ -167,10 +197,10 @@ func (s *Service) GetOrCreateReviewerThread(ctx context.Context, workspaceID, sh
 	thread, err = s.CreateThread(ctx, CreateThreadParams{
 		WorkspaceID:      workspaceID,
 		Role:             "reviewer",
-		ScopeType:        "shot",
-		ScopeID:          shotID,
+		ScopeType:        scopeType,
+		ScopeID:          scopeID,
 		RuntimeProvider:  "eino",
-		RuntimeAgentName: "ReviewerGraph",
+		RuntimeAgentName: "ReviewerGate",
 	})
 	if err == nil {
 		return thread, nil
@@ -308,10 +338,10 @@ func (s *Service) ListMessages(ctx context.Context, threadID pgtype.UUID, afterS
 		return nil, ErrInvalidRequest
 	}
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListAgentMessagesByThread(ctx, db.ListAgentMessagesByThreadParams{
 		ThreadID: threadID,
@@ -320,15 +350,83 @@ func (s *Service) ListMessages(ctx context.Context, threadID pgtype.UUID, afterS
 	})
 }
 
+func (s *Service) ListWorkspaceMessages(ctx context.Context, workspaceID pgtype.UUID, afterCreatedAt pgtype.Timestamptz, limit int32) ([]db.AgentMessage, error) {
+	if !workspaceID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	return s.queries.ListAgentMessagesByWorkspace(ctx, db.ListAgentMessagesByWorkspaceParams{
+		WorkspaceID:    workspaceID,
+		AfterCreatedAt: afterCreatedAt,
+		RowLimit:       limit,
+	})
+}
+
+func (s *Service) ListAgentThreadsByWorkspace(ctx context.Context, workspaceID pgtype.UUID, includeProducer bool) ([]db.AgentThread, error) {
+	if !workspaceID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	return s.queries.ListObservableAgentThreadsByWorkspace(ctx, db.ListObservableAgentThreadsByWorkspaceParams{
+		WorkspaceID:     workspaceID,
+		IncludeProducer: includeProducer,
+	})
+}
+
+func (s *Service) GetThreadForWorkspace(ctx context.Context, threadID pgtype.UUID, workspaceID pgtype.UUID) (db.AgentThread, error) {
+	if !threadID.Valid || !workspaceID.Valid {
+		return db.AgentThread{}, ErrInvalidRequest
+	}
+	if s == nil || s.queries == nil {
+		return db.AgentThread{}, ErrInvalidConfig
+	}
+	return s.queries.GetAgentThreadForWorkspace(ctx, db.GetAgentThreadForWorkspaceParams{
+		ID:          threadID,
+		WorkspaceID: workspaceID,
+	})
+}
+
+func (s *Service) ListThreadMessages(ctx context.Context, threadID pgtype.UUID, afterSeq int64, limit int32) ([]db.AgentMessage, error) {
+	return s.ListMessages(ctx, threadID, afterSeq, limit)
+}
+
+func (s *Service) LatestTaskByThread(ctx context.Context, threadID pgtype.UUID) (db.AgentTask, error) {
+	if !threadID.Valid {
+		return db.AgentTask{}, ErrInvalidRequest
+	}
+	if s == nil || s.queries == nil {
+		return db.AgentTask{}, ErrInvalidConfig
+	}
+	return s.queries.GetLatestAgentTaskByThread(ctx, threadID)
+}
+
+func (s *Service) LatestMessageByThread(ctx context.Context, threadID pgtype.UUID) (db.AgentMessage, error) {
+	if !threadID.Valid {
+		return db.AgentMessage{}, ErrInvalidRequest
+	}
+	if s == nil || s.queries == nil {
+		return db.AgentMessage{}, ErrInvalidConfig
+	}
+	return s.queries.GetLatestAgentMessageByThread(ctx, threadID)
+}
+
 type CreateTaskParams struct {
-	WorkspaceID pgtype.UUID
-	ThreadID    pgtype.UUID
-	Role        string
-	ScopeType   string
-	ScopeID     pgtype.UUID
-	TaskType    string
-	MaxAttempts int32
-	Input       []byte
+	WorkspaceID  pgtype.UUID
+	ThreadID     pgtype.UUID
+	Role         string
+	ScopeType    string
+	ScopeID      pgtype.UUID
+	TaskType     string
+	MaxAttempts  int32
+	Input        []byte
+	RenderPlanID pgtype.UUID
 }
 
 func (s *Service) CreateTask(ctx context.Context, params CreateTaskParams) (db.AgentTask, error) {
@@ -340,14 +438,15 @@ func (s *Service) CreateTask(ctx context.Context, params CreateTaskParams) (db.A
 		return db.AgentTask{}, ErrInvalidRequest
 	}
 	return s.queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-		WorkspaceID: params.WorkspaceID,
-		ThreadID:    params.ThreadID,
-		Role:        params.Role,
-		ScopeType:   scopeType,
-		ScopeID:     params.ScopeID,
-		TaskType:    params.TaskType,
-		MaxAttempts: params.MaxAttempts,
-		Input:       defaultJSON(params.Input),
+		WorkspaceID:  params.WorkspaceID,
+		ThreadID:     params.ThreadID,
+		Role:         params.Role,
+		ScopeType:    scopeType,
+		ScopeID:      params.ScopeID,
+		TaskType:     params.TaskType,
+		MaxAttempts:  params.MaxAttempts,
+		Input:        defaultJSON(params.Input),
+		RenderPlanID: params.RenderPlanID,
 	})
 }
 
@@ -356,10 +455,10 @@ func (s *Service) ListQueuedProducerTasks(ctx context.Context, workspaceID pgtyp
 		return nil, ErrInvalidRequest
 	}
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedProducerTasks(ctx, db.ListQueuedProducerTasksParams{
 		WorkspaceID: workspaceID,
@@ -369,50 +468,50 @@ func (s *Service) ListQueuedProducerTasks(ctx context.Context, workspaceID pgtyp
 
 func (s *Service) ListQueuedProducerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedProducerTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListQueuedCraftsmanTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedCraftsmanTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListQueuedWorkerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedWorkerTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListQueuedReviewerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedReviewerTasksAcrossWorkspaces(ctx, limit)
 }
 
 func (s *Service) ListQueuedComposerTasksAcrossWorkspaces(ctx context.Context, limit int32) ([]db.AgentTask, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.queries.ListQueuedComposerTasksAcrossWorkspaces(ctx, limit)
 }
@@ -527,6 +626,175 @@ func (s *Service) ListAgentEventsByWorkspace(ctx context.Context, workspaceID pg
 	})
 }
 
+type CreateProducerPendingSignalParams struct {
+	WorkspaceID      pgtype.UUID
+	ProducerThreadID pgtype.UUID
+	SourceRole       string
+	SourceTaskID     pgtype.UUID
+	SourceThreadID   pgtype.UUID
+	SignalType       string
+	ScopeType        string
+	ScopeID          pgtype.UUID
+	RenderPlanID     pgtype.UUID
+	MessageID        pgtype.UUID
+	Priority         int32
+	DedupeKey        string
+	Payload          []byte
+}
+
+func (s *Service) CreateProducerPendingSignal(ctx context.Context, params CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return db.ProducerPendingSignal{}, ErrInvalidConfig
+	}
+	if !params.WorkspaceID.Valid || !params.ProducerThreadID.Valid || !validProducerSignalSourceRole(params.SourceRole) || strings.TrimSpace(params.SignalType) == "" || !validProducerSignalScope(params.ScopeType) || strings.TrimSpace(params.DedupeKey) == "" {
+		return db.ProducerPendingSignal{}, ErrInvalidRequest
+	}
+	if params.SignalType == "craftsman_render_plan_ready" && !params.RenderPlanID.Valid {
+		return db.ProducerPendingSignal{}, ErrInvalidRequest
+	}
+	if params.Priority == 0 {
+		params.Priority = 100
+	}
+	return s.queries.CreateProducerPendingSignal(ctx, db.CreateProducerPendingSignalParams{
+		WorkspaceID:      params.WorkspaceID,
+		ProducerThreadID: params.ProducerThreadID,
+		SourceRole:       params.SourceRole,
+		SourceTaskID:     params.SourceTaskID,
+		SourceThreadID:   params.SourceThreadID,
+		SignalType:       params.SignalType,
+		ScopeType:        params.ScopeType,
+		ScopeID:          params.ScopeID,
+		RenderPlanID:     params.RenderPlanID,
+		MessageID:        params.MessageID,
+		Priority:         params.Priority,
+		DedupeKey:        params.DedupeKey,
+		Payload:          defaultJSON(params.Payload),
+	})
+}
+
+type ClaimProducerPendingSignalsParams struct {
+	WorkspaceID       pgtype.UUID
+	ProducerThreadID  pgtype.UUID
+	ClaimedByTaskID   pgtype.UUID
+	Limit             int32
+	StaleAfterSeconds int32
+}
+
+func (s *Service) ClaimProducerPendingSignals(ctx context.Context, params ClaimProducerPendingSignalsParams) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !params.WorkspaceID.Valid || !params.ProducerThreadID.Valid || !params.ClaimedByTaskID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+	if params.Limit > 100 {
+		params.Limit = 100
+	}
+	if params.StaleAfterSeconds <= 0 {
+		params.StaleAfterSeconds = 600
+	}
+	return s.queries.ClaimProducerPendingSignals(ctx, db.ClaimProducerPendingSignalsParams{
+		WorkspaceID:       params.WorkspaceID,
+		ProducerThreadID:  params.ProducerThreadID,
+		ClaimedByTaskID:   params.ClaimedByTaskID,
+		StaleAfterSeconds: params.StaleAfterSeconds,
+		RowLimit:          params.Limit,
+	})
+}
+
+func (s *Service) ListClaimedProducerSignalsByTask(ctx context.Context, workspaceID, producerThreadID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !workspaceID.Valid || !producerThreadID.Valid || !taskID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	return s.queries.ListClaimedProducerSignalsByTask(ctx, db.ListClaimedProducerSignalsByTaskParams{
+		WorkspaceID:      workspaceID,
+		ProducerThreadID: producerThreadID,
+		ClaimedByTaskID:  taskID,
+	})
+}
+
+func (s *Service) MarkProducerPendingSignalProcessed(ctx context.Context, signalID, workspaceID, taskID pgtype.UUID) (db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return db.ProducerPendingSignal{}, ErrInvalidConfig
+	}
+	if !signalID.Valid || !workspaceID.Valid || !taskID.Valid {
+		return db.ProducerPendingSignal{}, ErrInvalidRequest
+	}
+	return s.queries.MarkProducerPendingSignalProcessed(ctx, db.MarkProducerPendingSignalProcessedParams{
+		ID:                signalID,
+		WorkspaceID:       workspaceID,
+		ProcessedByTaskID: taskID,
+	})
+}
+
+func (s *Service) MarkProducerPendingSignalsProcessedByRenderPlan(ctx context.Context, workspaceID, renderPlanID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !workspaceID.Valid || !renderPlanID.Valid || !taskID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	return s.queries.MarkProducerPendingSignalsProcessedByRenderPlan(ctx, db.MarkProducerPendingSignalsProcessedByRenderPlanParams{
+		WorkspaceID:       workspaceID,
+		RenderPlanID:      renderPlanID,
+		ProcessedByTaskID: taskID,
+	})
+}
+
+func (s *Service) MarkProducerPendingSignalIgnored(ctx context.Context, signalID, workspaceID, taskID pgtype.UUID, reason string) (db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return db.ProducerPendingSignal{}, ErrInvalidConfig
+	}
+	if !signalID.Valid || !workspaceID.Valid || !taskID.Valid || strings.TrimSpace(reason) == "" {
+		return db.ProducerPendingSignal{}, ErrInvalidRequest
+	}
+	return s.queries.MarkProducerPendingSignalIgnored(ctx, db.MarkProducerPendingSignalIgnoredParams{
+		ID:                signalID,
+		WorkspaceID:       workspaceID,
+		ProcessedByTaskID: taskID,
+		LastError:         nullableText(reason),
+	})
+}
+
+func (s *Service) ReleaseProducerPendingSignalsForTask(ctx context.Context, workspaceID, taskID pgtype.UUID, reason string) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !workspaceID.Valid || !taskID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	return s.queries.ReleaseProducerPendingSignalsForTask(ctx, db.ReleaseProducerPendingSignalsForTaskParams{
+		WorkspaceID:     workspaceID,
+		ClaimedByTaskID: taskID,
+		LastError:       nullableText(reason),
+	})
+}
+
+func (s *Service) ListPendingProducerSignals(ctx context.Context, workspaceID pgtype.UUID, limit int32) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !workspaceID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	return s.queries.ListPendingProducerSignals(ctx, db.ListPendingProducerSignalsParams{
+		WorkspaceID: workspaceID,
+		Limit:       limit,
+	})
+}
+
 type UpsertCheckpointParams struct {
 	Key         string
 	WorkspaceID pgtype.UUID
@@ -608,7 +876,7 @@ func validThreadRole(value string) bool {
 
 func validThreadScope(value string) bool {
 	switch value {
-	case "workspace", "shot", "final_output":
+	case "workspace", "shot", "final_output", "render_plan":
 		return true
 	default:
 		return false
@@ -653,7 +921,7 @@ func validTaskRole(value string) bool {
 
 func validTaskScope(value string) bool {
 	switch value {
-	case "workspace", "shot", "node", "job", "final_output":
+	case "workspace", "shot", "node", "job", "final_output", "render_plan":
 		return true
 	default:
 		return false
@@ -672,6 +940,24 @@ func validTaskType(value string) bool {
 func validEventSourceRole(value string) bool {
 	switch value {
 	case "user", "producer", "craftsman", "reviewer", "composer", "worker", "system":
+		return true
+	default:
+		return false
+	}
+}
+
+func validProducerSignalSourceRole(value string) bool {
+	switch value {
+	case "craftsman", "worker", "reviewer", "composer", "system":
+		return true
+	default:
+		return false
+	}
+}
+
+func validProducerSignalScope(value string) bool {
+	switch value {
+	case "workspace", "shot", "render_plan", "final_output", "key_element_state", "node", "job":
 		return true
 	default:
 		return false

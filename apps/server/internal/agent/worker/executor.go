@@ -25,6 +25,10 @@ type Runtime interface {
 	MarkTaskSucceeded(ctx context.Context, taskID pgtype.UUID, output []byte) (db.AgentTask, error)
 	MarkTaskFailed(ctx context.Context, taskID pgtype.UUID, code, message string) (db.AgentTask, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
+	GetOrCreateProducerThread(ctx context.Context, workspaceID pgtype.UUID) (db.AgentThread, error)
+	CreateProducerPendingSignal(ctx context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error)
+	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
+	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 }
 
 type Store interface {
@@ -33,13 +37,25 @@ type Store interface {
 	ListMediaNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error)
 	GetArtifactVersionByID(ctx context.Context, id pgtype.UUID) (db.ArtifactVersion, error)
 	GetMediaAssetByID(ctx context.Context, id pgtype.UUID) (db.MediaAsset, error)
+	GetKeyElementStateByID(ctx context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error)
 	GetDependencyEdgeByEndpoints(ctx context.Context, params db.GetDependencyEdgeByEndpointsParams) (db.MediaEdge, error)
 	CreateMediaEdge(ctx context.Context, params db.CreateMediaEdgeParams) (db.MediaEdge, error)
 	UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error)
+	UpdateKeyElementState(ctx context.Context, params db.UpdateKeyElementStateParams) (db.KeyElementState, error)
+	MarkRenderPlanCompleted(ctx context.Context, params db.MarkRenderPlanCompletedParams) (db.RenderPlan, error)
 }
 
 type NodeBroadcaster interface {
 	BroadcastAgentNodeCreated(workspaceID pgtype.UUID, node db.MediaNode)
+	BroadcastAgentNodeUpdated(workspaceID pgtype.UUID, node db.MediaNode)
+}
+
+type AgentEventBroadcaster interface {
+	BroadcastAgentEvent(workspaceID pgtype.UUID, event db.AgentEvent)
+}
+
+type ProducerTaskEnqueuer interface {
+	EnqueueProducerTask(ctx context.Context, task db.AgentTask)
 }
 
 type ProductionSubmitter interface {
@@ -47,31 +63,37 @@ type ProductionSubmitter interface {
 }
 
 type ExecutorConfig struct {
-	Runtime     Runtime
-	Store       Store
-	Production  ProductionSubmitter
-	Broadcaster NodeBroadcaster
-	Logger      *slog.Logger
-	Tracer      trace.Tracer
+	Runtime          Runtime
+	Store            Store
+	Production       ProductionSubmitter
+	Broadcaster      NodeBroadcaster
+	AgentBroadcaster AgentEventBroadcaster
+	ProducerEnqueuer ProducerTaskEnqueuer
+	Logger           *slog.Logger
+	Tracer           trace.Tracer
 }
 
 type Executor struct {
-	runtime     Runtime
-	store       Store
-	production  ProductionSubmitter
-	broadcaster NodeBroadcaster
-	logger      *slog.Logger
-	tracer      trace.Tracer
+	runtime          Runtime
+	store            Store
+	production       ProductionSubmitter
+	broadcaster      NodeBroadcaster
+	agentBroadcaster AgentEventBroadcaster
+	producerEnqueuer ProducerTaskEnqueuer
+	logger           *slog.Logger
+	tracer           trace.Tracer
 }
 
 func NewExecutor(config ExecutorConfig) *Executor {
 	return &Executor{
-		runtime:     config.Runtime,
-		store:       config.Store,
-		production:  config.Production,
-		broadcaster: config.Broadcaster,
-		logger:      config.Logger,
-		tracer:      config.Tracer,
+		runtime:          config.Runtime,
+		store:            config.Store,
+		production:       config.Production,
+		broadcaster:      config.Broadcaster,
+		agentBroadcaster: config.AgentBroadcaster,
+		producerEnqueuer: config.ProducerEnqueuer,
+		logger:           config.Logger,
+		tracer:           config.Tracer,
 	}
 }
 
@@ -105,7 +127,7 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr erro
 		TaskID:      task.ID,
 		EventType:   "worker_generation_started",
 		SourceRole:  "worker",
-		Scope:       mustJSON(map[string]any{"shot_id": workerInput.ShotID}),
+		Scope:       mustJSON(map[string]any{"scope_type": task.ScopeType, "scope_id": uuidString(task.ScopeID), "shot_id": workerInput.ShotID}),
 	})
 	node, created, err := e.resolveTargetNode(ctx, task, workerInput)
 	if err != nil {
@@ -136,7 +158,7 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr erro
 		)
 	}
 	if err != nil {
-		return e.fail(ctx, task, "worker_generation_submit_failed", err)
+		return e.failWithProductionResult(ctx, task, workerInput, "worker_generation_submit_failed", err, result)
 	}
 	output := GenerationOutput{
 		Status:            "submitted",
@@ -146,6 +168,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr erro
 		OperationType:     result.Job.OperationType,
 	}
 	rawOutput, _ := json.Marshal(output)
+	if err := e.markScopedKeyElementStateReady(ctx, task, result); err != nil {
+		return e.fail(ctx, task, "worker_generation_state_update_failed", err)
+	}
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, task.ID, rawOutput); err != nil {
 		return err
 	}
@@ -201,41 +226,51 @@ func (e *Executor) resolveTargetNode(ctx context.Context, task db.AgentTask, inp
 	}
 	shotID, ok := pgUUIDFromString(input.ShotID)
 	if !ok {
-		if task.ScopeID.Valid {
+		if task.ScopeType == "shot" && task.ScopeID.Valid {
 			shotID = task.ScopeID
 			ok = true
 		}
 	}
-	if !ok {
+	if !ok && task.ScopeType == "shot" {
 		return db.MediaNode{}, false, fmt.Errorf("%w: shot_id is required", ErrInvalidInput)
 	}
 	spec := generationSpec(input)
 	modelParams, _ := json.Marshal(input.Params)
 	canvasX, canvasY := nodePosition(input)
 	metadata := mustJSON(map[string]any{
-		"agent_artifact_kind": spec.ArtifactKind,
-		"source_phase":        spec.SourcePhase,
-		"shot_client_key":     input.ShotClientKey,
-		"shot_sort_order":     input.ShotSortOrder,
-		"craftsman_thread_id": input.CraftsmanThreadID,
-		"craftsman_task_id":   input.CraftsmanTaskID,
-		"worker_task_id":      uuidString(task.ID),
+		"agent_artifact_kind":          spec.ArtifactKind,
+		"source_phase":                 spec.SourcePhase,
+		"scope_type":                   task.ScopeType,
+		"scope_id":                     uuidString(task.ScopeID),
+		"scope_key":                    input.ScopeKey,
+		"render_plan_key":              input.RenderPlanKey,
+		"source_render_plan_id":        uuidString(task.RenderPlanID),
+		"shot_client_key":              input.ShotClientKey,
+		"shot_sort_order":              input.ShotSortOrder,
+		"key_element_state_client_key": input.KeyElementStateClientKey,
+		"craftsman_thread_id":          input.CraftsmanThreadID,
+		"craftsman_task_id":            input.CraftsmanTaskID,
+		"worker_task_id":               uuidString(task.ID),
 	})
 	node, err := e.store.CreateAgentGenerationNode(ctx, db.CreateAgentGenerationNodeParams{
-		WorkspaceID:   task.WorkspaceID,
-		NodeType:      spec.NodeType,
-		Title:         nodeTitle(input),
-		Prompt:        strings.TrimSpace(input.Prompt),
-		OperationType: spec.OperationType,
-		CanvasX:       canvasX,
-		CanvasY:       canvasY,
-		CanvasW:       spec.CanvasW,
-		CanvasH:       220,
-		ShotID:        shotID,
-		ModelProvider: nullableText(input.Model.Provider),
-		ModelID:       nullableText(input.Model.ModelID),
-		ModelParams:   defaultJSON(modelParams),
-		Metadata:      metadata,
+		WorkspaceID:        task.WorkspaceID,
+		NodeType:           spec.NodeType,
+		Title:              nodeTitle(input),
+		Prompt:             strings.TrimSpace(input.Prompt),
+		OperationType:      spec.OperationType,
+		CanvasX:            canvasX,
+		CanvasY:            canvasY,
+		CanvasW:            spec.CanvasW,
+		CanvasH:            220,
+		ShotID:             shotID,
+		ModelProvider:      nullableText(input.Model.Provider),
+		ModelID:            nullableText(input.Model.ModelID),
+		ModelParams:        defaultJSON(modelParams),
+		Metadata:           metadata,
+		SemanticKey:        mediaNodeSemanticKey(task, input, spec),
+		DisplayName:        nodeTitle(input),
+		ArtifactKind:       spec.ArtifactKind,
+		SourceRenderPlanID: task.RenderPlanID,
 	})
 	return node, true, err
 }
@@ -259,7 +294,23 @@ func generationIntent(task db.AgentTask, input GenerationInput, node db.MediaNod
 			Type: "agent_worker",
 			ID:   uuidString(task.ID),
 		},
+		Semantic: production.SemanticInfo{
+			ScopeKey:           strings.TrimSpace(input.ScopeKey),
+			RenderPlanKey:      strings.TrimSpace(input.RenderPlanKey),
+			ArtifactKind:       spec.ArtifactKind,
+			SourceRenderPlanID: task.RenderPlanID,
+		},
 	}
+}
+
+func mediaNodeSemanticKey(task db.AgentTask, input GenerationInput, spec generationSpecValue) string {
+	if key := strings.TrimSpace(input.RenderPlanKey); key != "" {
+		return key + ".node"
+	}
+	if key := strings.TrimSpace(input.ScopeKey); key != "" {
+		return key + "." + spec.ArtifactKind + ".node"
+	}
+	return strings.TrimSpace(spec.ArtifactKind) + ".node"
 }
 
 func parseGenerationInput(raw []byte) (GenerationInput, error) {
@@ -267,10 +318,13 @@ func parseGenerationInput(raw []byte) (GenerationInput, error) {
 	if err := json.Unmarshal(defaultJSON(raw), &input); err != nil {
 		return GenerationInput{}, err
 	}
+	if strings.TrimSpace(input.TargetPhase) != "" {
+		input.Mode = strings.TrimSpace(input.TargetPhase)
+	}
 	if input.Mode == "" {
 		input.Mode = "preview_image"
 	}
-	if input.Mode != "preview_image" && input.Mode != "shot_video" {
+	if input.Mode != "reference_image" && input.Mode != "preview_image" && input.Mode != "shot_video" {
 		return GenerationInput{}, ErrInvalidInput
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
@@ -303,21 +357,149 @@ func effectiveMaxAttempts(task db.AgentTask, input GenerationInput) int {
 }
 
 func (e *Executor) fail(ctx context.Context, task db.AgentTask, code string, err error) error {
+	return e.failWithProductionResult(ctx, task, GenerationInput{}, code, err, production.RunResult{})
+}
+
+func (e *Executor) failWithProductionResult(ctx context.Context, task db.AgentTask, input GenerationInput, code string, err error, result production.RunResult) error {
 	message := ""
 	if err != nil {
 		message = err.Error()
 	}
 	e.markScopedShotFailed(ctx, task)
+	if e != nil && e.store != nil && task.RenderPlanID.Valid {
+		_, _ = e.store.MarkRenderPlanCompleted(ctx, db.MarkRenderPlanCompletedParams{
+			ID:              task.RenderPlanID,
+			WorkspaceID:     task.WorkspaceID,
+			Status:          "failed",
+			OutputVersionID: result.Version.ID,
+			OutputNodeID:    result.Node.ID,
+		})
+	}
 	_, _ = e.runtime.MarkTaskFailed(ctx, task.ID, code, message)
-	_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
+	payload := mustJSON(map[string]any{
+		"error_code":          code,
+		"error":               message,
+		"node_id":             uuidString(result.Node.ID),
+		"generation_job_id":   uuidString(result.Job.ID),
+		"artifact_version_id": uuidString(result.Version.ID),
+		"target_phase":        input.Mode,
+	})
+	event, _ := e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: task.WorkspaceID,
 		ThreadID:    task.ThreadID,
 		TaskID:      task.ID,
 		EventType:   "worker_generation_failed",
 		SourceRole:  "worker",
-		Payload:     mustJSON(map[string]any{"error_code": code, "error": message}),
+		TargetRole:  "producer",
+		Payload:     payload,
 	})
+	e.broadcastFailure(ctx, task, event, result)
+	e.wakeProducerOnFailure(ctx, task, input, code, message, result)
 	return fmt.Errorf("%s: %w", code, err)
+}
+
+func (e *Executor) broadcastFailure(ctx context.Context, task db.AgentTask, event db.AgentEvent, result production.RunResult) {
+	if e == nil {
+		return
+	}
+	if e.agentBroadcaster != nil && event.EventType != "" {
+		e.agentBroadcaster.BroadcastAgentEvent(task.WorkspaceID, event)
+	}
+	if e.broadcaster == nil || e.store == nil || !result.Node.ID.Valid {
+		return
+	}
+	node := result.Node
+	if loaded, err := e.store.GetMediaNodeByID(ctx, result.Node.ID); err == nil && loaded.ID.Valid {
+		node = loaded
+	}
+	e.broadcaster.BroadcastAgentNodeUpdated(task.WorkspaceID, node)
+}
+
+func (e *Executor) wakeProducerOnFailure(ctx context.Context, task db.AgentTask, input GenerationInput, code string, message string, result production.RunResult) {
+	if e == nil || e.runtime == nil || e.producerEnqueuer == nil || !task.WorkspaceID.Valid || !task.ID.Valid {
+		return
+	}
+	thread, err := e.runtime.GetOrCreateProducerThread(ctx, task.WorkspaceID)
+	if err != nil || !thread.ID.Valid {
+		return
+	}
+	scopeType := strings.TrimSpace(task.ScopeType)
+	if scopeType == "" {
+		scopeType = "workspace"
+	}
+	targetPhase := strings.TrimSpace(input.Mode)
+	if targetPhase == "" {
+		targetPhase = strings.TrimSpace(input.TargetPhase)
+	}
+	artifactKind := generationSpec(input).ArtifactKind
+	dedupeID := result.Job.ID
+	if !dedupeID.Valid {
+		dedupeID = task.ID
+	}
+	payload := mustJSON(map[string]any{
+		"trigger":             "worker_generation_completed",
+		"target_phase":        targetPhase,
+		"render_plan_id":      uuidString(task.RenderPlanID),
+		"render_plan_status":  "failed",
+		"scope_type":          scopeType,
+		"scope_id":            uuidString(task.ScopeID),
+		"shot_id":             input.ShotID,
+		"node_id":             uuidString(result.Node.ID),
+		"generation_job_id":   uuidString(result.Job.ID),
+		"artifact_version_id": uuidString(result.Version.ID),
+		"artifact_kind":       artifactKind,
+		"worker_task_id":      uuidString(task.ID),
+		"worker_thread_id":    uuidString(task.ThreadID),
+		"error_code":          code,
+		"error":               message,
+	})
+	if _, err := e.runtime.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
+		WorkspaceID:      task.WorkspaceID,
+		ProducerThreadID: thread.ID,
+		SourceRole:       "worker",
+		SourceTaskID:     task.ID,
+		SourceThreadID:   task.ThreadID,
+		SignalType:       "worker_generation_completed",
+		ScopeType:        scopeType,
+		ScopeID:          task.ScopeID,
+		RenderPlanID:     task.RenderPlanID,
+		Priority:         70,
+		DedupeKey:        "worker_generation_completed:" + uuidString(dedupeID),
+		Payload:          payload,
+	}); err != nil {
+		return
+	}
+	e.ensureProducerWakeTask(ctx, task.WorkspaceID, thread.ID, payload)
+}
+
+func (e *Executor) ensureProducerWakeTask(ctx context.Context, workspaceID pgtype.UUID, producerThreadID pgtype.UUID, input []byte) {
+	if e == nil || e.runtime == nil || e.producerEnqueuer == nil || !workspaceID.Valid || !producerThreadID.Valid {
+		return
+	}
+	activeTasks, err := e.runtime.ListActiveAgentTasksByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return
+	}
+	for _, task := range activeTasks {
+		if task.Role == "producer" &&
+			(task.TaskType == "producer_turn" || task.TaskType == "decision_resume") &&
+			(task.Status == "queued" || task.Status == "running" || task.Status == "waiting_for_user") {
+			return
+		}
+	}
+	task, err := e.runtime.CreateTask(ctx, agentruntime.CreateTaskParams{
+		WorkspaceID: workspaceID,
+		ThreadID:    producerThreadID,
+		Role:        "producer",
+		ScopeType:   "workspace",
+		TaskType:    "producer_turn",
+		MaxAttempts: 1,
+		Input:       input,
+	})
+	if err != nil {
+		return
+	}
+	e.producerEnqueuer.EnqueueProducerTask(ctx, task)
 }
 
 func (e *Executor) markScopedShotFailed(ctx context.Context, task db.AgentTask) {
@@ -335,6 +517,36 @@ func (e *Executor) markScopedShotFailed(ctx context.Context, task db.AgentTask) 
 	})
 }
 
+func (e *Executor) markScopedKeyElementStateReady(ctx context.Context, task db.AgentTask, result production.RunResult) error {
+	if e == nil || e.store == nil || task.ScopeType != "key_element_state" || !task.ScopeID.Valid || !task.WorkspaceID.Valid {
+		return nil
+	}
+	state, err := e.store.GetKeyElementStateByID(ctx, db.GetKeyElementStateByIDParams{
+		ID:          task.ScopeID,
+		WorkspaceID: task.WorkspaceID,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = e.store.UpdateKeyElementState(ctx, db.UpdateKeyElementStateParams{
+		ID:                 state.ID,
+		WorkspaceID:        state.WorkspaceID,
+		Label:              state.Label,
+		VisualDescription:  state.VisualDescription,
+		ReferenceStatus:    "ready",
+		ReferenceNodeID:    result.Node.ID,
+		ReferenceVersionID: result.Version.ID,
+		IsDefault:          state.IsDefault,
+		StateFacts:         state.StateFacts,
+		SourceRefs:         state.SourceRefs,
+		Status:             state.Status,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 type generationSpecValue struct {
 	NodeType      db.NodeType
 	OutputType    string
@@ -346,6 +558,23 @@ type generationSpecValue struct {
 
 func generationSpec(input GenerationInput) generationSpecValue {
 	switch input.Mode {
+	case "reference_image":
+		operationType := strings.TrimSpace(input.OperationType)
+		if operationType == "" {
+			operationType = "text_to_image"
+		}
+		outputType := strings.TrimSpace(input.OutputType)
+		if outputType == "" {
+			outputType = "image"
+		}
+		return generationSpecValue{
+			NodeType:      db.NodeTypeImage,
+			OutputType:    outputType,
+			OperationType: operationType,
+			ArtifactKind:  "reference_image",
+			SourcePhase:   "key_element_state",
+			CanvasW:       320,
+		}
 	case "shot_video":
 		operationType := strings.TrimSpace(input.OperationType)
 		if operationType == "" {
@@ -364,10 +593,18 @@ func generationSpec(input GenerationInput) generationSpecValue {
 			CanvasW:       360,
 		}
 	default:
+		operationType := strings.TrimSpace(input.OperationType)
+		if operationType == "" {
+			operationType = "text_to_image"
+		}
+		outputType := strings.TrimSpace(input.OutputType)
+		if outputType == "" {
+			outputType = "image"
+		}
 		return generationSpecValue{
 			NodeType:      db.NodeTypeImage,
-			OutputType:    "image",
-			OperationType: "text_to_image",
+			OutputType:    outputType,
+			OperationType: operationType,
 			ArtifactKind:  "preview_image",
 			CanvasW:       320,
 		}
@@ -375,6 +612,12 @@ func generationSpec(input GenerationInput) generationSpecValue {
 }
 
 func nodeTitle(input GenerationInput) string {
+	if input.Mode == "reference_image" {
+		if strings.TrimSpace(input.KeyElementStateClientKey) != "" {
+			return input.KeyElementStateClientKey + " reference image"
+		}
+		return "Agent reference image"
+	}
 	if input.Mode == "shot_video" {
 		if strings.TrimSpace(input.ShotClientKey) != "" {
 			return input.ShotClientKey + " shot video"
@@ -388,6 +631,9 @@ func nodeTitle(input GenerationInput) string {
 }
 
 func nodePosition(input GenerationInput) (float32, float32) {
+	if input.Mode == "reference_image" {
+		return 140, 140
+	}
 	x, y := previewNodePosition(input)
 	if input.Mode == "shot_video" {
 		return x, y + 500

@@ -32,6 +32,14 @@ WHERE thread_id = $1
 ORDER BY seq
 LIMIT $3;
 
+-- name: ListAgentMessagesByWorkspace :many
+SELECT *
+FROM agent_message
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND (sqlc.narg(after_created_at)::timestamptz IS NULL OR created_at > sqlc.narg(after_created_at))
+ORDER BY created_at, thread_id, seq
+LIMIT sqlc.arg(row_limit);
+
 -- name: UpdateAgentMessage :one
 UPDATE agent_message
 SET

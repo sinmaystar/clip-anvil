@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -91,6 +92,93 @@ func TestModelImageReferenceRejectsTooSmallWorkspaceImage(t *testing.T) {
 	if ok {
 		t.Fatal("modelImageReference ok = true, want false")
 	}
+}
+
+func TestRuntimeContextLoaderLoadsRecentMessagesThroughTrigger(t *testing.T) {
+	threadID := uuidWithByte(2)
+	messages := make([]db.AgentMessage, 0, 1001)
+	for seq := int64(1); seq <= 1001; seq++ {
+		text := "old"
+		if seq == 1001 {
+			text = "现在什么进展了"
+		}
+		messages = append(messages, db.AgentMessage{
+			ThreadID:    threadID,
+			Seq:         seq,
+			Role:        "user",
+			MessageType: "text",
+			Content:     mustUserContent(t, uimessage.UserMessageInput{Text: text}),
+		})
+	}
+	runtime := &fakeProducerContextRuntime{messages: messages}
+	loader := RuntimeContextLoader{Runtime: runtime}
+
+	out, err := loader.LoadProducerContext(context.Background(), ProducerTurnInput{
+		ThreadID:          threadID,
+		TriggerMessageSeq: 1001,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.afterSeq != 1 {
+		t.Fatalf("afterSeq = %d, want 1", runtime.afterSeq)
+	}
+	if runtime.limit != 1000 {
+		t.Fatalf("limit = %d, want 1000", runtime.limit)
+	}
+	if len(out.Messages) != 1000 {
+		t.Fatalf("messages len = %d, want 1000", len(out.Messages))
+	}
+	if out.Messages[0].Seq != 2 || out.Messages[len(out.Messages)-1].Seq != 1001 {
+		t.Fatalf("message seq window = %d..%d, want 2..1001", out.Messages[0].Seq, out.Messages[len(out.Messages)-1].Seq)
+	}
+	if out.LatestUserText != "现在什么进展了" {
+		t.Fatalf("latest user text = %q", out.LatestUserText)
+	}
+}
+
+func TestRuntimeContextLoaderCarriesNaturalLanguageRuntimeTrigger(t *testing.T) {
+	loader := RuntimeContextLoader{Runtime: &fakeProducerContextRuntime{}}
+
+	out, err := loader.LoadProducerContext(context.Background(), ProducerTurnInput{
+		ThreadID: uuidWithByte(2),
+		RuntimeTriggerText: strings.Join([]string{
+			"系统事件：Craftsman 已完成 RenderPlan 编译。",
+			"触发原因：craftsman_render_plan_ready。",
+			"下一步：请读取项目上下文，检查 waiting_for_approval RenderPlan，并决定 accept/reject 或派 Reviewer。",
+		}, "\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out.RuntimeTriggerText, "Craftsman 已完成 RenderPlan 编译") ||
+		!strings.Contains(out.RuntimeTriggerText, "waiting_for_approval RenderPlan") {
+		t.Fatalf("runtime trigger text = %q", out.RuntimeTriggerText)
+	}
+}
+
+type fakeProducerContextRuntime struct {
+	messages []db.AgentMessage
+	afterSeq int64
+	limit    int32
+}
+
+func (f *fakeProducerContextRuntime) ListMessages(_ context.Context, _ pgtype.UUID, afterSeq int64, limit int32) ([]db.AgentMessage, error) {
+	f.afterSeq = afterSeq
+	f.limit = limit
+	out := make([]db.AgentMessage, 0, limit)
+	for _, message := range f.messages {
+		if message.Seq <= afterSeq {
+			continue
+		}
+		out = append(out, message)
+		if len(out) >= int(limit) {
+			break
+		}
+	}
+	return out, nil
 }
 
 type fakeImageReader struct {

@@ -20,15 +20,15 @@ import (
 
 	agentcomposer "github.com/sinmaystar/clip-anvil/internal/agent/composer"
 	agentcraftsman "github.com/sinmaystar/clip-anvil/internal/agent/craftsman"
+	agentcreative "github.com/sinmaystar/clip-anvil/internal/agent/creative"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
 	agenthitl "github.com/sinmaystar/clip-anvil/internal/agent/hitl"
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
 	agentproducer "github.com/sinmaystar/clip-anvil/internal/agent/producer"
 	agentpss "github.com/sinmaystar/clip-anvil/internal/agent/pss"
+	agentrenderplan "github.com/sinmaystar/clip-anvil/internal/agent/renderplan"
 	agentreviewer "github.com/sinmaystar/clip-anvil/internal/agent/reviewer"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
-	agentscheduler "github.com/sinmaystar/clip-anvil/internal/agent/scheduler"
-	agentstoryboard "github.com/sinmaystar/clip-anvil/internal/agent/storyboard"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
 	"github.com/sinmaystar/clip-anvil/internal/api"
@@ -110,7 +110,8 @@ func main() {
 	agentBroadcaster := api.NewAgentBroadcaster(agentHub)
 	hitlService := agenthitl.NewService(agentRuntime, agentBroadcaster)
 	producerPSSBuilder := agentpss.NewBuilder(queries)
-	storyboardService := agentstoryboard.NewService(pgPool, queries)
+	creativeStateService := agentcreative.NewService(queries)
+	renderPlanService := agentrenderplan.NewService(queries, agentrenderplan.NewPromptCompiler())
 	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
 	canvasHandler := api.NewCanvasHandler(queries, storageService)
 	nodeHandler := api.NewNodeHandler(pgPool, queries, canvasHub)
@@ -177,8 +178,9 @@ func main() {
 		)
 	}
 	productionRuntime = production.NewTracingRuntime(productionRuntime, agentTracing.Tracer)
+	producerEnqueuer := &agentProducerTaskEnqueuer{}
 	productionBroadcaster := api.NewProductionBroadcaster(canvasHub, queries, storageService)
-	productionBroadcaster.SetAgentPreviewEventSink(agentPreviewEventSink{runtime: agentRuntime, broadcaster: agentBroadcaster})
+	productionBroadcaster.SetAgentPreviewEventSink(agentPreviewEventSink{runtime: agentRuntime, broadcaster: agentBroadcaster, producerEnqueuer: producerEnqueuer})
 	productionRunner := production.NewProductionRunner(
 		productionService,
 		productionRuntime,
@@ -190,13 +192,16 @@ func main() {
 	productionRunner.Start(ctx)
 	agentCanvasBroadcaster := api.NewAgentCanvasNodeBroadcaster(canvasHub, queries, storageService)
 	workerExecutor := agentworker.NewExecutor(agentworker.ExecutorConfig{
-		Runtime:     agentRuntime,
-		Store:       queries,
-		Production:  productionService,
-		Broadcaster: agentCanvasBroadcaster,
-		Tracer:      agentTracing.Tracer,
+		Runtime:          agentRuntime,
+		Store:            queries,
+		Production:       productionService,
+		Broadcaster:      agentCanvasBroadcaster,
+		AgentBroadcaster: agentBroadcaster,
+		ProducerEnqueuer: producerEnqueuer,
+		Tracer:           agentTracing.Tracer,
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
+	renderPlanSubmitter := agenttools.NewRenderPlanSubmitter(queries, agentRuntime, workerEnqueuer)
 	composerGraph, err := agentcomposer.NewGraph(agentcomposer.GraphConfig{
 		Runtime:          agentRuntime,
 		Store:            queries,
@@ -214,22 +219,17 @@ func main() {
 		Graph:          composerGraph,
 		TraceCallbacks: agentTracing.Callbacks,
 	})
-	composerEnqueuer := agentComposerTaskEnqueuer{executor: composerExecutor}
+	_ = composerExecutor
 	craftsmanGraph, err := agentcraftsman.NewGraph(agentcraftsman.GraphConfig{
 		Loader: agentcraftsman.ContextLoader{
 			Store:   queries,
 			Runtime: agentRuntime,
 		},
-		Responder: agentcraftsman.NewVolcengineModelResponder(agentcraftsman.VolcengineModelResponderConfig{
-			APIKey:      cfg.Production.Volcengine.APIKey,
-			BaseURL:     cfg.Production.Volcengine.BaseURL,
-			Region:      cfg.Production.Volcengine.Region,
-			Model:       cfg.Production.Volcengine.TextModel,
-			MaxTokens:   1000,
-			Temperature: 0.4,
-		}),
-		Runtime:          agentRuntime,
-		WorkerEnqueuer:   workerEnqueuer,
+		ToolResponder: craftsmanResponderForConfig(cfg),
+		NativeToolRegistry: mustNativeRegistry(
+			agenttools.NewReadProjectMemoryNativeTool(creativeStateService),
+			agenttools.NewUpsertRenderPlanNativeTool(renderPlanService, renderPlanSubmitter).WithReferenceStore(queries),
+		),
 		CheckPointStore:  agentEinoCheckpointStore,
 		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
@@ -238,80 +238,73 @@ func main() {
 		os.Exit(1)
 	}
 	craftsmanExecutor := agentcraftsman.NewExecutor(agentcraftsman.ExecutorConfig{
-		Runtime:        agentRuntime,
-		Graph:          craftsmanGraph,
-		TraceCallbacks: agentTracing.Callbacks,
+		Runtime:          agentRuntime,
+		Graph:            craftsmanGraph,
+		Broadcaster:      agentBroadcaster,
+		ProducerEnqueuer: producerEnqueuer,
+		TraceCallbacks:   agentTracing.Callbacks,
 	})
 	craftsmanEnqueuer := agentCraftsmanTaskEnqueuer{executor: craftsmanExecutor}
-	retryGenerationTool := agenttools.NewRetryGenerationTool(queries, agentRuntime, craftsmanEnqueuer)
-	dependencyDispatcher := agentscheduler.NewDispatcher(agentscheduler.NewDependencyScheduler(queries), agentRuntime)
+	reviewerNativeToolRegistry, err := agenttools.NewNativeRegistry(
+		agenttools.NewReadProjectContextNativeTool(creativeStateService),
+		agenttools.NewReadProjectMemoryNativeTool(creativeStateService),
+		agenttools.NewSubmitReviewResultNativeTool(queries),
+	)
+	if err != nil {
+		slog.Error("failed to create reviewer native tool registry", "error", err)
+		os.Exit(1)
+	}
 	reviewerGraph, err := agentreviewer.NewGraph(agentreviewer.GraphConfig{
 		Loader: agentreviewer.ContextLoader{
 			Store:       queries,
+			Runtime:     agentRuntime,
 			ImageReader: storageService,
 			PSSBuilder:  producerPSSBuilder,
 		},
-		Responder: agentreviewer.NewVolcengineModelResponder(agentreviewer.VolcengineModelResponderConfig{
-			APIKey:      cfg.Production.Volcengine.APIKey,
-			BaseURL:     cfg.Production.Volcengine.BaseURL,
-			Region:      cfg.Production.Volcengine.Region,
-			Model:       cfg.Production.Volcengine.TextModel,
-			MaxTokens:   1600,
-			Temperature: 0.1,
-		}),
-		Runtime:          agentRuntime,
-		Store:            queries,
-		Selector:         productionService,
-		RetryDispatcher:  agentReviewerRetryDispatcher{tool: retryGenerationTool},
-		Dependency:       dependencyDispatcher,
-		CheckPointStore:  agentEinoCheckpointStore,
-		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
+		ToolResponder:      reviewerResponderForConfig(cfg),
+		NativeToolRegistry: reviewerNativeToolRegistry,
+		CheckPointStore:    agentEinoCheckpointStore,
+		CompileCallbacks:   []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
 	if err != nil {
 		slog.Error("failed to create reviewer graph", "error", err)
 		os.Exit(1)
 	}
 	reviewerExecutor := agentreviewer.NewExecutor(agentreviewer.ExecutorConfig{
-		Runtime:        agentRuntime,
-		Graph:          reviewerGraph,
-		TraceCallbacks: agentTracing.Callbacks,
+		Runtime:          agentRuntime,
+		Graph:            reviewerGraph,
+		Broadcaster:      agentBroadcaster,
+		ProducerEnqueuer: producerEnqueuer,
+		TraceCallbacks:   agentTracing.Callbacks,
 	})
 	reviewerEnqueuer := agentReviewerTaskEnqueuer{executor: reviewerExecutor}
-	agentToolRegistry, err := agenttools.NewRegistry(
-		agenttools.NewReadWorkspaceContextTool(queries),
-		agenttools.NewGetProductionStateTool(producerPSSBuilder),
-		agenttools.NewUpdateStoryboardTool(storyboardService),
-		agenttools.NewCreateAgentTextNodeTool(queries, agentCanvasBroadcaster),
-		agenttools.NewDispatchCraftsmanTool(queries, agentRuntime, craftsmanEnqueuer),
-		agenttools.NewGenerateShotVideoTool(queries, agentRuntime, craftsmanEnqueuer),
-		agenttools.NewReviewShotTool(queries, agentRuntime, reviewerEnqueuer),
-		agenttools.NewSelectVersionTool(productionService, agentRuntime, agentCanvasBroadcaster),
-		retryGenerationTool,
-		agenttools.NewComposeFinalTool(queries, agentRuntime, composerEnqueuer),
-		agenttools.NewRequestUserDecisionTool(agenthitl.NewToolDecisionRequester(hitlService)),
+	producerNativeToolRegistry, err := agenttools.NewNativeRegistry(
+		agenttools.NewReadProjectContextNativeTool(creativeStateService, producerPSSBuilder),
+		agenttools.NewUpsertProjectBriefNativeTool(creativeStateService),
+		agenttools.NewUpdateProjectMemoryNativeTool(creativeStateService),
+		agenttools.NewUpsertKeyElementsNativeTool(creativeStateService),
+		agenttools.NewUpsertStoryboardNativeTool(creativeStateService),
+		agenttools.NewDispatchCraftsmanNativeTool(queries, agentRuntime, craftsmanEnqueuer),
+		agenttools.NewDecideRenderPlanNativeTool(queries, agentRuntime, workerEnqueuer),
+		agenttools.NewDispatchReviewerNativeTool(queries, agentRuntime, reviewerEnqueuer),
+		agenttools.NewRequestUserDecisionNativeTool(agenthitl.NewToolDecisionRequester(hitlService)),
 	)
 	if err != nil {
-		slog.Error("failed to create agent tool registry", "error", err)
+		slog.Error("failed to create producer native tool registry", "error", err)
 		os.Exit(1)
 	}
-	agentToolExecutor := agentproducer.NewRegistryToolExecutor(agentproducer.RegistryToolExecutorConfig{
-		Registry:    agentToolRegistry,
-		Runtime:     agentRuntime,
-		Broadcaster: agentBroadcaster,
-	})
 	producerGraph, err := agentproducer.NewGraph(agentproducer.GraphConfig{
 		Loader: agentproducer.RuntimeContextLoader{
 			Runtime:        agentRuntime,
 			Queries:        queries,
 			ImageReader:    storageService,
 			ModelSelection: agentModelSelection,
-			PSSBuilder:     producerPSSBuilder,
 		},
-		Responder:        producerResponderForConfig(cfg),
-		ToolExecutor:     agentToolExecutor,
-		ToolRegistry:     agentToolRegistry,
-		CheckPointStore:  agentEinoCheckpointStore,
-		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
+		Responder:          producerResponderForConfig(cfg),
+		NativeToolRegistry: producerNativeToolRegistry,
+		SignalRuntime:      agentRuntime,
+		CheckPointStore:    agentEinoCheckpointStore,
+		CompileCallbacks:   []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
 	if err != nil {
 		slog.Error("failed to create producer graph", "error", err)
@@ -325,31 +318,35 @@ func main() {
 		ToolTimeout:    time.Duration(cfg.Agent.ToolTimeoutSeconds) * time.Second,
 		TraceCallbacks: agentTracing.Callbacks,
 	})
+	producerEnqueuer.executor = producerExecutor
 	agentHandler := api.NewAgentHandler(queries, agentRuntime, agentHub, producerExecutor)
 	agentHandler.SetAttachmentStorage(storageService)
 	agentHandler.SetCanvasHub(canvasHub)
 	agentHandler.SetModelSelectionService(agentModelSelection)
 	agentHandler.SetHITLService(hitlService)
-	go func() {
-		tasks, err := agentRuntime.ListQueuedProducerTasksAcrossWorkspaces(context.Background(), 50)
-		if err != nil {
-			slog.Warn("skipping queued producer recovery", "error", err)
-			return
-		}
-		for _, task := range tasks {
-			if err := producerExecutor.RunTask(context.Background(), agentproducer.RunTaskInput{
-				WorkspaceID: task.WorkspaceID,
-				ThreadID:    task.ThreadID,
-				TaskID:      task.ID,
-			}); err != nil {
-				slog.Warn("failed to recover queued producer task", "task_id", task.ID, "error", err)
-			}
-		}
-	}()
-	go recoverQueuedCraftsmanTasks(craftsmanExecutor, agentRuntime)
-	go recoverQueuedWorkerTasks(workerExecutor, agentRuntime)
-	go recoverQueuedReviewerTasks(reviewerExecutor, agentRuntime)
-	go recoverQueuedComposerTasks(composerExecutor, agentRuntime)
+	// Disabled during Agent architecture development: local restarts often leave
+	// large batches of test tasks queued, and auto-recovering them makes each
+	// restart expensive and noisy.
+	// go func() {
+	// 	tasks, err := agentRuntime.ListQueuedProducerTasksAcrossWorkspaces(context.Background(), 1000)
+	// 	if err != nil {
+	// 		slog.Warn("skipping queued producer recovery", "error", err)
+	// 		return
+	// 	}
+	// 	for _, task := range tasks {
+	// 		if err := producerExecutor.RunTask(context.Background(), agentproducer.RunTaskInput{
+	// 			WorkspaceID: task.WorkspaceID,
+	// 			ThreadID:    task.ThreadID,
+	// 			TaskID:      task.ID,
+	// 		}); err != nil {
+	// 			slog.Warn("failed to recover queued producer task", "task_id", task.ID, "error", err)
+	// 		}
+	// 	}
+	// }()
+	// go recoverQueuedCraftsmanTasks(craftsmanExecutor, agentRuntime)
+	// go recoverQueuedWorkerTasks(workerExecutor, agentRuntime)
+	// go recoverQueuedReviewerTasks(reviewerExecutor, agentRuntime)
+	// go recoverQueuedComposerTasks(composerExecutor, agentRuntime)
 	runHandler := api.NewRunHandler(productionService, queries, storageService)
 	modelHandler := api.NewModelHandler(queries)
 	referencePackHandler := api.NewReferencePackHandler(pgPool, queries, productionService)
@@ -428,8 +425,13 @@ func main() {
 	h.GET("/api/workspaces/:id", authMiddleware, workspaceHandler.Get)
 	h.GET("/api/model-capabilities", authMiddleware, modelHandler.ListCapabilities)
 	h.GET("/api/agent/workspaces/:workspaceID/thread", authMiddleware, agentHandler.GetThread)
+	h.GET("/api/agent/workspaces/:workspaceID/threads", authMiddleware, agentHandler.ListThreads)
+	h.GET("/api/agent/workspaces/:workspaceID/threads/:threadID/messages", authMiddleware, agentHandler.ListThreadMessages)
 	h.GET("/api/agent/workspaces/:workspaceID/messages", authMiddleware, agentHandler.ListMessages)
+	h.GET("/api/agent/workspaces/:workspaceID/tasks", authMiddleware, agentHandler.ListActiveTasks)
 	h.GET("/api/agent/workspaces/:workspaceID/production-overview", authMiddleware, agentHandler.GetProductionOverview)
+	h.GET("/api/agent/workspaces/:workspaceID/canvas/workbench", authMiddleware, agentHandler.GetCanvasWorkbench)
+	h.GET("/api/agent/workspaces/:workspaceID/canvas/details", authMiddleware, agentHandler.GetCanvasDetail)
 	h.GET("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.GetModelSelection)
 	h.PUT("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.PutModelSelection)
 	h.POST("/api/agent/workspaces/:workspaceID/attachments", authMiddleware, agentHandler.PostAttachment)
@@ -477,8 +479,9 @@ func main() {
 }
 
 type agentPreviewEventSink struct {
-	runtime     *agentruntime.Service
-	broadcaster *api.AgentBroadcaster
+	runtime          *agentruntime.Service
+	broadcaster      *api.AgentBroadcaster
+	producerEnqueuer *agentProducerTaskEnqueuer
 }
 
 func (s agentPreviewEventSink) CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
@@ -495,8 +498,63 @@ func (s agentPreviewEventSink) BroadcastAgentEvent(workspaceID pgtype.UUID, even
 	s.broadcaster.BroadcastAgentEvent(workspaceID, event)
 }
 
+func (s agentPreviewEventSink) GetOrCreateProducerThread(ctx context.Context, workspaceID pgtype.UUID) (db.AgentThread, error) {
+	if s.runtime == nil {
+		return db.AgentThread{}, nil
+	}
+	return s.runtime.GetOrCreateProducerThread(ctx, workspaceID)
+}
+
+func (s agentPreviewEventSink) CreateProducerPendingSignal(ctx context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error) {
+	if s.runtime == nil {
+		return db.ProducerPendingSignal{}, nil
+	}
+	return s.runtime.CreateProducerPendingSignal(ctx, params)
+}
+
+func (s agentPreviewEventSink) ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error) {
+	if s.runtime == nil {
+		return nil, nil
+	}
+	return s.runtime.ListActiveAgentTasksByWorkspace(ctx, workspaceID)
+}
+
+func (s agentPreviewEventSink) CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {
+	if s.runtime == nil {
+		return db.AgentTask{}, nil
+	}
+	return s.runtime.CreateTask(ctx, params)
+}
+
+func (s agentPreviewEventSink) EnqueueProducerTask(ctx context.Context, task db.AgentTask) {
+	if s.producerEnqueuer == nil {
+		return
+	}
+	s.producerEnqueuer.EnqueueProducerTask(ctx, task)
+}
+
 type agentCraftsmanTaskEnqueuer struct {
 	executor *agentcraftsman.Executor
+}
+
+type agentProducerTaskEnqueuer struct {
+	executor *agentproducer.Executor
+}
+
+func (e *agentProducerTaskEnqueuer) EnqueueProducerTask(ctx context.Context, task db.AgentTask) {
+	if e == nil || e.executor == nil {
+		return
+	}
+	runCtx := context.WithoutCancel(ctx)
+	go func() {
+		if err := e.executor.RunTask(runCtx, agentproducer.RunTaskInput{
+			WorkspaceID: task.WorkspaceID,
+			ThreadID:    task.ThreadID,
+			TaskID:      task.ID,
+		}); err != nil {
+			slog.Warn("failed to run producer task", "task_id", task.ID, "error", err)
+		}
+	}()
 }
 
 func (e agentCraftsmanTaskEnqueuer) EnqueueCraftsmanTask(ctx context.Context, task db.AgentTask) {
@@ -509,7 +567,9 @@ func (e agentCraftsmanTaskEnqueuer) EnqueueCraftsmanTask(ctx context.Context, ta
 			WorkspaceID: task.WorkspaceID,
 			ThreadID:    task.ThreadID,
 			TaskID:      task.ID,
-			ShotID:      task.ScopeID,
+			ScopeType:   task.ScopeType,
+			ScopeID:     task.ScopeID,
+			ShotID:      shotIDForCraftsmanTask(task),
 			Input:       task.Input,
 		}); err != nil {
 			slog.Warn("failed to run craftsman task", "task_id", task.ID, "error", err)
@@ -533,22 +593,6 @@ func (e agentWorkerTaskEnqueuer) EnqueueWorkerTask(ctx context.Context, task db.
 	}()
 }
 
-type agentComposerTaskEnqueuer struct {
-	executor *agentcomposer.Executor
-}
-
-func (e agentComposerTaskEnqueuer) EnqueueComposerTask(ctx context.Context, task db.AgentTask) {
-	if e.executor == nil {
-		return
-	}
-	runCtx := context.WithoutCancel(ctx)
-	go func() {
-		if err := e.executor.RunTask(runCtx, agentcomposer.RunTaskInput{Task: task}); err != nil {
-			slog.Warn("failed to run composer task", "task_id", task.ID, "error", err)
-		}
-	}()
-}
-
 type agentReviewerTaskEnqueuer struct {
 	executor *agentreviewer.Executor
 }
@@ -565,35 +609,19 @@ func (e agentReviewerTaskEnqueuer) EnqueueReviewerTask(ctx context.Context, task
 	}()
 }
 
-type agentReviewerRetryDispatcher struct {
-	tool agenttools.RetryGenerationTool
-}
-
-func (d agentReviewerRetryDispatcher) DispatchRetry(ctx context.Context, input agentreviewer.RetryDispatchInput) error {
-	if input.ShotRef == "" {
-		return nil
+func shotIDForCraftsmanTask(task db.AgentTask) pgtype.UUID {
+	if task.ScopeType == "shot" {
+		return task.ScopeID
 	}
-	_, err := d.tool.Execute(ctx, agenttools.ExecuteInput{
-		WorkspaceID: input.WorkspaceID,
-		ThreadID:    input.ThreadID,
-		TaskID:      input.TaskID,
-		Arguments: map[string]any{
-			"shot_ref":         input.ShotRef,
-			"target_phase":     input.TargetPhase,
-			"review_record_id": input.ReviewID,
-			"critique":         input.Critique,
-			"fix_hints":        input.FixHints,
-			"max_attempts":     input.MaxAttempts,
-		},
-	})
-	return err
+	return pgtype.UUID{}
 }
 
+/*
 func recoverQueuedCraftsmanTasks(executor *agentcraftsman.Executor, runtime *agentruntime.Service) {
 	if executor == nil || runtime == nil {
 		return
 	}
-	tasks, err := runtime.ListQueuedCraftsmanTasksAcrossWorkspaces(context.Background(), 50)
+	tasks, err := runtime.ListQueuedCraftsmanTasksAcrossWorkspaces(context.Background(), 1000)
 	if err != nil {
 		slog.Warn("skipping queued craftsman recovery", "error", err)
 		return
@@ -603,7 +631,9 @@ func recoverQueuedCraftsmanTasks(executor *agentcraftsman.Executor, runtime *age
 			WorkspaceID: task.WorkspaceID,
 			ThreadID:    task.ThreadID,
 			TaskID:      task.ID,
-			ShotID:      task.ScopeID,
+			ScopeType:   task.ScopeType,
+			ScopeID:     task.ScopeID,
+			ShotID:      shotIDForCraftsmanTask(task),
 			Input:       task.Input,
 		}); err != nil {
 			slog.Warn("failed to recover queued craftsman task", "task_id", task.ID, "error", err)
@@ -615,7 +645,7 @@ func recoverQueuedWorkerTasks(executor *agentworker.Executor, runtime *agentrunt
 	if executor == nil || runtime == nil {
 		return
 	}
-	tasks, err := runtime.ListQueuedWorkerTasksAcrossWorkspaces(context.Background(), 50)
+	tasks, err := runtime.ListQueuedWorkerTasksAcrossWorkspaces(context.Background(), 1000)
 	if err != nil {
 		slog.Warn("skipping queued worker recovery", "error", err)
 		return
@@ -631,7 +661,7 @@ func recoverQueuedComposerTasks(executor *agentcomposer.Executor, runtime *agent
 	if executor == nil || runtime == nil {
 		return
 	}
-	tasks, err := runtime.ListQueuedComposerTasksAcrossWorkspaces(context.Background(), 50)
+	tasks, err := runtime.ListQueuedComposerTasksAcrossWorkspaces(context.Background(), 1000)
 	if err != nil {
 		slog.Warn("skipping queued composer recovery", "error", err)
 		return
@@ -647,7 +677,7 @@ func recoverQueuedReviewerTasks(executor *agentreviewer.Executor, runtime *agent
 	if executor == nil || runtime == nil {
 		return
 	}
-	tasks, err := runtime.ListQueuedReviewerTasksAcrossWorkspaces(context.Background(), 50)
+	tasks, err := runtime.ListQueuedReviewerTasksAcrossWorkspaces(context.Background(), 1000)
 	if err != nil {
 		slog.Warn("skipping queued reviewer recovery", "error", err)
 		return
@@ -658,8 +688,52 @@ func recoverQueuedReviewerTasks(executor *agentreviewer.Executor, runtime *agent
 		}
 	}
 }
+*/
+
+func mustNativeRegistry(tools ...agenttools.NativeTool) *agenttools.NativeRegistry {
+	registry, err := agenttools.NewNativeRegistry(tools...)
+	if err != nil {
+		slog.Error("failed to create native agent tool registry", "error", err)
+		os.Exit(1)
+	}
+	return registry
+}
+
+const (
+	producerModelMaxTokens  = 4096
+	craftsmanModelMaxTokens = 8192
+	reviewerModelMaxTokens  = 4096
+)
+
+func craftsmanResponderForConfig(cfg *config.Config) agentcraftsman.ToolCallingResponder {
+	craftsmanFixture := strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_CRAFTSMAN_FIXTURE"))
+	if craftsmanFixture == "m2_render_plan" || craftsmanFixture == "m3_reviewer_gate" {
+		slog.Warn("using M2 render plan E2E craftsman fixture responder")
+		return e2eM2RenderPlanCraftsmanResponder{}
+	}
+	return agentcraftsman.NewVolcengineModelResponder(agentcraftsman.VolcengineModelResponderConfig{
+		APIKey:      cfg.Production.Volcengine.APIKey,
+		BaseURL:     cfg.Production.Volcengine.BaseURL,
+		Region:      cfg.Production.Volcengine.Region,
+		Model:       cfg.Production.Volcengine.TextModel,
+		MaxTokens:   craftsmanModelMaxTokens,
+		Temperature: 0.2,
+	})
+}
 
 func producerResponderForConfig(cfg *config.Config) agentproducer.Responder {
+	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_PRODUCER_FIXTURE")) == "m3_reviewer_gate" {
+		slog.Warn("using M3 reviewer gate E2E producer fixture responder")
+		return e2eM3ReviewerGateProducerResponder{}
+	}
+	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_PRODUCER_FIXTURE")) == "m2_render_plan" {
+		slog.Warn("using M2 render plan E2E producer fixture responder")
+		return e2eM2RenderPlanProducerResponder{}
+	}
+	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_PRODUCER_FIXTURE")) == "m1_creative_state" {
+		slog.Warn("using M1 creative state E2E producer fixture responder")
+		return e2eM1CreativeStateResponder{}
+	}
 	if cfg.Production.ProviderMode != "real" ||
 		strings.TrimSpace(cfg.Production.Volcengine.APIKey) == "" {
 		slog.Warn(
@@ -675,8 +749,23 @@ func producerResponderForConfig(cfg *config.Config) agentproducer.Responder {
 		BaseURL:     cfg.Production.Volcengine.BaseURL,
 		Region:      cfg.Production.Volcengine.Region,
 		Model:       cfg.Production.Volcengine.TextModel,
-		MaxTokens:   1200,
+		MaxTokens:   producerModelMaxTokens,
 		Temperature: 0.3,
+	})
+}
+
+func reviewerResponderForConfig(cfg *config.Config) agentreviewer.ToolResponder {
+	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_REVIEWER_FIXTURE")) == "m3_reviewer_gate" {
+		slog.Warn("using M3 reviewer gate E2E reviewer fixture responder")
+		return e2eM3ReviewerGateResponder{}
+	}
+	return agentreviewer.NewVolcengineModelResponder(agentreviewer.VolcengineModelResponderConfig{
+		APIKey:      cfg.Production.Volcengine.APIKey,
+		BaseURL:     cfg.Production.Volcengine.BaseURL,
+		Region:      cfg.Production.Volcengine.Region,
+		Model:       cfg.Production.Volcengine.TextModel,
+		MaxTokens:   reviewerModelMaxTokens,
+		Temperature: 0.1,
 	})
 }
 

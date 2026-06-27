@@ -16,16 +16,21 @@ type RunTaskInput struct {
 }
 
 type GenerationInput struct {
-	Mode              string `json:"mode"`
-	TargetPhase       string `json:"target_phase,omitempty"`
-	ShotID            string `json:"shot_id"`
-	ShotClientKey     string `json:"shot_client_key,omitempty"`
-	ShotSortOrder     int    `json:"shot_sort_order,omitempty"`
-	CraftsmanThreadID string `json:"craftsman_thread_id"`
-	CraftsmanTaskID   string `json:"craftsman_task_id"`
-	Strategy          string `json:"strategy"`
-	Prompt            string `json:"prompt"`
-	NegativePrompt    string `json:"negative_prompt,omitempty"`
+	Mode                     string `json:"mode"`
+	TargetPhase              string `json:"target_phase,omitempty"`
+	ScopeType                string `json:"scope_type,omitempty"`
+	ScopeID                  string `json:"scope_id,omitempty"`
+	ScopeKey                 string `json:"scope_key,omitempty"`
+	RenderPlanKey            string `json:"render_plan_key,omitempty"`
+	ShotID                   string `json:"shot_id"`
+	ShotClientKey            string `json:"shot_client_key,omitempty"`
+	ShotSortOrder            int    `json:"shot_sort_order,omitempty"`
+	KeyElementStateClientKey string `json:"key_element_state_client_key,omitempty"`
+	CraftsmanThreadID        string `json:"craftsman_thread_id"`
+	CraftsmanTaskID          string `json:"craftsman_task_id"`
+	Strategy                 string `json:"strategy"`
+	Prompt                   string `json:"prompt"`
+	NegativePrompt           string `json:"negative_prompt,omitempty"`
 	// InputNodeRefs accepts source/generated node UUIDs or unambiguous canvas titles.
 	InputNodeRefs []string       `json:"input_node_refs,omitempty"`
 	TargetNodeID  string         `json:"target_node_id,omitempty"`

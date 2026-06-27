@@ -25,6 +25,9 @@ func TestContextLoaderBuildsPreviewReviewContext(t *testing.T) {
 	}
 	loader := ContextLoader{
 		Store: store,
+		Runtime: fakeReviewerMessageRuntime{messages: []db.AgentMessage{
+			{ID: uuidWithByte(10), Role: "assistant", MessageType: "text", Content: []byte(`{"schema":"clipanvil.agent.message.v1","blocks":[{"type":"markdown","text":"上一轮 Reviewer 已提醒产品偏小"}]}`)},
+		}},
 		ImageReader: fakeReviewImageReader{
 			data: []byte{137, 80, 78, 71},
 			ref:  storage.ObjectRef{MIME: "image/png"},
@@ -52,6 +55,9 @@ func TestContextLoaderBuildsPreviewReviewContext(t *testing.T) {
 	}
 	if !strings.HasPrefix(out.AssetURL, "data:image/png;base64,") {
 		t.Fatalf("asset url = %q", out.AssetURL)
+	}
+	if len(out.Messages) != 1 || !strings.Contains(string(out.Messages[0].Content), "产品偏小") {
+		t.Fatalf("messages = %#v", out.Messages)
 	}
 	for _, want := range []string{"shot-01", "bright product shot", "商品太小", "当前项目"} {
 		if !strings.Contains(out.Text, want) {
@@ -108,6 +114,14 @@ type fakeReviewPSSBuilder struct {
 
 func (f fakeReviewPSSBuilder) BuildProducerPSS(context.Context, pgtype.UUID) (agentpss.ProducerPSS, error) {
 	return agentpss.ProducerPSS{Text: f.text}, nil
+}
+
+type fakeReviewerMessageRuntime struct {
+	messages []db.AgentMessage
+}
+
+func (f fakeReviewerMessageRuntime) ListMessages(context.Context, pgtype.UUID, int64, int32) ([]db.AgentMessage, error) {
+	return f.messages, nil
 }
 
 func uuidWithByte(b byte) pgtype.UUID {

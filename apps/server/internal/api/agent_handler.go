@@ -80,6 +80,14 @@ type listAgentMessagesResponse struct {
 	Messages []agentMessageResponse `json:"messages"`
 }
 
+type listAgentThreadsResponse struct {
+	Threads []agentObservedThreadResponse `json:"threads"`
+}
+
+type agentTasksResponse struct {
+	Tasks []agentTaskResponse `json:"tasks"`
+}
+
 type postAgentMessageResponse struct {
 	Message       agentMessageResponse `json:"message"`
 	Event         agentEventResponse   `json:"event"`
@@ -116,6 +124,35 @@ func (h *AgentHandler) GetThread(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, getAgentThreadResponse{Thread: toAgentThreadResponse(thread)})
 }
 
+func (h *AgentHandler) ListThreads(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+
+	includeProducer := strings.TrimSpace(c.Query("include_producer")) == "true"
+	threads, err := h.runtime.ListAgentThreadsByWorkspace(ctx, workspace.ID, includeProducer)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to list agent threads")
+		return
+	}
+
+	out := make([]agentObservedThreadResponse, 0, len(threads))
+	for _, thread := range threads {
+		var latestTask *db.AgentTask
+		if task, err := h.runtime.LatestTaskByThread(ctx, thread.ID); err == nil {
+			latestTask = &task
+		}
+		var latestMessage *db.AgentMessage
+		if message, err := h.runtime.LatestMessageByThread(ctx, thread.ID); err == nil {
+			latestMessage = &message
+		}
+		out = append(out, toObservedAgentThreadResponse(thread, latestTask, latestMessage))
+	}
+
+	c.JSON(consts.StatusOK, listAgentThreadsResponse{Threads: out})
+}
+
 func (h *AgentHandler) GetProductionOverview(ctx context.Context, c *app.RequestContext) {
 	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
 	if !ok {
@@ -131,6 +168,48 @@ func (h *AgentHandler) GetProductionOverview(ctx context.Context, c *app.Request
 	c.JSON(consts.StatusOK, overview)
 }
 
+func (h *AgentHandler) GetCanvasWorkbench(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+
+	workbench, err := buildAgentWorkbenchProjection(ctx, h.queries, h.storage, workspace.ID)
+	if err != nil {
+		slog.Error("failed to build agent canvas workbench", "workspace_id", uuidToString(workspace.ID), "error", err)
+		writeError(c, consts.StatusInternalServerError, "failed to load agent canvas workbench")
+		return
+	}
+	c.JSON(consts.StatusOK, workbench)
+}
+
+func (h *AgentHandler) GetCanvasDetail(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+
+	detail, err := buildAgentCanvasDetail(
+		ctx,
+		h.queries,
+		h.storage,
+		workspace.ID,
+		strings.TrimSpace(c.Query("object_type")),
+		strings.TrimSpace(c.Query("object_id")),
+	)
+	if err != nil {
+		var detailErr agentCanvasDetailError
+		if errors.As(err, &detailErr) {
+			writeError(c, detailErr.Status, detailErr.Message)
+			return
+		}
+		slog.Error("failed to build agent canvas detail", "workspace_id", uuidToString(workspace.ID), "error", err)
+		writeError(c, consts.StatusInternalServerError, "failed to load agent canvas detail")
+		return
+	}
+	c.JSON(consts.StatusOK, detail)
+}
+
 func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) {
 	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
 	if !ok {
@@ -143,9 +222,50 @@ func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) 
 		return
 	}
 
-	messages, err := h.runtime.ListMessages(ctx, thread.ID, queryInt64(c, "after_seq", 0), queryInt32(c, "limit", 50))
+	afterCreatedAt := queryTimestamp(c, "after_created_at")
+	messages, err := h.runtime.ListMessages(ctx, thread.ID, 0, queryInt32(c, "limit", 1000))
 	if err != nil {
 		writeError(c, consts.StatusInternalServerError, "failed to list agent messages")
+		return
+	}
+	messages = filterAgentMessagesAfterCreatedAt(messages, afterCreatedAt)
+
+	out := make([]agentMessageResponse, 0, len(messages))
+	for _, msg := range messages {
+		response := h.toAgentMessageResponse(ctx, msg)
+		if msg.MessageType == "ui_card" && msg.EventID.Valid {
+			if event, err := h.runtime.GetAgentEventForWorkspace(ctx, msg.EventID, workspace.ID); err == nil {
+				hydrateDecisionCardFromEvent(response.Content, event)
+			}
+		}
+		out = append(out, response)
+	}
+
+	c.JSON(consts.StatusOK, listAgentMessagesResponse{
+		Thread:   toAgentThreadResponse(thread),
+		Messages: out,
+	})
+}
+
+func (h *AgentHandler) ListThreadMessages(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+	threadID, ok := uuidFromString(c.Param("threadID"))
+	if !ok {
+		writeError(c, consts.StatusBadRequest, "invalid agent thread")
+		return
+	}
+
+	thread, err := h.runtime.GetThreadForWorkspace(ctx, threadID, workspace.ID)
+	if err != nil {
+		writeError(c, consts.StatusNotFound, "agent thread not found")
+		return
+	}
+	messages, err := h.runtime.ListThreadMessages(ctx, thread.ID, queryInt64(c, "after_seq", 0), queryInt32(c, "limit", 1000))
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to list agent thread messages")
 		return
 	}
 
@@ -164,6 +284,32 @@ func (h *AgentHandler) ListMessages(ctx context.Context, c *app.RequestContext) 
 		Thread:   toAgentThreadResponse(thread),
 		Messages: out,
 	})
+}
+
+func filterAgentMessagesAfterCreatedAt(messages []db.AgentMessage, afterCreatedAt pgtype.Timestamptz) []db.AgentMessage {
+	if !afterCreatedAt.Valid {
+		return messages
+	}
+	out := messages[:0]
+	for _, message := range messages {
+		if message.CreatedAt.Valid && message.CreatedAt.Time.After(afterCreatedAt.Time) {
+			out = append(out, message)
+		}
+	}
+	return out
+}
+
+func (h *AgentHandler) ListActiveTasks(ctx context.Context, c *app.RequestContext) {
+	workspace, ok := h.agentWorkspaceForRequest(ctx, c)
+	if !ok {
+		return
+	}
+	tasks, err := h.runtime.ListActiveAgentTasksByWorkspace(ctx, workspace.ID)
+	if err != nil {
+		writeError(c, consts.StatusInternalServerError, "failed to list active agent tasks")
+		return
+	}
+	c.JSON(consts.StatusOK, toAgentTasksResponse(tasks))
 }
 
 func (h *AgentHandler) GetModelSelection(ctx context.Context, c *app.RequestContext) {
@@ -327,10 +473,11 @@ func (h *AgentHandler) PostMessage(ctx context.Context, c *app.RequestContext) {
 	if h.producerRunner != nil {
 		go func() {
 			_ = h.producerRunner.RunTask(context.Background(), agentproducer.RunTaskInput{
-				WorkspaceID:      workspace.ID,
-				ThreadID:         thread.ID,
-				TaskID:           task.ID,
-				TriggerMessageID: msg.ID,
+				WorkspaceID:       workspace.ID,
+				ThreadID:          thread.ID,
+				TaskID:            task.ID,
+				TriggerMessageID:  msg.ID,
+				TriggerMessageSeq: msg.Seq,
 			})
 		}()
 	}
@@ -682,11 +829,12 @@ func (h *AgentHandler) rejectIfAgentProcessing(ctx context.Context, workspaceID 
 
 func agentBusyReason(tasks []db.AgentTask) string {
 	for _, task := range tasks {
+		if !isProducerProcessingTask(task) {
+			continue
+		}
 		switch task.Status {
 		case "queued", "running":
 			return "ClipAnvil 正在处理上一条消息，请稍后再试"
-		case "waiting_for_user":
-			return "ClipAnvil 正在等待你的选择，请先完成当前决策"
 		}
 	}
 	return ""
@@ -694,12 +842,19 @@ func agentBusyReason(tasks []db.AgentTask) string {
 
 func agentProcessingReason(tasks []db.AgentTask) string {
 	for _, task := range tasks {
+		if !isProducerProcessingTask(task) {
+			continue
+		}
 		switch task.Status {
 		case "queued", "running":
 			return "ClipAnvil 正在处理上一条消息，请稍后再试"
 		}
 	}
 	return ""
+}
+
+func isProducerProcessingTask(task db.AgentTask) bool {
+	return task.TaskType == "producer_turn" || task.TaskType == "decision_resume"
 }
 
 func hydrateDecisionCardStatus(content map[string]any, status string) {
@@ -1020,16 +1175,16 @@ func jsonBytes(value any) []byte {
 	return raw
 }
 
-func queryInt64(c *app.RequestContext, key string, fallback int64) int64 {
-	raw := string(c.Query(key))
+func queryTimestamp(c *app.RequestContext, key string) pgtype.Timestamptz {
+	raw := strings.TrimSpace(string(c.Query(key)))
 	if raw == "" {
-		return fallback
+		return pgtype.Timestamptz{}
 	}
-	value, err := strconv.ParseInt(raw, 10, 64)
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
-		return fallback
+		return pgtype.Timestamptz{}
 	}
-	return value
+	return pgtype.Timestamptz{Time: parsed, Valid: true}
 }
 
 func queryInt32(c *app.RequestContext, key string, fallback int32) int32 {
@@ -1042,4 +1197,16 @@ func queryInt32(c *app.RequestContext, key string, fallback int32) int32 {
 		return fallback
 	}
 	return int32(value)
+}
+
+func queryInt64(c *app.RequestContext, key string, fallback int64) int64 {
+	raw := string(c.Query(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return value
 }

@@ -65,6 +65,15 @@ func resolveInputNode(nodes []db.MediaNode, value string) (db.MediaNode, error) 
 		}
 		return db.MediaNode{}, fmt.Errorf("%w: input node %s not found", ErrInvalidInput, value)
 	}
+	if node, ok := resolveInputNodeBySemanticKey(nodes, value); ok {
+		return node, nil
+	}
+	if node, ok, err := resolveCurrentShotOutputNode(nodes, value); ok || err != nil {
+		if err != nil {
+			return db.MediaNode{}, err
+		}
+		return node, nil
+	}
 	var matches []db.MediaNode
 	for _, node := range nodes {
 		if strings.EqualFold(strings.TrimSpace(node.Title), value) {
@@ -79,6 +88,59 @@ func resolveInputNode(nodes []db.MediaNode, value string) (db.MediaNode, error) 
 	default:
 		return db.MediaNode{}, fmt.Errorf("%w: input node title %q is ambiguous", ErrInvalidInput, value)
 	}
+}
+
+func resolveInputNodeBySemanticKey(nodes []db.MediaNode, value string) (db.MediaNode, bool) {
+	for _, node := range nodes {
+		if strings.TrimSpace(node.SemanticKey) == value {
+			return node, true
+		}
+	}
+	return db.MediaNode{}, false
+}
+
+func resolveCurrentShotOutputNode(nodes []db.MediaNode, value string) (db.MediaNode, bool, error) {
+	const suffix = ".current"
+	if !strings.HasSuffix(value, suffix) {
+		return db.MediaNode{}, false, nil
+	}
+	base := strings.TrimSuffix(value, suffix)
+	dot := strings.LastIndex(base, ".")
+	if dot <= 0 || dot >= len(base)-1 {
+		return db.MediaNode{}, false, fmt.Errorf("%w: input selector %q is invalid", ErrInvalidInput, value)
+	}
+	artifactKind := base[dot+1:]
+	var matches []db.MediaNode
+	for _, node := range nodes {
+		if strings.TrimSpace(node.ArtifactKind) != artifactKind || !node.CurrentVersionID.Valid {
+			continue
+		}
+		semanticKey := strings.TrimSpace(node.SemanticKey)
+		if semanticKey == "" {
+			continue
+		}
+		if strings.HasPrefix(semanticKey, base+".") || strings.Contains(semanticKey, "."+base+".") {
+			matches = append(matches, node)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return db.MediaNode{}, false, fmt.Errorf("%w: input selector %q not found", ErrInvalidInput, value)
+	case 1:
+		return matches[0], true, nil
+	default:
+		return latestMediaNode(matches), true, nil
+	}
+}
+
+func latestMediaNode(nodes []db.MediaNode) db.MediaNode {
+	latest := nodes[0]
+	for _, node := range nodes[1:] {
+		if node.UpdatedAt.Valid && (!latest.UpdatedAt.Valid || node.UpdatedAt.Time.After(latest.UpdatedAt.Time)) {
+			latest = node
+		}
+	}
+	return latest
 }
 
 func inputRefForNode(ctx context.Context, store inputRefStore, node db.MediaNode) (production.InputRef, error) {

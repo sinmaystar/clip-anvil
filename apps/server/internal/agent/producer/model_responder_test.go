@@ -63,6 +63,62 @@ func TestVolcengineModelResponderStreamsDeltasAndReturnsFinalText(t *testing.T) 
 	}
 }
 
+func TestProducerSystemPromptContainsDomainConcepts(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{})
+	for _, want := range []string{
+		"ClipAnvil 领域概念",
+		"ProjectMemory 是项目创作宪法",
+		"KeyElement 是视频中需要保持一致或复用的关键元素",
+		"Storyboard 不是一段纯文本脚本",
+		"不要在 Producer 字段中写 Seedance",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"当前 Project Context",
+		"已有 2 个分镜",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt contains dynamic project state %q", forbidden)
+		}
+	}
+}
+
+func TestProducerSystemPromptEnablesCurrentGenerationAndReviewerGate(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{})
+	for _, forbidden := range []string{
+		"M1 阶段只记录需求",
+		"M1 可用工具",
+		"M1 阶段不要调度 Craftsman",
+		"在 M2 调度",
+		"然后在 M2 调用",
+		"M2 可用生成调度工具",
+		"## M2 生成调度能力",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("prompt still contains milestone-only wording %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"当前生成调度能力",
+		"dispatch_craftsman",
+		"decide_render_plan",
+		"execute_immediately",
+		"wait_for_producer",
+		"dispatch_reviewer",
+		"Reviewer 是质量 gate",
+		"Reviewer 不直接重跑生成",
+		"select_artifact_version",
+		"不要虚构 compile_render_plan",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("prompt missing current capability wording %q", required)
+		}
+	}
+}
+
 func TestVolcengineModelResponderUsesSelectedModel(t *testing.T) {
 	streamer := &fakeArkStreamer{chunks: []*schema.Message{{Content: "ok"}}}
 	var gotModel string
@@ -111,9 +167,12 @@ func TestVolcengineModelResponderReturnsNativeToolCalls(t *testing.T) {
 			},
 		},
 	}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
 		APIKey: "test-key",
 		Model:  "doubao-test",
+		Logger: logger,
 		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatStreamer, error) {
 			return streamer, nil
 		},
@@ -134,6 +193,12 @@ func TestVolcengineModelResponderReturnsNativeToolCalls(t *testing.T) {
 	}
 	if out.Metadata["native_tool_call_count"] != 1 {
 		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+	if strings.Contains(logs.String(), "producer model response empty content") {
+		t.Fatalf("tool-call-only response should not be logged as empty content: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "producer model response completed") {
+		t.Fatalf("logs = %s", logs.String())
 	}
 }
 
@@ -387,18 +452,127 @@ func TestProducerPromptMessagesUseMarkdownBlocks(t *testing.T) {
 	}
 }
 
-func TestProducerPromptMessagesIncludesProductionStateSummary(t *testing.T) {
+func TestProducerPromptMessagesKeepsSystemPromptStable(t *testing.T) {
 	messages := producerPromptMessages(ProducerContext{
-		LatestUserText:      "创建分镜",
-		ProductionStateText: "Storyboard\n- 当前还没有 storyboard。",
+		LatestUserText: "创建分镜",
 	})
 	if len(messages) != 2 {
 		t.Fatalf("messages len = %d, want 2", len(messages))
 	}
-	if !strings.Contains(messages[0].Content, "Production State Summary") ||
-		!strings.Contains(messages[0].Content, "当前还没有 storyboard") ||
-		!strings.Contains(messages[0].Content, "update_storyboard") {
+	if strings.Contains(messages[0].Content, "当前 Project Context") ||
+		strings.Contains(messages[0].Content, "当前还没有 storyboard") {
 		t.Fatalf("system prompt = %q", messages[0].Content)
+	}
+	if !strings.Contains(messages[0].Content, "upsert_storyboard") {
+		t.Fatalf("system prompt missing tool guidance = %q", messages[0].Content)
+	}
+}
+
+func TestProducerPromptMessagesAppendsPendingRemindersToUserMessage(t *testing.T) {
+	messages := producerPromptMessages(ProducerContext{
+		LatestUserText:   "继续",
+		PendingReminders: []string{"<system-reminder>你已连续调用 read_project_context 5 次，请反思策略。</system-reminder>"},
+	})
+	if len(messages) != 2 {
+		t.Fatalf("messages len = %d, want 2", len(messages))
+	}
+	if messages[1].Role != schema.User ||
+		!strings.Contains(messages[1].Content, "继续") ||
+		!strings.Contains(messages[1].Content, "运行时提醒") ||
+		!strings.Contains(messages[1].Content, "read_project_context") {
+		t.Fatalf("user message with reminder = %#v", messages[1])
+	}
+	for _, message := range messages[1:] {
+		if message.Role == schema.System {
+			t.Fatalf("pending reminder must not create extra system message: %#v", messages)
+		}
+	}
+}
+
+func TestProducerPromptMessagesAppendsPendingRemindersToLatestToolResult(t *testing.T) {
+	messages := producerPromptMessages(ProducerContext{
+		SameTurnMessages: []ProducerSameTurnMessage{
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				Content:     "已读取项目上下文",
+				ToolCallID:  "call-read",
+				ToolName:    "read_project_context",
+			},
+		},
+		PendingReminders: []string{"<system-reminder>你有 2 个待处理 Producer signal。</system-reminder>"},
+	})
+	if len(messages) != 2 {
+		t.Fatalf("messages len = %d, want 2", len(messages))
+	}
+	if messages[1].Role != schema.Tool ||
+		!strings.Contains(messages[1].Content, "已读取项目上下文") ||
+		!strings.Contains(messages[1].Content, "运行时提醒") ||
+		!strings.Contains(messages[1].Content, "待处理 Producer signal") {
+		t.Fatalf("tool result with reminder = %#v", messages[1])
+	}
+}
+
+func TestProducerPromptMessagesIncludesRuntimeTrigger(t *testing.T) {
+	trigger := strings.Join([]string{
+		"系统事件：Craftsman 已完成 RenderPlan 编译。",
+		"触发原因：craftsman_render_plan_ready。",
+		"下一步：请读取项目上下文，检查 waiting_for_approval RenderPlan，并决定 accept/reject 或派 Reviewer。",
+	}, "\n")
+	messages := producerPromptMessages(ProducerContext{
+		Messages: []db.AgentMessage{
+			{
+				Role:        "assistant",
+				MessageType: "text",
+				Content:     mustAssistantContent(t, uimessage.AssistantMessageInput{Text: "我已派发 Craftsman。"}),
+			},
+		},
+		RuntimeTriggerText: trigger,
+	})
+	if len(messages) != 3 {
+		t.Fatalf("messages len = %d, want 3", len(messages))
+	}
+	if messages[0].Role != schema.System ||
+		strings.Contains(messages[0].Content, "当前触发事件") ||
+		strings.Contains(messages[0].Content, "Craftsman 已完成 RenderPlan 编译") {
+		t.Fatalf("system prompt = %q", messages[0].Content)
+	}
+	if messages[1].Role != schema.Assistant {
+		t.Fatalf("history assistant message = %#v", messages[1])
+	}
+	if messages[2].Role != schema.User ||
+		!strings.Contains(messages[2].Content, "系统事件：Craftsman 已完成 RenderPlan 编译") ||
+		!strings.Contains(messages[2].Content, "decide") {
+		t.Fatalf("runtime trigger user message = %#v", messages[2])
+	}
+}
+
+func TestProducerPromptMessagesKeepsRuntimeTriggerAfterSystemReminderBeforeToolLoop(t *testing.T) {
+	trigger := "<system-reminder>系统事件：Craftsman 已完成 RenderPlan 编译，请处理 pending signal。</system-reminder>"
+	messages := producerPromptMessages(ProducerContext{
+		Messages: []db.AgentMessage{
+			{
+				Role:        "assistant",
+				MessageType: "text",
+				Content:     mustAssistantContent(t, uimessage.AssistantMessageInput{Text: "我已派发 Craftsman。"}),
+			},
+		},
+		PendingReminders: []string{"<system-reminder>你有 2 个待处理 Producer signal。</system-reminder>"},
+		SameTurnMessages: []ProducerSameTurnMessage{
+			{
+				Role:        "system",
+				MessageType: "system_reminder",
+				Content:     "<system-reminder>你有 2 个待处理 Producer signal。</system-reminder>",
+			},
+		},
+		RuntimeTriggerText: trigger,
+	})
+
+	last := messages[len(messages)-1]
+	if last.Role != schema.User ||
+		!strings.Contains(last.Content, "系统事件：Craftsman 已完成 RenderPlan 编译") ||
+		!strings.Contains(last.Content, "decide_render_plan") {
+		t.Fatalf("last runtime trigger message = %#v", last)
 	}
 }
 
@@ -435,7 +609,7 @@ func TestProducerPromptMessagesIncludesSameTurnToolReasoningPassback(t *testing.
 			{
 				Role:             "assistant",
 				MessageType:      "tool_call",
-				Content:          `{"tool_call":{"name":"read_workspace_context","arguments":{}}}`,
+				Content:          "调用 read_workspace_context",
 				ReasoningContent: "需要先读取上下文",
 			},
 			{
@@ -458,6 +632,77 @@ func TestProducerPromptMessagesIncludesSameTurnToolReasoningPassback(t *testing.
 	tool := messages[3]
 	if tool.Role != schema.Tool || tool.ToolCallID != "call-1" || tool.ToolName != "read_workspace_context" {
 		t.Fatalf("tool result = %#v", tool)
+	}
+}
+
+func TestProducerPromptMessagesUsesRuntimeTriggerOnlyBeforeToolLoop(t *testing.T) {
+	userContent := mustUserContent(t, uimessage.UserMessageInput{Text: "继续"})
+	messages := producerPromptMessages(ProducerContext{
+		RuntimeTriggerText: "<system-reminder>shot_05 ready</system-reminder>",
+		Messages: []db.AgentMessage{
+			{Role: "user", MessageType: "text", Content: userContent},
+		},
+		SameTurnMessages: []ProducerSameTurnMessage{
+			{
+				Role:          "assistant",
+				MessageType:   "tool_call",
+				ToolCallID:    "call-read",
+				ToolName:      "read_project_context",
+				ToolArguments: map[string]any{"scope": map[string]any{"type": "workspace", "id": ""}},
+			},
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				ToolCallID:  "call-read",
+				ToolName:    "read_project_context",
+				Content:     "还有 4 个 waiting_for_approval RenderPlan",
+			},
+		},
+	})
+
+	for _, message := range messages {
+		if message.Role == schema.User && strings.Contains(message.Content, "shot_05 ready") {
+			t.Fatalf("runtime trigger leaked after tool loop started: %#v", message)
+		}
+	}
+}
+
+func TestProducerPromptMessagesRebuildsHistoricalToolCallAndResult(t *testing.T) {
+	userContent := mustUserContent(t, uimessage.UserMessageInput{Text: "继续检查状态"})
+	messages := producerPromptMessages(ProducerContext{
+		Messages: []db.AgentMessage{
+			{Role: "user", MessageType: "text", Content: userContent},
+			{
+				Role:        "assistant",
+				MessageType: "tool_call",
+				Content:     []byte(`{"text":"调用 read_project_context"}`),
+				RawMessage:  []byte(`{"tool_call_id":"call-read","tool_name":"read_project_context","arguments":{"include":["memory"]}}`),
+			},
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				Content:     []byte(`{"text":"项目上下文：机场场景 needs_reference"}`),
+				RawMessage:  []byte(`{"tool_call_id":"call-read","tool_name":"read_project_context","result_text":"项目上下文：机场场景 needs_reference"}`),
+			},
+		},
+	})
+
+	if len(messages) != 4 {
+		t.Fatalf("messages len = %d, want 4", len(messages))
+	}
+	assistant := messages[2]
+	if assistant.Role != schema.Assistant || len(assistant.ToolCalls) != 1 {
+		t.Fatalf("historical tool call = %#v", assistant)
+	}
+	if assistant.ToolCalls[0].ID != "call-read" || assistant.ToolCalls[0].Function.Name != "read_project_context" {
+		t.Fatalf("historical tool call function = %#v", assistant.ToolCalls[0])
+	}
+	tool := messages[3]
+	if tool.Role != schema.Tool || tool.ToolCallID != "call-read" || tool.ToolName != "read_project_context" {
+		t.Fatalf("historical tool result = %#v", tool)
+	}
+	if !strings.Contains(tool.Content, "needs_reference") {
+		t.Fatalf("historical tool result content = %q", tool.Content)
 	}
 }
 
@@ -539,7 +784,7 @@ func TestVolcengineModelResponderDiagnosticsTrackReasoningPassback(t *testing.T)
 			{Role: "user", MessageType: "text", Content: mustUserContent(t, uimessage.UserMessageInput{Text: "读取画布"})},
 		},
 		SameTurnMessages: []ProducerSameTurnMessage{
-			{Role: "assistant", MessageType: "tool_call", Content: `{"tool_call":{"name":"read_workspace_context","arguments":{}}}`, ReasoningContent: "需要先读取上下文"},
+			{Role: "assistant", MessageType: "tool_call", Content: "调用 read_workspace_context", ReasoningContent: "需要先读取上下文"},
 			{Role: "tool", MessageType: "tool_result", ToolCallID: "call-1", ToolName: "read_workspace_context", Content: `{"ok":true}`},
 		},
 	})

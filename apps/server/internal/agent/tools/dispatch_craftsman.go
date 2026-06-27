@@ -7,29 +7,34 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/sinmaystar/clip-anvil/internal/agent/preview"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 var errShotNotFound = errors.New("shot reference not found")
+var errScopeNotFound = errors.New("craftsman scope not found")
 
 type CraftsmanDispatcherStore interface {
 	GetWorkspaceByID(ctx context.Context, id pgtype.UUID) (db.Workspace, error)
 	ListActiveShotsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.Shot, error)
 	GetShotByID(ctx context.Context, id pgtype.UUID) (db.Shot, error)
 	GetShotByClientKey(ctx context.Context, params db.GetShotByClientKeyParams) (db.Shot, error)
+	GetKeyElementStateByID(ctx context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error)
+	ListActiveKeyElementStatesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.KeyElementState, error)
 	SetShotCraftsmanThread(ctx context.Context, params db.SetShotCraftsmanThreadParams) (db.Shot, error)
 	UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error)
 }
 
 type CraftsmanRuntime interface {
 	GetOrCreateCraftsmanThread(ctx context.Context, workspaceID, shotID pgtype.UUID) (db.AgentThread, error)
+	GetOrCreateCraftsmanThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error)
+	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
+	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
 }
 
 type CraftsmanTaskEnqueuer interface {
@@ -49,40 +54,68 @@ func NewDispatchCraftsmanTool(store CraftsmanDispatcherStore, runtime CraftsmanR
 func (t DispatchCraftsmanTool) Definition() Definition {
 	return Definition{
 		Name:        "dispatch_craftsman",
-		Description: "Dispatch shot-scoped preview generation work. This creates persistent shot execution tasks and reuses the production generation pipeline; it does not generate images directly inside the Producer turn.",
+		Description: "派发 scope-aware 的 Craftsman 生成任务。该工具只创建持久化任务并入队，Craftsman 会继续创建 RenderPlan 并复用生产链路生成参考图、分镜预览图或分镜视频；Producer turn 内不会直接生成媒体。",
 		Parameters: objectSchema(map[string]any{
+			"brief": map[string]any{
+				"type":        "string",
+				"description": "一句话描述调用该工具的意图，例如生成机场晨光统一参考图或直接生成所有分镜预览图。",
+			},
+			"scope": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"type": map[string]any{
+						"type":        "string",
+						"enum":        []string{"shot", "key_element_state"},
+						"description": "生产归属范围。shot 用于分镜图/视频；key_element_state 用于共享参考图。",
+					},
+					"id": map[string]any{
+						"type":        "string",
+						"description": "兼容旧字段。模型不要填写 UUID；请填写 read_project_context 返回的 semantic_key，或留空并用 shot_refs 批量派发 shot。",
+					},
+				},
+			},
 			"shot_refs": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
-				"description": "Shot UUIDs or stable client keys such as shot-01. Empty means all active planned shots.",
+				"description": "scope.type=shot 时的 Shot semantic_key 或稳定 client_key。为空表示所有可派发 active shots。scope.type=key_element_state 时不要填写 shot_refs。",
+			},
+			"target_phase": map[string]any{
+				"type":        "string",
+				"enum":        []string{"reference_image", "preview_image", "shot_video"},
+				"description": "要派发的生成阶段。reference_image 生成共享参考图；preview_image 生成分镜预览图；shot_video 生成分镜视频。",
 			},
 			"mode": map[string]any{
 				"type":        "string",
-				"enum":        []string{"preview_image"},
-				"description": "Production phase to dispatch. M6.6 only supports preview_image.",
+				"enum":        []string{"preview_image", "shot_video"},
+				"description": "兼容旧参数；新调用必须使用 target_phase。",
+			},
+			"execution_policy": map[string]any{
+				"type":        "string",
+				"enum":        []string{"execute_immediately", "wait_for_producer"},
+				"description": "execute_immediately 表示 Craftsman 编译 RenderPlan 后自动提交 Worker；wait_for_producer 表示编译后等待 Producer accept/reject。",
 			},
 			"force": map[string]any{
 				"type":        "boolean",
-				"description": "When true, create a new preview attempt even if a shot already has preview output.",
+				"description": "为 true 时，即使已有完成结果也创建新的尝试；默认 false。注意：force 不能绕过正在排队或运行中的同 scope/target_phase Craftsman 任务。",
 			},
 			"max_attempts": map[string]any{
 				"type":        "integer",
 				"minimum":     1,
 				"maximum":     3,
-				"description": "Fixed retry cap. Defaults to 3.",
+				"description": "Craftsman 最大尝试次数，范围 1 到 3；为空时默认 3。",
 			},
 			"review_record_id": map[string]any{
 				"type":        "string",
-				"description": "Optional review record that triggered this retry.",
+				"description": "可选，触发本次修订的 review_record_id。",
 			},
 			"critique": map[string]any{
 				"type":        "string",
-				"description": "Optional review critique that Craftsman should address.",
+				"description": "可选，Craftsman 必须回应的评审意见或用户修改意见。",
 			},
 			"fix_hints": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
-				"description": "Optional concrete fix hints from review.",
+				"description": "可选，具体修复建议，例如保持行李箱银灰色、改成低机位跟拍。",
 			},
 		}),
 		Result: map[string]any{"type": "object"},
@@ -93,7 +126,7 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 		Visibility: VisibilitySpec{
 			ShowCallMessage:   true,
 			ShowResultMessage: true,
-			UserLabel:         "开始生成预览图",
+			UserLabel:         "派发生成任务",
 		},
 	}
 }
@@ -113,31 +146,73 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 	if workspace.Mode != db.WorkspaceModeAgent {
 		return ExecuteOutput{}, errors.New("dispatch_craftsman requires an Agent workspace")
 	}
-	shots, err := t.resolveShots(ctx, input.WorkspaceID, args)
+	scopes, err := t.resolveScopes(ctx, input.WorkspaceID, args)
 	if err != nil {
 		return ExecuteOutput{}, err
 	}
+	if len(scopes) == 0 {
+		return ExecuteOutput{}, fmt.Errorf("没有可派发的 Craftsman scope，请读取项目上下文确认状态后重试")
+	}
 
-	dispatched := make([]map[string]any, 0, len(shots))
+	dispatched := make([]map[string]any, 0, len(scopes))
 	skipped := []map[string]any{}
-	for _, shot := range shots {
-		thread, err := t.runtime.GetOrCreateCraftsmanThread(ctx, input.WorkspaceID, shot.ID)
+	activeTasks, err := t.runtime.ListActiveAgentTasksByWorkspace(ctx, input.WorkspaceID)
+	if err != nil {
+		return ExecuteOutput{}, err
+	}
+	for _, scope := range scopes {
+		if active, ok := activeCraftsmanTaskForScopePhase(activeTasks, scope.ScopeType, scope.ScopeID, args.TargetPhase); ok {
+			skipped = append(skipped, map[string]any{
+				"scope_type":                scope.ScopeType,
+				"scope_id":                  uuidString(scope.ScopeID),
+				"scope_key":                 scope.ScopeKey,
+				"client_key":                scope.ClientKey,
+				"target_phase":              args.TargetPhase,
+				"reason":                    "active_craftsman_task_exists",
+				"active_craftsman_task_key": active.SemanticKey,
+				"active_craftsman_task_id":  uuidString(active.ID),
+				"active_status":             active.Status,
+			})
+			continue
+		}
+		thread, err := t.runtime.GetOrCreateCraftsmanThreadForScope(ctx, input.WorkspaceID, scope.ScopeType, scope.ScopeID)
 		if err != nil {
 			return ExecuteOutput{}, err
 		}
-		_, _ = t.store.SetShotCraftsmanThread(ctx, db.SetShotCraftsmanThreadParams{
-			ID:                shot.ID,
-			CraftsmanThreadID: thread.ID,
-			WorkspaceID:       input.WorkspaceID,
-		})
+		if scope.ScopeType == "shot" {
+			_, _ = t.store.SetShotCraftsmanThread(ctx, db.SetShotCraftsmanThreadParams{
+				ID:                scope.ScopeID,
+				CraftsmanThreadID: thread.ID,
+				WorkspaceID:       input.WorkspaceID,
+			})
+		}
 		taskInput := map[string]any{
-			"mode":                   args.Mode,
-			"shot_id":                uuidString(shot.ID),
-			"shot_client_key":        shot.ClientKey,
+			"mode":                   args.TargetPhase,
+			"target_phase":           args.TargetPhase,
+			"scope_type":             scope.ScopeType,
+			"scope_id":               uuidString(scope.ScopeID),
+			"scope_key":              scope.ScopeKey,
+			"execution_policy":       args.ExecutionPolicy,
+			"shot_id":                "",
+			"shot_client_key":        "",
 			"producer_thread_id":     uuidString(input.ThreadID),
 			"producer_task_id":       uuidString(input.TaskID),
 			"craftsman_thread_id":    uuidString(thread.ID),
 			"requested_max_attempts": args.MaxAttempts,
+		}
+		if scope.ScopeType == "shot" {
+			taskInput["shot_id"] = uuidString(scope.ScopeID)
+			taskInput["shot_client_key"] = scope.ClientKey
+		}
+		if scope.ScopeType == "key_element_state" {
+			taskInput["key_element_state_id"] = uuidString(scope.ScopeID)
+			taskInput["key_element_state_client_key"] = scope.ClientKey
+		}
+		if args.Brief != "" {
+			taskInput["brief"] = args.Brief
+		}
+		if args.ParentToolCallID != "" {
+			taskInput["parent_tool_call_id"] = args.ParentToolCallID
 		}
 		if args.ReviewRecordID != "" {
 			taskInput["review_record_id"] = args.ReviewRecordID
@@ -150,8 +225,8 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		}
 		if len(args.InputNodeRefs) > 0 {
 			taskInput["input_node_refs"] = args.InputNodeRefs
-		} else if args.Mode == "shot_video" && strings.TrimSpace(shot.ClientKey) != "" {
-			taskInput["input_node_refs"] = []string{shot.ClientKey + " preview image"}
+		} else if args.TargetPhase == "shot_video" && strings.TrimSpace(scope.ClientKey) != "" {
+			taskInput["input_node_refs"] = []string{scope.ClientKey + " preview image"}
 		}
 		rawInput, err := json.Marshal(taskInput)
 		if err != nil {
@@ -161,8 +236,8 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			WorkspaceID: input.WorkspaceID,
 			ThreadID:    thread.ID,
 			Role:        "craftsman",
-			ScopeType:   "shot",
-			ScopeID:     shot.ID,
+			ScopeType:   scope.ScopeType,
+			ScopeID:     scope.ScopeID,
 			TaskType:    "craftsman_turn",
 			MaxAttempts: args.MaxAttempts,
 			Input:       rawInput,
@@ -170,16 +245,8 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		if err != nil {
 			return ExecuteOutput{}, err
 		}
-		if args.Mode == "preview_image" {
-			if status, ok := preview.ShotStatusForEvent(preview.EventDispatched); ok {
-				if _, err := t.store.UpdateShotStatus(ctx, db.UpdateShotStatusParams{
-					ID:          shot.ID,
-					WorkspaceID: input.WorkspaceID,
-					Status:      status,
-				}); err != nil {
-					return ExecuteOutput{}, err
-				}
-			}
+		if err := t.appendDelegationMessage(ctx, input.WorkspaceID, thread.ID, task.ID, scope, args, taskInput); err != nil {
+			return ExecuteOutput{}, err
 		}
 		_, _ = t.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 			WorkspaceID: input.WorkspaceID,
@@ -188,61 +255,169 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			EventType:   "craftsman_dispatched",
 			SourceRole:  "producer",
 			TargetRole:  "craftsman",
-			Scope:       mustJSON(map[string]any{"shot_id": uuidString(shot.ID), "client_key": shot.ClientKey}),
-			Payload:     mustJSON(map[string]any{"mode": args.Mode, "max_attempts": args.MaxAttempts}),
+			Scope:       mustJSON(map[string]any{"scope_type": scope.ScopeType, "scope_id": uuidString(scope.ScopeID), "scope_key": scope.ScopeKey, "client_key": scope.ClientKey}),
+			Payload:     mustJSON(map[string]any{"target_phase": args.TargetPhase, "execution_policy": args.ExecutionPolicy, "max_attempts": args.MaxAttempts}),
 		})
 		if t.enqueuer != nil {
 			t.enqueuer.EnqueueCraftsmanTask(ctx, task)
 		}
 		dispatched = append(dispatched, map[string]any{
-			"shot_id":             uuidString(shot.ID),
-			"client_key":          shot.ClientKey,
+			"scope_type":          scope.ScopeType,
+			"scope_id":            uuidString(scope.ScopeID),
+			"scope_key":           scope.ScopeKey,
+			"client_key":          scope.ClientKey,
 			"craftsman_thread_id": uuidString(thread.ID),
 			"craftsman_task_id":   uuidString(task.ID),
 			"status":              task.Status,
 		})
 	}
-	summary := dispatchCraftsmanSummary(len(dispatched), len(skipped), args.Mode)
+	summary := dispatchCraftsmanSummary(len(dispatched), len(skipped), args.ScopeType, args.TargetPhase, args.ExecutionPolicy)
 	return ExecuteOutput{Summary: summary, Result: map[string]any{
-		"status":     "queued",
-		"mode":       args.Mode,
-		"summary":    summary,
-		"dispatched": dispatched,
-		"skipped":    skipped,
+		"status":       dispatchStatus(len(dispatched), len(skipped)),
+		"target_phase": args.TargetPhase,
+		"summary":      summary,
+		"dispatched":   dispatched,
+		"skipped":      skipped,
 	}}, nil
 }
 
-func dispatchCraftsmanSummary(dispatched int, skipped int, mode string) string {
-	if mode == "shot_video" {
+func dispatchStatus(dispatched int, skipped int) string {
+	if dispatched == 0 && skipped > 0 {
+		return "skipped"
+	}
+	return "queued"
+}
+
+func (t DispatchCraftsmanTool) appendDelegationMessage(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID, taskID pgtype.UUID, scope craftsmanDispatchScope, args parsedDispatchCraftsmanArgs, taskInput map[string]any) error {
+	text := craftsmanDelegationText(scope, args)
+	content, err := uimessage.BuildUserMessageContent(uimessage.UserMessageInput{Text: text})
+	if err != nil {
+		return err
+	}
+	_, err = t.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: workspaceID,
+		ThreadID:    threadID,
+		Role:        "user",
+		MessageType: "text",
+		Content:     content,
+		RawMessage: mustJSON(map[string]any{
+			"schema":       "clipanvil.agent.delegation.v1",
+			"target_role":  "craftsman",
+			"scope_type":   scope.ScopeType,
+			"scope_id":     uuidString(scope.ScopeID),
+			"scope_key":    scope.ScopeKey,
+			"client_key":   scope.ClientKey,
+			"target_phase": args.TargetPhase,
+			"task_input":   taskInput,
+		}),
+		TaskID: taskID,
+	})
+	return err
+}
+
+func craftsmanDelegationText(scope craftsmanDispatchScope, args parsedDispatchCraftsmanArgs) string {
+	lines := []string{
+		"Producer 派发 Craftsman 任务。",
+		"- scope: " + scope.ScopeType + "=" + scope.ScopeKey,
+		"- client_key: " + scope.ClientKey,
+		"- target_phase: " + args.TargetPhase,
+		"- execution_policy: " + args.ExecutionPolicy,
+	}
+	if args.Brief != "" {
+		lines = append(lines, "- brief: "+args.Brief)
+	}
+	if args.Critique != "" {
+		lines = append(lines, "- critique: "+args.Critique)
+	}
+	if len(args.FixHints) > 0 {
+		lines = append(lines, "- fix_hints: "+strings.Join(args.FixHints, "；"))
+	}
+	if len(args.InputNodeRefs) > 0 {
+		lines = append(lines, "- input_node_refs: "+strings.Join(args.InputNodeRefs, "；"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func dispatchCraftsmanSummary(dispatched int, skipped int, scopeType string, targetPhase string, executionPolicy string) string {
+	tail := "Craftsman 会先创建并编译 RenderPlan，随后等待 Producer accept/reject。"
+	if executionPolicy == "execute_immediately" {
+		tail = "Craftsman 编译 RenderPlan 后，工程会自动提交 Worker 生成任务。"
+	}
+	if dispatched == 0 && skipped > 0 {
+		return fmt.Sprintf("没有创建新的 Craftsman 任务：%d 个 scope 已存在同一 target_phase 的 Craftsman 任务正在排队或运行。请等待对应 signal，或稍后调用 read_project_context 查看真实状态；不要重复派发相同任务。", skipped)
+	}
+	if scopeType == "key_element_state" {
+		return fmt.Sprintf("已将 %d 个关键元素状态参考图 RenderPlan 任务加入队列。%s 当前仅表示 Craftsman 任务已排队，不表示参考图已经生成完成。", dispatched, tail)
+	}
+	if targetPhase == "shot_video" {
 		if skipped > 0 {
-			return fmt.Sprintf("已将 %d 个分镜视频生成任务加入队列，%d 个分镜被跳过。分镜视频会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示视频已经生成完成。", dispatched, skipped)
+			return fmt.Sprintf("已将 %d 个分镜视频 RenderPlan 任务加入队列，%d 个分镜被跳过。%s 当前仅表示 Craftsman 任务已排队，不表示视频已经生成完成。", dispatched, skipped, tail)
 		}
-		return fmt.Sprintf("已将 %d 个分镜视频生成任务加入队列。分镜视频会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示视频已经生成完成。", dispatched)
+		return fmt.Sprintf("已将 %d 个分镜视频 RenderPlan 任务加入队列。%s 当前仅表示 Craftsman 任务已排队，不表示视频已经生成完成。", dispatched, tail)
 	}
 	if skipped > 0 {
-		return fmt.Sprintf("已将 %d 个分镜的预览图生成任务加入队列，%d 个分镜因已有预览或状态不匹配被跳过。预览图会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示图片已经生成完成。", dispatched, skipped)
+		return fmt.Sprintf("已将 %d 个分镜的预览图 RenderPlan 任务加入队列，%d 个分镜因已有预览或状态不匹配被跳过。%s 当前仅表示 Craftsman 任务已排队，不表示图片已经生成完成。", dispatched, skipped, tail)
 	}
-	return fmt.Sprintf("已将 %d 个分镜的预览图生成任务加入队列。预览图会由后台 Craftsman/Worker 继续生成；节点和生成状态会通过画布同步与生产状态查询更新。当前仅表示任务已排队，不表示图片已经生成完成。", dispatched)
+	return fmt.Sprintf("已将 %d 个分镜的预览图 RenderPlan 任务加入队列。%s 当前仅表示 Craftsman 任务已排队，不表示图片已经生成完成。", dispatched, tail)
+}
+
+func activeCraftsmanTaskForScopePhase(tasks []db.AgentTask, scopeType string, scopeID pgtype.UUID, targetPhase string) (db.AgentTask, bool) {
+	for _, task := range tasks {
+		if task.Role != "craftsman" || task.TaskType != "craftsman_turn" {
+			continue
+		}
+		if task.ScopeType != scopeType || task.ScopeID != scopeID {
+			continue
+		}
+		var input map[string]any
+		if err := json.Unmarshal(task.Input, &input); err != nil {
+			continue
+		}
+		phase := strings.TrimSpace(stringValue(input, "target_phase"))
+		if phase == "" {
+			phase = strings.TrimSpace(stringValue(input, "mode"))
+		}
+		if phase == targetPhase {
+			return task, true
+		}
+	}
+	return db.AgentTask{}, false
 }
 
 type parsedDispatchCraftsmanArgs struct {
-	Mode           string
-	ShotRefs       []string
-	Force          bool
-	MaxAttempts    int32
-	ReviewRecordID string
-	Critique       string
-	FixHints       []string
-	InputNodeRefs  []string
+	Brief            string
+	ScopeType        string
+	ScopeID          pgtype.UUID
+	ScopeRef         string
+	TargetPhase      string
+	ExecutionPolicy  string
+	ParentToolCallID string
+	ShotRefs         []string
+	Force            bool
+	MaxAttempts      int32
+	ReviewRecordID   string
+	Critique         string
+	FixHints         []string
+	InputNodeRefs    []string
 }
 
 func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, error) {
-	mode := stringValue(raw, "mode")
-	if mode == "" {
-		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("invalid dispatch_craftsman mode")
+	targetPhase := stringValue(raw, "target_phase")
+	if targetPhase == "" {
+		targetPhase = stringValue(raw, "mode")
 	}
-	if mode != "preview_image" && mode != "shot_video" {
-		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("unsupported dispatch_craftsman mode %q", mode)
+	if targetPhase == "" {
+		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("invalid dispatch_craftsman target_phase")
+	}
+	if targetPhase != "reference_image" && targetPhase != "preview_image" && targetPhase != "shot_video" {
+		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("unsupported dispatch_craftsman target_phase %q", targetPhase)
+	}
+	executionPolicy := stringValue(raw, "execution_policy")
+	if executionPolicy == "" {
+		executionPolicy = "wait_for_producer"
+	}
+	if executionPolicy != "execute_immediately" && executionPolicy != "wait_for_producer" {
+		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("unsupported dispatch_craftsman execution_policy %q", executionPolicy)
 	}
 	maxAttempts := int32Value(raw, "max_attempts", 3)
 	if maxAttempts < 1 {
@@ -251,20 +426,134 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 	if maxAttempts > 3 {
 		maxAttempts = 3
 	}
+	scopeType := "shot"
+	scopeID := pgtype.UUID{}
+	if scopeRaw, ok := raw["scope"].(map[string]any); ok {
+		if value := strings.TrimSpace(stringValue(scopeRaw, "type")); value != "" {
+			scopeType = value
+		}
+		if id, ok := pgUUIDFromString(stringValue(scopeRaw, "id")); ok {
+			scopeID = id
+		}
+	}
+	scopeRef := ""
+	if scopeRaw, ok := raw["scope"].(map[string]any); ok {
+		scopeRef = strings.TrimSpace(stringValue(scopeRaw, "id"))
+	}
+	if scopeType != "shot" && scopeType != "key_element_state" {
+		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("unsupported dispatch_craftsman scope.type %q", scopeType)
+	}
+	if scopeType == "key_element_state" {
+		if !scopeID.Valid && scopeRef == "" {
+			return parsedDispatchCraftsmanArgs{}, fmt.Errorf("scope.id is required for key_element_state")
+		}
+		if targetPhase != "reference_image" {
+			return parsedDispatchCraftsmanArgs{}, fmt.Errorf("key_element_state 只能派发 reference_image")
+		}
+	}
+	if scopeType == "shot" && targetPhase == "reference_image" {
+		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("shot 不能派发 reference_image")
+	}
 	shotRefs := stringSliceValue(raw, "shot_refs")
 	return parsedDispatchCraftsmanArgs{
-		Mode:           mode,
-		ShotRefs:       shotRefs,
-		Force:          boolValue(raw, "force"),
-		MaxAttempts:    maxAttempts,
-		ReviewRecordID: stringValue(raw, "review_record_id"),
-		Critique:       stringValue(raw, "critique"),
-		FixHints:       stringSliceValue(raw, "fix_hints"),
-		InputNodeRefs:  stringSliceValue(raw, "input_node_refs"),
+		Brief:            stringValue(raw, "brief"),
+		ScopeType:        scopeType,
+		ScopeID:          scopeID,
+		ScopeRef:         scopeRef,
+		TargetPhase:      targetPhase,
+		ExecutionPolicy:  executionPolicy,
+		ParentToolCallID: stringValue(raw, "parent_tool_call_id"),
+		ShotRefs:         shotRefs,
+		Force:            boolValue(raw, "force"),
+		MaxAttempts:      maxAttempts,
+		ReviewRecordID:   stringValue(raw, "review_record_id"),
+		Critique:         stringValue(raw, "critique"),
+		FixHints:         stringSliceValue(raw, "fix_hints"),
+		InputNodeRefs:    stringSliceValue(raw, "input_node_refs"),
 	}, nil
 }
 
+type craftsmanDispatchScope struct {
+	ScopeType string
+	ScopeID   pgtype.UUID
+	ScopeKey  string
+	ClientKey string
+}
+
+func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) ([]craftsmanDispatchScope, error) {
+	if args.ScopeType == "key_element_state" {
+		state, err := t.resolveKeyElementStateRef(ctx, workspaceID, args)
+		if err != nil {
+			return nil, err
+		}
+		if state.WorkspaceID != workspaceID || state.Status != "active" {
+			return nil, errScopeNotFound
+		}
+		if state.ReferenceStatus != "needs_reference" && !args.Force {
+			return nil, fmt.Errorf("key_element_state.reference_status=%s，不需要生成参考图；如需重做请设置 force=true", state.ReferenceStatus)
+		}
+		return []craftsmanDispatchScope{{ScopeType: "key_element_state", ScopeID: state.ID, ScopeKey: semanticScopeKey(state.SemanticKey, "key_element_state", state.ClientKey), ClientKey: state.ClientKey}}, nil
+	}
+	shots, err := t.resolveShots(ctx, workspaceID, args)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]craftsmanDispatchScope, 0, len(shots))
+	for _, shot := range shots {
+		out = append(out, craftsmanDispatchScope{ScopeType: "shot", ScopeID: shot.ID, ScopeKey: semanticScopeKey(shot.SemanticKey, "shot", shot.ClientKey), ClientKey: shot.ClientKey})
+	}
+	return out, nil
+}
+
+func semanticScopeKey(semanticKey string, scopeType string, clientKey string) string {
+	if value := strings.TrimSpace(semanticKey); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(clientKey); value != "" {
+		return strings.TrimSpace(scopeType) + "." + value
+	}
+	return strings.TrimSpace(scopeType) + ".semantic_key_missing"
+}
+
+func (t DispatchCraftsmanTool) resolveKeyElementStateRef(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) (db.KeyElementState, error) {
+	if args.ScopeID.Valid {
+		return t.store.GetKeyElementStateByID(ctx, db.GetKeyElementStateByIDParams{ID: args.ScopeID, WorkspaceID: workspaceID})
+	}
+	if strings.TrimSpace(args.ScopeRef) == "" {
+		return db.KeyElementState{}, fmt.Errorf("key_element_state scope.id 必须填写 UUID 或 state_client_key")
+	}
+	states, err := t.store.ListActiveKeyElementStatesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return db.KeyElementState{}, err
+	}
+	var matched *db.KeyElementState
+	for _, state := range states {
+		if state.ClientKey != args.ScopeRef && state.SemanticKey != args.ScopeRef {
+			continue
+		}
+		current := state
+		if matched != nil {
+			return db.KeyElementState{}, fmt.Errorf("state_client_key=%s 不唯一，请改用 key_element_state UUID", args.ScopeRef)
+		}
+		matched = &current
+	}
+	if matched == nil {
+		return db.KeyElementState{}, fmt.Errorf("找不到 key_element_state ref=%s，请先读取项目上下文确认真实 semantic_key", args.ScopeRef)
+	}
+	return *matched, nil
+}
+
 func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) ([]db.Shot, error) {
+	if args.ScopeID.Valid {
+		shot, err := t.resolveShotRef(ctx, workspaceID, uuidString(args.ScopeID))
+		if err != nil {
+			return nil, err
+		}
+		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+			return nil, nil
+		}
+		return []db.Shot{shot}, nil
+	}
 	if len(args.ShotRefs) == 0 {
 		shots, err := t.store.ListActiveShotsByWorkspace(ctx, workspaceID)
 		if err != nil {
@@ -272,7 +561,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		}
 		out := make([]db.Shot, 0, len(shots))
 		for _, shot := range shots {
-			if shotDispatchableForMode(shot.Status, args.Force, args.Mode) {
+			if shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
 				out = append(out, shot)
 			}
 		}
@@ -288,7 +577,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		if seen[shot.ID] {
 			continue
 		}
-		if !shotDispatchableForMode(shot.Status, args.Force, args.Mode) {
+		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
 			continue
 		}
 		seen[shot.ID] = true
@@ -312,14 +601,31 @@ func (t DispatchCraftsmanTool) resolveShotRef(ctx context.Context, workspaceID p
 		}
 		return shot, nil
 	}
+	shots, err := t.store.ListActiveShotsByWorkspace(ctx, workspaceID)
+	if err == nil {
+		var matched *db.Shot
+		for _, shot := range shots {
+			if shot.SemanticKey != ref {
+				continue
+			}
+			current := shot
+			if matched != nil {
+				return db.Shot{}, fmt.Errorf("shot semantic_key=%s 不唯一，请读取项目上下文确认", ref)
+			}
+			matched = &current
+		}
+		if matched != nil {
+			return *matched, nil
+		}
+	}
 	return t.store.GetShotByClientKey(ctx, db.GetShotByClientKeyParams{
 		WorkspaceID: workspaceID,
 		ClientKey:   ref,
 	})
 }
 
-func shotDispatchableForMode(status string, force bool, mode string) bool {
-	if mode == "shot_video" {
+func shotDispatchableForPhase(status string, force bool, targetPhase string) bool {
+	if targetPhase == "shot_video" {
 		switch strings.TrimSpace(status) {
 		case "preview_ready", "failed":
 			return true
@@ -337,14 +643,6 @@ func shotDispatchableForMode(status string, force bool, mode string) bool {
 	default:
 		return false
 	}
-}
-
-func pgUUIDFromString(value string) (pgtype.UUID, bool) {
-	parsed, err := uuid.Parse(strings.TrimSpace(value))
-	if err != nil {
-		return pgtype.UUID{}, false
-	}
-	return pgtype.UUID{Bytes: parsed, Valid: true}, true
 }
 
 func boolValue(values map[string]any, key string) bool {

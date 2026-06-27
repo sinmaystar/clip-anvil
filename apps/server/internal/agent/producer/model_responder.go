@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,7 +17,9 @@ import (
 	"github.com/cloudwego/eino/schema"
 	arkModel "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 type arkChatStreamer interface {
@@ -112,6 +115,7 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, producerContext P
 	diagnostics["image_attachment_count"] = len(producerContext.ImageAttachments)
 	diagnostics["tool_binding_count"] = len(producerContext.ToolInfos)
 	enrichReasoningPassbackDiagnostics(diagnostics, messages)
+	logProducerModelInputIfEnabled(ctx, logger, diagnostics, messages, producerContext.ToolInfos)
 	streamer := model
 	if len(producerContext.ToolInfos) > 0 {
 		toolCallingModel, ok := model.(einoModel.ToolCallingChatModel)
@@ -233,7 +237,7 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, producerContext P
 	}
 	diagnostics["native_tool_call_count"] = len(final.ToolCalls)
 	metadata["native_tool_call_count"] = len(final.ToolCalls)
-	if strings.TrimSpace(final.Content) == "" {
+	if strings.TrimSpace(final.Content) == "" && len(final.ToolCalls) == 0 {
 		logProducerModelEmptyContent(ctx, logger, diagnostics)
 	} else {
 		logProducerModelCompleted(ctx, logger, diagnostics)
@@ -357,6 +361,70 @@ func logProducerModelCompleted(ctx context.Context, logger *slog.Logger, diagnos
 	logger.InfoContext(ctx, "producer model response completed", diagnosticsLogValues(diagnostics)...)
 }
 
+func logProducerModelInputIfEnabled(ctx context.Context, logger *slog.Logger, diagnostics map[string]any, messages []*schema.Message, tools []*schema.ToolInfo) {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("CLIPANVIL_AGENT_LOG_MODEL_INPUT")))
+	if value != "1" && value != "true" && value != "yes" {
+		return
+	}
+	payload := map[string]any{
+		"diagnostics": diagnostics,
+		"messages":    producerModelInputMessageDiagnostics(messages),
+		"tools":       producerModelInputToolDiagnostics(tools),
+	}
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		logger.WarnContext(ctx, "producer model input diagnostic marshal failed", "error", err)
+		return
+	}
+	logger.WarnContext(ctx, "producer model input diagnostic", "payload", string(raw))
+}
+
+func producerModelInputMessageDiagnostics(messages []*schema.Message) []map[string]any {
+	out := make([]map[string]any, 0, len(messages))
+	for index, message := range messages {
+		if message == nil {
+			out = append(out, map[string]any{"index": index, "nil": true})
+			continue
+		}
+		item := map[string]any{
+			"index":                          index,
+			"role":                           string(message.Role),
+			"name":                           message.Name,
+			"content":                        message.Content,
+			"content_chars":                  utf8.RuneCountInString(message.Content),
+			"reasoning_content_chars":        utf8.RuneCountInString(message.ReasoningContent),
+			"tool_call_id":                   message.ToolCallID,
+			"tool_name":                      message.ToolName,
+			"tool_calls":                     message.ToolCalls,
+			"user_input_multi_content":       message.UserInputMultiContent,
+			"user_input_multi_content_count": len(message.UserInputMultiContent),
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func producerModelInputToolDiagnostics(tools []*schema.ToolInfo) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for index, tool := range tools {
+		if tool == nil {
+			out = append(out, map[string]any{"index": index, "nil": true})
+			continue
+		}
+		item := map[string]any{
+			"index": index,
+			"name":  tool.Name,
+			"desc":  tool.Desc,
+			"extra": tool.Extra,
+		}
+		if tool.ParamsOneOf != nil {
+			item["params_one_of"] = tool.ParamsOneOf
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 func diagnosticsLogValues(diagnostics map[string]any) []any {
 	keys := []string{
 		"provider",
@@ -401,30 +469,35 @@ func diagnosticsLogValues(diagnostics map[string]any) []any {
 }
 
 func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
-	systemPrompt := strings.TrimSpace(`你是 ClipAnvil 的 Producer Agent。
-你的职责是理解用户的视频创作需求，维护 storyboard，并推动后续 Craftsman / Worker / Composer 阶段。
-当前 M6.5 阶段只能通过工具保存 storyboard 和读取生产状态；不要声称已经生成图片、视频、评审或成片。
-需要持久化分镜时必须调用 update_storyboard；需要确认时调用 request_user_decision；需要刷新项目状态时调用 get_production_state。
-每次回复最多调用一个工具；不要把多个 FunctionCall 拼在同一条回复里。
-推荐工具调用格式：{"tool_call":{"name":"update_storyboard","arguments":{"intent":"replace","shots":[{"client_key":"shot-01","sort_order":1,"title":"开场","duration_sec":4,"brief":{"summary":"画面内容","voice_over":"口播","ui_overlay":"字幕或贴片"}}]}}}。
-回答使用中文，简洁、具体，并在工具成功后总结已保存的 shot。`)
-	if pss := strings.TrimSpace(producerContext.ProductionStateText); pss != "" {
-		systemPrompt += "\n\n当前 Production State Summary (PSS):\n" + pss
-	}
+	systemPrompt := ProducerSystemPrompt(producerContext)
 	messages := []*schema.Message{
 		schema.SystemMessage(systemPrompt),
 	}
 	for _, msg := range producerContext.Messages {
-		text := agentMessageText(msg.Content)
-		if text == "" {
-			continue
-		}
 		switch msg.Role {
 		case "user":
+			text := agentMessageText(msg.Content)
+			if text == "" {
+				continue
+			}
 			messages = append(messages, userPromptMessage(msg.Content, text, producerContext.ImageAttachments))
 		case "assistant":
 			if msg.MessageType == "text" {
+				text := agentMessageText(msg.Content)
+				if text == "" {
+					continue
+				}
 				messages = append(messages, schema.AssistantMessage(text, nil))
+			} else if msg.MessageType == "tool_call" {
+				if toolMessage := historicalToolCallPromptMessage(msg); toolMessage != nil {
+					messages = append(messages, toolMessage)
+				}
+			}
+		case "tool":
+			if msg.MessageType == "tool_result" {
+				if toolMessage := historicalToolResultPromptMessage(msg); toolMessage != nil {
+					messages = append(messages, toolMessage)
+				}
 			}
 		}
 	}
@@ -434,14 +507,76 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 			messages = append(messages, next)
 		}
 	}
-	if len(messages) == 1 {
+	if trigger := strings.TrimSpace(producerContext.RuntimeTriggerText); trigger != "" && !hasSameTurnToolExchange(producerContext.SameTurnMessages) {
+		messages = append(messages, schema.UserMessage(runtimeTriggerPromptText(trigger)))
+	}
+	if !hasNonSystemPromptMessage(messages) {
 		text := strings.TrimSpace(producerContext.LatestUserText)
 		if text == "" {
 			text = "请开始一次 Producer 对话。"
 		}
 		messages = append(messages, schema.UserMessage(text))
 	}
-	return messages
+	return appendPendingRemindersToPrompt(messages, producerContext.PendingReminders)
+}
+
+func appendPendingRemindersToPrompt(messages []*schema.Message, reminders []string) []*schema.Message {
+	text := pendingReminderPromptText(reminders)
+	if text == "" {
+		return messages
+	}
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := messages[index]
+		if message == nil {
+			continue
+		}
+		if message.Role != schema.User && message.Role != schema.Tool {
+			continue
+		}
+		message.Content = strings.TrimSpace(message.Content) + "\n\n" + text
+		return messages
+	}
+	return append(messages, schema.UserMessage(text))
+}
+
+func pendingReminderPromptText(reminders []string) string {
+	normalized := make([]string, 0, len(reminders))
+	for _, reminder := range reminders {
+		if text := toolloop.NormalizeSystemReminder(reminder); text != "" {
+			normalized = append(normalized, text)
+		}
+	}
+	if len(normalized) == 0 {
+		return ""
+	}
+	return "运行时提醒：\n" + strings.Join(normalized, "\n")
+}
+
+func hasSameTurnToolExchange(messages []ProducerSameTurnMessage) bool {
+	for _, message := range messages {
+		switch strings.TrimSpace(message.MessageType) {
+		case "tool_call", "tool_result":
+			return true
+		}
+	}
+	return false
+}
+
+func hasNonSystemPromptMessage(messages []*schema.Message) bool {
+	for _, message := range messages {
+		if message != nil && message.Role != schema.System {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimeTriggerPromptText(trigger string) string {
+	trigger = strings.TrimSpace(trigger)
+	if trigger == "" {
+		return ""
+	}
+	return "请根据以下系统触发事件继续推进 Producer 工作。你需要读取项目上下文，确认真实状态，再决定调用 decide_render_plan、dispatch_reviewer 或 request_user_decision；如果存在多条 craftsman_render_plan_ready RenderPlan，请优先用 decide_render_plan 的 decisions 批量参数一次处理每条决策。\n\n" + trigger
 }
 
 func sameTurnPromptMessage(msg ProducerSameTurnMessage) *schema.Message {
@@ -488,6 +623,83 @@ func sameTurnToolCalls(msg ProducerSameTurnMessage) []schema.ToolCall {
 			Arguments: arguments,
 		},
 	}}
+}
+
+func historicalToolCallPromptMessage(msg db.AgentMessage) *schema.Message {
+	raw := jsonObject(msg.RawMessage)
+	toolCallID := stringFromAny(raw["tool_call_id"])
+	toolName := firstNonEmpty(stringFromAny(raw["tool_name"]), stringFromAny(raw["name"]))
+	if toolCallID == "" || toolName == "" {
+		return nil
+	}
+	arguments := "{}"
+	if rawArgs, ok := raw["arguments"]; ok {
+		if encoded, err := json.Marshal(rawArgs); err == nil {
+			arguments = string(encoded)
+		}
+	}
+	return schema.AssistantMessage(historicalToolText(msg), []schema.ToolCall{{
+		ID:   toolCallID,
+		Type: "function",
+		Function: schema.FunctionCall{
+			Name:      toolName,
+			Arguments: arguments,
+		},
+	}})
+}
+
+func historicalToolResultPromptMessage(msg db.AgentMessage) *schema.Message {
+	raw := jsonObject(msg.RawMessage)
+	toolCallID := stringFromAny(raw["tool_call_id"])
+	toolName := firstNonEmpty(stringFromAny(raw["tool_name"]), stringFromAny(raw["name"]))
+	content := firstNonEmpty(stringFromAny(raw["result_text"]), historicalToolText(msg))
+	if content == "" {
+		if rawResult, ok := raw["result"]; ok {
+			if encoded, err := json.Marshal(rawResult); err == nil {
+				content = string(encoded)
+			}
+		}
+	}
+	if content == "" {
+		return nil
+	}
+	if toolCallID == "" {
+		return schema.UserMessage("工具返回：" + content)
+	}
+	return schema.ToolMessage(content, toolCallID, schema.WithToolName(toolName))
+}
+
+func historicalToolText(msg db.AgentMessage) string {
+	if text := strings.TrimSpace(agentMessageText(msg.Content)); text != "" {
+		return text
+	}
+	content := jsonObject(msg.Content)
+	return strings.TrimSpace(stringFromAny(content["text"]))
+}
+
+func jsonObject(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func stringFromAny(value any) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func userPromptMessage(raw []byte, text string, images map[string]ProducerImageAttachment) *schema.Message {

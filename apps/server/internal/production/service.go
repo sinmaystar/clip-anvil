@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -361,23 +362,26 @@ func (s *Service) createQueuedJobWithVersion(
 	qtx := s.queries.WithTx(tx)
 
 	job, err := qtx.CreateGenerationJob(ctx, db.CreateGenerationJobParams{
-		WorkspaceID:      node.WorkspaceID,
-		TargetNodeID:     node.ID,
-		ParentJobID:      parentJobID,
-		OperationType:    intent.OperationType,
-		Provider:         intent.Model.Provider,
-		ModelID:          intent.Model.ModelID,
-		Intent:           intentJSON,
-		RenderedPrompt:   intent.EffectivePrompt(),
-		ProviderRequest:  []byte("{}"),
-		ProviderResponse: []byte("{}"),
-		Status:           db.JobStatusQueued,
-		Progress:         0,
-		Attempt:          1,
-		MaxAttempts:      maxAttempts,
-		RetryPolicy:      retryPolicyJSON(maxAttempts),
-		RequestedByType:  intent.RequestedBy.Type,
-		RequestedByID:    nullableText(intent.RequestedBy.ID),
+		WorkspaceID:        node.WorkspaceID,
+		TargetNodeID:       node.ID,
+		ParentJobID:        parentJobID,
+		OperationType:      intent.OperationType,
+		Provider:           intent.Model.Provider,
+		ModelID:            intent.Model.ModelID,
+		Intent:             intentJSON,
+		RenderedPrompt:     intent.EffectivePrompt(),
+		ProviderRequest:    []byte("{}"),
+		ProviderResponse:   []byte("{}"),
+		Status:             db.JobStatusQueued,
+		Progress:           0,
+		Attempt:            1,
+		MaxAttempts:        maxAttempts,
+		RetryPolicy:        retryPolicyJSON(maxAttempts),
+		RequestedByType:    intent.RequestedBy.Type,
+		RequestedByID:      nullableText(intent.RequestedBy.ID),
+		SemanticKey:        generationJobSemanticKey(intent, 1),
+		DisplayName:        generationJobDisplayName(intent, 1),
+		SourceRenderPlanID: intent.Semantic.SourceRenderPlanID,
 	})
 	if err != nil {
 		return db.GenerationJob{}, db.ArtifactVersion{}, err
@@ -387,17 +391,21 @@ func (s *Service) createQueuedJobWithVersion(
 		return db.GenerationJob{}, db.ArtifactVersion{}, err
 	}
 	version, err := qtx.CreateArtifactVersion(ctx, db.CreateArtifactVersionParams{
-		WorkspaceID:      node.WorkspaceID,
-		NodeID:           node.ID,
-		JobID:            job.ID,
-		VersionNo:        versionNo,
-		Winner:           false,
-		Output:           []byte("{}"),
-		InputHash:        inputHash,
-		Status:           db.JobStatusQueued,
-		Progress:         0,
-		ProviderRequest:  []byte("{}"),
-		ProviderResponse: []byte("{}"),
+		WorkspaceID:        node.WorkspaceID,
+		NodeID:             node.ID,
+		JobID:              job.ID,
+		VersionNo:          versionNo,
+		Winner:             false,
+		Output:             []byte("{}"),
+		InputHash:          inputHash,
+		Status:             db.JobStatusQueued,
+		Progress:           0,
+		ProviderRequest:    []byte("{}"),
+		ProviderResponse:   []byte("{}"),
+		SemanticKey:        artifactVersionSemanticKey(intent, versionNo),
+		DisplayName:        artifactVersionDisplayName(intent, versionNo),
+		ArtifactKind:       artifactKindForIntent(intent),
+		SourceRenderPlanID: intent.Semantic.SourceRenderPlanID,
 	})
 	if err != nil {
 		return db.GenerationJob{}, db.ArtifactVersion{}, err
@@ -464,6 +472,50 @@ func (s *Service) markQueuedJobProgress(ctx context.Context, job db.GenerationJo
 	return updated, nil
 }
 
+func generationJobSemanticKey(intent GenerationIntent, attempt int32) string {
+	base := strings.TrimSpace(intent.Semantic.RenderPlanKey)
+	if base == "" {
+		return ""
+	}
+	if attempt <= 0 {
+		attempt = 1
+	}
+	return fmt.Sprintf("%s.job.a%d", base, attempt)
+}
+
+func generationJobDisplayName(intent GenerationIntent, attempt int32) string {
+	return generationJobSemanticKey(intent, attempt)
+}
+
+func artifactVersionSemanticKey(intent GenerationIntent, versionNo int32) string {
+	base := strings.TrimSpace(intent.Semantic.RenderPlanKey)
+	if base == "" {
+		return ""
+	}
+	if versionNo <= 0 {
+		versionNo = 1
+	}
+	return fmt.Sprintf("%s.artifact.v%d", base, versionNo)
+}
+
+func artifactVersionDisplayName(intent GenerationIntent, versionNo int32) string {
+	return artifactVersionSemanticKey(intent, versionNo)
+}
+
+func artifactKindForIntent(intent GenerationIntent) string {
+	if kind := strings.TrimSpace(intent.Semantic.ArtifactKind); kind != "" {
+		return kind
+	}
+	switch strings.TrimSpace(intent.OutputType) {
+	case "video":
+		return "shot_video"
+	case "image":
+		return "image"
+	default:
+		return strings.TrimSpace(intent.OutputType)
+	}
+}
+
 func (s *Service) markQueuedJobFailed(ctx context.Context, job db.GenerationJob, runErr error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -488,19 +540,23 @@ func (s *Service) markQueuedJobFailed(ctx context.Context, job db.GenerationJob,
 	}); err != nil {
 		return err
 	}
-	if _, err := qtx.MarkArtifactVersionFailedByJob(ctx, db.MarkArtifactVersionFailedByJobParams{
+	failedVersion, err := qtx.MarkArtifactVersionFailedByJob(ctx, db.MarkArtifactVersionFailedByJobParams{
 		JobID:            job.ID,
 		Progress:         progress,
 		ProviderResponse: response,
 		ErrorCode:        errorCode,
 		ErrorMessage:     errorMessage,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	if _, err := qtx.UpdateMediaNodeStatus(ctx, db.UpdateMediaNodeStatusParams{
 		ID:     currentJob.TargetNodeID,
 		Status: db.NodeStatusFailed,
 	}); err != nil {
+		return err
+	}
+	if err := markSubmittedRenderPlanTerminal(ctx, qtx, currentJob, "failed", failedVersion.ID, currentJob.TargetNodeID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -588,10 +644,38 @@ func (s *Service) persistQueuedJobSuccess(ctx context.Context, jobID pgtype.UUID
 	if err != nil {
 		return RunResult{}, err
 	}
+	if err := markSubmittedRenderPlanTerminal(ctx, qtx, succeeded, "succeeded", version.ID, updated.ID); err != nil {
+		return RunResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return RunResult{}, err
 	}
 	return RunResult{Node: updated, Job: succeeded, Version: version}, nil
+}
+
+type renderPlanTerminalSyncer interface {
+	MarkSubmittedRenderPlanCompletedByWorkerTask(ctx context.Context, arg db.MarkSubmittedRenderPlanCompletedByWorkerTaskParams) (db.RenderPlan, error)
+}
+
+func markSubmittedRenderPlanTerminal(ctx context.Context, q renderPlanTerminalSyncer, job db.GenerationJob, status string, versionID pgtype.UUID, nodeID pgtype.UUID) error {
+	if q == nil || job.RequestedByType != "agent_worker" || !job.WorkspaceID.Valid || !job.RequestedByID.Valid {
+		return nil
+	}
+	var workerTaskID pgtype.UUID
+	if err := workerTaskID.Scan(strings.TrimSpace(job.RequestedByID.String)); err != nil || !workerTaskID.Valid {
+		return nil
+	}
+	_, err := q.MarkSubmittedRenderPlanCompletedByWorkerTask(ctx, db.MarkSubmittedRenderPlanCompletedByWorkerTaskParams{
+		WorkspaceID:           job.WorkspaceID,
+		SubmittedWorkerTaskID: workerTaskID,
+		Status:                status,
+		OutputVersionID:       versionID,
+		OutputNodeID:          nodeID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
 }
 
 func (s *Service) persistSuccessfulRun(
@@ -634,25 +718,28 @@ func (s *Service) persistSuccessfulRun(
 
 	now := time.Now()
 	job, err := qtx.CreateGenerationJob(ctx, db.CreateGenerationJobParams{
-		WorkspaceID:      node.WorkspaceID,
-		TargetNodeID:     node.ID,
-		ParentJobID:      parentJobID,
-		OperationType:    intent.OperationType,
-		Provider:         intent.Model.Provider,
-		ModelID:          intent.Model.ModelID,
-		Intent:           intentJSON,
-		RenderedPrompt:   result.RenderedPrompt,
-		ProviderRequest:  requestJSON,
-		ProviderResponse: responseJSON,
-		Status:           db.JobStatusSucceeded,
-		Progress:         100,
-		Attempt:          attempt,
-		MaxAttempts:      maxAttempts,
-		RetryPolicy:      retryPolicyJSON(maxAttempts),
-		RequestedByType:  intent.RequestedBy.Type,
-		RequestedByID:    nullableText(intent.RequestedBy.ID),
-		StartedAt:        pgtype.Timestamptz{Time: now, Valid: true},
-		CompletedAt:      pgtype.Timestamptz{Time: now, Valid: true},
+		WorkspaceID:        node.WorkspaceID,
+		TargetNodeID:       node.ID,
+		ParentJobID:        parentJobID,
+		OperationType:      intent.OperationType,
+		Provider:           intent.Model.Provider,
+		ModelID:            intent.Model.ModelID,
+		Intent:             intentJSON,
+		RenderedPrompt:     result.RenderedPrompt,
+		ProviderRequest:    requestJSON,
+		ProviderResponse:   responseJSON,
+		Status:             db.JobStatusSucceeded,
+		Progress:           100,
+		Attempt:            attempt,
+		MaxAttempts:        maxAttempts,
+		RetryPolicy:        retryPolicyJSON(maxAttempts),
+		RequestedByType:    intent.RequestedBy.Type,
+		RequestedByID:      nullableText(intent.RequestedBy.ID),
+		StartedAt:          pgtype.Timestamptz{Time: now, Valid: true},
+		CompletedAt:        pgtype.Timestamptz{Time: now, Valid: true},
+		SemanticKey:        generationJobSemanticKey(intent, attempt),
+		DisplayName:        generationJobDisplayName(intent, attempt),
+		SourceRenderPlanID: intent.Semantic.SourceRenderPlanID,
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -669,20 +756,24 @@ func (s *Service) persistSuccessfulRun(
 		return RunResult{}, err
 	}
 	version, err := qtx.CreateArtifactVersion(ctx, db.CreateArtifactVersionParams{
-		WorkspaceID:      node.WorkspaceID,
-		NodeID:           node.ID,
-		JobID:            job.ID,
-		AssetID:          asset.ID,
-		VersionNo:        versionNo,
-		Winner:           true,
-		Output:           outputJSON,
-		InputHash:        inputHash,
-		Status:           db.JobStatusSucceeded,
-		Progress:         100,
-		ProviderRequest:  requestJSON,
-		ProviderResponse: responseJSON,
-		StartedAt:        pgtype.Timestamptz{Time: now, Valid: true},
-		CompletedAt:      pgtype.Timestamptz{Time: now, Valid: true},
+		WorkspaceID:        node.WorkspaceID,
+		NodeID:             node.ID,
+		JobID:              job.ID,
+		AssetID:            asset.ID,
+		VersionNo:          versionNo,
+		Winner:             true,
+		Output:             outputJSON,
+		InputHash:          inputHash,
+		Status:             db.JobStatusSucceeded,
+		Progress:           100,
+		ProviderRequest:    requestJSON,
+		ProviderResponse:   responseJSON,
+		StartedAt:          pgtype.Timestamptz{Time: now, Valid: true},
+		CompletedAt:        pgtype.Timestamptz{Time: now, Valid: true},
+		SemanticKey:        artifactVersionSemanticKey(intent, versionNo),
+		DisplayName:        artifactVersionDisplayName(intent, versionNo),
+		ArtifactKind:       artifactKindForIntent(intent),
+		SourceRenderPlanID: intent.Semantic.SourceRenderPlanID,
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -1346,27 +1437,30 @@ func (s *Service) createFailedJob(
 	errorCode := pgtype.Text{String: errorCodeForRun(runErr), Valid: true}
 	errorMessage := pgtype.Text{String: runErr.Error(), Valid: true}
 	job, err := qtx.CreateGenerationJob(ctx, db.CreateGenerationJobParams{
-		WorkspaceID:      node.WorkspaceID,
-		TargetNodeID:     node.ID,
-		ParentJobID:      parentJobID,
-		OperationType:    intent.OperationType,
-		Provider:         intent.Model.Provider,
-		ModelID:          intent.Model.ModelID,
-		Intent:           intentJSON,
-		RenderedPrompt:   intent.EffectivePrompt(),
-		ProviderRequest:  []byte("{}"),
-		ProviderResponse: response,
-		Status:           db.JobStatusFailed,
-		Progress:         0,
-		Attempt:          attempt,
-		MaxAttempts:      maxAttempts,
-		RetryPolicy:      retryPolicyJSON(maxAttempts),
-		ErrorCode:        errorCode,
-		ErrorMessage:     errorMessage,
-		RequestedByType:  intent.RequestedBy.Type,
-		RequestedByID:    nullableText(intent.RequestedBy.ID),
-		StartedAt:        pgtype.Timestamptz{Time: now, Valid: true},
-		CompletedAt:      pgtype.Timestamptz{Time: now, Valid: true},
+		WorkspaceID:        node.WorkspaceID,
+		TargetNodeID:       node.ID,
+		ParentJobID:        parentJobID,
+		OperationType:      intent.OperationType,
+		Provider:           intent.Model.Provider,
+		ModelID:            intent.Model.ModelID,
+		Intent:             intentJSON,
+		RenderedPrompt:     intent.EffectivePrompt(),
+		ProviderRequest:    []byte("{}"),
+		ProviderResponse:   response,
+		Status:             db.JobStatusFailed,
+		Progress:           0,
+		Attempt:            attempt,
+		MaxAttempts:        maxAttempts,
+		RetryPolicy:        retryPolicyJSON(maxAttempts),
+		ErrorCode:          errorCode,
+		ErrorMessage:       errorMessage,
+		RequestedByType:    intent.RequestedBy.Type,
+		RequestedByID:      nullableText(intent.RequestedBy.ID),
+		StartedAt:          pgtype.Timestamptz{Time: now, Valid: true},
+		CompletedAt:        pgtype.Timestamptz{Time: now, Valid: true},
+		SemanticKey:        generationJobSemanticKey(intent, attempt),
+		DisplayName:        generationJobDisplayName(intent, attempt),
+		SourceRenderPlanID: intent.Semantic.SourceRenderPlanID,
 	})
 	if err != nil {
 		return job, err
@@ -1376,21 +1470,25 @@ func (s *Service) createFailedJob(
 		return db.GenerationJob{}, err
 	}
 	if _, err := qtx.CreateArtifactVersion(ctx, db.CreateArtifactVersionParams{
-		WorkspaceID:      node.WorkspaceID,
-		NodeID:           node.ID,
-		JobID:            job.ID,
-		VersionNo:        versionNo,
-		Winner:           false,
-		Output:           []byte("{}"),
-		InputHash:        "",
-		Status:           db.JobStatusFailed,
-		Progress:         0,
-		ErrorCode:        errorCode,
-		ErrorMessage:     errorMessage,
-		ProviderRequest:  []byte("{}"),
-		ProviderResponse: response,
-		StartedAt:        pgtype.Timestamptz{Time: now, Valid: true},
-		CompletedAt:      pgtype.Timestamptz{Time: now, Valid: true},
+		WorkspaceID:        node.WorkspaceID,
+		NodeID:             node.ID,
+		JobID:              job.ID,
+		VersionNo:          versionNo,
+		Winner:             false,
+		Output:             []byte("{}"),
+		InputHash:          "",
+		Status:             db.JobStatusFailed,
+		Progress:           0,
+		ErrorCode:          errorCode,
+		ErrorMessage:       errorMessage,
+		ProviderRequest:    []byte("{}"),
+		ProviderResponse:   response,
+		StartedAt:          pgtype.Timestamptz{Time: now, Valid: true},
+		CompletedAt:        pgtype.Timestamptz{Time: now, Valid: true},
+		SemanticKey:        artifactVersionSemanticKey(intent, versionNo),
+		DisplayName:        artifactVersionDisplayName(intent, versionNo),
+		ArtifactKind:       artifactKindForIntent(intent),
+		SourceRenderPlanID: intent.Semantic.SourceRenderPlanID,
 	}); err != nil {
 		return db.GenerationJob{}, err
 	}

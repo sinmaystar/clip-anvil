@@ -10,7 +10,8 @@
   ├── media_node (含画布坐标 x,y,w,h)  ──→  React Flow media node
   ├── media_edge                        ──→  React Flow dependency edge
   ├── media_group                       ──→  React Flow group node
-  └── canvas_document (camera)          ──→  React Flow viewport
+  ├── canvas_document (camera)          ──→  React Flow viewport
+  └── Agent 领域表 / production 表       ──→  Agent Workbench scene/shot/artifact 投影
 ```
 
 | 方案 | 问题 |
@@ -57,6 +58,40 @@ interface CanvasFlowEdgeData {
 ```
 
 React Flow node data 只保存画布渲染需要的业务投影。模型参数、版本列表、调用记录等重数据通过选中节点后的 API 按需加载。
+
+## 2.1 Agent Workbench 投影层
+
+Agent 模式当前不再只复用 Studio 的媒体节点平铺画布。`apps/web/src/components/agent-workbench/` 和 `apps/web/src/lib/agentWorkbench*.ts` 提供专门的制作工作台投影：
+
+| 文件 | 职责 |
+|---|---|
+| `agentWorkbench.ts` | 定义 Agent 工作台投影数据：overview、scene、shot、artifact slot、review、issue |
+| `agentWorkbenchViewModel.ts` | 把后端投影数据转换成 React Flow overview / scene / shot nodes 和 edges |
+| `agentWorkbenchMediaLayout.ts` | 根据真实图片/视频尺寸计算媒体缩略图大小，支持竖图、横图和多产物 |
+| `AgentWorkbenchCanvas.tsx` | Agent Workbench React Flow 宿主，支持选择 overview / scene / shot / artifact |
+| `AgentSceneGroupNode.tsx` | 场景分组容器节点 |
+| `AgentShotNode.tsx` | 分镜卡片，展示 shot 文案、预览图、视频、状态和问题入口 |
+| `AgentCanvasDetailPanel.tsx` | 选中对象后的详情面板 |
+
+Workbench 的事实源不是前端布局 snapshot，而是后端从 `creative_brief`、`project_memory`、`key_element`、`scene`、`shot`、`render_plan`、`media_node`、`artifact_version`、`review_record`、`artifact_issue` 等表构建的生产投影。
+
+当前布局策略：
+
+- overview 节点展示项目级 Brief / Memory 摘要。
+- scene 节点作为分组容器，内部包含多个 shot。
+- shot 使用两列瀑布流式自动布局，避免单个带视频的 shot 把整行其它 shot 拉高。
+- shot 内按需展示 preview image、shot video 和 review/issue，不强行保留空槽位。
+- 图片和视频按原始比例自适应尺寸，点击 artifact 可打开详情面板。
+
+Studio 画布和 Agent Workbench 的关系：
+
+| 维度 | Studio Canvas | Agent Workbench |
+|---|---|---|
+| 主要对象 | `media_node`、`media_edge`、`media_group` | scene、shot、artifact、review、issue、overview |
+| 用户操作 | 创建、编辑、连线、运行、选择版本 | 浏览、选择、查看详情、通过对话要求 Producer 修改 |
+| 事实源 | Studio 业务表和 production 表 | Agent 领域表 + production 表 |
+| 布局 | 用户拖拽 + Dagre 自动整理 | 后端/前端根据 scene/shot 层级自动投影 |
+| 目标 | 手动专业编辑器 | 让用户看见 Agent 制作过程和分镜状态 |
 
 ## 3. 节点卡片视觉规格
 

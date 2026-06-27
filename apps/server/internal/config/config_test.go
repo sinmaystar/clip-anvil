@@ -316,7 +316,7 @@ jwt:
   secret: "test-secret"
   expire_hours: 12
 agent:
-  producer_max_tool_calls: 50
+  producer_max_tool_calls: 1000
   tool_timeout_seconds: 300
 `)
 	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
@@ -367,8 +367,8 @@ jwt:
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Agent.ProducerMaxToolCalls != 50 {
-		t.Fatalf("ProducerMaxToolCalls = %d, want 50", cfg.Agent.ProducerMaxToolCalls)
+	if cfg.Agent.ProducerMaxToolCalls != 1000 {
+		t.Fatalf("ProducerMaxToolCalls = %d, want 1000", cfg.Agent.ProducerMaxToolCalls)
 	}
 	if cfg.Agent.ToolTimeoutSeconds != 300 {
 		t.Fatalf("ToolTimeoutSeconds = %d, want 300", cfg.Agent.ToolTimeoutSeconds)

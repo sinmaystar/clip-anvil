@@ -12,7 +12,11 @@ import (
 )
 
 const createAgentTask = `-- name: CreateAgentTask :one
+WITH proposed AS (
+    SELECT gen_random_uuid() AS id
+)
 INSERT INTO agent_task (
+    id,
     workspace_id,
     thread_id,
     role,
@@ -20,21 +24,38 @@ INSERT INTO agent_task (
     scope_id,
     task_type,
     max_attempts,
-    input
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
-) RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+    input,
+    render_plan_id,
+    semantic_key,
+    display_name
+)
+SELECT
+    proposed.id,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+    COALESCE(
+        NULLIF($10::text, ''),
+        $3 || '.' || $4 || '.' || left(COALESCE($5::uuid::text, $1::uuid::text), 8) || '.' || $6 || '.' || left(proposed.id::text, 8)
+    ),
+    COALESCE(
+        NULLIF($11::text, ''),
+        $3 || ' ' || $6
+    )
+FROM proposed
+RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 `
 
 type CreateAgentTaskParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	ThreadID    pgtype.UUID `json:"thread_id"`
-	Role        string      `json:"role"`
-	ScopeType   string      `json:"scope_type"`
-	ScopeID     pgtype.UUID `json:"scope_id"`
-	TaskType    string      `json:"task_type"`
-	MaxAttempts int32       `json:"max_attempts"`
-	Input       []byte      `json:"input"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	ThreadID     pgtype.UUID `json:"thread_id"`
+	Role         string      `json:"role"`
+	ScopeType    string      `json:"scope_type"`
+	ScopeID      pgtype.UUID `json:"scope_id"`
+	TaskType     string      `json:"task_type"`
+	MaxAttempts  int32       `json:"max_attempts"`
+	Input        []byte      `json:"input"`
+	RenderPlanID pgtype.UUID `json:"render_plan_id"`
+	SemanticKey  string      `json:"semantic_key"`
+	DisplayName  string      `json:"display_name"`
 }
 
 func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams) (AgentTask, error) {
@@ -47,6 +68,9 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 		arg.TaskType,
 		arg.MaxAttempts,
 		arg.Input,
+		arg.RenderPlanID,
+		arg.SemanticKey,
+		arg.DisplayName,
 	)
 	var i AgentTask
 	err := row.Scan(
@@ -67,12 +91,15 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.RenderPlanID,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getAgentTaskByID = `-- name: GetAgentTaskByID :one
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE id = $1
 `
@@ -98,12 +125,15 @@ func (q *Queries) GetAgentTaskByID(ctx context.Context, id pgtype.UUID) (AgentTa
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.RenderPlanID,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const listActiveAgentTasksByWorkspace = `-- name: ListActiveAgentTasksByWorkspace :many
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE workspace_id = $1
   AND status IN ('queued', 'running', 'waiting_for_user')
@@ -137,6 +167,9 @@ func (q *Queries) ListActiveAgentTasksByWorkspace(ctx context.Context, workspace
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.RenderPlanID,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -149,7 +182,7 @@ func (q *Queries) ListActiveAgentTasksByWorkspace(ctx context.Context, workspace
 }
 
 const listAgentTasksByWorkspace = `-- name: ListAgentTasksByWorkspace :many
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE workspace_id = $1
 ORDER BY created_at DESC
@@ -188,6 +221,9 @@ func (q *Queries) ListAgentTasksByWorkspace(ctx context.Context, arg ListAgentTa
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.RenderPlanID,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -200,7 +236,7 @@ func (q *Queries) ListAgentTasksByWorkspace(ctx context.Context, arg ListAgentTa
 }
 
 const listAgentTasksByWorkspaceStatus = `-- name: ListAgentTasksByWorkspaceStatus :many
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE workspace_id = $1
   AND status = $2
@@ -239,6 +275,9 @@ func (q *Queries) ListAgentTasksByWorkspaceStatus(ctx context.Context, arg ListA
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.RenderPlanID,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -251,7 +290,7 @@ func (q *Queries) ListAgentTasksByWorkspaceStatus(ctx context.Context, arg ListA
 }
 
 const listQueuedComposerTasksAcrossWorkspaces = `-- name: ListQueuedComposerTasksAcrossWorkspaces :many
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE role = 'composer'
   AND task_type = 'composer_turn'
@@ -287,6 +326,9 @@ func (q *Queries) ListQueuedComposerTasksAcrossWorkspaces(ctx context.Context, l
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.RenderPlanID,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -299,7 +341,7 @@ func (q *Queries) ListQueuedComposerTasksAcrossWorkspaces(ctx context.Context, l
 }
 
 const listQueuedCraftsmanTasksAcrossWorkspaces = `-- name: ListQueuedCraftsmanTasksAcrossWorkspaces :many
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE role = 'craftsman'
   AND task_type = 'craftsman_turn'
@@ -335,6 +377,9 @@ func (q *Queries) ListQueuedCraftsmanTasksAcrossWorkspaces(ctx context.Context, 
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.RenderPlanID,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -347,7 +392,7 @@ func (q *Queries) ListQueuedCraftsmanTasksAcrossWorkspaces(ctx context.Context, 
 }
 
 const listQueuedProducerTasks = `-- name: ListQueuedProducerTasks :many
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE workspace_id = $1
   AND role = 'producer'
@@ -389,6 +434,9 @@ func (q *Queries) ListQueuedProducerTasks(ctx context.Context, arg ListQueuedPro
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.RenderPlanID,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -401,7 +449,7 @@ func (q *Queries) ListQueuedProducerTasks(ctx context.Context, arg ListQueuedPro
 }
 
 const listQueuedProducerTasksAcrossWorkspaces = `-- name: ListQueuedProducerTasksAcrossWorkspaces :many
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE role = 'producer'
   AND task_type = 'producer_turn'
@@ -437,6 +485,9 @@ func (q *Queries) ListQueuedProducerTasksAcrossWorkspaces(ctx context.Context, l
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.RenderPlanID,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -449,7 +500,7 @@ func (q *Queries) ListQueuedProducerTasksAcrossWorkspaces(ctx context.Context, l
 }
 
 const listQueuedReviewerTasksAcrossWorkspaces = `-- name: ListQueuedReviewerTasksAcrossWorkspaces :many
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE role = 'reviewer'
   AND task_type = 'reviewer_turn'
@@ -485,6 +536,9 @@ func (q *Queries) ListQueuedReviewerTasksAcrossWorkspaces(ctx context.Context, l
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.RenderPlanID,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -497,7 +551,7 @@ func (q *Queries) ListQueuedReviewerTasksAcrossWorkspaces(ctx context.Context, l
 }
 
 const listQueuedWorkerTasksAcrossWorkspaces = `-- name: ListQueuedWorkerTasksAcrossWorkspaces :many
-SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+SELECT id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 FROM agent_task
 WHERE role = 'worker'
   AND task_type = 'worker_generation'
@@ -533,6 +587,9 @@ func (q *Queries) ListQueuedWorkerTasksAcrossWorkspaces(ctx context.Context, lim
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.RenderPlanID,
+			&i.SemanticKey,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -549,7 +606,7 @@ UPDATE agent_task
 SET status = 'cancelled',
     completed_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 `
 
 func (q *Queries) MarkAgentTaskCancelled(ctx context.Context, id pgtype.UUID) (AgentTask, error) {
@@ -573,6 +630,9 @@ func (q *Queries) MarkAgentTaskCancelled(ctx context.Context, id pgtype.UUID) (A
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.RenderPlanID,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -584,7 +644,7 @@ SET status = 'failed',
     error_message = $3,
     completed_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 `
 
 type MarkAgentTaskFailedParams struct {
@@ -614,6 +674,9 @@ func (q *Queries) MarkAgentTaskFailed(ctx context.Context, arg MarkAgentTaskFail
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.RenderPlanID,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -626,7 +689,7 @@ SET status = 'running',
     error_code = NULL,
     error_message = NULL
 WHERE id = $1
-RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 `
 
 func (q *Queries) MarkAgentTaskRunning(ctx context.Context, id pgtype.UUID) (AgentTask, error) {
@@ -650,6 +713,9 @@ func (q *Queries) MarkAgentTaskRunning(ctx context.Context, id pgtype.UUID) (Age
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.RenderPlanID,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -662,7 +728,7 @@ SET status = 'succeeded',
     error_message = NULL,
     completed_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 `
 
 type MarkAgentTaskSucceededParams struct {
@@ -691,6 +757,9 @@ func (q *Queries) MarkAgentTaskSucceeded(ctx context.Context, arg MarkAgentTaskS
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.RenderPlanID,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -699,7 +768,7 @@ const markAgentTaskWaitingForUser = `-- name: MarkAgentTaskWaitingForUser :one
 UPDATE agent_task
 SET status = 'waiting_for_user'
 WHERE id = $1
-RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at
+RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 `
 
 func (q *Queries) MarkAgentTaskWaitingForUser(ctx context.Context, id pgtype.UUID) (AgentTask, error) {
@@ -723,6 +792,9 @@ func (q *Queries) MarkAgentTaskWaitingForUser(ctx context.Context, id pgtype.UUI
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.RenderPlanID,
+		&i.SemanticKey,
+		&i.DisplayName,
 	)
 	return i, err
 }

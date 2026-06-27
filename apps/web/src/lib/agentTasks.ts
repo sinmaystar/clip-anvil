@@ -16,6 +16,19 @@ export function mergeAgentTasks<T extends AgentTaskState>(
   return [...byId.values()];
 }
 
+export function mergeActiveAgentTaskSnapshot<T extends AgentTaskState>(
+  current: T[],
+  activeTasks: T[],
+) {
+  const activeIds = new Set(activeTasks.map((task) => task.id));
+  const retained = current.filter(
+    (task) =>
+      !isActiveAgentTask(task) ||
+      activeIds.has(task.id),
+  );
+  return mergeAgentTasks(retained, activeTasks);
+}
+
 export function hasRunningProducerTask(tasks: AgentTaskState[]) {
   return tasks.some(
     (task) =>
@@ -26,21 +39,35 @@ export function hasRunningProducerTask(tasks: AgentTaskState[]) {
 }
 
 export function hasActiveAgentTask(tasks: AgentTaskState[]) {
-	return tasks.some(
-		(task) =>
-			task.status === "queued" ||
-			task.status === "running" ||
-			task.status === "waiting_for_user",
-	);
+  return tasks.some((task) => isActiveAgentTask(task));
 }
 
 export function hasProcessingAgentTask(tasks: AgentTaskState[]) {
-	return tasks.some(
-		(task) => task.status === "queued" || task.status === "running",
-	);
+  return hasRunningProducerTask(tasks);
 }
 
-export function agentComposerDisabledReason(tasks: AgentTaskState[]) {
-	void tasks;
-	return "";
+export function agentProcessingLabel(tasks: AgentTaskState[]) {
+  if (hasQueuedOrRunningTask(tasks, "producer_turn")) {
+    return "ClipAnvil 正在思考";
+  }
+  if (hasQueuedOrRunningTask(tasks, "decision_resume")) {
+    return "ClipAnvil 正在处理你的选择";
+  }
+  return "";
+}
+
+function hasQueuedOrRunningTask(tasks: AgentTaskState[], taskType: string) {
+  return tasks.some(
+    (task) =>
+      task.task_type === taskType &&
+      (task.status === "queued" || task.status === "running"),
+  );
+}
+
+function isActiveAgentTask(task: AgentTaskState) {
+  return (
+    task.status === "queued" ||
+    task.status === "running" ||
+    task.status === "waiting_for_user"
+  );
 }

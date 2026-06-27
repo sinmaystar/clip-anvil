@@ -1,31 +1,37 @@
 import {
-  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type SyntheticEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Navigate, useNavigate, useParams } from "react-router";
+import {
+  Navigate,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router";
 import {
   type CanvasPayload,
   fetchCanvas,
-  fetchModelCapabilities,
-  fetchNodeProductionState,
-  fetchReferencePackItems,
   fetchWorkspace,
   type MediaNode,
 } from "../lib/api";
 import {
   type AgentAttachment,
   type AgentMessage,
+  type AgentObservedThread,
   type AgentTask,
+  fetchAgentCanvasDetail,
   fetchAgentModelSelection,
   fetchAgentMessages,
-  fetchAgentProductionOverview,
+  fetchAgentCanvasWorkbench,
+  fetchAgentTasks,
   fetchAgentThread,
+  fetchAgentThreadMessages,
+  fetchAgentThreads,
   postAgentDecision,
   postAgentMessage,
   putAgentModelSelection,
@@ -45,11 +51,8 @@ import {
   AgentMessageRenderer,
   type AgentMessageActions,
 } from "../components/agent/AgentMessageRenderer";
-import { AgentProductionStatusBar } from "../components/agent/AgentProductionStatusBar";
-import { AgentFlowCanvas } from "../components/canvas-flow/AgentFlowCanvas";
-import { PropertyPanel } from "../components/PropertyPanel";
-import { AgentStoryboardPanel } from "../components/agent/AgentStoryboardPanel";
-import { AgentTaskTimeline } from "../components/agent/AgentTaskTimeline";
+import { AgentCanvasDetailPanel } from "../components/agent-workbench/AgentCanvasDetailPanel";
+import { AgentWorkbenchCanvas } from "../components/agent-workbench/AgentWorkbenchCanvas";
 import {
   type AgentFloatingPosition,
   type AgentPanelCorner,
@@ -63,7 +66,15 @@ import {
   isAgentMessageListNearBottom,
   resizeAgentPanelFromCorner,
 } from "../lib/agentLayout";
-import { mergeAgentMessages } from "../lib/agentMessages";
+import {
+  formatAgentMessageTime,
+  isProducerThreadMessage,
+  messageDisplayClass,
+  mergeAgentMessages,
+  visibleAgentMessages,
+} from "../lib/agentMessages";
+import { AgentThreadDrawer } from "../components/agent/AgentThreadDrawer";
+import { AgentThreadObserverPanel } from "../components/agent/AgentThreadObserverPanel";
 import { agentMessageSchemaV1 } from "../lib/agentMessageBlocks";
 import {
   agentModelSelectionPayload,
@@ -71,10 +82,11 @@ import {
   formatAgentModelOption,
 } from "../lib/agentModelSelection";
 import {
-  clearAgentStream,
+  finalizeAgentStreamWithMessage,
   type AgentStreamState,
   mergeAgentStreamDelta,
   shouldShowAgentThinkingIndicator,
+  visibleAgentStreams,
 } from "../lib/agentStreaming";
 import {
   agentModelSupportsThinking,
@@ -82,36 +94,56 @@ import {
   agentThinkingEffortOptions,
 } from "../lib/agentThinking";
 import {
-  agentComposerDisabledReason,
+  agentProcessingLabel,
   hasProcessingAgentTask,
-  hasRunningProducerTask,
+  mergeActiveAgentTaskSnapshot,
   mergeAgentTasks,
 } from "../lib/agentTasks";
-import { shouldRefreshAgentProductionOverview } from "../lib/agentProductionOverview";
+import {
+  type AgentThreadMessageCache,
+  mergeAgentThreadMessages,
+  mergeObservedAgentThreads,
+  updateObservedThreadFromMessage,
+  updateObservedThreadFromTask,
+} from "../lib/agentThreads";
 import {
   isTerminalGenerationStatus,
   nodeStatusForGenerationStatus,
   shouldPollCanvasForProductionUpdates,
 } from "../lib/canvasRunState";
-import {
-  type AgentConnectionStatus,
-  connectAgentSocket,
-} from "../lib/agentWs";
+import { type AgentConnectionStatus, connectAgentSocket } from "../lib/agentWs";
 import { connectCanvasSocket } from "../lib/ws";
 import { createClientMessageId } from "../lib/clientMessageId";
 import { preserveCanvasAssetUrls } from "../lib/canvasAssetUrls";
-import { isSourceMaterialNode } from "../lib/sourceMaterial";
+import {
+  agentWorkbenchVisibleNodeCount,
+  type AgentWorkbenchProjection,
+} from "../lib/agentWorkbench";
+import type { AgentWorkbenchSelection } from "../lib/agentWorkbenchSelection";
 import { workspaceModeRoute } from "../lib/workspaceRoutes";
 import { useAuthStore } from "../stores/auth";
 
 export function AgentWorkspacePage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const token = useAuthStore((state) => state.token);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [streams, setStreams] = useState<AgentStreamState[]>([]);
+  const [observedThreads, setObservedThreads] = useState<AgentObservedThread[]>(
+    [],
+  );
+  const [selectedAgentThreadId, setSelectedAgentThreadId] = useState(
+    () => searchParams.get("agentThread") ?? "",
+  );
+  const [agentThreadMessageCache, setAgentThreadMessageCache] =
+    useState<AgentThreadMessageCache>({});
+  const [subThreadStreams, setSubThreadStreams] = useState<
+    Record<string, AgentStreamState[]>
+  >({});
+  const finalizedStreamKeysRef = useRef<Set<string>>(new Set());
   const [attachments, setAttachments] = useState<AgentAttachment[]>([]);
   const [resolvedDecisionIds, setResolvedDecisionIds] = useState<Set<string>>(
     () => new Set(),
@@ -178,18 +210,13 @@ export function AgentWorkspacePage() {
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [sendError, setSendError] = useState("");
   const [attachmentError, setAttachmentError] = useState("");
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [nodeEditorPosition, setNodeEditorPosition] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    maxHeight: number;
-  } | null>(null);
+  const [selectedWorkbenchSelection, setSelectedWorkbenchSelection] =
+    useState<AgentWorkbenchSelection | null>(null);
   const [connectionStatus, setConnectionStatus] =
     useState<AgentConnectionStatus>("offline");
   const [canvasConnectionStatus, setCanvasConnectionStatus] =
     useState<AgentConnectionStatus>("offline");
-  const lastSeqRef = useRef(0);
+  const lastMessageCreatedAtRef = useRef("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const agentCanvasSurfaceRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -206,7 +233,7 @@ export function AgentWorkspacePage() {
     queryFn: () => fetchWorkspace(id ?? ""),
     enabled: Boolean(id),
   });
-  const canvasQuery = useQuery<CanvasPayload>({
+  useQuery<CanvasPayload>({
     queryKey: ["workspace", id, "canvas"],
     queryFn: () => fetchCanvas(id ?? ""),
     enabled: Boolean(id),
@@ -221,24 +248,32 @@ export function AgentWorkspacePage() {
         newData as CanvasPayload,
       ),
   });
-  const canvas = canvasQuery.data;
-  const selectedNode =
-    canvas?.nodes.find((node) => node.id === selectedNodeId) ?? null;
-  const modelCapabilitiesQuery = useQuery({
-    queryKey: ["model-capabilities"],
-    queryFn: fetchModelCapabilities,
-  });
-  const selectedNodeProductionStateQuery = useQuery({
-    queryKey: ["node", selectedNodeId, "production-state"],
-    queryFn: () => fetchNodeProductionState(selectedNodeId ?? ""),
-    enabled: Boolean(selectedNodeId),
-  });
-  const selectedReferencePackItemsQuery = useQuery({
-    queryKey: ["reference-pack", selectedNodeId, "items"],
-    queryFn: () => fetchReferencePackItems(selectedNodeId ?? ""),
-    enabled: selectedNode?.node_type === "reference_pack",
-  });
   const agentEnabled = Boolean(id && workspaceQuery.data?.mode === "agent");
+  const workbenchQuery = useQuery<AgentWorkbenchProjection>({
+    queryKey: ["workspace", id, "agent-workbench"],
+    queryFn: () => fetchAgentCanvasWorkbench(id ?? ""),
+    enabled: agentEnabled,
+    refetchInterval: (query) =>
+      canvasConnectionStatus !== "connected" &&
+      hasActiveWorkbenchProduction(query.state.data)
+        ? 2_000
+        : false,
+  });
+  const agentCanvasNodeCount = workbenchQuery.data
+    ? agentWorkbenchVisibleNodeCount(workbenchQuery.data)
+    : 0;
+  const detailQuery = useQuery({
+    queryKey: [
+      "workspace",
+      id,
+      "agent-canvas-detail",
+      selectedWorkbenchSelection?.objectType,
+      selectedWorkbenchSelection?.objectId,
+    ],
+    queryFn: () =>
+      fetchAgentCanvasDetail(id ?? "", selectedWorkbenchSelection!),
+    enabled: agentEnabled && Boolean(selectedWorkbenchSelection),
+  });
   const agentThreadQuery = useQuery({
     queryKey: ["agent", id, "thread"],
     queryFn: () => fetchAgentThread(id ?? ""),
@@ -249,17 +284,34 @@ export function AgentWorkspacePage() {
     queryFn: () => fetchAgentMessages(id ?? ""),
     enabled: agentEnabled,
   });
+  const agentThreadsQuery = useQuery({
+    queryKey: ["agent", id, "threads"],
+    queryFn: () => fetchAgentThreads(id ?? ""),
+    enabled: agentEnabled,
+  });
+  const selectedAgentThread = observedThreads.find(
+    (thread) => thread.id === selectedAgentThreadId,
+  );
+  const selectedAgentThreadMessagesQuery = useQuery({
+    queryKey: ["agent", id, "threads", selectedAgentThreadId, "messages"],
+    queryFn: () => fetchAgentThreadMessages(id ?? "", selectedAgentThreadId),
+    enabled: agentEnabled && Boolean(selectedAgentThreadId),
+  });
+  const agentTasksQuery = useQuery({
+    queryKey: ["agent", id, "tasks"],
+    queryFn: () => fetchAgentTasks(id ?? ""),
+    enabled: agentEnabled,
+    refetchInterval: (query) =>
+      query.state.data?.tasks.some(
+        (task) => task.status === "queued" || task.status === "running",
+      )
+        ? 2_000
+        : false,
+  });
   const agentModelSelectionQuery = useQuery({
     queryKey: ["agent", id, "model-selection"],
     queryFn: () => fetchAgentModelSelection(id ?? ""),
     enabled: agentEnabled,
-  });
-  const agentProductionOverviewQuery = useQuery({
-    queryKey: ["agent", id, "production-overview"],
-    queryFn: () => fetchAgentProductionOverview(id ?? ""),
-    enabled: agentEnabled,
-    refetchInterval: (query) =>
-      query.state.data?.counts.running_tasks ? 2_000 : false,
   });
   const modelSelectionMutation = useMutation({
     mutationFn: (input: { value: string; reasoningEffort?: string }) => {
@@ -289,9 +341,7 @@ export function AgentWorkspacePage() {
       }),
     onSuccess: (response) => {
       shouldPinToBottomRef.current = true;
-      setMessages((current) =>
-        mergeAgentMessages(current, [response.message]),
-      );
+      setMessages((current) => mergeAgentMessages(current, [response.message]));
       setTasks((current) => mergeAgentTasks(current, [response.task]));
       const decisionEvent = response.decision_event;
       if (decisionEvent) {
@@ -340,9 +390,7 @@ export function AgentWorkspacePage() {
         next.add(response.decision_event.id);
         return next;
       });
-      setMessages((current) =>
-        mergeAgentMessages(current, [response.message]),
-      );
+      setMessages((current) => mergeAgentMessages(current, [response.message]));
       setTasks((current) => mergeAgentTasks(current, [response.task]));
       setSendError("");
       scrollMessagesToBottom();
@@ -359,16 +407,22 @@ export function AgentWorkspacePage() {
         card.status === "pending" && !resolvedDecisionIds.has(card.decision_id),
     )
     .map((card) => card.decision_id);
+  const visibleMessages = useMemo(
+    () => visibleAgentMessages(messages),
+    [messages],
+  );
+  const visibleStreams = useMemo(
+    () => visibleAgentStreams(streams, visibleMessages),
+    [streams, visibleMessages],
+  );
   const hasPendingDecision = pendingDecisionIds.length > 0;
   const agentBusy = hasProcessingAgentTask(tasks);
-  const composerDisabledReason = agentComposerDisabledReason(tasks);
-  const composerHint =
-    composerDisabledReason ||
-    (hasPendingDecision ? "可以点击选项，或直接输入自然语言回复当前决策" : "");
-  const producerRunning = hasRunningProducerTask(tasks);
+  const processingLabel = agentProcessingLabel(tasks);
+  const activityLabel =
+    processingLabel || (hasPendingDecision ? "ClipAnvil 等待你的确认" : "");
   const showThinkingIndicator = shouldShowAgentThinkingIndicator(
-    producerRunning,
-    streams,
+    Boolean(activityLabel),
+    visibleStreams,
   );
   const statusLabel = connectionStatusLabel(
     agentThreadQuery.isLoading ? "connecting" : connectionStatus,
@@ -396,6 +450,19 @@ export function AgentWorkspacePage() {
     );
   }
 
+  function selectAgentThread(threadID: string) {
+    setSelectedAgentThreadId(threadID);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (threadID) {
+        next.set("agentThread", threadID);
+      } else {
+        next.delete("agentThread");
+      }
+      return next;
+    });
+  }
+
   useEffect(() => {
     if (agentMessagesQuery.data) {
       setMessages((current) =>
@@ -405,8 +472,40 @@ export function AgentWorkspacePage() {
   }, [agentMessagesQuery.data]);
 
   useEffect(() => {
-    lastSeqRef.current =
-      messages.length > 0 ? messages[messages.length - 1].seq : 0;
+    if (agentThreadsQuery.data) {
+      setObservedThreads(
+        mergeObservedAgentThreads([], agentThreadsQuery.data.threads),
+      );
+    }
+  }, [agentThreadsQuery.data]);
+
+  useEffect(() => {
+    setSelectedAgentThreadId(searchParams.get("agentThread") ?? "");
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (selectedAgentThreadId && selectedAgentThreadMessagesQuery.data) {
+      setAgentThreadMessageCache((current) =>
+        mergeAgentThreadMessages(
+          current,
+          selectedAgentThreadId,
+          selectedAgentThreadMessagesQuery.data.messages,
+        ),
+      );
+    }
+  }, [selectedAgentThreadId, selectedAgentThreadMessagesQuery.data]);
+
+  useEffect(() => {
+    if (agentTasksQuery.data) {
+      setTasks((current) =>
+        mergeActiveAgentTaskSnapshot(current, agentTasksQuery.data.tasks),
+      );
+    }
+  }, [agentTasksQuery.data]);
+
+  useEffect(() => {
+    lastMessageCreatedAtRef.current =
+      messages.length > 0 ? messages[messages.length - 1].created_at : "";
   }, [messages]);
 
   useEffect(() => {
@@ -414,18 +513,33 @@ export function AgentWorkspacePage() {
       return;
     }
     scrollMessagesToBottom();
-  }, [messages, streams, producerRunning]);
+  }, [messages, visibleStreams, activityLabel]);
 
   useEffect(() => {
     if (!id || !token || workspaceQuery.data?.mode !== "agent") {
       return;
     }
+    const producerThreadID = agentThreadQuery.data?.thread.id;
 
     const fetchMissingMessages = () => {
-      void fetchAgentMessages(id, lastSeqRef.current, 200).then((response) => {
-        setMessages((current) =>
-          mergeAgentMessages(current, response.messages),
-        );
+      void fetchAgentMessages(id, lastMessageCreatedAtRef.current, 1000).then(
+        (response) => {
+          setMessages((current) =>
+            mergeAgentMessages(current, response.messages),
+          );
+        },
+      );
+      void queryClient.invalidateQueries({ queryKey: ["agent", id, "threads"] });
+    };
+    const refetchAgentCanvas = () => {
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "canvas"],
+      });
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-workbench"],
+      });
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-canvas-detail"],
       });
     };
 
@@ -433,49 +547,107 @@ export function AgentWorkspacePage() {
       workspaceId: id,
       token,
       onEvent: (event) => {
-        if (shouldRefreshAgentProductionOverview(event.type)) {
-          void queryClient.invalidateQueries({
-            queryKey: ["agent", id, "production-overview"],
-          });
-        }
         if (
           (event.type === "agent.message.created" ||
             event.type === "agent.message.updated") &&
           event.payload.workspace_id === id
         ) {
-          setMessages((current) =>
-            mergeAgentMessages(current, [event.payload.message]),
-          );
-          if (event.type === "agent.message.created") {
-            setStreams((current) =>
-              clearAgentStream(current, event.payload.message.task_id),
+          const message = event.payload.message;
+          if (isProducerThreadMessage(message, producerThreadID)) {
+            setMessages((current) => mergeAgentMessages(current, [message]));
+            if (event.type === "agent.message.created") {
+              setStreams((current) => {
+                const finalized = finalizeAgentStreamWithMessage(
+                  current,
+                  finalizedStreamKeysRef.current,
+                  message,
+                );
+                finalizedStreamKeysRef.current = finalized.finalizedStreamKeys;
+                return finalized.streams;
+              });
+            } else {
+              finalizedStreamKeysRef.current = finalizeAgentStreamWithMessage(
+                [],
+                finalizedStreamKeysRef.current,
+                message,
+              ).finalizedStreamKeys;
+            }
+            refetchAgentCanvas();
+          } else {
+            setAgentThreadMessageCache((current) =>
+              mergeAgentThreadMessages(current, message.thread_id, [message]),
             );
+            setObservedThreads((current) => {
+              if (!current.some((thread) => thread.id === message.thread_id)) {
+                void queryClient.invalidateQueries({
+                  queryKey: ["agent", id, "threads"],
+                });
+              }
+              return updateObservedThreadFromMessage(current, message);
+            });
+            setSubThreadStreams((current) => ({
+              ...current,
+              [message.thread_id]: finalizeAgentStreamWithMessage(
+                current[message.thread_id] ?? [],
+                new Set(),
+                message,
+              ).streams,
+            }));
           }
         }
         if (
           event.type === "agent.message.delta" &&
           event.payload.workspace_id === id
         ) {
-          setStreams((current) =>
-            mergeAgentStreamDelta(current, {
-              task_id: event.payload.task_id,
-              block_id: event.payload.block_id,
-              block_type: event.payload.block_type,
-              delta: event.payload.delta,
-              sequence: event.payload.sequence,
-            }),
-          );
+          const deltaPayload = {
+            task_id: event.payload.task_id,
+            block_id: event.payload.block_id,
+            block_type: event.payload.block_type,
+            delta: event.payload.delta,
+            message_id: event.payload.message_id,
+            sequence: event.payload.sequence,
+          };
+          if (event.payload.thread_id === producerThreadID) {
+            setStreams((current) =>
+              mergeAgentStreamDelta(
+                current,
+                deltaPayload,
+                finalizedStreamKeysRef.current,
+              ),
+            );
+          } else if (event.payload.thread_id === selectedAgentThreadId) {
+            setSubThreadStreams((current) => ({
+              ...current,
+              [event.payload.thread_id]: mergeAgentStreamDelta(
+                current[event.payload.thread_id] ?? [],
+                deltaPayload,
+              ),
+            }));
+          }
         }
         if (
           event.type === "agent.task.updated" &&
           event.payload.workspace_id === id
         ) {
           setTasks((current) => mergeAgentTasks(current, [event.payload.task]));
+          setObservedThreads((current) =>
+            updateObservedThreadFromTask(current, event.payload.task),
+          );
+          if (
+            event.payload.task.thread_id &&
+            event.payload.task.thread_id !== producerThreadID
+          ) {
+            void queryClient.invalidateQueries({
+              queryKey: ["agent", id, "threads"],
+            });
+          }
+          refetchAgentCanvas();
         }
         if (
           event.type === "agent.event.created" &&
           event.payload.workspace_id === id
         ) {
+          refetchAgentCanvas();
           const agentEvent = event.payload.event;
           if (
             agentEvent.event_type === "decision_requested" &&
@@ -504,7 +676,13 @@ export function AgentWorkspacePage() {
       onReconnect: fetchMissingMessages,
       onStatusChange: setConnectionStatus,
     });
-  }, [id, token, workspaceQuery.data?.mode]);
+  }, [
+    id,
+    token,
+    workspaceQuery.data?.mode,
+    queryClient,
+    agentThreadQuery.data?.thread.id,
+  ]);
 
   useEffect(() => {
     if (!id || !token || workspaceQuery.data?.mode !== "agent") {
@@ -515,6 +693,17 @@ export function AgentWorkspacePage() {
       void queryClient.refetchQueries({
         queryKey: ["workspace", id, "canvas"],
       });
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-workbench"],
+      });
+    };
+    const refetchWorkbench = () => {
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-workbench"],
+      });
+      void queryClient.refetchQueries({
+        queryKey: ["workspace", id, "agent-canvas-detail"],
+      });
     };
     const refreshCanvas = () => {
       refetchCanvasSnapshot();
@@ -524,11 +713,6 @@ export function AgentWorkspacePage() {
       workspaceId: id,
       token,
       onEvent: (event) => {
-        if (shouldRefreshAgentProductionOverview(event.type)) {
-          void queryClient.invalidateQueries({
-            queryKey: ["agent", id, "production-overview"],
-          });
-        }
         switch (event.type) {
           case "NodeCreated":
           case "NodeUpdated": {
@@ -538,6 +722,7 @@ export function AgentWorkspacePage() {
                 ["workspace", id, "canvas"],
                 (current) => upsertCanvasNode(current, node),
               );
+              refetchWorkbench();
             }
             break;
           }
@@ -564,6 +749,7 @@ export function AgentWorkspacePage() {
                     nodeStatus,
                   ),
               );
+              refetchWorkbench();
             }
             if (
               event.type === "production.job.updated" &&
@@ -584,53 +770,6 @@ export function AgentWorkspacePage() {
       },
     });
   }, [id, queryClient, token, workspaceQuery.data?.mode]);
-
-  useEffect(() => {
-    if (!selectedNode || !canvas) {
-      setNodeEditorPosition(null);
-      return;
-    }
-    const frame = agentCanvasSurfaceRef.current;
-    const frameRect = frame?.getBoundingClientRect();
-    if (!frame || !frameRect) {
-      setNodeEditorPosition(null);
-      return;
-    }
-    const isComposerPopover =
-      selectedNode.node_type !== "reference_pack" &&
-      !isSourceMaterialNode(selectedNode);
-    const minWidth = isComposerPopover ? 460 : 420;
-    const maxWidth = isComposerPopover ? 680 : 560;
-    const width = Math.min(maxWidth, Math.max(minWidth, frameRect.width - 24));
-    const maxHeight = Math.round(
-      Math.min(720, Math.max(320, frameRect.height - 32)),
-    );
-    const renderedNodeRect = frame
-      .querySelector(
-        `.react-flow__node[data-id="${cssSelectorValue(selectedNode.id)}"]`,
-      )
-      ?.getBoundingClientRect();
-    const fallbackBottomLeft = {
-      x: selectedNode.canvas_x * canvas.camera.zoom + canvas.camera.x,
-      y:
-        (selectedNode.canvas_y + selectedNode.canvas_h) * canvas.camera.zoom +
-        canvas.camera.y,
-    };
-    const nodeLeftX = renderedNodeRect
-      ? renderedNodeRect.left - frameRect.left
-      : fallbackBottomLeft.x;
-    const nodeBottomY = renderedNodeRect
-      ? renderedNodeRect.bottom - frameRect.top
-      : fallbackBottomLeft.y;
-    setNodeEditorPosition({
-      left: Math.round(
-        clamp(nodeLeftX, 12, Math.max(12, frameRect.width - width - 12)),
-      ),
-      top: Math.round(nodeBottomY + 28),
-      width: Math.round(width),
-      maxHeight,
-    });
-  }, [canvas, selectedNode]);
 
   if (workspaceQuery.isLoading) {
     return (
@@ -669,8 +808,7 @@ export function AgentWorkspacePage() {
     agentModelSelectionQuery.data?.selection.producer.reasoning_effort ||
     selectedModelOption?.default_reasoning_effort ||
     "";
-  const thinkingEffortOptions =
-    agentThinkingEffortOptions(selectedModelOption);
+  const thinkingEffortOptions = agentThinkingEffortOptions(selectedModelOption);
   const thinkingSelectorEnabled =
     agentModelSupportsThinking(selectedModelOption) &&
     thinkingEffortOptions.length > 0;
@@ -744,7 +882,9 @@ export function AgentWorkspacePage() {
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   };
-  const beginWidthPointerResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const beginWidthPointerResize = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     beginWidthResizeFrom(event.clientX, panelWidth);
@@ -776,7 +916,9 @@ export function AgentWorkspacePage() {
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
   };
-  const beginHeightPointerResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const beginHeightPointerResize = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     beginHeightResizeFrom(event.clientY, panelHeight);
@@ -902,7 +1044,7 @@ export function AgentWorkspacePage() {
     if (!collapsed) {
       setCollapsed(true);
     }
-    setSelectedNodeId(null);
+    setSelectedWorkbenchSelection(null);
   };
 
   return (
@@ -925,6 +1067,14 @@ export function AgentWorkspacePage() {
         className="agent-canvas-stage"
         aria-label="Agent 画布"
         onPointerDown={(event) => {
+          if (
+            shouldClearAgentWorkbenchSelection(
+              event.target,
+              event.currentTarget,
+            )
+          ) {
+            setSelectedWorkbenchSelection(null);
+          }
           if (event.target === event.currentTarget) {
             collapseFromCanvas();
           }
@@ -934,84 +1084,35 @@ export function AgentWorkspacePage() {
           <div className="agent-canvas-header">
             <div>
               <p className="workspace-kicker">Agent Canvas</p>
-              <h2>Agent 画布</h2>
             </div>
-            <span>{canvas?.nodes.length ?? 0} 个节点</span>
+            <span>{agentCanvasNodeCount} 个节点</span>
           </div>
           <div className="agent-canvas-surface" ref={agentCanvasSurfaceRef}>
-            {canvasQuery.isLoading ? (
+            {workbenchQuery.isLoading ? (
               <p className="agent-empty-text">正在加载画布</p>
-            ) : canvas && canvas.nodes.length > 0 && id ? (
-              <>
-                <AgentFlowCanvas
-                  canvas={canvas}
-                  onSelectNode={setSelectedNodeId}
-                  selectedNodeId={selectedNodeId}
-                  workspaceId={id}
-                />
-                {selectedNode && nodeEditorPosition ? (
-                  <div
-                    className="node-editor-overlay node-production-popover agent-node-production-popover"
-                    onClick={stopCanvasEvent}
-                    onContextMenu={stopCanvasEvent}
-                    onKeyDown={stopCanvasEvent}
-                    onPointerDown={stopCanvasEvent}
-                    onWheel={stopCanvasEvent}
-                    style={
-                      {
-                        left: nodeEditorPosition.left,
-                        top: nodeEditorPosition.top,
-                        width: nodeEditorPosition.width,
-                        maxHeight: nodeEditorPosition.maxHeight,
-                        "--node-editor-max-height": `${nodeEditorPosition.maxHeight}px`,
-                      } as CSSProperties
-                    }
-                  >
-                    <PropertyPanel
-                      edges={canvas.edges}
-                      groups={canvas.groups}
-                      isModelCapabilitiesLoading={
-                        modelCapabilitiesQuery.isLoading
-                      }
-                      isProductionStateLoading={
-                        selectedNodeProductionStateQuery.isLoading
-                      }
-                      isReferencePackItemsLoading={
-                        selectedReferencePackItemsQuery.isLoading
-                      }
-                      isRetryingJob={false}
-                      isRunningNode={false}
-                      isSelectingVersion={false}
-                      isUpdatingGroupMembers={false}
-                      isUpdatingNode={false}
-                      isUpdatingReferencePackItems={false}
-                      modelCapabilities={modelCapabilitiesQuery.data ?? []}
-                      nodeProductionState={
-                        selectedNodeProductionStateQuery.data ?? null
-                      }
-                      nodes={canvas.nodes}
-                      readOnly
-                      referencePackItems={
-                        selectedReferencePackItemsQuery.data ?? []
-                      }
-                      selectedEdgeId={null}
-                      selectedGroupId={null}
-                      selectedNodeId={selectedNodeId}
-                      onReplaceReferencePackItems={noopReplaceReferencePackItems}
-                      onPromptRefSelect={noopPromptRefSelect}
-                      onRetryJob={noopStringCallback}
-                      onRunNode={noopRunNode}
-                      onSelectVersion={noopSelectVersion}
-                      onUpdateNode={noopUpdateNode}
-                    />
-                  </div>
-                ) : null}
-              </>
+            ) : workbenchQuery.data && agentCanvasNodeCount > 1 ? (
+              <AgentWorkbenchCanvas
+                onSelectObject={setSelectedWorkbenchSelection}
+                selected={selectedWorkbenchSelection}
+                workbench={workbenchQuery.data}
+              />
             ) : (
-              <p className="agent-empty-text">Agent 尚未创建画布节点。</p>
+              <p className="agent-empty-text">Agent 尚未创建场景或分镜。</p>
             )}
           </div>
         </section>
+
+        <AgentCanvasDetailPanel
+          detail={detailQuery.data}
+          error={detailQuery.error instanceof Error ? detailQuery.error : null}
+          isLoading={detailQuery.isLoading}
+          onClose={() => setSelectedWorkbenchSelection(null)}
+          onRetry={() => {
+            void detailQuery.refetch();
+          }}
+          onSelectObject={setSelectedWorkbenchSelection}
+          selection={selectedWorkbenchSelection}
+        />
 
         {collapsed ? (
           <button
@@ -1083,114 +1184,120 @@ export function AgentWorkspacePage() {
                   <span className="agent-sr-only">{statusLabel}</span>
                 </span>
               </div>
-              <button
-                className="agent-icon-button"
-                onClick={() => setCollapsed(true)}
-                title="收起"
-                type="button"
+              <div className="agent-chat-header-actions">
+                <AgentThreadObserverPanel
+                  threads={observedThreads}
+                  selectedThreadId={selectedAgentThreadId}
+                  onSelectThread={selectAgentThread}
+                />
+                <button
+                  className="agent-icon-button"
+                  onClick={() => setCollapsed(true)}
+                  title="收起"
+                  type="button"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            <div className="agent-chat-main-column">
+              <div
+                className="agent-message-list"
+                aria-live="polite"
+                onScroll={updateMessageScrollState}
+                ref={messageListRef}
               >
-                ×
-              </button>
-            </div>
-
-            <div className="agent-production-overview-stack">
-              <AgentProductionStatusBar
-                isLoading={agentProductionOverviewQuery.isLoading}
-                overview={agentProductionOverviewQuery.data ?? null}
-              />
-              <AgentStoryboardPanel
-                onSelectNode={setSelectedNodeId}
-                overview={agentProductionOverviewQuery.data ?? null}
-              />
-              <AgentTaskTimeline
-                overview={agentProductionOverviewQuery.data ?? null}
-              />
-            </div>
-
-            <div
-              className="agent-message-list"
-              aria-live="polite"
-              onScroll={updateMessageScrollState}
-              ref={messageListRef}
-            >
-              {agentMessagesQuery.isLoading ? (
-                <p className="agent-empty-text">正在加载对话</p>
-              ) : messages.length > 0 ? (
-                <>
-                  {messages.map((message) => {
-                    const decisionCard = decisionCardFromMessage(message);
-                    const isDecisionResolved =
-                      decisionCard !== null &&
-                      (decisionCard.status === "handled" ||
-                        resolvedDecisionIds.has(decisionCard.decision_id));
-                    return (
+                {agentMessagesQuery.isLoading ? (
+                  <p className="agent-empty-text">正在加载对话</p>
+                ) : visibleMessages.length > 0 ? (
+                  <>
+                    {visibleMessages.map((message) => {
+                      const decisionCard = decisionCardFromMessage(message);
+                      const isDecisionResolved =
+                        decisionCard !== null &&
+                        (decisionCard.status === "handled" ||
+                          resolvedDecisionIds.has(decisionCard.decision_id));
+                      const messageTime = formatAgentMessageTime(
+                        message.created_at,
+                      );
+                      return (
+                        <article
+                          className={`agent-message agent-message-${messageClass(message)}${isNestedAgentMessage(message) ? " agent-message-nested" : ""}`}
+                          key={message.id}
+                        >
+                          <AgentMessageRenderer
+                            actions={{
+                              ...messageActions,
+                              observedAgentThreads: observedThreads,
+                              onSelectAgentThread: selectAgentThread,
+                              disabled:
+                                isDecisionResolved ||
+                                respondDecisionMutation.isPending,
+                            }}
+                            message={message}
+                          />
+                          {messageTime ? (
+                            <time
+                              className="agent-message-time"
+                              dateTime={message.created_at}
+                            >
+                              {messageTime}
+                            </time>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+                    {visibleStreams.map((stream) => (
                       <article
-                        className={`agent-message agent-message-${messageClass(message)}`}
-                        key={message.id}
+                        className="agent-message agent-message-assistant agent-message-streaming"
+                        key={stream.task_id}
                       >
-                        <AgentMessageRenderer
-                          actions={{
-                            ...messageActions,
-                            disabled:
-                              isDecisionResolved ||
-                              respondDecisionMutation.isPending,
-                          }}
-                          message={message}
-                        />
+                        <AgentMessageRenderer message={streamToMessage(stream)} />
                       </article>
-                    );
-                  })}
-                  {streams.map((stream) => (
-                    <article
-                      className="agent-message agent-message-assistant agent-message-streaming"
-                      key={stream.task_id}
-                    >
-                      <AgentMessageRenderer message={streamToMessage(stream)} />
-                    </article>
-                  ))}
-                  {showThinkingIndicator ? (
-                    <ThinkingIndicator />
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  {streams.map((stream) => (
-                    <article
-                      className="agent-message agent-message-assistant agent-message-streaming"
-                      key={stream.task_id}
-                    >
-                      <AgentMessageRenderer message={streamToMessage(stream)} />
-                    </article>
-                  ))}
-                  {streams.length === 0 ? (
-                    showThinkingIndicator ? (
-                      <ThinkingIndicator />
-                    ) : (
-                      <p className="agent-empty-text">还没有 ClipAnvil 对话。</p>
-                    )
-                  ) : null}
-                </>
-              )}
+                    ))}
+                    {showThinkingIndicator ? (
+                      <ThinkingIndicator label={activityLabel} />
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    {visibleStreams.map((stream) => (
+                      <article
+                        className="agent-message agent-message-assistant agent-message-streaming"
+                        key={stream.task_id}
+                      >
+                        <AgentMessageRenderer message={streamToMessage(stream)} />
+                      </article>
+                    ))}
+                    {visibleStreams.length === 0 ? (
+                      showThinkingIndicator ? (
+                        <ThinkingIndicator label={activityLabel} />
+                      ) : (
+                        <p className="agent-empty-text">
+                          还没有 ClipAnvil 对话。
+                        </p>
+                      )
+                    ) : null}
+                  </>
+                )}
+              </div>
+              {showJumpToLatest ? (
+                <button
+                  aria-label="跳到最新消息"
+                  className="agent-scroll-latest-button"
+                  onClick={scrollMessagesToBottom}
+                  type="button"
+                >
+                  ↓
+                </button>
+              ) : null}
             </div>
-            {showJumpToLatest ? (
-              <button
-                aria-label="跳到最新消息"
-                className="agent-scroll-latest-button"
-                onClick={scrollMessagesToBottom}
-                type="button"
-              >
-                ↓
-              </button>
-            ) : null}
 
             {sendError ? <p className="agent-chat-error">{sendError}</p> : null}
             {attachmentError ? (
               <p className="agent-chat-error">{attachmentError}</p>
             ) : null}
-            {composerHint ? (
-              <p className="agent-chat-hint">{composerHint}</p>
-            ) : null}
-
             <form
               className="agent-chat-composer"
               onSubmit={(event) => {
@@ -1306,7 +1413,8 @@ export function AgentWorkspacePage() {
                         ))}
                       </select>
                     ) : null}
-                    {agentModelSelectionQuery.data && thinkingSelectorEnabled ? (
+                    {agentModelSelectionQuery.data &&
+                    thinkingSelectorEnabled ? (
                       <select
                         aria-label="思考深度"
                         className="agent-thinking-select"
@@ -1342,6 +1450,22 @@ export function AgentWorkspacePage() {
                 </div>
               </div>
             </form>
+            <AgentThreadDrawer
+              isLoading={selectedAgentThreadMessagesQuery.isLoading}
+              messages={
+                selectedAgentThreadId
+                  ? (agentThreadMessageCache[selectedAgentThreadId]?.messages ??
+                    [])
+                  : []
+              }
+              onClose={() => selectAgentThread("")}
+              streams={
+                selectedAgentThreadId
+                  ? (subThreadStreams[selectedAgentThreadId] ?? [])
+                  : []
+              }
+              thread={selectedAgentThread}
+            />
           </aside>
         )}
       </section>
@@ -1361,44 +1485,57 @@ function canvasNodeFromEventPayload(node: unknown): MediaNode | null {
   return null;
 }
 
-function stopCanvasEvent(event: SyntheticEvent) {
-  event.stopPropagation();
-}
-
-function noopStringCallback(_id: string) {}
-
-function noopRunNode(_nodeId: string, _patch?: unknown) {}
-
-function noopUpdateNode(_nodeId: string, _patch: unknown) {}
-
-function noopReplaceReferencePackItems(
-  _packNodeId: string,
-  _memberNodeIds: string[],
-) {}
-
-function noopPromptRefSelect(
-  _targetNode: MediaNode,
-  _refNode: MediaNode,
-  _prompt: string,
-) {}
-
-function noopSelectVersion(_nodeId: string, _versionId: string) {}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function cssSelectorValue(value: string) {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function upsertCanvasNode(
-  current: CanvasPayload | undefined,
-  node: MediaNode,
+function shouldClearAgentWorkbenchSelection(
+  target: EventTarget | null,
+  currentTarget: HTMLElement,
 ) {
+  if (!(target instanceof Element) || !currentTarget.contains(target)) {
+    return false;
+  }
+  if (
+    target.closest(
+      [
+        ".agent-canvas-detail-panel",
+        ".agent-chat-float",
+        ".agent-chat-restore",
+        ".react-flow__node",
+        ".react-flow__controls",
+        ".react-flow__minimap",
+        "button",
+        "a",
+        "input",
+        "textarea",
+        "select",
+      ].join(","),
+    )
+  ) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      ".agent-canvas-surface, .agent-workbench-surface, .react-flow__pane",
+    ),
+  );
+}
+
+function hasActiveWorkbenchProduction(
+  workbench: AgentWorkbenchProjection | undefined,
+) {
+  if (!workbench) {
+    return false;
+  }
+  return workbench.scenes.some((scene) =>
+    scene.shots.some(
+      (shot) =>
+        shot.preview.status === "queued" ||
+        shot.preview.status === "running" ||
+        shot.video.status === "queued" ||
+        shot.video.status === "running",
+    ),
+  );
+}
+
+function upsertCanvasNode(current: CanvasPayload | undefined, node: MediaNode) {
   if (!current) {
     return current;
   }
@@ -1427,19 +1564,21 @@ function updateCanvasNodeStatus(
   };
 }
 
-function ThinkingIndicator() {
+function ThinkingIndicator({ label }: { label: string }) {
+  const text = label || "ClipAnvil 正在思考";
   return (
-    <p className="agent-thinking-indicator" aria-label="ClipAnvil 正在思考">
-      <span aria-hidden="true">ClipAnvil 正在思考</span>
+    <p className="agent-thinking-indicator" aria-label={text}>
+      <span aria-hidden="true">{text}</span>
     </p>
   );
 }
 
 function messageClass(message: AgentMessage) {
-  if (message.message_type === "error") {
-    return "error";
-  }
-  return message.role;
+  return messageDisplayClass(message);
+}
+
+function isNestedAgentMessage(message: AgentMessage) {
+  return typeof message.raw_message?.parent_tool_call_id === "string";
 }
 
 function streamToMessage(

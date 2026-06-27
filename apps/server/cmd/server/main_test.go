@@ -61,6 +61,26 @@ func TestProducerResponderForConfigUsesDeterministicWhenRealModeHasNoKey(t *test
 	}
 }
 
+func TestProducerResponderForConfigUsesM1E2EFixtureWhenEnabled(t *testing.T) {
+	t.Setenv("CLIPANVIL_E2E_PRODUCER_FIXTURE", "m1_creative_state")
+	responder := producerResponderForConfig(&config.Config{
+		Production: config.ProductionConfig{
+			ProviderMode: "mock",
+		},
+	})
+
+	out, err := responder.Respond(context.Background(), agentproducer.ProducerContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ModelMessage == nil || len(out.ModelMessage.ToolCalls) != 1 {
+		t.Fatalf("fixture first response tool calls = %#v", out.ModelMessage)
+	}
+	if out.ModelMessage.ToolCalls[0].Function.Name != "upsert_project_brief" {
+		t.Fatalf("first fixture tool = %q", out.ModelMessage.ToolCalls[0].Function.Name)
+	}
+}
+
 func TestProducerResponderForConfigUsesVolcengineWhenRealModeHasKey(t *testing.T) {
 	responder := producerResponderForConfig(&config.Config{
 		Production: config.ProductionConfig{
@@ -75,6 +95,18 @@ func TestProducerResponderForConfigUsesVolcengineWhenRealModeHasKey(t *testing.T
 	})
 	if _, ok := responder.(agentproducer.VolcengineModelResponder); !ok {
 		t.Fatalf("expected Volcengine responder, got %T", responder)
+	}
+}
+
+func TestAgentModelMaxTokenBudgetsAreLargeEnoughForNativeToolArguments(t *testing.T) {
+	if producerModelMaxTokens < 4096 {
+		t.Fatalf("producerModelMaxTokens = %d, want at least 4096", producerModelMaxTokens)
+	}
+	if craftsmanModelMaxTokens < 8192 {
+		t.Fatalf("craftsmanModelMaxTokens = %d, want at least 8192", craftsmanModelMaxTokens)
+	}
+	if reviewerModelMaxTokens < 4096 {
+		t.Fatalf("reviewerModelMaxTokens = %d, want at least 4096", reviewerModelMaxTokens)
 	}
 }
 
