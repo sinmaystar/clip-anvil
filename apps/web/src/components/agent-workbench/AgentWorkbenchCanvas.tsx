@@ -56,6 +56,9 @@ function AgentWorkbenchCanvasContent({
 }: AgentWorkbenchCanvasProps) {
   const [mediaDimensions, setMediaDimensions] =
     useState<AgentWorkbenchMediaDimensionsByKey>({});
+  const [shotHeights, setShotHeights] = useState<
+    Record<string, number | undefined>
+  >({});
   const handleMediaDimensionsChange = useCallback(
     (key: string, dimensions: AgentWorkbenchMediaDimensions) => {
       setMediaDimensions((current) => {
@@ -71,9 +74,18 @@ function AgentWorkbenchCanvasContent({
     },
     [],
   );
+  const handleShotHeightChange = useCallback((shotId: string, height: number) => {
+    setShotHeights((current) => {
+      const previous = current[shotId];
+      if (previous && Math.abs(previous - height) <= 1) {
+        return current;
+      }
+      return { ...current, [shotId]: height };
+    });
+  }, []);
   const flow = useMemo(
-    () => agentWorkbenchToFlow(workbench, mediaDimensions),
-    [mediaDimensions, workbench],
+    () => agentWorkbenchToFlow(workbench, mediaDimensions, shotHeights),
+    [mediaDimensions, shotHeights, workbench],
   );
   const nodes = useMemo<AgentWorkbenchNode[]>(
     () =>
@@ -85,6 +97,7 @@ function AgentWorkbenchCanvasContent({
               ...node.data,
               mediaDimensions,
               onMediaDimensionsChange: handleMediaDimensionsChange,
+              onShotHeightChange: handleShotHeightChange,
             },
             selected: isFlowNodeSelected(node, selected),
           };
@@ -94,7 +107,13 @@ function AgentWorkbenchCanvasContent({
           selected: isFlowNodeSelected(node, selected),
         };
       }),
-    [flow.nodes, handleMediaDimensionsChange, mediaDimensions, selected],
+    [
+      flow.nodes,
+      handleMediaDimensionsChange,
+      handleShotHeightChange,
+      mediaDimensions,
+      selected,
+    ],
   );
 
   return (

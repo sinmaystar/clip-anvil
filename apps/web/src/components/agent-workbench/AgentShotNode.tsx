@@ -1,5 +1,10 @@
 import type { Node, NodeProps } from "@xyflow/react";
-import type { CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type CSSProperties,
+} from "react";
 import type {
   AgentWorkbenchArtifactSlot,
   AgentWorkbenchShot,
@@ -17,16 +22,46 @@ type ShotNode = Node<AgentWorkbenchShotNodeData, "agentShot">;
 
 export function AgentShotNode({ data, selected }: NodeProps<ShotNode>) {
   const shot = data.shot;
+  const shotRef = useRef<HTMLElement | null>(null);
   const artifacts = shotArtifactSlots(shot);
   const previewSlots = artifacts.filter((slot) => !isVideoSlot(slot));
   const videoSlot = artifacts.find(isVideoSlot);
   const mediaSlots = visibleMediaSlots(previewSlots, videoSlot, artifacts);
   const showReview = Boolean(shot.review || shot.issues.length > 0);
+  const reportShotHeight = useCallback(() => {
+    const element = shotRef.current;
+    if (!element) {
+      return;
+    }
+    const height = Math.ceil(
+      Math.max(element.scrollHeight, element.getBoundingClientRect().height),
+    );
+    if (height > 0) {
+      data.onShotHeightChange?.(shot.id, height);
+    }
+  }, [data.onShotHeightChange, shot.id]);
+
+  useEffect(() => {
+    reportShotHeight();
+    const element = shotRef.current;
+    if (!element || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(() => reportShotHeight());
+    observer.observe(element);
+    const mediaStack = element.querySelector(".agent-workbench-shot-media-stack");
+    if (mediaStack) {
+      observer.observe(mediaStack);
+    }
+    return () => observer.disconnect();
+  }, [reportShotHeight]);
+
   return (
     <article
       className="agent-workbench-shot-node"
       data-selected={selected}
       data-status={shot.status}
+      ref={shotRef}
     >
       <header>
         <div>
@@ -40,6 +75,7 @@ export function AgentShotNode({ data, selected }: NodeProps<ShotNode>) {
         mediaDimensions={data.mediaDimensions ?? {}}
         mediaSlots={mediaSlots}
         onMediaDimensionsChange={data.onMediaDimensionsChange}
+        onShotLayoutChange={reportShotHeight}
         shot={shot}
       />
       <StatusRow
@@ -88,6 +124,7 @@ function MediaCard({
   mediaDimensions,
   mediaSlots,
   onMediaDimensionsChange,
+  onShotLayoutChange,
   shot,
 }: {
   mediaDimensions: AgentWorkbenchMediaDimensionsByKey;
@@ -96,6 +133,7 @@ function MediaCard({
     key: string,
     dimensions: AgentWorkbenchMediaDimensions,
   ) => void;
+  onShotLayoutChange?: () => void;
   shot: AgentWorkbenchShot;
 }) {
   return (
@@ -114,6 +152,7 @@ function MediaCard({
               key={slot.node_id || `${slot.kind}-${index}`}
               mediaDimensions={mediaDimensions}
               onMediaDimensionsChange={onMediaDimensionsChange}
+              onShotLayoutChange={onShotLayoutChange}
               shot={shot}
               slot={slot}
               slots={mediaSlots}
@@ -143,6 +182,7 @@ function MediaCard({
 function MediaButton({
   mediaDimensions,
   onMediaDimensionsChange,
+  onShotLayoutChange,
   shot,
   slot,
   slots,
@@ -153,6 +193,7 @@ function MediaButton({
     key: string,
     dimensions: AgentWorkbenchMediaDimensions,
   ) => void;
+  onShotLayoutChange?: () => void;
   shot: AgentWorkbenchShot;
   slot: AgentWorkbenchArtifactSlot;
   slots: AgentWorkbenchArtifactSlot[];
@@ -188,6 +229,7 @@ function MediaButton({
             ? (dimensions) => onMediaDimensionsChange(mediaKey, dimensions)
             : undefined
         }
+        onShotLayoutChange={onShotLayoutChange}
         slot={slot}
         title={shot.title || title}
       />
@@ -213,10 +255,12 @@ function mediaSlotStyle(
 
 function MediaPreview({
   onMediaDimensionsChange,
+  onShotLayoutChange,
   slot,
   title,
 }: {
   onMediaDimensionsChange?: (dimensions: AgentWorkbenchMediaDimensions) => void;
+  onShotLayoutChange?: () => void;
   slot: AgentWorkbenchArtifactSlot | undefined;
   title: string;
 }) {
@@ -230,6 +274,17 @@ function MediaPreview({
         controls
         draggable={false}
         muted
+        onLoadedMetadata={(event) => {
+          const { videoHeight, videoWidth } = event.currentTarget;
+          if (videoWidth <= 0 || videoHeight <= 0) {
+            return;
+          }
+          onMediaDimensionsChange?.({
+            width: videoWidth,
+            height: videoHeight,
+          });
+          requestAnimationFrame(() => onShotLayoutChange?.());
+        }}
         playsInline
         poster={slot.thumbnail_url}
         preload="metadata"
@@ -251,6 +306,7 @@ function MediaPreview({
             width: naturalWidth,
             height: naturalHeight,
           });
+          requestAnimationFrame(() => onShotLayoutChange?.());
         }}
         src={image}
       />

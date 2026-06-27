@@ -25,10 +25,11 @@ type ProducerTurnInput struct {
 }
 
 type ProducerTurnOutput struct {
-	AssistantText    string
-	Metadata         map[string]any
-	ModelMessage     *schema.Message
-	SameTurnMessages []ProducerSameTurnMessage
+	AssistantText             string
+	Metadata                  map[string]any
+	ModelMessage              *schema.Message
+	SameTurnMessages          []ProducerSameTurnMessage
+	PersistentTriggerMessages []ProducerTriggerMessage
 }
 
 type ProducerStreamDelta struct {
@@ -65,6 +66,12 @@ type ProducerSameTurnMessage struct {
 	ToolCallID       string
 	ToolName         string
 	ToolArguments    map[string]any
+}
+
+type ProducerTriggerMessage struct {
+	Text    string
+	Source  string
+	Trigger string
 }
 
 type ProducerModelSelection struct {

@@ -18,6 +18,10 @@ type AssistantMessageInput struct {
 	DefaultCollapsed bool
 }
 
+type SystemReminderInput struct {
+	Text string
+}
+
 type ToolStatusInput struct {
 	ToolCallID   string
 	ToolName     string
@@ -77,6 +81,15 @@ func BuildAssistantMessageContent(input AssistantMessageInput) ([]byte, error) {
 		})
 	}
 	return marshalEnvelope(blocks, nil)
+}
+
+func BuildSystemReminderMessageContent(input SystemReminderInput) ([]byte, error) {
+	return marshalEnvelope([]Block{
+		SystemReminderBlock{
+			BaseBlock: NewBaseBlock("blk_system_reminder", "system_reminder"),
+			Text:      strings.TrimSpace(input.Text),
+		},
+	}, nil)
 }
 
 func BuildToolStatusMessageContent(input ToolStatusInput) ([]byte, error) {

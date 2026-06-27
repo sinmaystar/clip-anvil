@@ -120,13 +120,14 @@ func main() {
 		DefaultProvider:  cfg.Production.DefaultProvider,
 		DefaultTextModel: cfg.Production.DefaultTextModel,
 		Volcengine: production.VolcengineProviderConfig{
-			APIKey:     cfg.Production.Volcengine.APIKey,
-			BaseURL:    cfg.Production.Volcengine.BaseURL,
-			Region:     cfg.Production.Volcengine.Region,
-			TextModel:  cfg.Production.Volcengine.TextModel,
-			ImageModel: cfg.Production.Volcengine.ImageModel,
-			VideoModel: cfg.Production.Volcengine.VideoModel,
-			AudioModel: cfg.Production.Volcengine.AudioModel,
+			APIKey:                  cfg.Production.Volcengine.APIKey,
+			BaseURL:                 cfg.Production.Volcengine.BaseURL,
+			Region:                  cfg.Production.Volcengine.Region,
+			TextModel:               cfg.Production.Volcengine.TextModel,
+			ImageModel:              cfg.Production.Volcengine.ImageModel,
+			VideoModel:              cfg.Production.Volcengine.VideoModel,
+			VideoResolutionOverride: cfg.Production.Volcengine.VideoResolutionOverride,
+			AudioModel:              cfg.Production.Volcengine.AudioModel,
 		},
 	})
 	sandboxJobService := sandbox.NewJobService(sandboxManager, sandboxClient, queries, storageService)
@@ -162,13 +163,14 @@ func main() {
 		}
 		productionRuntime = production.NewVolcengineProductionRuntime(
 			production.VolcengineProviderConfig{
-				APIKey:     cfg.Production.Volcengine.APIKey,
-				BaseURL:    cfg.Production.Volcengine.BaseURL,
-				Region:     cfg.Production.Volcengine.Region,
-				TextModel:  cfg.Production.Volcengine.TextModel,
-				ImageModel: cfg.Production.Volcengine.ImageModel,
-				VideoModel: cfg.Production.Volcengine.VideoModel,
-				AudioModel: cfg.Production.Volcengine.AudioModel,
+				APIKey:                  cfg.Production.Volcengine.APIKey,
+				BaseURL:                 cfg.Production.Volcengine.BaseURL,
+				Region:                  cfg.Production.Volcengine.Region,
+				TextModel:               cfg.Production.Volcengine.TextModel,
+				ImageModel:              cfg.Production.Volcengine.ImageModel,
+				VideoModel:              cfg.Production.Volcengine.VideoModel,
+				VideoResolutionOverride: cfg.Production.Volcengine.VideoResolutionOverride,
+				AudioModel:              cfg.Production.Volcengine.AudioModel,
 			},
 			http.DefaultClient,
 			time.Duration(cfg.Production.ProviderPollIntervalSeconds)*time.Second,

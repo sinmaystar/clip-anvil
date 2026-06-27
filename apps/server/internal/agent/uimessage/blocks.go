@@ -38,6 +38,20 @@ func (b MarkdownBlock) MarshalJSON() ([]byte, error) {
 	return json.Marshal(next)
 }
 
+type SystemReminderBlock struct {
+	BaseBlock
+	Text string `json:"text"`
+}
+
+func (SystemReminderBlock) UIBlockType() string { return "system_reminder" }
+
+func (b SystemReminderBlock) MarshalJSON() ([]byte, error) {
+	type alias SystemReminderBlock
+	next := alias(b)
+	next.Type = b.UIBlockType()
+	return json.Marshal(next)
+}
+
 type ThinkingBlock struct {
 	BaseBlock
 	Text             string `json:"text"`

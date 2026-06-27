@@ -13,7 +13,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	agentprompt "github.com/sinmaystar/clip-anvil/internal/agent/prompt"
-	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
 )
 
 type arkChatStreamer interface {
@@ -126,11 +125,6 @@ func reviewToolPromptMessages(reviewContext Context) []*schema.Message {
 			Content: SystemPrompt(),
 		},
 	}
-	for _, reminder := range reviewContext.PendingReminders {
-		if text := toolloop.NormalizeSystemReminder(reminder); text != "" {
-			messages = append(messages, schema.SystemMessage(text))
-		}
-	}
 	messages = append(messages, agentprompt.HistoryMessages(reviewContext.Messages)...)
 	messages = append(messages, reviewUserMessage(reviewContext))
 	for _, message := range reviewContext.SameTurnMessages {
@@ -157,7 +151,7 @@ func reviewToolPromptMessages(reviewContext Context) []*schema.Message {
 			})
 		}
 	}
-	return messages
+	return agentprompt.AppendPendingReminders(messages, reviewContext.PendingReminders)
 }
 
 func reviewUserMessage(reviewContext Context) *schema.Message {

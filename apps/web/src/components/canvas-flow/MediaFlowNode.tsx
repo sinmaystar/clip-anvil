@@ -55,9 +55,15 @@ export function MediaFlowNode({
   const imagePreviewUrl = previewAssetUrl || previewThumbnailUrl;
   const [imageNaturalSize, setImageNaturalSize] =
     useState<MediaDimensions | null>(null);
+  const [videoNaturalSize, setVideoNaturalSize] =
+    useState<MediaDimensions | null>(null);
   const size = mediaNodeDisplaySize(
     node,
-    node.node_type === "image" ? imageNaturalSize : null,
+    node.node_type === "image"
+      ? imageNaturalSize
+      : node.node_type === "video"
+        ? videoNaturalSize
+        : null,
   );
   const hasPreviewContent =
     Boolean(previewText) || Boolean(previewAssetUrl) || Boolean(previewThumbnailUrl);
@@ -74,6 +80,10 @@ export function MediaFlowNode({
   useEffect(() => {
     setImageNaturalSize(null);
   }, [node.id, imagePreviewUrl]);
+
+  useEffect(() => {
+    setVideoNaturalSize(null);
+  }, [node.id, previewAssetUrl]);
 
   useEffect(() => {
     updateNodeInternals(node.id);
@@ -244,6 +254,23 @@ export function MediaFlowNode({
                 <video
                   controls
                   draggable={false}
+                  onLoadedMetadata={(event) => {
+                    const { videoHeight, videoWidth } = event.currentTarget;
+                    if (videoWidth <= 0 || videoHeight <= 0) {
+                      return;
+                    }
+                    const nextSize = {
+                      width: videoWidth,
+                      height: videoHeight,
+                    };
+                    setVideoNaturalSize((current) =>
+                      current?.width === videoWidth &&
+                      current?.height === videoHeight
+                        ? current
+                        : nextSize,
+                    );
+                    data.onMediaDimensionsChange?.(node.id, nextSize);
+                  }}
                   poster={previewThumbnailUrl}
                   preload="metadata"
                   src={previewAssetUrl}

@@ -84,7 +84,7 @@ Seedance 视频评审重点：
 
 pre-render 检查：
 - compiled_prompt 不能裸出现 asset id、storage URL 或无语义 UUID。
-- reference_bindings 必须说明每个素材的 role，例如 first_frame、last_frame、product_reference、scene_reference。
+- reference_bindings 必须说明每个素材的官方 content_type 和 model_role，例如 content_type=image_url/model_role=first_frame、content_type=image_url/model_role=last_frame、content_type=image_url/model_role=reference_image。商品、场景、风格等业务语义只能写在 semantic_target 或 notes。
 - subject_bindings 必须能锚定核心人物或商品。
 - prompt_parts 应覆盖主体、动作、场景、镜头、风格、质量和约束。
 - 视频 prompt 不应写绝对秒数。
@@ -128,7 +128,7 @@ submit_review_result 的 target 规则：
 ## 修复建议规则
 
 好的 fix_hint：
-- fork 当前 RenderPlan，把悦行行李箱 KeyElementState 作为 product_reference，priority=1，并在 negative_hints 中禁止黑色软包行李箱。
+- fork 当前 RenderPlan，把悦行行李箱 KeyElementState 作为 reference_binding，content_type=image_url，model_role=reference_image，semantic_target=悦行行李箱外观，priority=1，并在 negative_hints 中禁止黑色软包行李箱。
 - 将 suggested_fix 设为 edit，局部修复 2-4 秒中行李箱拉杆变形，保留整体运镜和背景。
 - 对 shot_02 改用 shot_01 的 last_frame 作为 first_frame，确保首尾帧连续。
 - 请求用户确认是否接受更固定的低机位镜头，因为当前运镜冲突导致多次失败。

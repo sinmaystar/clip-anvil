@@ -124,6 +124,9 @@ func (r VolcengineVideoRuntime) generate(ctx context.Context, client volcengineV
 		return
 	}
 	request := videoTaskRequest(modelID, rendered, intent)
+	if resolution := strings.TrimSpace(r.cfg.VideoResolutionOverride); resolution != "" {
+		request.Resolution = &resolution
+	}
 	created, err := client.CreateTask(ctx, request)
 	if err != nil {
 		events <- ProductionEvent{Type: ProductionEventJobFailed, Progress: 100, Err: fmt.Errorf("%w: create ark video task: %v", ErrProviderExecution, err)}
@@ -274,14 +277,13 @@ func videoTaskRequest(modelID string, rendered string, intent GenerationIntent) 
 		},
 	}
 	for _, ref := range intent.InputRefs {
-		if ref.NodeType != "image" || strings.TrimSpace(ref.StorageURL) == "" {
+		url := strings.TrimSpace(ref.StorageURL)
+		if url == "" {
 			continue
 		}
-		url := strings.TrimSpace(ref.StorageURL)
-		content = append(content, &cgmodel.CreateContentGenerationContentItem{
-			Type:     cgmodel.ContentGenerationContentItemTypeImage,
-			ImageURL: &cgmodel.ImageURL{URL: url},
-		})
+		if item := videoContentItemForInputRef(ref, url); item != nil {
+			content = append(content, item)
+		}
 	}
 	request := cgmodel.CreateContentGenerationTaskRequest{
 		Model:   modelID,
@@ -314,6 +316,43 @@ func videoTaskRequest(modelID string, rendered string, intent GenerationIntent) 
 		request.CameraFixed = &cameraFixed
 	}
 	return request
+}
+
+func videoContentItemForInputRef(ref InputRef, url string) *cgmodel.CreateContentGenerationContentItem {
+	item := &cgmodel.CreateContentGenerationContentItem{}
+	if role := strings.TrimSpace(ref.ModelRole); role != "" {
+		item.Role = &role
+	}
+	switch contentTypeForVideoInputRef(ref) {
+	case "image_url":
+		item.Type = cgmodel.ContentGenerationContentItemTypeImage
+		item.ImageURL = &cgmodel.ImageURL{URL: url}
+	case "video_url":
+		item.Type = cgmodel.ContentGenerationContentItemTypeVideo
+		item.VideoURL = &cgmodel.VideoUrl{Url: url}
+	case "audio_url":
+		item.Type = cgmodel.ContentGenerationContentItemTypeAudio
+		item.AudioURL = &cgmodel.AudioUrl{Url: url}
+	default:
+		return nil
+	}
+	return item
+}
+
+func contentTypeForVideoInputRef(ref InputRef) string {
+	if contentType := strings.TrimSpace(ref.ContentType); contentType != "" {
+		return contentType
+	}
+	switch strings.TrimSpace(ref.NodeType) {
+	case "image":
+		return "image_url"
+	case "video":
+		return "video_url"
+	case "audio":
+		return "audio_url"
+	default:
+		return ""
+	}
 }
 
 func mimeForVideoURL(rawURL string) string {

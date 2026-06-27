@@ -67,7 +67,8 @@ type ReferenceBinding struct {
 	ClientKey      string `json:"client_key"`
 	SourceType     string `json:"source_type"`
 	SourceID       string `json:"source_id"`
-	Role           string `json:"role"`
+	ContentType    string `json:"content_type"`
+	ModelRole      string `json:"model_role"`
 	PromptAlias    string `json:"prompt_alias,omitempty"`
 	SemanticTarget string `json:"semantic_target,omitempty"`
 	Priority       int    `json:"priority,omitempty"`

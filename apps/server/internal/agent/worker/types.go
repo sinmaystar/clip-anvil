@@ -33,12 +33,23 @@ type GenerationInput struct {
 	NegativePrompt           string `json:"negative_prompt,omitempty"`
 	// InputNodeRefs accepts source/generated node UUIDs or unambiguous canvas titles.
 	InputNodeRefs []string       `json:"input_node_refs,omitempty"`
+	InputBindings []InputBinding `json:"input_bindings,omitempty"`
 	TargetNodeID  string         `json:"target_node_id,omitempty"`
 	OutputType    string         `json:"output_type,omitempty"`
 	OperationType string         `json:"operation_type,omitempty"`
 	Model         ModelSpec      `json:"model,omitempty"`
 	Params        map[string]any `json:"params,omitempty"`
 	MaxAttempts   int            `json:"max_attempts"`
+}
+
+type InputBinding struct {
+	ClientKey      string `json:"client_key,omitempty"`
+	SourceType     string `json:"source_type"`
+	SourceID       string `json:"source_id"`
+	ContentType    string `json:"content_type"`
+	ModelRole      string `json:"model_role"`
+	SemanticTarget string `json:"semantic_target,omitempty"`
+	Required       bool   `json:"required,omitempty"`
 }
 
 type ModelSpec struct {

@@ -115,7 +115,7 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if err != nil {
 		return err
 	}
-	applyProducerTaskTriggerInput(&input, runningTask.Input)
+	triggerPayload := applyProducerTaskTriggerInput(&input, runningTask.Input)
 	e.broadcastTask(input.WorkspaceID, runningTask)
 
 	started, err := e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
@@ -129,6 +129,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	})
 	if err == nil {
 		e.broadcastEvent(input.WorkspaceID, started)
+	}
+	if err := e.persistRuntimeTriggerMessage(ctx, &input, triggerPayload); err != nil {
+		return e.failTask(ctx, input, "producer_trigger_message_persist_failed", err.Error())
 	}
 
 	graphInput := ProducerTurnInput{
@@ -185,6 +188,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		if err := e.persistNativeToolTrace(ctx, input, output.SameTurnMessages); err != nil {
 			return e.failTask(ctx, input, "producer_tool_trace_persist_failed", err.Error())
 		}
+	}
+	if err := e.persistTriggerMessages(ctx, input, output.PersistentTriggerMessages); err != nil {
+		return e.failTask(ctx, input, "producer_trigger_message_persist_failed", err.Error())
 	}
 
 	content, err := uimessage.BuildAssistantMessageContent(uimessage.AssistantMessageInput{
@@ -275,6 +281,72 @@ func (e *Executor) markInformationalSignalsProcessed(ctx context.Context, input 
 		}
 		_, _ = processor.MarkProducerPendingSignalProcessed(ctx, signal.ID, input.WorkspaceID, input.TaskID)
 	}
+}
+
+func (e *Executor) persistRuntimeTriggerMessage(ctx context.Context, input *RunTaskInput, payload producerTaskTriggerPayload) error {
+	if input == nil || strings.TrimSpace(input.RuntimeTriggerText) == "" || strings.TrimSpace(payload.Trigger) == "" {
+		return nil
+	}
+	if input.TriggerMessageID.Valid || input.TriggerMessageSeq > 0 {
+		return nil
+	}
+	msg, err := e.persistTriggerMessage(ctx, *input, ProducerTriggerMessage{
+		Text:    input.RuntimeTriggerText,
+		Source:  "agent_trigger",
+		Trigger: strings.TrimSpace(payload.Trigger),
+	})
+	if err != nil {
+		return err
+	}
+	input.TriggerMessageID = msg.ID
+	input.TriggerMessageSeq = msg.Seq
+	return nil
+}
+
+func (e *Executor) persistTriggerMessages(ctx context.Context, input RunTaskInput, messages []ProducerTriggerMessage) error {
+	for _, message := range messages {
+		if strings.TrimSpace(message.Text) == "" {
+			continue
+		}
+		if _, err := e.persistTriggerMessage(ctx, input, message); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Executor) persistTriggerMessage(ctx context.Context, input RunTaskInput, message ProducerTriggerMessage) (db.AgentMessage, error) {
+	text := strings.TrimSpace(message.Text)
+	content, err := uimessage.BuildSystemReminderMessageContent(uimessage.SystemReminderInput{Text: text})
+	if err != nil {
+		return db.AgentMessage{}, err
+	}
+	source := strings.TrimSpace(message.Source)
+	if source == "" {
+		source = "system"
+	}
+	trigger := strings.TrimSpace(message.Trigger)
+	if trigger == "" {
+		trigger = source
+	}
+	msg, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: input.WorkspaceID,
+		ThreadID:    input.ThreadID,
+		Role:        "system",
+		MessageType: "text",
+		Content:     content,
+		RawMessage: mustJSON(map[string]any{
+			"text":    text,
+			"source":  source,
+			"trigger": trigger,
+		}),
+		TaskID: input.TaskID,
+	})
+	if err != nil {
+		return db.AgentMessage{}, err
+	}
+	e.broadcastMessage(input.WorkspaceID, msg, db.AgentEvent{})
+	return msg, nil
 }
 
 func (e *Executor) persistNativeToolTrace(ctx context.Context, input RunTaskInput, messages []ProducerSameTurnMessage) error {
@@ -645,10 +717,10 @@ func (e *Executor) broadcastMessageDelta(workspaceID pgtype.UUID, delta Producer
 	}
 }
 
-func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) {
+func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) producerTaskTriggerPayload {
 	var payload producerTaskTriggerPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return
+		return producerTaskTriggerPayload{}
 	}
 	if !input.TriggerMessageID.Valid {
 		if id, ok := pgUUIDFromString(payload.TriggerMessageID); ok {
@@ -658,9 +730,10 @@ func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) {
 	if input.TriggerMessageSeq <= 0 {
 		input.TriggerMessageSeq = payload.TriggerMessageSeq
 	}
-	if strings.TrimSpace(input.RuntimeTriggerText) == "" && !input.TriggerMessageID.Valid && input.TriggerMessageSeq <= 0 {
+	if strings.TrimSpace(input.RuntimeTriggerText) == "" {
 		input.RuntimeTriggerText = producerRuntimeTriggerText(payload)
 	}
+	return payload
 }
 
 type producerTaskTriggerPayload struct {

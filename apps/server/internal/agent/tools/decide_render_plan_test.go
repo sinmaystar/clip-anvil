@@ -95,7 +95,7 @@ func TestDecideRenderPlanAcceptKeepsShotOutputInputRefs(t *testing.T) {
 			Status:             "waiting_for_approval",
 			CompiledPrompt:     "把已确认预览图生成 5 秒行李箱广告视频。",
 			Params:             []byte(`{"ratio":"9:16","duration_sec":5}`),
-			ReferenceBindings:  []byte(`[{"client_key":"ref_shot_01_preview","source_type":"shot_output","source_id":"shot_01.preview_image.current","role":"first_frame","required":true}]`),
+			ReferenceBindings:  []byte(`[{"client_key":"ref_shot_01_preview","source_type":"shot_output","source_id":"shot_01.preview_image.current","content_type":"image_url","model_role":"first_frame","required":true}]`),
 			CreatedByThreadID:  uuidWithByte(12),
 			CreatedByTaskID:    uuidWithByte(13),
 			SemanticKey:        "shot_01.shot_video.r1",
@@ -123,9 +123,18 @@ func TestDecideRenderPlanAcceptKeepsShotOutputInputRefs(t *testing.T) {
 	if err := json.Unmarshal(runtime.createdTasks[0].Input, &input); err != nil {
 		t.Fatal(err)
 	}
-	refs, _ := input["input_node_refs"].([]any)
-	if len(refs) != 1 || refs[0] != "shot_01.preview_image.current" {
-		t.Fatalf("input_node_refs = %#v", input["input_node_refs"])
+	bindings, _ := input["input_bindings"].([]any)
+	if len(bindings) != 1 {
+		t.Fatalf("input_bindings = %#v", input["input_bindings"])
+	}
+	binding, _ := bindings[0].(map[string]any)
+	if binding["source_id"] != "shot_01.preview_image.current" ||
+		binding["content_type"] != "image_url" ||
+		binding["model_role"] != "first_frame" {
+		t.Fatalf("input_bindings[0] = %#v", binding)
+	}
+	if _, ok := binding["role"]; ok {
+		t.Fatalf("input_bindings[0] must not contain legacy role: %#v", binding)
 	}
 }
 

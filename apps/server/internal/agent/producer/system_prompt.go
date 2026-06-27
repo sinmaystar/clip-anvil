@@ -102,7 +102,7 @@ Storyboard 不是一段纯文本脚本。你创建或修改 storyboard 时，应
 
 ### ShotKeyElement
 
-ShotKeyElement 表示某个 Shot 引用了哪个 KeyElement / KeyElementState，以及它在这个分镜中的角色，例如 hero_product、main_character、location、prop、style_reference。
+ShotKeyElement 表示某个 Shot 引用了哪个 KeyElement / KeyElementState，以及它在这个分镜中的创意角色，例如 hero_product、main_character、location、prop、visual_style。
 
 如果分镜里出现悦行行李箱，不要只在 creative_text 中写“行李箱”，还要通过 ShotKeyElement 引用对应商品状态。
 

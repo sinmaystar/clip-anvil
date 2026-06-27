@@ -289,6 +289,137 @@ func TestExecutorDoesNotPersistSystemReminderBeforeFinalAssistantMessage(t *test
 	}
 }
 
+func TestExecutorPersistsAgentTriggerMessageBeforeFinalAssistantMessage(t *testing.T) {
+	runtime := &fakeRuntime{}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime: runtime,
+		Graph: &fakeGraph{output: ProducerTurnOutput{
+			AssistantText: "已处理工程事件。",
+			PersistentTriggerMessages: []ProducerTriggerMessage{
+				{
+					Text:    "<system-reminder>你有 2 个待处理 Producer signal。</system-reminder>",
+					Source:  "producer_pending_signal",
+					Trigger: "producer_pending_signal",
+				},
+			},
+			SameTurnMessages: []ProducerSameTurnMessage{
+				{
+					Role:        "system",
+					MessageType: "system_reminder",
+					Content:     "<system-reminder>你已连续调用 read_project_context 5 次。</system-reminder>",
+				},
+			},
+		}},
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID:      uuidWithByte(1),
+		ThreadID:         uuidWithByte(2),
+		TaskID:           uuidWithByte(3),
+		TriggerMessageID: uuidWithByte(4),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := runtime.appendedMessageTypes()
+	want := []string{"text", "text"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("message types = %#v, want %#v", got, want)
+	}
+	if runtime.appended[0].Role != "system" || runtime.appended[1].Role != "assistant" {
+		t.Fatalf("persisted roles = %#v", runtime.appended)
+	}
+	if !bytes.Contains(runtime.appended[0].Content, []byte(`"type":"system_reminder"`)) ||
+		!bytes.Contains(runtime.appended[0].Content, []byte(`待处理 Producer signal`)) ||
+		bytes.Contains(runtime.appended[0].Content, []byte(`连续调用 read_project_context`)) {
+		t.Fatalf("persisted trigger content = %s", runtime.appended[0].Content)
+	}
+	if !bytes.Contains(runtime.appended[0].RawMessage, []byte(`"source":"producer_pending_signal"`)) {
+		t.Fatalf("persisted trigger raw = %s", runtime.appended[0].RawMessage)
+	}
+}
+
+func TestExecutorPersistsWakeTaskInputAsAgentTriggerMessage(t *testing.T) {
+	runtime := &fakeRuntime{
+		runningTaskInput: []byte(`{
+			"trigger":"craftsman_render_plan_ready",
+			"craftsman_task_id":"04000000-0000-0000-0000-000000000000",
+			"craftsman_thread_id":"03000000-0000-0000-0000-000000000000",
+			"scope_type":"shot",
+			"scope_id":"02000000-0000-0000-0000-000000000000",
+			"shot_id":"02000000-0000-0000-0000-000000000000",
+			"target_phase":"preview_image"
+		}`),
+	}
+	graph := &fakeGraph{output: ProducerTurnOutput{AssistantText: "assistant reply"}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runtime.appended) != 2 {
+		t.Fatalf("appended = %#v, want trigger and final assistant", runtime.appended)
+	}
+	trigger := runtime.appended[0]
+	if trigger.Role != "system" || trigger.MessageType != "text" {
+		t.Fatalf("trigger message = %#v", trigger)
+	}
+	if !bytes.Contains(trigger.Content, []byte(`"type":"system_reminder"`)) ||
+		!bytes.Contains(trigger.Content, []byte(`Craftsman 已完成 RenderPlan 编译`)) {
+		t.Fatalf("trigger content = %s", trigger.Content)
+	}
+	if !bytes.Contains(trigger.RawMessage, []byte(`"trigger":"craftsman_render_plan_ready"`)) {
+		t.Fatalf("trigger raw = %s", trigger.RawMessage)
+	}
+	if graph.input.TriggerMessageID != trigger.ID || graph.input.TriggerMessageSeq != trigger.Seq {
+		t.Fatalf("graph trigger = id %v seq %d, want id %v seq %d", graph.input.TriggerMessageID, graph.input.TriggerMessageSeq, trigger.ID, trigger.Seq)
+	}
+	if !strings.Contains(graph.input.RuntimeTriggerText, "Craftsman 已完成 RenderPlan 编译") {
+		t.Fatalf("graph runtime trigger text = %q", graph.input.RuntimeTriggerText)
+	}
+}
+
+func TestExecutorUsesExistingTriggerMessageWithoutDuplicatePersistence(t *testing.T) {
+	runtime := &fakeRuntime{
+		runningTaskInput: []byte(`{
+			"trigger":"worker_generation_completed",
+			"trigger_message_id":"05000000-0000-0000-0000-000000000000",
+			"trigger_message_seq":42,
+			"render_plan_id":"06000000-0000-0000-0000-000000000000",
+			"generation_job_id":"07000000-0000-0000-0000-000000000000",
+			"target_phase":"shot_video"
+		}`),
+	}
+	graph := &fakeGraph{output: ProducerTurnOutput{AssistantText: "assistant reply"}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runtime.appended) != 1 || runtime.appended[0].Role != "assistant" {
+		t.Fatalf("appended = %#v, want final assistant only", runtime.appended)
+	}
+	if graph.input.TriggerMessageID != uuidWithByte(5) || graph.input.TriggerMessageSeq != 42 {
+		t.Fatalf("graph trigger = id %v seq %d", graph.input.TriggerMessageID, graph.input.TriggerMessageSeq)
+	}
+	if !strings.Contains(graph.input.RuntimeTriggerText, "Worker 已完成一次媒体生成") {
+		t.Fatalf("graph runtime trigger text = %q", graph.input.RuntimeTriggerText)
+	}
+}
+
 func TestExecutorPersistsLiveNativeToolTraceFromGraphContext(t *testing.T) {
 	runtime := &fakeRuntime{}
 	broadcaster := &fakeBroadcaster{}

@@ -90,6 +90,9 @@ func TestVideoRuntimeCreatesPollsAndReturnsURLForSandboxPersistence(t *testing.T
 	if len(client.createReq.Content) != 2 || client.createReq.Content[1].ImageURL.URL != "https://assets.example/input.png" {
 		t.Fatalf("content = %#v", client.createReq.Content)
 	}
+	if client.createReq.Content[1].Role == nil || *client.createReq.Content[1].Role != "first_frame" {
+		t.Fatalf("image content role = %#v, want first_frame", client.createReq.Content[1].Role)
+	}
 }
 
 func TestVideoRuntimeResolvesImageRefsBeforeCreatingTask(t *testing.T) {
@@ -117,6 +120,36 @@ func TestVideoRuntimeResolvesImageRefsBeforeCreatingTask(t *testing.T) {
 	}
 	if client.createReq.Content[1].ImageURL.URL != resolver.url {
 		t.Fatalf("image url = %q", client.createReq.Content[1].ImageURL.URL)
+	}
+}
+
+func TestVideoRuntimeOverridesResolutionWhenConfigured(t *testing.T) {
+	client := &fakeVideoTaskClient{
+		taskID: "task-video-resolution-override",
+		polls: []model.GetContentGenerationTaskResponse{{
+			ID:      "task-video-resolution-override",
+			Status:  model.StatusSucceeded,
+			Content: model.Content{VideoURL: "https://provider.invalid/video.mp4"},
+		}},
+	}
+	runtime := newVolcengineVideoRuntimeForTest(
+		VolcengineProviderConfig{
+			APIKey:                  "test-key",
+			VideoModel:              "doubao-seedance-2-0-260128",
+			VideoResolutionOverride: "480p",
+		},
+		client,
+		nil,
+		time.Millisecond,
+		time.Second,
+	)
+	intent := videoIntent()
+	intent.Model.ModelID = "doubao-seedance-2-0-260128"
+	intent.Params["resolution"] = "1080p"
+
+	_ = runVideoRuntime(t, runtime, intent)
+	if client.createReq.Resolution == nil || *client.createReq.Resolution != "480p" {
+		t.Fatalf("resolution = %#v, want 480p", client.createReq.Resolution)
 	}
 }
 
@@ -234,8 +267,10 @@ func videoIntent() GenerationIntent {
 		PromptTemplate: "A slow camera move through a quiet neon studio.",
 		OutputType:     "video",
 		InputRefs: []InputRef{{
-			NodeType:   "image",
-			StorageURL: "https://assets.example/input.png",
+			NodeType:    "image",
+			StorageURL:  "https://assets.example/input.png",
+			ContentType: "image_url",
+			ModelRole:   "first_frame",
 		}},
 		Model: ModelSpec{Provider: "volcengine", ModelID: "doubao-seedance-1-0-pro-fast-251015"},
 		Params: map[string]any{

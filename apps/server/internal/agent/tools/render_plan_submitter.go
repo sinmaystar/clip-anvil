@@ -143,7 +143,7 @@ func workerInputForShotRenderPlan(plan db.RenderPlan, shot db.Shot) agentworker.
 		CraftsmanTaskID:   uuidString(plan.CreatedByTaskID),
 		Strategy:          strings.TrimSpace(plan.Rationale),
 		Prompt:            strings.TrimSpace(plan.CompiledPrompt),
-		InputNodeRefs:     renderPlanInputNodeRefs(plan.ReferenceBindings),
+		InputBindings:     renderPlanInputBindings(plan.ReferenceBindings),
 		OutputType:        outputTypeForRenderPlan(plan),
 		OperationType:     plan.Operation,
 		Model:             modelForRenderPlan(plan),
@@ -167,7 +167,7 @@ func workerInputForKeyElementStateRenderPlan(plan db.RenderPlan, state db.KeyEle
 		CraftsmanTaskID:          uuidString(plan.CreatedByTaskID),
 		Strategy:                 strings.TrimSpace(plan.Rationale),
 		Prompt:                   strings.TrimSpace(plan.CompiledPrompt),
-		InputNodeRefs:            renderPlanInputNodeRefs(plan.ReferenceBindings),
+		InputBindings:            renderPlanInputBindings(plan.ReferenceBindings),
 		OutputType:               outputTypeForRenderPlan(plan),
 		OperationType:            plan.Operation,
 		Model:                    modelForRenderPlan(plan),
@@ -188,20 +188,33 @@ func modelForRenderPlan(plan db.RenderPlan) agentworker.ModelSpec {
 }
 
 type renderPlanReferenceBinding struct {
-	SourceType string `json:"source_type"`
-	SourceID   string `json:"source_id"`
+	ClientKey      string `json:"client_key"`
+	SourceType     string `json:"source_type"`
+	SourceID       string `json:"source_id"`
+	ContentType    string `json:"content_type"`
+	ModelRole      string `json:"model_role"`
+	SemanticTarget string `json:"semantic_target,omitempty"`
+	Required       bool   `json:"required,omitempty"`
 }
 
-func renderPlanInputNodeRefs(raw []byte) []string {
+func renderPlanInputBindings(raw []byte) []agentworker.InputBinding {
 	var refs []renderPlanReferenceBinding
 	if err := json.Unmarshal(defaultJSON(raw), &refs); err != nil {
 		return nil
 	}
-	out := make([]string, 0, len(refs))
+	out := make([]agentworker.InputBinding, 0, len(refs))
 	for _, ref := range refs {
 		sourceType := strings.TrimSpace(ref.SourceType)
 		if (sourceType == "media_node" || sourceType == "shot_output") && strings.TrimSpace(ref.SourceID) != "" {
-			out = append(out, strings.TrimSpace(ref.SourceID))
+			out = append(out, agentworker.InputBinding{
+				ClientKey:      strings.TrimSpace(ref.ClientKey),
+				SourceType:     sourceType,
+				SourceID:       strings.TrimSpace(ref.SourceID),
+				ContentType:    strings.TrimSpace(ref.ContentType),
+				ModelRole:      strings.TrimSpace(ref.ModelRole),
+				SemanticTarget: strings.TrimSpace(ref.SemanticTarget),
+				Required:       ref.Required,
+			})
 		}
 	}
 	return out

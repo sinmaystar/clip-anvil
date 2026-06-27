@@ -115,4 +115,21 @@ describe("adaptive media node layout", () => {
     assert.ok(size.w <= 480, `width ${size.w} should stay inspectable`);
     assert.ok(Math.abs(size.w / size.h - 16 / 9) < 0.05);
   });
+
+  it("uses measured video dimensions when preview metadata is absent", () => {
+    const size = adaptiveMediaNodeSize(
+      {
+        ...baseNode,
+        node_type: "video",
+      },
+      { width: 496, height: 864 },
+    );
+
+    assert.ok(
+      size.h > size.w,
+      `vertical video should stay tall, got ${size.w}x${size.h}`,
+    );
+    assert.ok(size.h <= mediaNodePreviewLimits.video.maxH);
+    assert.ok(Math.abs(size.w / size.h - 496 / 864) < 0.05);
+  });
 });

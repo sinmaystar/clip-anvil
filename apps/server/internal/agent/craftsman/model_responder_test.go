@@ -145,6 +145,26 @@ func TestCraftsmanPromptIncludesHistoricalThreadMessages(t *testing.T) {
 	}
 }
 
+func TestCraftsmanPendingRemindersAppendToLatestUserMessage(t *testing.T) {
+	messages := craftsmanToolPromptMessages(Context{
+		Text:             "Current Task\n- target_phase: preview_image\n- shot: shot_01",
+		PendingReminders: []string{"<system-reminder>你已连续调用 read_project_memory 5 次，请反思策略。</system-reminder>"},
+	})
+
+	if len(messages) != 2 {
+		t.Fatalf("message count = %d, messages = %#v", len(messages), messages)
+	}
+	if messages[0].Role != schema.System {
+		t.Fatalf("first message = %#v", messages[0])
+	}
+	if messages[1].Role != schema.User ||
+		!strings.Contains(messages[1].Content, "target_phase: preview_image") ||
+		!strings.Contains(messages[1].Content, "运行时提醒") ||
+		!strings.Contains(messages[1].Content, "read_project_memory") {
+		t.Fatalf("latest user message should include pending reminder: %#v", messages[1])
+	}
+}
+
 type fakeCraftsmanArkModel struct {
 	messages      []*schema.Message
 	message       *schema.Message

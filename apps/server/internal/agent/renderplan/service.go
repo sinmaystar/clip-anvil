@@ -120,6 +120,9 @@ func validateInput(input UpsertInput) error {
 			return fmt.Errorf("%w: duration_sec 只能是 5 或 10，当前是 %d", ErrInvalidInput, duration)
 		}
 	}
+	if err := validateReferenceBindingContent(input.ReferenceBindings, input.Operation); err != nil {
+		return err
+	}
 	if input.Mode == "update_draft" && !input.RenderPlanID.Valid {
 		return fmt.Errorf("%w: update_draft 需要 render_plan_id", ErrInvalidInput)
 	}
@@ -139,6 +142,84 @@ func validateInput(input UpsertInput) error {
 		return fmt.Errorf("%w: rationale 必填", ErrInvalidInput)
 	}
 	return nil
+}
+
+func validateReferenceBindingContent(bindings []ReferenceBinding, operation string) error {
+	for index, binding := range bindings {
+		if strings.TrimSpace(binding.ContentType) == "" {
+			return fmt.Errorf("%w: reference_bindings[%d].content_type 必填", ErrInvalidInput, index)
+		}
+		if strings.TrimSpace(binding.ModelRole) == "" {
+			return fmt.Errorf("%w: reference_bindings[%d].model_role 必填", ErrInvalidInput, index)
+		}
+		if err := validateContentModelRole(binding.ContentType, binding.ModelRole); err != nil {
+			return fmt.Errorf("%w: reference_bindings[%d]: %v", ErrInvalidInput, index, err)
+		}
+	}
+	switch strings.TrimSpace(operation) {
+	case "image_to_video_first_frame":
+		if len(bindings) != 1 || bindings[0].ContentType != "image_url" || bindings[0].ModelRole != "first_frame" {
+			return fmt.Errorf("%w: image_to_video_first_frame 需要且只需要 1 个 reference_binding: content_type=image_url, model_role=first_frame", ErrInvalidInput)
+		}
+	case "image_to_video_first_last_frame":
+		firstFrames, lastFrames := 0, 0
+		for _, binding := range bindings {
+			if binding.ContentType != "image_url" {
+				return fmt.Errorf("%w: image_to_video_first_last_frame 只能使用 image_url", ErrInvalidInput)
+			}
+			switch binding.ModelRole {
+			case "first_frame":
+				firstFrames++
+			case "last_frame":
+				lastFrames++
+			default:
+				return fmt.Errorf("%w: image_to_video_first_last_frame 只能使用 model_role=first_frame 或 last_frame", ErrInvalidInput)
+			}
+		}
+		if len(bindings) != 2 || firstFrames != 1 || lastFrames != 1 {
+			return fmt.Errorf("%w: image_to_video_first_last_frame 必须提供 2 个 image_url，分别是 first_frame 和 last_frame", ErrInvalidInput)
+		}
+	case "multi_modal_reference_video":
+		if len(bindings) == 0 {
+			return fmt.Errorf("%w: multi_modal_reference_video 至少需要 1 个 reference_binding", ErrInvalidInput)
+		}
+		imageRefs := 0
+		for _, binding := range bindings {
+			switch binding.ModelRole {
+			case "reference_image":
+				imageRefs++
+			case "reference_video", "reference_audio":
+			default:
+				return fmt.Errorf("%w: multi_modal_reference_video 只能使用 reference_image、reference_video 或 reference_audio", ErrInvalidInput)
+			}
+		}
+		if imageRefs > 9 {
+			return fmt.Errorf("%w: multi_modal_reference_video 最多支持 9 张 reference_image", ErrInvalidInput)
+		}
+	}
+	return nil
+}
+
+func validateContentModelRole(contentType string, modelRole string) error {
+	switch strings.TrimSpace(contentType) {
+	case "image_url":
+		if modelRole == "first_frame" || modelRole == "last_frame" || modelRole == "reference_image" {
+			return nil
+		}
+		return fmt.Errorf("image_url 只能使用 model_role=first_frame、last_frame 或 reference_image")
+	case "video_url":
+		if modelRole == "reference_video" {
+			return nil
+		}
+		return fmt.Errorf("video_url 只能使用 model_role=reference_video")
+	case "audio_url":
+		if modelRole == "reference_audio" {
+			return nil
+		}
+		return fmt.Errorf("audio_url 只能使用 model_role=reference_audio")
+	default:
+		return fmt.Errorf("content_type 只能是 image_url、video_url 或 audio_url")
+	}
 }
 
 func requireValue(value string, field string, allowed ...string) error {

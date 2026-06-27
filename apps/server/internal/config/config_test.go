@@ -151,6 +151,7 @@ production:
     text_model: "doubao-seed-2-0-mini-260428"
     image_model: "doubao-seedream-5-0-260128"
     video_model: "doubao-seedance-1-0-pro-fast-251015"
+    video_resolution_override: "480p"
     audio_model: ""
 `)
 
@@ -185,6 +186,9 @@ production:
 	}
 	if cfg.Production.Volcengine.VideoModel != "doubao-seedance-1-0-pro-fast-251015" {
 		t.Fatalf("Volcengine.VideoModel = %q", cfg.Production.Volcengine.VideoModel)
+	}
+	if cfg.Production.Volcengine.VideoResolutionOverride != "480p" {
+		t.Fatalf("Volcengine.VideoResolutionOverride = %q", cfg.Production.Volcengine.VideoResolutionOverride)
 	}
 	if cfg.Production.Volcengine.AudioModel != "" {
 		t.Fatalf("Volcengine.AudioModel = %q, want empty", cfg.Production.Volcengine.AudioModel)
@@ -228,6 +232,7 @@ production:
 	t.Setenv("CLIPANVIL_PRODUCTION_DEFAULT_PROVIDER", "volcengine")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY", "local-key")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TEXT_MODEL", "doubao-cheap")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_VIDEO_RESOLUTION_OVERRIDE", "480p")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_REGION", "cn-beijing")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_MODEL", "")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_ACCESS_KEY_ID", "tos-ak")
@@ -257,6 +262,9 @@ production:
 	}
 	if cfg.Production.Volcengine.TextModel != "doubao-cheap" {
 		t.Fatalf("Volcengine.TextModel = %q, want doubao-cheap", cfg.Production.Volcengine.TextModel)
+	}
+	if cfg.Production.Volcengine.VideoResolutionOverride != "480p" {
+		t.Fatalf("Volcengine.VideoResolutionOverride = %q, want 480p", cfg.Production.Volcengine.VideoResolutionOverride)
 	}
 	if cfg.Production.Volcengine.Region != "cn-beijing" {
 		t.Fatalf("Volcengine.Region = %q, want cn-beijing", cfg.Production.Volcengine.Region)

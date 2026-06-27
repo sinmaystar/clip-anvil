@@ -19,10 +19,10 @@ export type AgentWorkbenchMediaDimensionsByKey = Record<
 const mediaLimits = {
   minW: 180,
   minH: 160,
-  defaultW: 480,
-  defaultH: 270,
-  maxW: 480,
-  maxH: 380,
+  defaultW: 288,
+  defaultH: 192,
+  maxW: 288,
+  maxH: 288,
 };
 
 export function agentWorkbenchMediaSize(

@@ -6,6 +6,10 @@ import {
   shotNodeId,
 } from "../../dist-test/lib/agentWorkbenchViewModel.js";
 
+function nodeMinHeight(node) {
+  return Number(node?.style?.minHeight ?? node?.height ?? 0);
+}
+
 const workbench = {
   overview: {
     workspace_id: "workspace-1",
@@ -145,7 +149,130 @@ describe("agent workbench view model", () => {
     assert.ok(shot3);
     assert.equal(shot1.position.y, shot2.position.y);
     assert.ok(shot3.position.y > shot1.position.y);
-    assert.ok(Number(scene.height) > Number(shot1.height) * 2);
+    assert.ok(Number(scene.height) > nodeMinHeight(shot1) * 2);
+  });
+
+  it("lays multiple compact scenes across columns instead of one vertical strip", () => {
+    const multiSceneWorkbench = {
+      ...workbench,
+      scenes: Array.from({ length: 4 }, (_, index) => ({
+        ...workbench.scenes[0],
+        id: `scene-${index + 1}`,
+        title: `场景 ${index + 1}`,
+        shots: [
+          {
+            ...workbench.scenes[0].shots[0],
+            id: `shot-${index + 1}`,
+            client_key: `shot_0${index + 1}`,
+            sequence_index: index + 1,
+          },
+        ],
+      })),
+    };
+    const flow = agentWorkbenchToFlow(multiSceneWorkbench);
+    const scene1 = flow.nodes.find((node) => node.id === sceneNodeId("scene-1"));
+    const scene2 = flow.nodes.find((node) => node.id === sceneNodeId("scene-2"));
+    const scene3 = flow.nodes.find((node) => node.id === sceneNodeId("scene-3"));
+
+    assert.ok(scene1);
+    assert.ok(scene2);
+    assert.ok(scene3);
+    assert.ok(scene2.position.x > scene1.position.x);
+    assert.equal(scene2.position.y, scene1.position.y);
+    assert.equal(scene3.position.x, scene1.position.x);
+    assert.ok(scene3.position.y > scene1.position.y);
+  });
+
+  it("packs preview and video media side by side when a shot can fit them", () => {
+    const denseMediaWorkbench = {
+      ...workbench,
+      scenes: [
+        {
+          ...workbench.scenes[0],
+          shots: [
+            {
+              ...workbench.scenes[0].shots[0],
+              id: "shot-dense",
+              client_key: "shot_dense",
+              sequence_index: 1,
+              artifacts: [
+                {
+                  kind: "preview_image",
+                  status: "succeeded",
+                  node_id: "preview-dense",
+                  width: 2048,
+                  height: 2048,
+                },
+                {
+                  kind: "shot_video",
+                  status: "succeeded",
+                  node_id: "video-dense",
+                  width: 496,
+                  height: 864,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const flow = agentWorkbenchToFlow(denseMediaWorkbench);
+    const shot = flow.nodes.find((node) => node.id === shotNodeId("shot-dense"));
+
+    assert.ok(shot);
+    assert.ok(
+      nodeMinHeight(shot) <= 620,
+      `shot minHeight ${nodeMinHeight(shot)} should stay dense`,
+    );
+  });
+
+  it("uses measured shot heights to relayout masonry after rendered content expands", () => {
+    const measuredWorkbench = {
+      ...workbench,
+      scenes: [
+        {
+          ...workbench.scenes[0],
+          shots: [
+            {
+              ...workbench.scenes[0].shots[0],
+              id: "shot-measured-1",
+              client_key: "shot_01",
+              sequence_index: 1,
+            },
+            {
+              ...workbench.scenes[0].shots[0],
+              id: "shot-measured-2",
+              client_key: "shot_02",
+              sequence_index: 2,
+            },
+            {
+              ...workbench.scenes[0].shots[0],
+              id: "shot-measured-3",
+              client_key: "shot_03",
+              sequence_index: 3,
+            },
+          ],
+        },
+      ],
+    };
+    const flow = agentWorkbenchToFlow(
+      measuredWorkbench,
+      {},
+      { "shot-measured-1": 860 },
+    );
+    const scene = flow.nodes.find((node) => node.id === sceneNodeId("scene-1"));
+    const shot1 = flow.nodes.find((node) => node.id === shotNodeId("shot-measured-1"));
+    const shot2 = flow.nodes.find((node) => node.id === shotNodeId("shot-measured-2"));
+    const shot3 = flow.nodes.find((node) => node.id === shotNodeId("shot-measured-3"));
+
+    assert.ok(scene);
+    assert.ok(shot1);
+    assert.ok(shot2);
+    assert.ok(shot3);
+    assert.equal(shot1.height, 860);
+    assert.ok(shot3.position.x > shot1.position.x);
+    assert.equal(shot3.position.y, shot2.position.y + nodeMinHeight(shot2) + 32);
+    assert.ok(Number(scene.height) > 860);
   });
 
   it("uses masonry layout so tall video shots do not stretch neighboring shots", () => {
@@ -220,13 +347,13 @@ describe("agent workbench view model", () => {
     assert.ok(shot1);
     assert.ok(shot2);
     assert.ok(shot3);
-    assert.ok(Number(shot2.height) > Number(shot1.height));
-    assert.notEqual(shot1.height, shot2.height);
+    assert.ok(nodeMinHeight(shot2) > nodeMinHeight(shot1));
+    assert.notEqual(nodeMinHeight(shot1), nodeMinHeight(shot2));
     assert.equal(shot1.position.y, shot2.position.y);
     assert.equal(shot3.position.x, shot1.position.x);
     assert.equal(
       shot3.position.y,
-      shot1.position.y + Number(shot1.height) + 32,
+      shot1.position.y + nodeMinHeight(shot1) + 32,
     );
   });
 });

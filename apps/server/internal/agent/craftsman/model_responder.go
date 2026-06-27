@@ -11,7 +11,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	agentprompt "github.com/sinmaystar/clip-anvil/internal/agent/prompt"
-	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
 )
 
 type arkChatModel interface {
@@ -109,11 +108,6 @@ func craftsmanToolPromptMessages(craftsmanContext Context) []*schema.Message {
 			Content: SystemPrompt(),
 		},
 	}
-	for _, reminder := range craftsmanContext.PendingReminders {
-		if text := toolloop.NormalizeSystemReminder(reminder); text != "" {
-			messages = append(messages, schema.SystemMessage(text))
-		}
-	}
 	messages = append(messages, agentprompt.HistoryMessages(craftsmanContext.Messages)...)
 	messages = append(messages,
 		&schema.Message{
@@ -145,7 +139,7 @@ func craftsmanToolPromptMessages(craftsmanContext Context) []*schema.Message {
 			})
 		}
 	}
-	return messages
+	return agentprompt.AppendPendingReminders(messages, craftsmanContext.PendingReminders)
 }
 
 func durationPtr(value time.Duration) *time.Duration {
