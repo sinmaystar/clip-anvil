@@ -21,6 +21,7 @@
     "src/lib/agentStreaming.ts",
     "src/lib/agentThinking.ts",
     "src/lib/agentWorkbench.ts",
+    "src/lib/agentWorkbenchMediaLayout.ts",
     "src/lib/agentWorkbenchSelection.ts",
     "src/lib/agentWorkbenchViewModel.ts",
     "src/lib/apiErrors.ts",

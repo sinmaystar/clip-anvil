@@ -378,10 +378,17 @@ func nativeReviewerToolRuntimeMiddleware(stateStore *reviewerLoopToolStateStore)
 					if state, ok := stateStore.stateByKey(stateKey); ok {
 						stateStore.rememberCallWithKey(input.CallID, stateKey, state)
 						ctx = agenttools.WithNativeRuntimeContext(ctx, agenttools.NativeRuntimeContext{
-							WorkspaceID: state.Context.Input.WorkspaceID,
-							ThreadID:    state.Context.Input.ThreadID,
-							TaskID:      state.Context.Input.TaskID,
-							ToolCallID:  input.CallID,
+							WorkspaceID:                state.Context.Input.WorkspaceID,
+							ThreadID:                   state.Context.Input.ThreadID,
+							TaskID:                     state.Context.Input.TaskID,
+							ToolCallID:                 input.CallID,
+							ReviewTask:                 state.Context.Input.Task.ReviewTask,
+							ReviewShotID:               state.Context.Input.Task.Target.ShotID,
+							ReviewNodeID:               state.Context.Input.Task.Target.NodeID,
+							ReviewVersionID:            state.Context.Input.Task.Target.ArtifactVersionID,
+							ReviewJobID:                state.Context.Input.Task.Target.GenerationJobID,
+							ReviewRenderPlanID:         state.Context.Input.Task.Target.RenderPlanID,
+							ReviewParentReviewRecordID: state.Context.Input.Task.Target.ParentReviewRecordID,
 						})
 					}
 				}

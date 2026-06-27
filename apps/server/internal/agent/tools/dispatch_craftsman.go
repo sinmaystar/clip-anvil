@@ -23,6 +23,7 @@ type CraftsmanDispatcherStore interface {
 	GetShotByID(ctx context.Context, id pgtype.UUID) (db.Shot, error)
 	GetShotByClientKey(ctx context.Context, params db.GetShotByClientKeyParams) (db.Shot, error)
 	GetKeyElementStateByID(ctx context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error)
+	ListActiveKeyElementStatesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.KeyElementState, error)
 	SetShotCraftsmanThread(ctx context.Context, params db.SetShotCraftsmanThreadParams) (db.Shot, error)
 	UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error)
 }
@@ -68,14 +69,14 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 					},
 					"id": map[string]any{
 						"type":        "string",
-						"description": "scope 对象 UUID。key_element_state 必填；shot 可为空并使用 shot_refs 批量派发。",
+						"description": "scope 对象引用。key_element_state 必须填写 UUID 或 state_client_key；shot 可为空并使用 shot_refs 批量派发。",
 					},
 				},
 			},
 			"shot_refs": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
-				"description": "scope.type=shot 时的 Shot UUID 或稳定 client_key。为空表示所有可派发 active shots。",
+				"description": "scope.type=shot 时的 Shot UUID 或稳定 client_key。为空表示所有可派发 active shots。scope.type=key_element_state 时不要填写 shot_refs。",
 			},
 			"target_phase": map[string]any{
 				"type":        "string",
@@ -332,6 +333,7 @@ type parsedDispatchCraftsmanArgs struct {
 	Brief            string
 	ScopeType        string
 	ScopeID          pgtype.UUID
+	ScopeRef         string
 	TargetPhase      string
 	ExecutionPolicy  string
 	ParentToolCallID string
@@ -379,11 +381,15 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 			scopeID = id
 		}
 	}
+	scopeRef := ""
+	if scopeRaw, ok := raw["scope"].(map[string]any); ok {
+		scopeRef = strings.TrimSpace(stringValue(scopeRaw, "id"))
+	}
 	if scopeType != "shot" && scopeType != "key_element_state" {
 		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("unsupported dispatch_craftsman scope.type %q", scopeType)
 	}
 	if scopeType == "key_element_state" {
-		if !scopeID.Valid {
+		if !scopeID.Valid && scopeRef == "" {
 			return parsedDispatchCraftsmanArgs{}, fmt.Errorf("scope.id is required for key_element_state")
 		}
 		if targetPhase != "reference_image" {
@@ -398,6 +404,7 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 		Brief:            stringValue(raw, "brief"),
 		ScopeType:        scopeType,
 		ScopeID:          scopeID,
+		ScopeRef:         scopeRef,
 		TargetPhase:      targetPhase,
 		ExecutionPolicy:  executionPolicy,
 		ParentToolCallID: stringValue(raw, "parent_tool_call_id"),
@@ -419,7 +426,7 @@ type craftsmanDispatchScope struct {
 
 func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) ([]craftsmanDispatchScope, error) {
 	if args.ScopeType == "key_element_state" {
-		state, err := t.store.GetKeyElementStateByID(ctx, db.GetKeyElementStateByIDParams{ID: args.ScopeID, WorkspaceID: workspaceID})
+		state, err := t.resolveKeyElementStateRef(ctx, workspaceID, args)
 		if err != nil {
 			return nil, err
 		}
@@ -440,6 +447,34 @@ func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pg
 		out = append(out, craftsmanDispatchScope{ScopeType: "shot", ScopeID: shot.ID, ClientKey: shot.ClientKey})
 	}
 	return out, nil
+}
+
+func (t DispatchCraftsmanTool) resolveKeyElementStateRef(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) (db.KeyElementState, error) {
+	if args.ScopeID.Valid {
+		return t.store.GetKeyElementStateByID(ctx, db.GetKeyElementStateByIDParams{ID: args.ScopeID, WorkspaceID: workspaceID})
+	}
+	if strings.TrimSpace(args.ScopeRef) == "" {
+		return db.KeyElementState{}, fmt.Errorf("key_element_state scope.id 必须填写 UUID 或 state_client_key")
+	}
+	states, err := t.store.ListActiveKeyElementStatesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return db.KeyElementState{}, err
+	}
+	var matched *db.KeyElementState
+	for _, state := range states {
+		if state.ClientKey != args.ScopeRef {
+			continue
+		}
+		current := state
+		if matched != nil {
+			return db.KeyElementState{}, fmt.Errorf("state_client_key=%s 不唯一，请改用 key_element_state UUID", args.ScopeRef)
+		}
+		matched = &current
+	}
+	if matched == nil {
+		return db.KeyElementState{}, fmt.Errorf("找不到 key_element_state client_key=%s，请先读取项目上下文确认真实 state_client_key", args.ScopeRef)
+	}
+	return *matched, nil
 }
 
 func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) ([]db.Shot, error) {

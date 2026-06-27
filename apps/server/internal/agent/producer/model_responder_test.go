@@ -167,9 +167,12 @@ func TestVolcengineModelResponderReturnsNativeToolCalls(t *testing.T) {
 			},
 		},
 	}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
 		APIKey: "test-key",
 		Model:  "doubao-test",
+		Logger: logger,
 		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatStreamer, error) {
 			return streamer, nil
 		},
@@ -190,6 +193,12 @@ func TestVolcengineModelResponderReturnsNativeToolCalls(t *testing.T) {
 	}
 	if out.Metadata["native_tool_call_count"] != 1 {
 		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+	if strings.Contains(logs.String(), "producer model response empty content") {
+		t.Fatalf("tool-call-only response should not be logged as empty content: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "producer model response completed") {
+		t.Fatalf("logs = %s", logs.String())
 	}
 }
 
@@ -459,17 +468,48 @@ func TestProducerPromptMessagesKeepsSystemPromptStable(t *testing.T) {
 	}
 }
 
-func TestProducerPromptMessagesInjectsPendingSystemReminders(t *testing.T) {
+func TestProducerPromptMessagesAppendsPendingRemindersToUserMessage(t *testing.T) {
 	messages := producerPromptMessages(ProducerContext{
 		LatestUserText:   "继续",
 		PendingReminders: []string{"<system-reminder>你已连续调用 read_project_context 5 次，请反思策略。</system-reminder>"},
 	})
-	if len(messages) < 3 {
-		t.Fatalf("messages len = %d, want at least 3", len(messages))
+	if len(messages) != 2 {
+		t.Fatalf("messages len = %d, want 2", len(messages))
 	}
-	if messages[1].Role != schema.System || !strings.Contains(messages[1].Content, "<system-reminder>") ||
+	if messages[1].Role != schema.User ||
+		!strings.Contains(messages[1].Content, "继续") ||
+		!strings.Contains(messages[1].Content, "运行时提醒") ||
 		!strings.Contains(messages[1].Content, "read_project_context") {
-		t.Fatalf("system reminder message = %#v", messages[1])
+		t.Fatalf("user message with reminder = %#v", messages[1])
+	}
+	for _, message := range messages[1:] {
+		if message.Role == schema.System {
+			t.Fatalf("pending reminder must not create extra system message: %#v", messages)
+		}
+	}
+}
+
+func TestProducerPromptMessagesAppendsPendingRemindersToLatestToolResult(t *testing.T) {
+	messages := producerPromptMessages(ProducerContext{
+		SameTurnMessages: []ProducerSameTurnMessage{
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				Content:     "已读取项目上下文",
+				ToolCallID:  "call-read",
+				ToolName:    "read_project_context",
+			},
+		},
+		PendingReminders: []string{"<system-reminder>你有 2 个待处理 Producer signal。</system-reminder>"},
+	})
+	if len(messages) != 2 {
+		t.Fatalf("messages len = %d, want 2", len(messages))
+	}
+	if messages[1].Role != schema.Tool ||
+		!strings.Contains(messages[1].Content, "已读取项目上下文") ||
+		!strings.Contains(messages[1].Content, "运行时提醒") ||
+		!strings.Contains(messages[1].Content, "待处理 Producer signal") {
+		t.Fatalf("tool result with reminder = %#v", messages[1])
 	}
 }
 
@@ -504,6 +544,35 @@ func TestProducerPromptMessagesIncludesRuntimeTrigger(t *testing.T) {
 		!strings.Contains(messages[2].Content, "系统事件：Craftsman 已完成 RenderPlan 编译") ||
 		!strings.Contains(messages[2].Content, "decide") {
 		t.Fatalf("runtime trigger user message = %#v", messages[2])
+	}
+}
+
+func TestProducerPromptMessagesKeepsRuntimeTriggerAfterSystemReminderBeforeToolLoop(t *testing.T) {
+	trigger := "<system-reminder>系统事件：Craftsman 已完成 RenderPlan 编译，请处理 pending signal。</system-reminder>"
+	messages := producerPromptMessages(ProducerContext{
+		Messages: []db.AgentMessage{
+			{
+				Role:        "assistant",
+				MessageType: "text",
+				Content:     mustAssistantContent(t, uimessage.AssistantMessageInput{Text: "我已派发 Craftsman。"}),
+			},
+		},
+		PendingReminders: []string{"<system-reminder>你有 2 个待处理 Producer signal。</system-reminder>"},
+		SameTurnMessages: []ProducerSameTurnMessage{
+			{
+				Role:        "system",
+				MessageType: "system_reminder",
+				Content:     "<system-reminder>你有 2 个待处理 Producer signal。</system-reminder>",
+			},
+		},
+		RuntimeTriggerText: trigger,
+	})
+
+	last := messages[len(messages)-1]
+	if last.Role != schema.User ||
+		!strings.Contains(last.Content, "系统事件：Craftsman 已完成 RenderPlan 编译") ||
+		!strings.Contains(last.Content, "decide_render_plan") {
+		t.Fatalf("last runtime trigger message = %#v", last)
 	}
 }
 
@@ -563,6 +632,38 @@ func TestProducerPromptMessagesIncludesSameTurnToolReasoningPassback(t *testing.
 	tool := messages[3]
 	if tool.Role != schema.Tool || tool.ToolCallID != "call-1" || tool.ToolName != "read_workspace_context" {
 		t.Fatalf("tool result = %#v", tool)
+	}
+}
+
+func TestProducerPromptMessagesUsesRuntimeTriggerOnlyBeforeToolLoop(t *testing.T) {
+	userContent := mustUserContent(t, uimessage.UserMessageInput{Text: "继续"})
+	messages := producerPromptMessages(ProducerContext{
+		RuntimeTriggerText: "<system-reminder>shot_05 ready</system-reminder>",
+		Messages: []db.AgentMessage{
+			{Role: "user", MessageType: "text", Content: userContent},
+		},
+		SameTurnMessages: []ProducerSameTurnMessage{
+			{
+				Role:          "assistant",
+				MessageType:   "tool_call",
+				ToolCallID:    "call-read",
+				ToolName:      "read_project_context",
+				ToolArguments: map[string]any{"scope": map[string]any{"type": "workspace", "id": ""}},
+			},
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				ToolCallID:  "call-read",
+				ToolName:    "read_project_context",
+				Content:     "还有 4 个 waiting_for_approval RenderPlan",
+			},
+		},
+	})
+
+	for _, message := range messages {
+		if message.Role == schema.User && strings.Contains(message.Content, "shot_05 ready") {
+			t.Fatalf("runtime trigger leaked after tool loop started: %#v", message)
+		}
 	}
 }
 

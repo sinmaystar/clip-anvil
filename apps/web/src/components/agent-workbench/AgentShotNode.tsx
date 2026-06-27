@@ -1,8 +1,15 @@
 import type { Node, NodeProps } from "@xyflow/react";
+import type { CSSProperties } from "react";
 import type {
   AgentWorkbenchArtifactSlot,
   AgentWorkbenchShot,
 } from "../../lib/agentWorkbench";
+import {
+  agentWorkbenchMediaKey,
+  agentWorkbenchMediaSize,
+  type AgentWorkbenchMediaDimensions,
+  type AgentWorkbenchMediaDimensionsByKey,
+} from "../../lib/agentWorkbenchMediaLayout";
 import type { AgentWorkbenchShotNodeData } from "../../lib/agentWorkbenchViewModel";
 import { useAgentWorkbenchSelection } from "./AgentWorkbenchSelectionContext";
 
@@ -29,7 +36,12 @@ export function AgentShotNode({ data, selected }: NodeProps<ShotNode>) {
         <em>{shot.status}</em>
       </header>
       <p>{shot.creative_text || "等待 Producer 补充分镜描述。"}</p>
-      <MediaCard mediaSlots={mediaSlots} shot={shot} />
+      <MediaCard
+        mediaDimensions={data.mediaDimensions ?? {}}
+        mediaSlots={mediaSlots}
+        onMediaDimensionsChange={data.onMediaDimensionsChange}
+        shot={shot}
+      />
       <StatusRow
         previewCount={previewSlots.length}
         previewSlot={previewSlots[0]}
@@ -73,10 +85,17 @@ function visibleMediaSlots(
 }
 
 function MediaCard({
+  mediaDimensions,
   mediaSlots,
+  onMediaDimensionsChange,
   shot,
 }: {
+  mediaDimensions: AgentWorkbenchMediaDimensionsByKey;
   mediaSlots: AgentWorkbenchArtifactSlot[];
+  onMediaDimensionsChange?: (
+    key: string,
+    dimensions: AgentWorkbenchMediaDimensions,
+  ) => void;
   shot: AgentWorkbenchShot;
 }) {
   return (
@@ -88,12 +107,13 @@ function MediaCard({
       <div
         className="agent-workbench-shot-media-stack"
         data-count={mediaSlots.length}
-        data-layout={mediaSlots.length > 2 ? "grid" : "stack"}
       >
         {mediaSlots.length > 0 ? (
           mediaSlots.map((slot, index) => (
             <MediaButton
               key={slot.node_id || `${slot.kind}-${index}`}
+              mediaDimensions={mediaDimensions}
+              onMediaDimensionsChange={onMediaDimensionsChange}
               shot={shot}
               slot={slot}
               slots={mediaSlots}
@@ -121,17 +141,26 @@ function MediaCard({
 }
 
 function MediaButton({
+  mediaDimensions,
+  onMediaDimensionsChange,
   shot,
   slot,
   slots,
   title,
 }: {
+  mediaDimensions: AgentWorkbenchMediaDimensionsByKey;
+  onMediaDimensionsChange?: (
+    key: string,
+    dimensions: AgentWorkbenchMediaDimensions,
+  ) => void;
   shot: AgentWorkbenchShot;
   slot: AgentWorkbenchArtifactSlot;
   slots: AgentWorkbenchArtifactSlot[];
   title: string;
 }) {
   const selection = useAgentWorkbenchSelection();
+  const mediaKey = agentWorkbenchMediaKey(slot);
+  const measuredDimensions = mediaDimensions[mediaKey];
   return (
     <button
       className="agent-workbench-shot-media-button"
@@ -148,11 +177,20 @@ function MediaButton({
           objectId: slot.node_id,
           label: slot.title || title,
           });
-        }}
+      }}
+      style={mediaSlotStyle(slot, measuredDimensions)}
       title={slot.title || title}
       type="button"
     >
-      <MediaPreview slot={slot} title={shot.title || title} />
+      <MediaPreview
+        onMediaDimensionsChange={
+          onMediaDimensionsChange && mediaKey
+            ? (dimensions) => onMediaDimensionsChange(mediaKey, dimensions)
+            : undefined
+        }
+        slot={slot}
+        title={shot.title || title}
+      />
       <span className="agent-workbench-shot-media-badge">
         <strong>{artifactSlotTitle(slot, slots.indexOf(slot), slots)}</strong>
         <em>{slot.status}</em>
@@ -161,10 +199,24 @@ function MediaButton({
   );
 }
 
+function mediaSlotStyle(
+  slot: AgentWorkbenchArtifactSlot,
+  measuredDimensions?: AgentWorkbenchMediaDimensions,
+): CSSProperties {
+  const size = agentWorkbenchMediaSize(slot, measuredDimensions);
+  return {
+    aspectRatio: size.aspectRatio,
+    height: size.height,
+    width: size.width,
+  };
+}
+
 function MediaPreview({
+  onMediaDimensionsChange,
   slot,
   title,
 }: {
+  onMediaDimensionsChange?: (dimensions: AgentWorkbenchMediaDimensions) => void;
   slot: AgentWorkbenchArtifactSlot | undefined;
   title: string;
 }) {
@@ -186,7 +238,23 @@ function MediaPreview({
     );
   }
   if (image) {
-    return <img alt={slot.title || title} draggable={false} src={image} />;
+    return (
+      <img
+        alt={slot.title || title}
+        draggable={false}
+        onLoad={(event) => {
+          const { naturalHeight, naturalWidth } = event.currentTarget;
+          if (naturalWidth <= 0 || naturalHeight <= 0) {
+            return;
+          }
+          onMediaDimensionsChange?.({
+            width: naturalWidth,
+            height: naturalHeight,
+          });
+        }}
+        src={image}
+      />
+    );
   }
   return (
     <div className="agent-workbench-slot-empty">

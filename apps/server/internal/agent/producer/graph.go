@@ -192,6 +192,9 @@ func applyProducerBeforeModel(ctx context.Context, signalRuntime ProducerSignalR
 	reminderState := toolloop.BeforeModel(producerLoopMessages(state.Context), state.ToolIterations, state.ReminderCooldowns, toolloop.DefaultConfig())
 	state.ReminderCooldowns = reminderState.Cooldowns
 	state.Context.PendingReminders = reminderState.PendingReminders
+	if state.ToolIterations > 0 {
+		return state, nil
+	}
 	signalReminders, newlyClaimed, err := producerSignalReminders(ctx, signalRuntime, state.Context.Input)
 	if err != nil {
 		return ProducerLoopState{}, err
@@ -203,19 +206,8 @@ func applyProducerBeforeModel(ctx context.Context, signalRuntime ProducerSignalR
 	return state, nil
 }
 
-func applyProducerSignalCheck(ctx context.Context, signalRuntime ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
-	previousSignalKey := state.SignalReminderKey
-	signalReminders, newlyClaimed, err := producerSignalReminders(ctx, signalRuntime, state.Context.Input)
-	if err != nil {
-		return ProducerLoopState{}, err
-	}
-	state.SignalReminderCount = newlyClaimed
-	state.SignalReminderKey = signalReminderKey(signalReminders)
+func applyProducerSignalCheck(_ context.Context, _ ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
 	state.NewlyClaimedSignals = 0
-	if newlyClaimed > 0 && state.SignalReminderKey != previousSignalKey {
-		state.NewlyClaimedSignals = newlyClaimed
-		state.Context.PendingReminders = signalReminders
-	}
 	return state, nil
 }
 
@@ -252,16 +244,23 @@ func formatProducerSignalReminder(signals []db.ProducerPendingSignal) string {
 		"<system-reminder>",
 		fmt.Sprintf("你有 %d 个待处理 Producer signal。", len(signals)),
 		"这些 signal 是工程事件队列，不是普通用户需求；请读取项目上下文，然后按业务优先级处理。",
-		"处理 craftsman_render_plan_ready 时，应针对每条 signal 指定的 render_plan_id 调用 decide_render_plan accept/reject，或先派 Reviewer；不要只处理列表中的第一条。",
+		"处理 craftsman_render_plan_ready 时，应针对每条 signal 指定的 render_plan_id 调用 decide_render_plan；如果有多条 RenderPlan，请使用 decisions 批量参数一次提交每条的 accept/reject，或先派 Reviewer；不要只处理列表中的第一条。",
+		"处理 worker_generation_completed 时，应读取项目上下文确认 RenderPlan、generation_job、artifact_version 和画布产物状态；这是信息型完成通知，通常不需要 accept/reject。",
+		"处理 review_completed 时，应读取项目上下文确认 review_record、artifact_issue 和 retry_recommendation；这是 Reviewer 结果通知，Producer 需要决定接受、修复、重生成或请求用户确认。",
 	}
 	for i, signal := range signals {
-		lines = append(lines, fmt.Sprintf("%d. %s: scope=%s/%s render_plan_id=%s target_phase=%s source_task=%s",
+		lines = append(lines, fmt.Sprintf("%d. %s: scope=%s/%s render_plan_id=%s target_phase=%s status=%s review_record_id=%s verdict=%s generation_job_id=%s artifact_version_id=%s source_task=%s",
 			i+1,
 			strings.TrimSpace(signal.SignalType),
 			strings.TrimSpace(signal.ScopeType),
 			uuidString(signal.ScopeID),
 			uuidString(signal.RenderPlanID),
 			signalPayloadString(signal.Payload, "target_phase"),
+			signalPayloadString(signal.Payload, "render_plan_status"),
+			signalPayloadString(signal.Payload, "review_record_id"),
+			signalPayloadString(signal.Payload, "verdict"),
+			signalPayloadString(signal.Payload, "generation_job_id"),
+			signalPayloadString(signal.Payload, "artifact_version_id"),
 			uuidString(signal.SourceTaskID),
 		))
 	}

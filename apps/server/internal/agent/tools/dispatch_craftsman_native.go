@@ -14,7 +14,7 @@ type DispatchCraftsmanNativeTool struct {
 
 type DispatchCraftsmanToolInput struct {
 	Brief           string                 `json:"brief" jsonschema:"required" jsonschema_description:"一句话描述调用该工具的意图，例如生成机场晨光统一参考图或直接生成所有分镜预览图。不要超过 160 个中文字符。"`
-	Scope           DispatchCraftsmanScope `json:"scope" jsonschema:"required" jsonschema_description:"生产归属范围。shot 表示分镜图或分镜视频；key_element_state 表示共享参考图。scope.type=shot 且 id 为空时，可配合 shot_refs 批量派发。"`
+	Scope           DispatchCraftsmanScope `json:"scope" jsonschema:"required" jsonschema_description:"生产归属范围。shot 表示分镜图或分镜视频；key_element_state 表示共享参考图。scope.type=shot 且 id 为空时，可配合 shot_refs 批量派发；scope.type=key_element_state 时 id 填 key_element_state UUID 或 state_client_key。"`
 	ShotRefs        []string               `json:"shot_refs" jsonschema_description:"scope.type=shot 时可填写的分镜 UUID 或稳定 client_key。为空表示派发所有可生成的 active shots。scope.type=key_element_state 时必须留空。"`
 	TargetPhase     string                 `json:"target_phase" jsonschema:"required,enum=reference_image,enum=preview_image,enum=shot_video" jsonschema_description:"生成阶段。reference_image 生成 KeyElementState 统一参考图；preview_image 生成分镜预览图；shot_video 基于已确认预览图生成分镜视频。"`
 	Mode            string                 `json:"mode" jsonschema:"enum=preview_image,enum=shot_video" jsonschema_description:"兼容旧参数；新调用请使用 target_phase。"`
@@ -28,7 +28,7 @@ type DispatchCraftsmanToolInput struct {
 
 type DispatchCraftsmanScope struct {
 	Type string `json:"type" jsonschema:"required,enum=shot,enum=key_element_state" jsonschema_description:"scope 类型。shot 用于分镜预览图或分镜视频；key_element_state 用于共享参考图。"`
-	ID   string `json:"id" jsonschema_description:"scope 对象 UUID。scope.type=key_element_state 必填；scope.type=shot 可为空并使用 shot_refs 批量派发。"`
+	ID   string `json:"id" jsonschema_description:"scope 对象引用。scope.type=key_element_state 时填写 key_element_state UUID 或 state_client_key；scope.type=shot 时可填写 shot UUID，也可留空并使用 shot_refs 批量派发。"`
 }
 
 func NewDispatchCraftsmanNativeTool(store CraftsmanDispatcherStore, runtime CraftsmanRuntime, enqueuer CraftsmanTaskEnqueuer) DispatchCraftsmanNativeTool {
@@ -95,7 +95,7 @@ func validateDispatchCraftsmanInput(input DispatchCraftsmanToolInput) error {
 		return err
 	}
 	if input.Scope.Type == "key_element_state" && input.Scope.ID == "" {
-		return fmt.Errorf("scope.id 必填")
+		return fmt.Errorf("scope.id 必填；key_element_state 参考图任务请填写 key_element_state UUID 或 state_client_key")
 	}
 	if input.Scope.Type == "key_element_state" && targetPhase != "reference_image" {
 		return fmt.Errorf("key_element_state 只能派发 reference_image")

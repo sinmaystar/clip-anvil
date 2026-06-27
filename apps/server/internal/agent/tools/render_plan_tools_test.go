@@ -28,16 +28,30 @@ func TestRenderPlanToolInfosUseTypedSchemasAndChineseDescriptions(t *testing.T) 
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(schema)
-	for _, want := range []string{"model_prompt_profile", "reference_bindings", "prompt_parts"} {
+	for _, want := range []string{"generation_text", "model_prompt_profile", "reference_bindings", "prompt_parts"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("schema missing %s: %s", want, string(raw))
+		}
+	}
+	for _, want := range []string{"主体", "场景", "光线", "镜头", "动作", "风格", "音频", "避免"} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("generation_text description missing %q: %s", want, string(raw))
 		}
 	}
 }
 
 func TestUpsertRenderPlanToolReturnsNaturalValidationError(t *testing.T) {
 	tool := NewUpsertRenderPlanNativeTool(nil)
-	got, err := tool.InvokableRun(context.Background(), `{"mode":"create"}`)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		ScopeType:   "shot",
+		ScopeID:     uuidWithByte(4),
+		TargetPhase: "preview_image",
+		ToolCallID:  "call_render_plan",
+	})
+	got, err := tool.InvokableRun(ctx, `{"mode":"create"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +75,7 @@ func TestUpsertRenderPlanToolAcceptsMinimalPlanArguments(t *testing.T) {
 	got, err := tool.InvokableRun(ctx, `{
 		"brief":"为 shot_01 创建预览图 RenderPlan。",
 		"mode":"create",
-		"scope":{"type":"shot","id":"04000000-0000-0000-0000-000000000000"},
-		"target_phase":"preview_image",
-		"task_type":"generate",
-		"model_prompt_profile":"seedream_5_image",
-		"operation":"image_to_image"
+		"generation_text":"生成一张 9:16 分镜预览图：银灰色硬壳竖条纹行李箱位于现代机场出发大厅中央，柔和晨光从落地窗照入，镜头平视略低机位，主体清晰完整，商业广告质感，避免改变箱体颜色、条纹、护角和万向轮结构。"
 	}`)
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +85,62 @@ func TestUpsertRenderPlanToolAcceptsMinimalPlanArguments(t *testing.T) {
 	}
 	if strings.Contains(got, "prompt_parts.objective") || strings.Contains(got, "rationale") {
 		t.Fatalf("minimal plan should not fail long-field validation: %s", got)
+	}
+}
+
+func TestUpsertRenderPlanToolRequiresGenerationTextForWritablePlan(t *testing.T) {
+	tool := NewUpsertRenderPlanNativeTool(nil)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		ScopeType:   "shot",
+		ScopeID:     uuidWithByte(4),
+		TargetPhase: "preview_image",
+		ToolCallID:  "call_render_plan",
+	})
+
+	got, err := tool.InvokableRun(ctx, `{
+		"brief":"为 shot_01 创建预览图 RenderPlan。",
+		"mode":"create"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "generation_text 必填") {
+		t.Fatalf("result = %s", got)
+	}
+}
+
+func TestUpsertRenderPlanRuntimeDefaultsInferVideoOperationFromFirstFrame(t *testing.T) {
+	input := UpsertRenderPlanToolInput{
+		Brief:          "为 shot_02 创建视频计划。",
+		Mode:           "create",
+		GenerationText: "生成 5 秒 9:16 分镜视频：银灰色行李箱从首帧画面开始被人物平稳拉动，镜头轻微跟拍，万向轮顺滑滚动，光线干净高级，避免产品变形。",
+		ReferenceBindings: []ReferenceBindingInput{{
+			ClientKey:      "ref_shot_02_preview",
+			SourceType:     "artifact_version",
+			SourceID:       "05000000-0000-0000-0000-000000000000",
+			Role:           "first_frame",
+			SemanticTarget: "shot_02 首帧预览图",
+		}},
+		Params: RenderPlanParamsInput{DurationSec: 5, Ratio: "9:16"},
+	}
+
+	got := applyUpsertRenderPlanRuntimeDefaults(input, NativeRuntimeContext{
+		ScopeType:   "shot",
+		ScopeID:     uuidWithByte(4),
+		TargetPhase: "shot_video",
+	})
+
+	if got.Scope.Type != "shot" || got.Scope.ID != "04000000-0000-0000-0000-000000000000" {
+		t.Fatalf("scope defaults = %#v", got.Scope)
+	}
+	if got.TargetPhase != "shot_video" || got.TaskType != "generate" || got.ModelPromptProfile != "seedance_2_video" || got.Operation != "image_to_video_first_frame" {
+		t.Fatalf("inferred fields = target=%q task=%q profile=%q operation=%q", got.TargetPhase, got.TaskType, got.ModelPromptProfile, got.Operation)
+	}
+	if got.PromptParts.Objective != got.GenerationText || got.PromptParts.Action != got.GenerationText {
+		t.Fatalf("prompt parts should be backed by generation_text: %#v", got.PromptParts)
 	}
 }
 
@@ -93,6 +159,7 @@ func TestUpsertRenderPlanToolRejectsRuntimeTargetPhaseMismatch(t *testing.T) {
 	got, err := tool.InvokableRun(ctx, `{
 		"brief":"错误地创建视频计划。",
 		"mode":"create",
+		"generation_text":"生成一段错误的分镜视频计划，用来验证 target_phase 与当前 Craftsman task 不一致时会被拒绝。",
 		"scope":{"type":"shot","id":"04000000-0000-0000-0000-000000000000"},
 		"target_phase":"shot_video",
 		"task_type":"generate",
@@ -122,6 +189,7 @@ func TestUpsertRenderPlanToolRejectsRuntimeScopeMismatch(t *testing.T) {
 	got, err := tool.InvokableRun(ctx, `{
 		"brief":"错误地写入另一个分镜。",
 		"mode":"create",
+		"generation_text":"生成一张错误 scope 的分镜预览图，用来验证 scope 与当前 Craftsman task 不一致时会被拒绝。",
 		"scope":{"type":"shot","id":"05000000-0000-0000-0000-000000000000"},
 		"target_phase":"preview_image",
 		"task_type":"generate",
@@ -158,6 +226,7 @@ func TestUpsertRenderPlanToolRejectsMissingMediaNodeReferenceBeforeService(t *te
 	got, err := tool.InvokableRun(ctx, `{
 		"brief":"为 shot_01 创建预览图 RenderPlan。",
 		"mode":"create",
+		"generation_text":"生成一张 9:16 分镜预览图：银灰色硬壳竖条纹行李箱位于现代机场出发大厅中央，柔和晨光从落地窗照入，镜头平视略低机位，主体清晰完整，商业广告质感，避免改变箱体颜色、条纹、护角和万向轮结构。",
 		"scope":{"type":"shot","id":"04000000-0000-0000-0000-000000000000"},
 		"target_phase":"preview_image",
 		"task_type":"generate",

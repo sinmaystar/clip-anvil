@@ -161,6 +161,56 @@ func TestDispatchCraftsmanNativeCarriesParentToolCallID(t *testing.T) {
 	}
 }
 
+func TestDispatchCraftsmanNativeLimitsDispatchToShotRefs(t *testing.T) {
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		shots: []db.Shot{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", Title: "开场", Status: "preview_ready"},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot_02", Title: "细节", Status: "preview_ready"},
+			{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), ClientKey: "shot_03", Title: "推行", Status: "preview_ready"},
+			{ID: uuidWithByte(14), WorkspaceID: uuidWithByte(1), ClientKey: "shot_04", Title: "转场", Status: "preview_ready"},
+			{ID: uuidWithByte(15), WorkspaceID: uuidWithByte(1), ClientKey: "shot_05", Title: "收尾", Status: "preview_ready"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanNativeTool(store, runtime, &fakeCraftsmanEnqueuer{})
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		ToolCallID:  "producer-dispatch-call",
+	})
+
+	got, err := tool.InvokableRun(ctx, `{
+		"brief":"只重生成 shot_03 和 shot_04。",
+		"scope":{"type":"shot"},
+		"shot_refs":["shot_03","shot_04"],
+		"target_phase":"preview_image",
+		"execution_policy":"execute_immediately",
+		"force":true
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "已将 2 个分镜的预览图") {
+		t.Fatalf("result = %s", got)
+	}
+	if len(runtime.createdTasks) != 2 {
+		t.Fatalf("created tasks = %d, want 2", len(runtime.createdTasks))
+	}
+	gotKeys := []string{}
+	for _, task := range runtime.createdTasks {
+		var input map[string]any
+		if err := json.Unmarshal(task.Input, &input); err != nil {
+			t.Fatal(err)
+		}
+		gotKeys = append(gotKeys, input["shot_client_key"].(string))
+	}
+	if strings.Join(gotKeys, ",") != "shot_03,shot_04" {
+		t.Fatalf("shot keys = %#v", gotKeys)
+	}
+}
+
 func TestDispatchCraftsmanDispatchesKeyElementStateReferenceTask(t *testing.T) {
 	stateID := uuidWithByte(31)
 	store := &fakeCraftsmanDispatchStore{
@@ -207,6 +257,40 @@ func TestDispatchCraftsmanDispatchesKeyElementStateReferenceTask(t *testing.T) {
 	}
 	if len(store.statusUpdates) != 0 {
 		t.Fatalf("reference dispatch should not touch shot status: %#v", store.statusUpdates)
+	}
+}
+
+func TestDispatchCraftsmanResolvesKeyElementStateByClientKey(t *testing.T) {
+	stateID := uuidWithByte(32)
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		keyElementStates: []db.KeyElementState{
+			{ID: stateID, WorkspaceID: uuidWithByte(1), ClientKey: "state_airport_morning", ReferenceStatus: "needs_reference", Status: "active"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanTool(store, runtime, &fakeCraftsmanEnqueuer{})
+
+	out, err := tool.Execute(context.Background(), ExecuteInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		Arguments: map[string]any{
+			"brief":            "生成机场晨光统一参考图。",
+			"target_phase":     "reference_image",
+			"execution_policy": "execute_immediately",
+			"scope":            map[string]any{"type": "key_element_state", "id": "state_airport_morning"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatched := out.Result["dispatched"].([]map[string]any)
+	if len(dispatched) != 1 || dispatched[0]["scope_id"] != uuidString(stateID) {
+		t.Fatalf("dispatched = %#v", dispatched)
+	}
+	if len(runtime.createdTasks) != 1 || runtime.createdTasks[0].ScopeID != stateID {
+		t.Fatalf("created tasks = %#v", runtime.createdTasks)
 	}
 }
 
@@ -306,6 +390,10 @@ func (f *fakeCraftsmanDispatchStore) GetKeyElementStateByID(_ context.Context, p
 		}
 	}
 	return db.KeyElementState{}, errScopeNotFound
+}
+
+func (f *fakeCraftsmanDispatchStore) ListActiveKeyElementStatesByWorkspace(context.Context, pgtype.UUID) ([]db.KeyElementState, error) {
+	return f.keyElementStates, nil
 }
 
 func (f *fakeCraftsmanDispatchStore) SetShotCraftsmanThread(_ context.Context, params db.SetShotCraftsmanThreadParams) (db.Shot, error) {

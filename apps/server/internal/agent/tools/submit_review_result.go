@@ -75,13 +75,13 @@ type SubmitReviewResultNativeTool struct {
 }
 
 type ReviewTargetInput struct {
-	WorkspaceScope       string `json:"workspace_scope" jsonschema:"enum=shot,enum=render_plan,enum=final_video" jsonschema_description:"目标归属范围。pre_render_plan_review 通常是 render_plan；preview_image_review / shot_video_review 通常是 shot；final_video_review 是 final_video。"`
-	ShotID               string `json:"shot_id" jsonschema_description:"分镜 UUID。preview_image_review 和 shot_video_review 必填。"`
-	RenderPlanID         string `json:"render_plan_id" jsonschema_description:"RenderPlan UUID。pre_render_plan_review 必填；artifact review 中可选，用于关联生成计划。"`
-	NodeID               string `json:"node_id" jsonschema_description:"媒体节点 UUID。artifact review 必填。"`
-	ArtifactVersionID    string `json:"artifact_version_id" jsonschema_description:"被评审的 artifact_version UUID。artifact review 必填。"`
-	GenerationJobID      string `json:"generation_job_id" jsonschema_description:"生成该 artifact 的 generation_job UUID。可选，但填写后 Reviewer 可以看到 compiled prompt 和 provider metadata。"`
-	ParentReviewRecordID string `json:"parent_review_record_id" jsonschema_description:"如果这是修复后的复评，填写上一条 review_record UUID，形成 review 链路。"`
+	WorkspaceScope       string `json:"workspace_scope" jsonschema:"enum=shot,enum=render_plan,enum=final_video" jsonschema_description:"目标归属范围。必须沿用当前 Reviewer 任务 target，不要推断或替换。pre_render_plan_review 通常是 render_plan；preview_image_review / shot_video_review 通常是 shot；final_video_review 是 final_video。"`
+	ShotID               string `json:"shot_id" jsonschema_description:"分镜 UUID。preview_image_review 和 shot_video_review 必填。必须从当前 Reviewer 任务 target 原样复制；不要填写 media_node id。"`
+	RenderPlanID         string `json:"render_plan_id" jsonschema_description:"RenderPlan UUID。pre_render_plan_review 必填；artifact review 中可选。必须从当前 Reviewer 任务 target 原样复制；不要填写 node_id 或 artifact_version_id。"`
+	NodeID               string `json:"node_id" jsonschema_description:"媒体节点 UUID。artifact review 必填。必须从当前 Reviewer 任务 target 原样复制。"`
+	ArtifactVersionID    string `json:"artifact_version_id" jsonschema_description:"被评审 artifact_version UUID。artifact review 必填。必须从当前 Reviewer 任务 target 原样复制；它不是 node_id，也不是 generation_job_id。"`
+	GenerationJobID      string `json:"generation_job_id" jsonschema_description:"生成该 artifact 的 generation_job UUID。可选。必须从当前 Reviewer 任务 target 原样复制；不要自行编造。"`
+	ParentReviewRecordID string `json:"parent_review_record_id" jsonschema_description:"如果当前 Reviewer 任务 target 提供了上一条 review_record UUID，则原样复制；否则留空。不要填写 00000000-0000-0000-0000-000000000000。"`
 }
 
 type SubmitReviewResultInput struct {
@@ -135,11 +135,11 @@ func NewSubmitReviewResultNativeTool(store SubmitReviewResultStore) *SubmitRevie
 }
 
 func (t *SubmitReviewResultNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfoFor[SubmitReviewResultInput](toolSubmitReviewResult, "Reviewer 提交当前评审任务的结构化结果。工具会写入 review_record，并根据 issues 创建 artifact_issue；不会修改 RenderPlan、ShotPlan、ProjectMemory，也不会直接触发重跑。")
+	return toolInfoFor[SubmitReviewResultInput](toolSubmitReviewResult, "Reviewer 提交当前评审任务的结构化结果。target 字段必须使用当前 Reviewer 任务 target 中的 ID，不要把 media_node id 当作 artifact_version_id，不要编造 generation_job_id 或 render_plan_id。工具会写入 review_record，并根据 issues 创建 artifact_issue；不会修改 RenderPlan、ShotPlan、ProjectMemory，也不会直接触发重跑。")
 }
 
 func (t *SubmitReviewResultNativeTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...einotool.Option) (string, error) {
-	input, msg, ok := decodeToolArgs(toolSubmitReviewResult, argumentsInJSON, validateSubmitReviewResultInput)
+	input, msg, ok := decodeToolArgs[SubmitReviewResultInput](toolSubmitReviewResult, argumentsInJSON, nil)
 	if !ok {
 		return msg, nil
 	}
@@ -149,6 +149,10 @@ func (t *SubmitReviewResultNativeTool) InvokableRun(ctx context.Context, argumen
 	runtime, msg, ok := runtimeOrError(ctx, toolSubmitReviewResult)
 	if !ok {
 		return msg, nil
+	}
+	input = applySubmitReviewResultRuntimeTarget(input, runtime)
+	if err := validateSubmitReviewResultInput(input); err != nil {
+		return NaturalToolError(toolSubmitReviewResult, err.Error(), "请修正参数后重试，不要重复提交相同错误参数。"), nil
 	}
 	record, err := t.createAndCompleteReview(ctx, runtime, input)
 	if err != nil {
@@ -172,6 +176,78 @@ func (t *SubmitReviewResultNativeTool) InvokableRun(ctx context.Context, argumen
 		},
 		Next: "Producer 应读取 review_record 和 artifact_issue，决定是否接受、派 Craftsman fork RenderPlan 或请求用户确认。",
 	}.String(), nil
+}
+
+func applySubmitReviewResultRuntimeTarget(input SubmitReviewResultInput, runtime NativeRuntimeContext) SubmitReviewResultInput {
+	if strings.TrimSpace(runtime.ReviewTask) != "" {
+		input.ReviewTask = strings.TrimSpace(runtime.ReviewTask)
+	}
+	if strings.TrimSpace(runtime.ReviewShotID) != "" {
+		input.Target.ShotID = strings.TrimSpace(runtime.ReviewShotID)
+	}
+	if strings.TrimSpace(runtime.ReviewNodeID) != "" {
+		input.Target.NodeID = strings.TrimSpace(runtime.ReviewNodeID)
+	}
+	if strings.TrimSpace(runtime.ReviewVersionID) != "" {
+		input.Target.ArtifactVersionID = strings.TrimSpace(runtime.ReviewVersionID)
+	}
+	if strings.TrimSpace(runtime.ReviewJobID) != "" {
+		input.Target.GenerationJobID = strings.TrimSpace(runtime.ReviewJobID)
+	}
+	if strings.TrimSpace(runtime.ReviewRenderPlanID) != "" {
+		input.Target.RenderPlanID = strings.TrimSpace(runtime.ReviewRenderPlanID)
+	}
+	if strings.TrimSpace(runtime.ReviewParentReviewRecordID) != "" {
+		input.Target.ParentReviewRecordID = strings.TrimSpace(runtime.ReviewParentReviewRecordID)
+	}
+	if isZeroUUIDText(input.Target.ParentReviewRecordID) {
+		input.Target.ParentReviewRecordID = ""
+	}
+	if strings.TrimSpace(input.Target.WorkspaceScope) == "" {
+		input.Target.WorkspaceScope = workspaceScopeForReviewTask(input.ReviewTask)
+	}
+	for index := range input.Issues {
+		switch input.Issues[index].TargetObjectType {
+		case "artifact_version":
+			input.Issues[index].TargetObjectID = input.Target.ArtifactVersionID
+		case "render_plan":
+			if strings.TrimSpace(input.Target.RenderPlanID) != "" {
+				input.Issues[index].TargetObjectID = input.Target.RenderPlanID
+			}
+		case "shot":
+			if strings.TrimSpace(input.Target.ShotID) != "" {
+				input.Issues[index].TargetObjectID = input.Target.ShotID
+			}
+		}
+	}
+	switch input.RetryRecommendation.TargetObjectType {
+	case "artifact_version":
+		input.RetryRecommendation.TargetObjectID = input.Target.ArtifactVersionID
+	case "render_plan":
+		if strings.TrimSpace(input.Target.RenderPlanID) != "" {
+			input.RetryRecommendation.TargetObjectID = input.Target.RenderPlanID
+		}
+	case "shot":
+		if strings.TrimSpace(input.Target.ShotID) != "" {
+			input.RetryRecommendation.TargetObjectID = input.Target.ShotID
+		}
+	}
+	return input
+}
+
+func workspaceScopeForReviewTask(reviewTask string) string {
+	switch reviewTask {
+	case reviewTaskPreRenderPlan:
+		return "render_plan"
+	case reviewTaskFinalVideo:
+		return "final_video"
+	default:
+		return "shot"
+	}
+}
+
+func isZeroUUIDText(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "00000000-0000-0000-0000-000000000000")
 }
 
 func (t *SubmitReviewResultNativeTool) createAndCompleteReview(ctx context.Context, runtime NativeRuntimeContext, input SubmitReviewResultInput) (db.ReviewRecord, error) {

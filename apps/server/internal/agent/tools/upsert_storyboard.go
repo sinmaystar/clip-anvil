@@ -16,12 +16,12 @@ type UpsertStoryboardNativeTool struct {
 
 type UpsertStoryboardToolInput struct {
 	Brief           string                `json:"brief" jsonschema:"required" jsonschema_description:"本次写入 storyboard 的业务目的，例如创建机场广告第一版场景和分镜。不要超过 160 个中文字符。"`
-	Mode            string                `json:"mode" jsonschema:"required,enum=create,enum=patch,enum=replace,enum=archive" jsonschema_description:"create 创建对象；patch 局部更新；replace 替换 scope 下草稿 storyboard；archive 归档对象。"`
+	Mode            string                `json:"mode" jsonschema:"required,enum=create,enum=patch,enum=replace,enum=archive" jsonschema_description:"create 创建对象；patch 局部更新；replace 替换 scope 下草稿 storyboard；archive 归档对象。patch 可重复提交同一引用或依赖，工程会跳过已存在的关系。"`
 	Scope           StoryboardScope       `json:"scope" jsonschema:"required" jsonschema_description:"写入范围。workspace 表示整体 storyboard；scene 表示某个场景；shot 表示某个分镜。"`
 	Scenes          []SceneInput          `json:"scenes" jsonschema_description:"要创建或更新的场景列表。"`
 	Shots           []ShotInput           `json:"shots" jsonschema_description:"要创建或更新的分镜列表。"`
-	ShotKeyElements []ShotKeyElementInput `json:"shot_key_elements" jsonschema_description:"分镜和关键元素状态的引用关系。"`
-	Dependencies    []ShotDependencyInput `json:"dependencies" jsonschema_description:"分镜之间的连续性或生产依赖。"`
+	ShotKeyElements []ShotKeyElementInput `json:"shot_key_elements" jsonschema_description:"分镜和关键元素状态的引用关系。shot_client_key、element_client_key、state_client_key 必须来自 read_project_context 或本次调用已创建的对象，不要编造。重复关系会被跳过。"`
+	Dependencies    []ShotDependencyInput `json:"dependencies" jsonschema_description:"分镜之间的连续性或生产依赖。from/to shot_client_key 必须来自 read_project_context 或本次调用已创建的 shots。重复依赖会被跳过。"`
 	Reason          string                `json:"reason" jsonschema_description:"为什么这样写 storyboard，用于审计和后续解释。"`
 }
 
@@ -87,7 +87,7 @@ func NewUpsertStoryboardNativeTool(service *creative.Service) *UpsertStoryboardN
 }
 
 func (t *UpsertStoryboardNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfoFor[UpsertStoryboardToolInput](toolUpsertStoryboard, "创建、局部更新、替换或归档 ClipAnvil storyboard 事实，包括 Scene、Shot、分镜引用的关键元素状态，以及分镜之间的连续性依赖。这个工具写的是创意级 storyboard，不写模型原生 prompt。")
+	return toolInfoFor[UpsertStoryboardToolInput](toolUpsertStoryboard, "创建、局部更新、替换或归档 ClipAnvil storyboard 事实，包括 Scene、Shot、分镜引用的关键元素状态，以及分镜之间的连续性依赖。这个工具写的是创意级 storyboard，不写模型原生 prompt。引用关系和依赖必须使用真实存在的 client_key；重复提交同一关系是幂等的。")
 }
 
 func (t *UpsertStoryboardNativeTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...einotool.Option) (string, error) {

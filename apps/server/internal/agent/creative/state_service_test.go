@@ -264,27 +264,86 @@ func TestServiceRejectsStudioWorkspace(t *testing.T) {
 	}
 }
 
-func TestServiceRejectsPromptDerivedElementWithoutMissingReferenceState(t *testing.T) {
+func TestServiceAllowsPromptDerivedElementWithoutReferenceWhenStateDoesNotNeedOne(t *testing.T) {
 	workspaceID := testUUID(1)
 	service := NewService(newFakeStore(workspaceID, db.WorkspaceModeAgent))
-	_, err := service.UpsertKeyElements(context.Background(), UpsertKeyElementsInput{
+	out, err := service.UpsertKeyElements(context.Background(), UpsertKeyElementsInput{
 		WorkspaceID: workspaceID,
-		Brief:       "创建缺少参考的机场场景",
+		Brief:       "创建无需统一参考图的人物抽象状态",
 		Mode:        "create",
 		Elements: []KeyElementInput{{
-			ClientKey:   "scene_airport",
-			ElementType: "scene",
-			Name:        "机场",
+			ClientKey:   "character_young_traveler",
+			ElementType: "character",
+			Name:        "年轻出行者",
 			SourceType:  "prompt_derived",
 			States: []KeyElementStateInput{{
-				ClientKey:       "state_default",
-				ReferenceStatus: "none",
-				IsDefault:       true,
+				ClientKey:         "state_general",
+				VisualDescription: "年轻、利落、时尚的都市出行者，不需要固定长相参考。",
+				ReferenceStatus:   "none",
+				IsDefault:         true,
 			}},
 		}},
 	})
-	if !errors.Is(err, ErrInvalidCreativeStateInput) {
-		t.Fatalf("expected invalid input error, got %v", err)
+	if err != nil {
+		t.Fatalf("upsert key elements: %v", err)
+	}
+	if out.ElementsCreated != 1 || out.StatesCreated != 1 {
+		t.Fatalf("unexpected output: %#v", out)
+	}
+}
+
+func TestServiceUpsertStoryboardSkipsDuplicateShotKeyElementsAndDependencies(t *testing.T) {
+	workspaceID := testUUID(1)
+	store := newFakeStore(workspaceID, db.WorkspaceModeAgent)
+	service := NewService(store)
+
+	_, err := service.UpsertKeyElements(context.Background(), UpsertKeyElementsInput{
+		WorkspaceID: workspaceID,
+		Brief:       "创建商品关键元素",
+		Mode:        "create",
+		Elements: []KeyElementInput{{
+			ClientKey:   "product_luggage",
+			ElementType: "product",
+			Name:        "行李箱",
+			SourceType:  "user_asset",
+			States: []KeyElementStateInput{{
+				ClientKey:         "state_uploaded",
+				VisualDescription: "用户上传的银色行李箱",
+				ReferenceStatus:   "ready",
+				IsDefault:         true,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("upsert elements: %v", err)
+	}
+	input := UpsertStoryboardInput{
+		WorkspaceID: workspaceID,
+		Brief:       "创建两个分镜并绑定商品",
+		Mode:        "create",
+		Scope:       StoryboardScope{Type: "workspace"},
+		Shots: []ShotInput{
+			{ClientKey: "shot_01", SortOrder: 1, Title: "开场", CreativeText: "行李箱亮相"},
+			{ClientKey: "shot_02", SortOrder: 2, Title: "细节", CreativeText: "行李箱细节"},
+		},
+		ShotKeyElements: []ShotKeyElementInput{
+			{ShotClientKey: "shot_01", ElementClientKey: "product_luggage", StateClientKey: "state_uploaded", Role: "hero_product", Required: true},
+		},
+		Dependencies: []ShotDependencyInput{
+			{FromShotClientKey: "shot_01", ToShotClientKey: "shot_02", DependencyType: "same_product_consistency", Reason: "保持同一个商品"},
+		},
+	}
+	if _, err := service.UpsertStoryboard(context.Background(), input); err != nil {
+		t.Fatalf("first upsert storyboard: %v", err)
+	}
+	if _, err := service.UpsertStoryboard(context.Background(), input); err != nil {
+		t.Fatalf("second upsert storyboard should be idempotent: %v", err)
+	}
+	if len(store.links) != 1 {
+		t.Fatalf("links len = %d, want 1: %#v", len(store.links), store.links)
+	}
+	if len(store.deps) != 1 {
+		t.Fatalf("deps len = %d, want 1: %#v", len(store.deps), store.deps)
 	}
 }
 

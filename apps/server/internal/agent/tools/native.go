@@ -25,6 +25,14 @@ type NativeRuntimeContext struct {
 	ScopeType       string
 	ScopeID         pgtype.UUID
 	TargetPhase     string
+
+	ReviewTask                 string
+	ReviewShotID               string
+	ReviewNodeID               string
+	ReviewVersionID            string
+	ReviewJobID                string
+	ReviewRenderPlanID         string
+	ReviewParentReviewRecordID string
 }
 
 type NativeToolTrace struct {

@@ -111,6 +111,8 @@ type agentWorkbenchArtifactSlotResponse struct {
 	VersionID    string `json:"version_id,omitempty"`
 	ThumbnailURL string `json:"thumbnail_url,omitempty"`
 	AccessURL    string `json:"access_url,omitempty"`
+	Width        int32  `json:"width,omitempty"`
+	Height       int32  `json:"height,omitempty"`
 	ErrorCode    string `json:"error_code,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
 }
@@ -555,6 +557,8 @@ func agentWorkbenchArtifactSlotFromNode(ctx context.Context, signer assetURLSign
 			if preview != nil {
 				slot.AccessURL = preview.AccessURL
 				slot.ThumbnailURL = preview.ThumbnailURL
+				slot.Width = preview.Width
+				slot.Height = preview.Height
 			}
 		}
 	}

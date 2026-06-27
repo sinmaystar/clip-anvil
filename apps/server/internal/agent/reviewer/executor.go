@@ -24,6 +24,10 @@ type ExecutorRuntime interface {
 	MarkTaskFailed(ctx context.Context, taskID pgtype.UUID, code, message string) (db.AgentTask, error)
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
 	UpdateMessage(ctx context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error)
+	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
+	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
+	CreateProducerPendingSignal(ctx context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error)
+	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
 	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
 }
 
@@ -32,10 +36,11 @@ type Runner interface {
 }
 
 type ExecutorConfig struct {
-	Runtime        ExecutorRuntime
-	Graph          Runner
-	Broadcaster    Broadcaster
-	TraceCallbacks []callbacks.Handler
+	Runtime          ExecutorRuntime
+	Graph            Runner
+	Broadcaster      Broadcaster
+	ProducerEnqueuer ProducerTaskEnqueuer
+	TraceCallbacks   []callbacks.Handler
 }
 
 type Broadcaster interface {
@@ -43,19 +48,25 @@ type Broadcaster interface {
 	BroadcastAgentMessageUpdated(workspaceID pgtype.UUID, message db.AgentMessage, event db.AgentEvent)
 }
 
+type ProducerTaskEnqueuer interface {
+	EnqueueProducerTask(ctx context.Context, task db.AgentTask)
+}
+
 type Executor struct {
-	runtime        ExecutorRuntime
-	graph          Runner
-	broadcaster    Broadcaster
-	traceCallbacks []callbacks.Handler
+	runtime          ExecutorRuntime
+	graph            Runner
+	broadcaster      Broadcaster
+	producerEnqueuer ProducerTaskEnqueuer
+	traceCallbacks   []callbacks.Handler
 }
 
 func NewExecutor(config ExecutorConfig) *Executor {
 	return &Executor{
-		runtime:        config.Runtime,
-		graph:          config.Graph,
-		broadcaster:    config.Broadcaster,
-		traceCallbacks: config.TraceCallbacks,
+		runtime:          config.Runtime,
+		graph:            config.Graph,
+		broadcaster:      config.Broadcaster,
+		producerEnqueuer: config.ProducerEnqueuer,
+		traceCallbacks:   config.TraceCallbacks,
 	}
 }
 
@@ -118,7 +129,122 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if _, err := e.runtime.SetThreadCheckpoint(ctx, task.ThreadID, checkpointKey); err != nil {
 		return e.fail(ctx, task.ID, "reviewer_checkpoint_update_failed", err)
 	}
+	if err := e.wakeProducerIfNeeded(ctx, task, taskInput, out); err != nil {
+		return e.fail(ctx, task.ID, "reviewer_producer_signal_failed", err)
+	}
 	return nil
+}
+
+func (e *Executor) wakeProducerIfNeeded(ctx context.Context, task db.AgentTask, input TaskInput, out GraphOutput) error {
+	if e == nil || e.runtime == nil || e.producerEnqueuer == nil || !task.WorkspaceID.Valid || !task.ID.Valid || !task.ThreadID.Valid {
+		return nil
+	}
+	producerThreadID, ok := pgUUIDFromString(input.ProducerThreadID)
+	if !ok {
+		return nil
+	}
+	reviewRecordID := out.Record.ID
+	if !reviewRecordID.Valid {
+		return nil
+	}
+	scopeType := strings.TrimSpace(task.ScopeType)
+	if scopeType == "" {
+		scopeType = strings.TrimSpace(input.Target.WorkspaceScope)
+	}
+	scopeID := task.ScopeID
+	if !scopeID.Valid {
+		scopeID = reviewScopeID(input)
+	}
+	if scopeType == "" || !scopeID.Valid {
+		return nil
+	}
+	renderPlanID, _ := pgUUIDFromString(input.Target.RenderPlanID)
+	payload := mustJSON(map[string]any{
+		"trigger":              "review_completed",
+		"review_record_id":     uuidString(reviewRecordID),
+		"review_task":          input.ReviewTask,
+		"verdict":              out.Decision.Status,
+		"should_retry":         out.Decision.ShouldRetry,
+		"target_phase":         input.TargetPhase,
+		"scope_type":           scopeType,
+		"scope_id":             uuidString(scopeID),
+		"shot_id":              input.ShotID,
+		"node_id":              input.NodeID,
+		"render_plan_id":       input.Target.RenderPlanID,
+		"generation_job_id":    input.GenerationJobID,
+		"artifact_version_id":  input.ArtifactVersionID,
+		"reviewer_task_id":     uuidString(task.ID),
+		"reviewer_thread_id":   uuidString(task.ThreadID),
+		"producer_task_id":     input.ProducerTaskID,
+		"parent_review_record": input.ParentReviewRecordID,
+	})
+	_, err := e.runtime.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
+		WorkspaceID:      task.WorkspaceID,
+		ProducerThreadID: producerThreadID,
+		SourceRole:       "reviewer",
+		SourceTaskID:     task.ID,
+		SourceThreadID:   task.ThreadID,
+		SignalType:       "review_completed",
+		ScopeType:        scopeType,
+		ScopeID:          scopeID,
+		RenderPlanID:     renderPlanID,
+		Priority:         80,
+		DedupeKey:        "review_completed:" + uuidString(reviewRecordID),
+		Payload:          payload,
+	})
+	if err != nil {
+		return err
+	}
+	activeTasks, err := e.runtime.ListActiveAgentTasksByWorkspace(ctx, task.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	for _, activeTask := range activeTasks {
+		if activeTask.Role == "producer" &&
+			(activeTask.TaskType == "producer_turn" || activeTask.TaskType == "decision_resume") &&
+			(activeTask.Status == "queued" || activeTask.Status == "waiting_for_user") {
+			return nil
+		}
+	}
+	wakeTask, err := e.runtime.CreateTask(ctx, agentruntime.CreateTaskParams{
+		WorkspaceID: task.WorkspaceID,
+		ThreadID:    producerThreadID,
+		Role:        "producer",
+		ScopeType:   "workspace",
+		TaskType:    "producer_turn",
+		MaxAttempts: 1,
+		Input:       payload,
+	})
+	if err != nil {
+		return err
+	}
+	_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
+		WorkspaceID: task.WorkspaceID,
+		ThreadID:    producerThreadID,
+		TaskID:      wakeTask.ID,
+		EventType:   "producer_turn_queued",
+		SourceRole:  "system",
+		TargetRole:  "producer",
+		Scope:       mustJSON(map[string]any{"trigger": "review_completed", "scope_type": scopeType, "scope_id": uuidString(scopeID)}),
+		Payload:     payload,
+	})
+	e.producerEnqueuer.EnqueueProducerTask(ctx, wakeTask)
+	return nil
+}
+
+func reviewScopeID(input TaskInput) pgtype.UUID {
+	for _, candidate := range []string{
+		input.Target.RenderPlanID,
+		input.Target.ShotID,
+		input.ShotID,
+		input.Target.NodeID,
+		input.NodeID,
+	} {
+		if id, ok := pgUUIDFromString(candidate); ok {
+			return id
+		}
+	}
+	return pgtype.UUID{}
 }
 
 type reviewerLiveToolTrace struct {

@@ -1,9 +1,15 @@
 import type { Edge, Node } from "@xyflow/react";
 import type {
+  AgentWorkbenchArtifactSlot,
   AgentWorkbenchProjection,
   AgentWorkbenchScene,
   AgentWorkbenchShot,
 } from "./agentWorkbench";
+import {
+  agentWorkbenchMediaKey,
+  agentWorkbenchMediaSize,
+  type AgentWorkbenchMediaDimensionsByKey,
+} from "./agentWorkbenchMediaLayout.js";
 
 export type AgentWorkbenchNode =
   | Node<AgentWorkbenchOverviewNodeData, "agentOverview">
@@ -28,6 +34,11 @@ export interface AgentWorkbenchSceneNodeData extends Record<string, unknown> {
 export interface AgentWorkbenchShotNodeData extends Record<string, unknown> {
   kind: "shot";
   shot: AgentWorkbenchShot;
+  mediaDimensions?: AgentWorkbenchMediaDimensionsByKey;
+  onMediaDimensionsChange?: (
+    key: string,
+    dimensions: { width: number; height: number },
+  ) => void;
 }
 
 export interface AgentWorkbenchEdgeData extends Record<string, unknown> {
@@ -42,7 +53,6 @@ const SHOT_WIDTH = 520;
 const SHOT_HEIGHT = 560;
 const SHOT_COMPACT_HEIGHT = 420;
 const SHOT_CONTENT_CHROME_HEIGHT = 252;
-const SHOT_MEDIA_TILE_HEIGHT = 270;
 const SHOT_MEDIA_GAP = 12;
 const SHOT_GAP = 32;
 const SHOT_ROW_GAP = 32;
@@ -64,7 +74,10 @@ export function shotNodeId(shotId: string) {
   return `agent-shot-${shotId}`;
 }
 
-export function agentWorkbenchToFlow(workbench: AgentWorkbenchProjection): {
+export function agentWorkbenchToFlow(
+  workbench: AgentWorkbenchProjection,
+  mediaDimensions: AgentWorkbenchMediaDimensionsByKey = {},
+): {
   nodes: AgentWorkbenchNode[];
   edges: AgentWorkbenchEdge[];
 } {
@@ -87,7 +100,7 @@ export function agentWorkbenchToFlow(workbench: AgentWorkbenchProjection): {
   let sceneY = ORIGIN_Y;
   for (const scene of workbench.scenes) {
     const shots = sortedShots(scene.shots);
-    const shotLayouts = layoutShots(shots);
+    const shotLayouts = layoutShots(shots, mediaDimensions);
     const sceneWidth =
       SCENE_PADDING * 2 +
       Math.max(1, Math.min(SHOTS_PER_ROW, shots.length)) * SHOT_WIDTH +
@@ -167,57 +180,64 @@ function sortedShots(shots: AgentWorkbenchShot[]) {
   });
 }
 
-function layoutShots(shots: AgentWorkbenchShot[]) {
+function layoutShots(
+  shots: AgentWorkbenchShot[],
+  mediaDimensions: AgentWorkbenchMediaDimensionsByKey,
+) {
   const layouts: Array<{ x: number; y: number; height: number }> = [];
-  const rowHeights: number[] = [];
+  const columnCount = Math.max(1, Math.min(SHOTS_PER_ROW, shots.length));
+  const columnHeights = Array.from({ length: columnCount }, () => 0);
 
   shots.forEach((shot, index) => {
-    const row = Math.floor(index / SHOTS_PER_ROW);
-    const height = shotNodeHeight(shot);
-    rowHeights[row] = Math.max(rowHeights[row] ?? 0, height);
-  });
-
-  const rowY = rowHeights.reduce<number[]>((offsets, height, index) => {
-    const previous =
-      index === 0
-        ? 0
-        : offsets[index - 1] + rowHeights[index - 1] + SHOT_ROW_GAP;
-    offsets.push(previous);
-    return offsets;
-  }, []);
-
-  shots.forEach((shot, index) => {
-    const column = index % SHOTS_PER_ROW;
-    const row = Math.floor(index / SHOTS_PER_ROW);
+    const column = index < columnCount ? index : shortestColumn(columnHeights);
+    const height = shotNodeHeight(shot, mediaDimensions);
     layouts.push({
       x: column * (SHOT_WIDTH + SHOT_GAP),
-      y: rowY[row],
-      height: rowHeights[row] || shotNodeHeight(shot),
+      y: columnHeights[column],
+      height,
     });
+    columnHeights[column] += height + SHOT_ROW_GAP;
   });
 
   return layouts;
 }
 
-function shotNodeHeight(shot: AgentWorkbenchShot) {
-  const artifactCount = shotArtifactSlotCount(shot);
-  if (!shot.creative_text && artifactCount === 0) {
+function shortestColumn(columnHeights: number[]) {
+  return columnHeights.reduce(
+    (shortest, height, index) =>
+      height < columnHeights[shortest] ? index : shortest,
+    0,
+  );
+}
+
+function shotNodeHeight(
+  shot: AgentWorkbenchShot,
+  mediaDimensions: AgentWorkbenchMediaDimensionsByKey,
+) {
+  const mediaSlots = shotArtifactSlots(shot);
+  if (!shot.creative_text && mediaSlots.length === 0) {
     return SHOT_COMPACT_HEIGHT;
   }
-  const mediaRows =
-    artifactCount > 2
-      ? Math.ceil(artifactCount / 2)
-      : Math.max(1, artifactCount);
   const mediaHeight =
-    mediaRows * SHOT_MEDIA_TILE_HEIGHT +
-    Math.max(0, mediaRows - 1) * SHOT_MEDIA_GAP;
+    mediaSlots.length > 0
+      ? mediaSlots.reduce(
+          (height, slot) =>
+            height +
+            agentWorkbenchMediaSize(
+              slot,
+              mediaDimensions[agentWorkbenchMediaKey(slot)],
+            ).height,
+          0,
+        ) +
+        Math.max(0, mediaSlots.length - 1) * SHOT_MEDIA_GAP
+      : agentWorkbenchMediaSize(undefined).height;
   return Math.max(SHOT_HEIGHT, SHOT_CONTENT_CHROME_HEIGHT + mediaHeight);
 }
 
-function shotArtifactSlotCount(shot: AgentWorkbenchShot) {
+function shotArtifactSlots(shot: AgentWorkbenchShot): AgentWorkbenchArtifactSlot[] {
   if (shot.artifacts && shot.artifacts.length > 0) {
-    return shot.artifacts.length;
+    return shot.artifacts;
   }
   return [shot.preview, shot.video].filter((slot) => slot.status !== "missing")
-    .length;
+    .filter((slot): slot is AgentWorkbenchArtifactSlot => Boolean(slot));
 }

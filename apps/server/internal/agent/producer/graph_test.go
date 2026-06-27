@@ -194,7 +194,7 @@ func TestProducerGraphInjectsClaimedSignalRemindersBeforeModel(t *testing.T) {
 	}
 }
 
-func TestProducerGraphContinuesWhenSignalArrivesBeforeFinalize(t *testing.T) {
+func TestProducerGraphLeavesNewSignalsForNextTurnBeforeFinalize(t *testing.T) {
 	signalRuntime := &fakeProducerSignalRuntime{
 		pendingByClaimCall: [][]db.ProducerPendingSignal{
 			nil,
@@ -216,7 +216,6 @@ func TestProducerGraphContinuesWhenSignalArrivesBeforeFinalize(t *testing.T) {
 	}
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
 		{AssistantText: "本轮准备结束。"},
-		{AssistantText: "已看到运行中新增 signal。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
@@ -236,29 +235,21 @@ func TestProducerGraphContinuesWhenSignalArrivesBeforeFinalize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.AssistantText != "已看到运行中新增 signal。" {
+	if out.AssistantText != "本轮准备结束。" {
 		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
-	if len(responder.contexts) != 2 {
-		t.Fatalf("model calls = %d, want 2", len(responder.contexts))
+	if len(responder.contexts) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(responder.contexts))
 	}
 	if len(responder.contexts[0].PendingReminders) != 0 {
 		t.Fatalf("first model reminders = %#v", responder.contexts[0].PendingReminders)
 	}
-	if len(responder.contexts[1].PendingReminders) != 1 {
-		t.Fatalf("second model reminders = %#v", responder.contexts[1].PendingReminders)
-	}
-	reminder := responder.contexts[1].PendingReminders[0]
-	if !strings.Contains(reminder, "craftsman_render_plan_ready") ||
-		!strings.Contains(reminder, "render_plan_id=33000000-0000-0000-0000-000000000000") {
-		t.Fatalf("second model reminder = %q", reminder)
-	}
-	if len(signalRuntime.claimed) != 1 || signalRuntime.claimCalls < 2 {
+	if len(signalRuntime.claimed) != 0 || signalRuntime.claimCalls != 1 {
 		t.Fatalf("claimCalls=%d claimed=%#v", signalRuntime.claimCalls, signalRuntime.claimed)
 	}
 }
 
-func TestProducerGraphContinuesWhenClaimedSignalsRemainBeforeFinalize(t *testing.T) {
+func TestProducerGraphDoesNotReenterModelWhenClaimedSignalsRemainBeforeFinalize(t *testing.T) {
 	signals := []db.ProducerPendingSignal{
 		{
 			ID:               uuidWithByte(81),
@@ -297,7 +288,6 @@ func TestProducerGraphContinuesWhenClaimedSignalsRemainBeforeFinalize(t *testing
 	}
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
 		{AssistantText: "已处理第一条 signal。"},
-		{AssistantText: "已处理剩余 signal。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
@@ -317,17 +307,14 @@ func TestProducerGraphContinuesWhenClaimedSignalsRemainBeforeFinalize(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.AssistantText != "已处理剩余 signal。" {
+	if out.AssistantText != "已处理第一条 signal。" {
 		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
-	if len(responder.contexts) != 2 {
-		t.Fatalf("model calls = %d, want 2", len(responder.contexts))
+	if len(responder.contexts) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(responder.contexts))
 	}
 	if len(responder.contexts[0].PendingReminders) != 1 || !strings.Contains(responder.contexts[0].PendingReminders[0], "你有 2 个待处理 Producer signal") {
 		t.Fatalf("first reminders = %#v", responder.contexts[0].PendingReminders)
-	}
-	if len(responder.contexts[1].PendingReminders) != 1 || !strings.Contains(responder.contexts[1].PendingReminders[0], "render_plan_id=34000000-0000-0000-0000-000000000000") {
-		t.Fatalf("second reminders = %#v", responder.contexts[1].PendingReminders)
 	}
 }
 
@@ -430,6 +417,146 @@ func TestProducerGraphAddsPendingReminderAfterContinuousReadToolCalls(t *testing
 	}
 	if !strings.Contains(reminders[0], "read_project_context") || !strings.Contains(reminders[0], "连续调用") {
 		t.Fatalf("unexpected reminder = %q", reminders[0])
+	}
+}
+
+func TestProducerGraphDoesNotReturnSystemReminderAfterContinuousReadToolCalls(t *testing.T) {
+	responder := &recordingResponder{outputs: []ProducerTurnOutput{
+		nativeToolCallOutput("call-read-1", "read_project_context", `{"brief":"读取1","scope":{"type":"workspace","id":""}}`),
+		nativeToolCallOutput("call-read-2", "read_project_context", `{"brief":"读取2","scope":{"type":"workspace","id":""}}`),
+		nativeToolCallOutput("call-read-3", "read_project_context", `{"brief":"读取3","scope":{"type":"workspace","id":""}}`),
+		nativeToolCallOutput("call-read-4", "read_project_context", `{"brief":"读取4","scope":{"type":"workspace","id":""}}`),
+		nativeToolCallOutput("call-read-5", "read_project_context", `{"brief":"读取5","scope":{"type":"workspace","id":""}}`),
+		{AssistantText: "已停止重复读取。"},
+	}}
+	graph, err := NewGraph(GraphConfig{
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "检查循环"}},
+		Responder:          responder,
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "read_project_context"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{MaxToolCalls: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range out.SameTurnMessages {
+		if message.MessageType == "system_reminder" && strings.Contains(message.Content, "read_project_context") {
+			t.Fatalf("same-turn messages must not persist tool-loop reminder: %#v", out.SameTurnMessages)
+		}
+	}
+}
+
+func TestProducerGraphDoesNotPersistSignalReminderAcrossToolLoop(t *testing.T) {
+	responder := &recordingResponder{outputs: []ProducerTurnOutput{
+		nativeToolCallOutput("call-read", "read_project_context", `{"brief":"读取项目","scope":{"type":"workspace","id":""}}`),
+		{AssistantText: "已处理 signal。"},
+	}}
+	signalRuntime := &fakeProducerSignalRuntime{
+		pending: []db.ProducerPendingSignal{
+			{
+				ID:               uuidWithByte(88),
+				WorkspaceID:      uuidWithByte(1),
+				ProducerThreadID: uuidWithByte(2),
+				SourceTaskID:     uuidWithByte(31),
+				SignalType:       "craftsman_render_plan_ready",
+				ScopeType:        "shot",
+				ScopeID:          uuidWithByte(41),
+				RenderPlanID:     uuidWithByte(51),
+				Payload:          []byte(`{"target_phase":"preview_image","render_plan_status":"waiting_for_approval"}`),
+			},
+		},
+	}
+	graph, err := NewGraph(GraphConfig{
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
+		Responder:          responder,
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "read_project_context"),
+		SignalRuntime:      signalRuntime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{
+		WorkspaceID:  uuidWithByte(1),
+		ThreadID:     uuidWithByte(2),
+		TaskID:       uuidWithByte(9),
+		MaxToolCalls: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, message := range out.SameTurnMessages {
+		if message.MessageType == "system_reminder" && strings.Contains(message.Content, "craftsman_render_plan_ready") {
+			t.Fatalf("same-turn messages must not persist signal reminder: %#v", out.SameTurnMessages)
+		}
+	}
+}
+
+func TestProducerGraphDoesNotAbsorbGrowingSignalReminderInSameTurn(t *testing.T) {
+	responder := &recordingResponder{outputs: []ProducerTurnOutput{
+		nativeToolCallOutput("call-read", "read_project_context", `{"brief":"读取项目","scope":{"type":"workspace","id":""}}`),
+		{AssistantText: "已处理最新 signal。"},
+	}}
+	firstSignal := db.ProducerPendingSignal{
+		ID:               uuidWithByte(88),
+		WorkspaceID:      uuidWithByte(1),
+		ProducerThreadID: uuidWithByte(2),
+		SourceTaskID:     uuidWithByte(31),
+		SignalType:       "craftsman_render_plan_ready",
+		ScopeType:        "shot",
+		ScopeID:          uuidWithByte(41),
+		RenderPlanID:     uuidWithByte(51),
+		Payload:          []byte(`{"target_phase":"preview_image","render_plan_status":"waiting_for_approval"}`),
+	}
+	secondSignal := db.ProducerPendingSignal{
+		ID:               uuidWithByte(89),
+		WorkspaceID:      uuidWithByte(1),
+		ProducerThreadID: uuidWithByte(2),
+		SourceTaskID:     uuidWithByte(32),
+		SignalType:       "craftsman_render_plan_ready",
+		ScopeType:        "shot",
+		ScopeID:          uuidWithByte(42),
+		RenderPlanID:     uuidWithByte(52),
+		Payload:          []byte(`{"target_phase":"preview_image","render_plan_status":"waiting_for_approval"}`),
+	}
+	signalRuntime := &fakeProducerSignalRuntime{
+		pendingByClaimCall: [][]db.ProducerPendingSignal{
+			{firstSignal},
+			{secondSignal},
+			nil,
+		},
+	}
+	graph, err := NewGraph(GraphConfig{
+		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
+		Responder:          responder,
+		NativeToolRegistry: mustTestNativeToolRegistry(t, "read_project_context"),
+		SignalRuntime:      signalRuntime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := graph.Run(context.Background(), ProducerTurnInput{
+		WorkspaceID:  uuidWithByte(1),
+		ThreadID:     uuidWithByte(2),
+		TaskID:       uuidWithByte(9),
+		MaxToolCalls: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, message := range out.SameTurnMessages {
+		if message.MessageType == "system_reminder" && strings.Contains(message.Content, "待处理 Producer signal") {
+			t.Fatalf("same-turn messages must not persist signal reminder: %#v", out.SameTurnMessages)
+		}
+	}
+	if len(signalRuntime.claimed) != 1 || signalRuntime.claimed[0].RenderPlanID != firstSignal.RenderPlanID {
+		t.Fatalf("current turn should only claim initial signal batch: %#v", signalRuntime.claimed)
 	}
 }
 

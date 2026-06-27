@@ -106,6 +106,12 @@ pre-render 检查：
 8. 如果工具返回参数错误，修正参数后重试。不要重复同一个失败调用。
 9. 最终回复只简短说明已提交评审，不承诺 Producer 会自动执行修复。
 
+submit_review_result 的 target 规则：
+- target 里的 shot_id、node_id、artifact_version_id、generation_job_id、render_plan_id 必须从当前 Reviewer 任务 target 原样复制。
+- artifact_version_id 不是 node_id；node_id 不是 render_plan_id；generation_job_id 不是 artifact_version_id。
+- 如果你不知道某个可选 ID，就留空，不要编造 UUID，不要填写 00000000-0000-0000-0000-000000000000。
+- issues.target_object_id 要与 issues.target_object_type 对应：artifact_version 使用 artifact_version_id，shot 使用 shot_id，render_plan 使用 render_plan_id。
+
 ---
 
 ## Verdict 规则

@@ -107,15 +107,103 @@ func TestDecideRenderPlanRejectDoesNotSubmitWorkerTask(t *testing.T) {
 	}
 }
 
+func TestDecideRenderPlanBatchDecisionsProcessEachRenderPlan(t *testing.T) {
+	acceptPlan := db.RenderPlan{
+		ID:                 uuidWithByte(21),
+		WorkspaceID:        uuidWithByte(1),
+		ScopeType:          "shot",
+		ScopeID:            uuidWithByte(11),
+		TargetPhase:        "preview_image",
+		ModelPromptProfile: "seedream_5_image",
+		Operation:          "text_to_image",
+		Status:             "waiting_for_approval",
+		CompiledPrompt:     "生成机场中的银色行李箱预览图。",
+		Params:             []byte(`{"ratio":"9:16","max_images":1}`),
+		CreatedByThreadID:  uuidWithByte(12),
+		CreatedByTaskID:    uuidWithByte(13),
+	}
+	rejectPlan := db.RenderPlan{
+		ID:          uuidWithByte(22),
+		WorkspaceID: uuidWithByte(1),
+		ScopeType:   "shot",
+		ScopeID:     uuidWithByte(12),
+		TargetPhase: "preview_image",
+		Status:      "waiting_for_approval",
+	}
+	store := &fakeRenderPlanDecisionStore{
+		plans: map[string]db.RenderPlan{
+			uuidString(acceptPlan.ID): acceptPlan,
+			uuidString(rejectPlan.ID): rejectPlan,
+		},
+		shots: map[string]db.Shot{
+			uuidString(acceptPlan.ScopeID): {ID: acceptPlan.ScopeID, WorkspaceID: uuidWithByte(1), ClientKey: "shot_01"},
+			uuidString(rejectPlan.ScopeID): {ID: rejectPlan.ScopeID, WorkspaceID: uuidWithByte(1), ClientKey: "shot_02"},
+		},
+	}
+	runtime := &fakeRenderPlanDecisionRuntime{}
+	enqueuer := &fakeWorkerTaskEnqueuer{}
+	tool := NewDecideRenderPlanNativeTool(store, runtime, enqueuer)
+
+	args := fmt.Sprintf(`{
+		"brief":"批量处理 Craftsman 提交的预览图 RenderPlan。",
+		"decisions":[
+			{
+				"render_plan_id":%q,
+				"decision":"accept",
+				"reason":"符合全局视觉方向",
+				"next_action":"submit_worker"
+			},
+			{
+				"render_plan_id":%q,
+				"decision":"reject",
+				"reason":"产品占比太低",
+				"next_action":"revise_with_craftsman",
+				"revision_instructions":"放大行李箱并减少背景人物"
+			}
+		]
+	}`, uuidString(acceptPlan.ID), uuidString(rejectPlan.ID))
+	got, err := tool.InvokableRun(contextWithNativeRuntime(uuidWithByte(1), uuidWithByte(2), uuidWithByte(3)), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "批量 RenderPlan 决策完成") ||
+		!strings.Contains(got, uuidString(acceptPlan.ID)) ||
+		!strings.Contains(got, uuidString(rejectPlan.ID)) {
+		t.Fatalf("result = %s", got)
+	}
+	if len(runtime.createdTasks) != 1 || len(enqueuer.tasks) != 1 {
+		t.Fatalf("created tasks = %d, enqueued = %d", len(runtime.createdTasks), len(enqueuer.tasks))
+	}
+	if len(store.rejectedPlans) != 1 || store.rejectedPlans[0] != rejectPlan.ID {
+		t.Fatalf("rejected plans = %#v", store.rejectedPlans)
+	}
+	if len(runtime.processedRenderPlans) != 2 ||
+		runtime.processedRenderPlans[0] != acceptPlan.ID ||
+		runtime.processedRenderPlans[1] != rejectPlan.ID {
+		t.Fatalf("processed render plans = %#v", runtime.processedRenderPlans)
+	}
+}
+
 type fakeRenderPlanDecisionStore struct {
 	plan            db.RenderPlan
+	plans           map[string]db.RenderPlan
 	shot            db.Shot
+	shots           map[string]db.Shot
 	keyElementState db.KeyElementState
 	submitted       bool
+	submittedPlans  []pgtype.UUID
 	rejected        bool
+	rejectedPlans   []pgtype.UUID
 }
 
 func (f *fakeRenderPlanDecisionStore) GetRenderPlanByID(_ context.Context, params db.GetRenderPlanByIDParams) (db.RenderPlan, error) {
+	if f.plans != nil {
+		plan, ok := f.plans[uuidString(params.ID)]
+		if ok && plan.WorkspaceID == params.WorkspaceID {
+			return plan, nil
+		}
+		return db.RenderPlan{}, errShotNotFound
+	}
 	if f.plan.ID == params.ID && f.plan.WorkspaceID == params.WorkspaceID {
 		return f.plan, nil
 	}
@@ -123,6 +211,13 @@ func (f *fakeRenderPlanDecisionStore) GetRenderPlanByID(_ context.Context, param
 }
 
 func (f *fakeRenderPlanDecisionStore) GetShotByID(_ context.Context, id pgtype.UUID) (db.Shot, error) {
+	if f.shots != nil {
+		shot, ok := f.shots[uuidString(id)]
+		if ok {
+			return shot, nil
+		}
+		return db.Shot{}, errShotNotFound
+	}
 	if f.shot.ID == id {
 		return f.shot, nil
 	}
@@ -138,6 +233,14 @@ func (f *fakeRenderPlanDecisionStore) GetKeyElementStateByID(_ context.Context, 
 
 func (f *fakeRenderPlanDecisionStore) MarkRenderPlanSubmitted(_ context.Context, params db.MarkRenderPlanSubmittedParams) (db.RenderPlan, error) {
 	f.submitted = true
+	f.submittedPlans = append(f.submittedPlans, params.ID)
+	if f.plans != nil {
+		plan := f.plans[uuidString(params.ID)]
+		plan.Status = "submitted"
+		plan.SubmittedWorkerTaskID = params.SubmittedWorkerTaskID
+		f.plans[uuidString(params.ID)] = plan
+		return plan, nil
+	}
 	f.plan.Status = "submitted"
 	f.plan.SubmittedWorkerTaskID = params.SubmittedWorkerTaskID
 	return f.plan, nil
@@ -145,6 +248,14 @@ func (f *fakeRenderPlanDecisionStore) MarkRenderPlanSubmitted(_ context.Context,
 
 func (f *fakeRenderPlanDecisionStore) MarkRenderPlanRejected(_ context.Context, params db.MarkRenderPlanRejectedParams) (db.RenderPlan, error) {
 	f.rejected = true
+	f.rejectedPlans = append(f.rejectedPlans, params.ID)
+	if f.plans != nil {
+		plan := f.plans[uuidString(params.ID)]
+		plan.Status = "rejected"
+		plan.Blocker = params.Blocker
+		f.plans[uuidString(params.ID)] = plan
+		return plan, nil
+	}
 	f.plan.Status = "rejected"
 	f.plan.Blocker = params.Blocker
 	return f.plan, nil

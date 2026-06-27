@@ -237,7 +237,7 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, producerContext P
 	}
 	diagnostics["native_tool_call_count"] = len(final.ToolCalls)
 	metadata["native_tool_call_count"] = len(final.ToolCalls)
-	if strings.TrimSpace(final.Content) == "" {
+	if strings.TrimSpace(final.Content) == "" && len(final.ToolCalls) == 0 {
 		logProducerModelEmptyContent(ctx, logger, diagnostics)
 	} else {
 		logProducerModelCompleted(ctx, logger, diagnostics)
@@ -473,11 +473,6 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 	messages := []*schema.Message{
 		schema.SystemMessage(systemPrompt),
 	}
-	for _, reminder := range producerContext.PendingReminders {
-		if text := toolloop.NormalizeSystemReminder(reminder); text != "" {
-			messages = append(messages, schema.SystemMessage(text))
-		}
-	}
 	for _, msg := range producerContext.Messages {
 		switch msg.Role {
 		case "user":
@@ -512,7 +507,7 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 			messages = append(messages, next)
 		}
 	}
-	if trigger := strings.TrimSpace(producerContext.RuntimeTriggerText); trigger != "" {
+	if trigger := strings.TrimSpace(producerContext.RuntimeTriggerText); trigger != "" && !hasSameTurnToolExchange(producerContext.SameTurnMessages) {
 		messages = append(messages, schema.UserMessage(runtimeTriggerPromptText(trigger)))
 	}
 	if !hasNonSystemPromptMessage(messages) {
@@ -522,7 +517,49 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 		}
 		messages = append(messages, schema.UserMessage(text))
 	}
-	return messages
+	return appendPendingRemindersToPrompt(messages, producerContext.PendingReminders)
+}
+
+func appendPendingRemindersToPrompt(messages []*schema.Message, reminders []string) []*schema.Message {
+	text := pendingReminderPromptText(reminders)
+	if text == "" {
+		return messages
+	}
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := messages[index]
+		if message == nil {
+			continue
+		}
+		if message.Role != schema.User && message.Role != schema.Tool {
+			continue
+		}
+		message.Content = strings.TrimSpace(message.Content) + "\n\n" + text
+		return messages
+	}
+	return append(messages, schema.UserMessage(text))
+}
+
+func pendingReminderPromptText(reminders []string) string {
+	normalized := make([]string, 0, len(reminders))
+	for _, reminder := range reminders {
+		if text := toolloop.NormalizeSystemReminder(reminder); text != "" {
+			normalized = append(normalized, text)
+		}
+	}
+	if len(normalized) == 0 {
+		return ""
+	}
+	return "运行时提醒：\n" + strings.Join(normalized, "\n")
+}
+
+func hasSameTurnToolExchange(messages []ProducerSameTurnMessage) bool {
+	for _, message := range messages {
+		switch strings.TrimSpace(message.MessageType) {
+		case "tool_call", "tool_result":
+			return true
+		}
+	}
+	return false
 }
 
 func hasNonSystemPromptMessage(messages []*schema.Message) bool {
@@ -539,7 +576,7 @@ func runtimeTriggerPromptText(trigger string) string {
 	if trigger == "" {
 		return ""
 	}
-	return "请根据以下系统触发事件继续推进 Producer 工作。你需要读取项目上下文，确认真实状态，再决定调用 decide_render_plan、dispatch_reviewer 或 request_user_decision。\n\n" + trigger
+	return "请根据以下系统触发事件继续推进 Producer 工作。你需要读取项目上下文，确认真实状态，再决定调用 decide_render_plan、dispatch_reviewer 或 request_user_decision；如果存在多条 craftsman_render_plan_ready RenderPlan，请优先用 decide_render_plan 的 decisions 批量参数一次处理每条决策。\n\n" + trigger
 }
 
 func sameTurnPromptMessage(msg ProducerSameTurnMessage) *schema.Message {

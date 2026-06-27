@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -103,6 +104,46 @@ func TestAgentWorkbenchMissingArtifactSlot(t *testing.T) {
 	slot := agentWorkbenchArtifactSlotResponse{Kind: "shot_video", Status: "missing"}
 	if slot.Kind != "shot_video" || slot.Status != "missing" || slot.NodeID != "" {
 		t.Fatalf("slot = %#v", slot)
+	}
+}
+
+func TestAgentWorkbenchArtifactSlotIncludesAssetDimensions(t *testing.T) {
+	assetID := uuidWithByteForWorkbenchTest(41)
+	versionID := uuidWithByteForWorkbenchTest(42)
+	node := db.MediaNode{
+		ID:               uuidWithByteForWorkbenchTest(43),
+		Source:           "agent",
+		NodeType:         db.NodeTypeImage,
+		Title:            "vertical preview",
+		Status:           db.NodeStatusSucceeded,
+		CurrentVersionID: versionID,
+		Metadata:         []byte(`{"agent_artifact_kind":"preview_image"}`),
+	}
+	version := db.ArtifactVersion{
+		ID:      versionID,
+		AssetID: assetID,
+	}
+	asset := db.MediaAsset{
+		ID:          assetID,
+		Type:        db.AssetTypeImage,
+		Mime:        "image/png",
+		Metadata:    []byte(`{"width":900,"height":1600}`),
+		StorageUrl:  pgtype.Text{String: "s3://bucket/vertical.png", Valid: true},
+		WorkspaceID: uuidWithByteForWorkbenchTest(44),
+	}
+
+	slot, err := agentWorkbenchArtifactSlotFromNode(
+		context.Background(),
+		nil,
+		node,
+		map[pgtype.UUID]db.MediaAsset{assetID: asset},
+		map[pgtype.UUID]db.ArtifactVersion{versionID: version},
+	)
+	if err != nil {
+		t.Fatalf("agentWorkbenchArtifactSlotFromNode error = %v", err)
+	}
+	if slot.Width != 900 || slot.Height != 1600 {
+		t.Fatalf("slot dimensions = %dx%d, want 900x1600", slot.Width, slot.Height)
 	}
 }
 

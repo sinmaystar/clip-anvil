@@ -226,6 +226,7 @@ describe("agent React Flow canvas", () => {
 
   it("renders Agent shots as modern media cards instead of dense artifact grids", async () => {
     const shotSource = await readFile(agentShotNodeUrl, "utf8");
+    const canvasSource = await readFile(agentWorkbenchCanvasUrl, "utf8");
     const cssSource = await readFile(mainCssUrl, "utf8");
 
     assert.match(shotSource, /agent-workbench-shot-media-card/);
@@ -235,7 +236,16 @@ describe("agent React Flow canvas", () => {
     assert.doesNotMatch(shotSource, /agent-workbench-shot-play-badge/);
     assert.doesNotMatch(shotSource, /agent-workbench-shot-grid/);
     assert.match(cssSource, /\.agent-workbench-shot-media-card/);
-    assert.match(cssSource, /aspect-ratio:\s*16\s*\/\s*9/);
+    assert.match(shotSource, /agentWorkbenchMediaSize/);
+    assert.match(shotSource, /style=\{mediaSlotStyle\(slot,\s*measuredDimensions\)\}/);
+    assert.match(shotSource, /naturalWidth/);
+    assert.match(shotSource, /onMediaDimensionsChange/);
+    assert.match(canvasSource, /mediaDimensions/);
+    assert.match(canvasSource, /setMediaDimensions/);
+    assert.doesNotMatch(
+      cssSource,
+      /\.agent-workbench-shot-media-button\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9/,
+    );
     assert.match(
       cssSource,
       /\.agent-workbench-shot-media-card\s*\{[^}]*background:\s*transparent;/,

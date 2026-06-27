@@ -69,6 +69,8 @@ type TaskInput struct {
 	ArtifactVersionID    string       `json:"artifact_version_id"`
 	GenerationJobID      string       `json:"generation_job_id,omitempty"`
 	ParentReviewRecordID string       `json:"parent_review_record_id,omitempty"`
+	ProducerThreadID     string       `json:"producer_thread_id,omitempty"`
+	ProducerTaskID       string       `json:"producer_task_id,omitempty"`
 	AttemptNo            int32        `json:"attempt_no"`
 	MaxAttempts          int32        `json:"max_attempts"`
 	AutoRetry            bool         `json:"auto_retry"`

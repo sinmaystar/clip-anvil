@@ -26,25 +26,26 @@ type RenderPlanReferenceStore interface {
 type UpsertRenderPlanToolInput struct {
 	Brief                string                    `json:"brief" jsonschema:"required" jsonschema_description:"本次写入 RenderPlan 的业务目的，例如为机场出发大厅状态创建 Seedream reference image 计划。不要超过 160 个中文字符。"`
 	Mode                 string                    `json:"mode" jsonschema:"required,enum=create,enum=update_draft,enum=fork_from,enum=mark_blocked" jsonschema_description:"create 创建新计划；update_draft 修改未执行草稿；fork_from 基于旧计划创建新 revision；mark_blocked 记录无法继续的阻塞原因。"`
+	GenerationText       string                    `json:"generation_text" jsonschema:"required" jsonschema_description:"本计划最重要的自由文本生成说明。请用自然语言完整写清楚要生成什么，不要写 JSON 字符串。必须覆盖：主体是谁以及必须保持的稳定特征；场景/空间/时间；光线和色彩；镜头语言、景别、构图和运镜；主体动作或视频事件顺序；整体风格和商业质感；音频、旁白或字幕诉求；必须避免的错误和不一致。图片计划写成一段详细画面描述；视频计划写成一段可执行镜头描述，只保留一个主要动作和一个主要运镜。建议 300 到 900 个中文字符，宁可写在这里，也不要把 prompt_parts、audit_hints、subject_bindings 填成很长的多层 JSON。"`
 	RenderPlanID         string                    `json:"render_plan_id" jsonschema_description:"update_draft 或 mark_blocked 时填写目标 RenderPlan UUID。create 时为空。"`
 	ForkFromRenderPlanID string                    `json:"fork_from_render_plan_id" jsonschema_description:"mode=fork_from 时填写来源 RenderPlan UUID。不能和 render_plan_id 同时作为写入目标。"`
-	Scope                RenderPlanScopeInput      `json:"scope" jsonschema:"required" jsonschema_description:"RenderPlan 归属对象。必须与当前 Craftsman task scope 一致。"`
-	TargetPhase          string                    `json:"target_phase" jsonschema:"required,enum=reference_image,enum=preview_image,enum=shot_video" jsonschema_description:"目标阶段。reference_image 为关键元素参考图；preview_image 为分镜预览图；shot_video 为分镜视频。"`
-	TaskType             string                    `json:"task_type" jsonschema:"required,enum=generate,enum=edit,enum=extend,enum=bridge" jsonschema_description:"生成任务类型。M2 主要使用 generate；edit/extend/bridge 可用于修复建模，但不一定立即执行。"`
-	ModelPromptProfile   string                    `json:"model_prompt_profile" jsonschema:"required,enum=seedream_5_image,enum=seedance_2_video" jsonschema_description:"模型提示词 profile。seedream_5_image 用于参考图和预览图；seedance_2_video 用于分镜视频。"`
-	Operation            string                    `json:"operation" jsonschema:"required,enum=text_to_image,enum=image_to_image,enum=multi_image_to_image,enum=text_to_video,enum=image_to_video_first_frame,enum=image_to_video_first_last_frame,enum=multi_modal_reference_video,enum=video_edit,enum=video_extend,enum=video_bridge" jsonschema_description:"provider-agnostic operation。不要填 provider API 私有枚举；PromptCompiler 和 provider adapter 会映射。"`
-	ReferenceBindings    []ReferenceBindingInput   `json:"reference_bindings" jsonschema_description:"本计划使用的参考资源绑定。必须说明来源对象、语义角色、prompt alias 和优先级。"`
-	SubjectBindings      []SubjectBindingInput     `json:"subject_bindings" jsonschema_description:"Seedance/Seedream prompt 中的主体绑定，例如 主体1 对应悦行行李箱。"`
-	PromptParts          RenderPromptPartsInput    `json:"prompt_parts" jsonschema_description:"可选的结构化 prompt parts。优先只填写 objective、subject、setting、camera、composition 等必要字段；不要一次塞入超长 JSON。为空时工具会用 brief 作为 objective。"`
+	Scope                RenderPlanScopeInput      `json:"scope" jsonschema_description:"RenderPlan 归属对象。通常可以省略，工具会继承当前 Craftsman task scope；只有确有必要时才填写，且必须与当前 task scope 一致。"`
+	TargetPhase          string                    `json:"target_phase" jsonschema:"enum=reference_image,enum=preview_image,enum=shot_video" jsonschema_description:"目标阶段。通常可以省略，工具会继承当前 Craftsman task target_phase。reference_image 为关键元素参考图；preview_image 为分镜预览图；shot_video 为分镜视频。"`
+	TaskType             string                    `json:"task_type" jsonschema:"enum=generate,enum=edit,enum=extend,enum=bridge" jsonschema_description:"生成任务类型。通常省略，默认 generate；只有明确做编辑、延长、桥接时填写 edit/extend/bridge。"`
+	ModelPromptProfile   string                    `json:"model_prompt_profile" jsonschema:"enum=seedream_5_image,enum=seedance_2_video" jsonschema_description:"通常省略，由 target_phase 自动推导：reference_image/preview_image 使用 seedream_5_image，shot_video 使用 seedance_2_video。"`
+	Operation            string                    `json:"operation" jsonschema:"enum=text_to_image,enum=image_to_image,enum=multi_image_to_image,enum=text_to_video,enum=image_to_video_first_frame,enum=image_to_video_first_last_frame,enum=multi_modal_reference_video,enum=video_edit,enum=video_extend,enum=video_bridge" jsonschema_description:"通常省略，由 target_phase 和 reference_bindings 自动推导。只有你明确知道需要 edit/extend/bridge 或特殊首尾帧时才填写。不要填 provider API 私有枚举。"`
+	ReferenceBindings    []ReferenceBindingInput   `json:"reference_bindings" jsonschema_description:"本计划使用的参考资源绑定。只填写真实需要的资源，通常 0 到 3 个；不要为了完整而编造引用。"`
+	SubjectBindings      []SubjectBindingInput     `json:"subject_bindings" jsonschema_description:"可选高级字段。只有需要显式声明主体句柄时才填写；一般把主体与一致性要求写进 generation_text 即可，避免长 JSON。"`
+	PromptParts          RenderPromptPartsInput    `json:"prompt_parts" jsonschema_description:"可选高级字段。一般留空，工具会把 generation_text 编译为 prompt_parts.objective；视频计划也会用 generation_text 兜底 action。只有确实需要结构化拆分时，才填写少量字段。"`
 	Params               RenderPlanParamsInput     `json:"params" jsonschema_description:"模型参数草案，例如比例、时长、分辨率、是否返回尾帧。工具和 PromptCompiler 会校验。"`
-	AuditHints           RenderPlanAuditHintsInput `json:"audit_hints" jsonschema_description:"Craftsman 对风险、自动补全和需要用户确认事项的提示。"`
+	AuditHints           RenderPlanAuditHintsInput `json:"audit_hints" jsonschema_description:"可选高级字段。一般留空；风险、疑问和修复建议优先用 generation_text 或 blocker.message 简短表达。"`
 	Blocker              RenderPlanBlockerInput    `json:"blocker" jsonschema_description:"mode=mark_blocked 时填写，说明为什么不能继续生成。"`
 	Rationale            string                    `json:"rationale" jsonschema_description:"为什么这样组织 prompt parts、参考资源和参数。保持简短，面向 Producer 可读；为空时工具会用 brief 兜底。"`
 }
 
 type RenderPlanScopeInput struct {
-	Type string `json:"type" jsonschema:"required,enum=key_element_state,enum=shot" jsonschema_description:"RenderPlan 归属类型。key_element_state 通常对应 reference_image；shot 对应 preview_image 或 shot_video。"`
-	ID   string `json:"id" jsonschema:"required" jsonschema_description:"归属对象 UUID。"`
+	Type string `json:"type" jsonschema:"enum=key_element_state,enum=shot" jsonschema_description:"RenderPlan 归属类型。通常省略并继承当前 Craftsman task。key_element_state 通常对应 reference_image；shot 对应 preview_image 或 shot_video。"`
+	ID   string `json:"id" jsonschema_description:"归属对象 UUID。通常省略并继承当前 Craftsman task。"`
 }
 
 type ReferenceBindingInput struct {
@@ -70,7 +71,7 @@ type SubjectBindingInput struct {
 }
 
 type RenderPromptPartsInput struct {
-	Objective      string   `json:"objective" jsonschema:"required" jsonschema_description:"本次生成目标，用一句话说明希望模型产出什么。"`
+	Objective      string   `json:"objective" jsonschema_description:"可选高级字段。本次生成目标；通常留空，让工具使用 generation_text。"`
 	Subject        string   `json:"subject" jsonschema_description:"主体描述。应引用 subject binding 的语义，不写裸 ID。"`
 	Setting        string   `json:"setting" jsonschema_description:"场景环境、时间、空间、光线。"`
 	Action         string   `json:"action" jsonschema_description:"主体动作或事件。视频中应具体到可见动作。"`
@@ -130,11 +131,11 @@ func (t *UpsertRenderPlanNativeTool) WithReferenceStore(store RenderPlanReferenc
 }
 
 func (t *UpsertRenderPlanNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfoFor[UpsertRenderPlanToolInput](toolUpsertRenderPlan, "创建、更新草稿或 fork 一个 ClipAnvil RenderPlan。RenderPlan 是把 Producer 的创意级事实翻译成 Seedream / Seedance 生成计划的结构化对象。优先提交短而正确的计划：必须继承当前 Craftsman task 的 scope 和 target_phase，只填写必要 reference bindings、subject bindings、prompt parts 和 params；不要一次生成超长 JSON。")
+	return toolInfoFor[UpsertRenderPlanToolInput](toolUpsertRenderPlan, "创建、更新草稿或 fork 一个 ClipAnvil RenderPlan，用于 Seedream 图片和 Seedance 视频生成。优先使用 generation_text 写完整自然语言生成说明；scope、target_phase、model_prompt_profile、operation 和 task_type 通常由当前 Craftsman task 与引用资源自动推导。只填写必要 reference_bindings 和 params，不要把创作描述拆成超长多层 JSON。")
 }
 
 func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...einotool.Option) (string, error) {
-	input, msg, ok := decodeToolArgs(toolUpsertRenderPlan, argumentsInJSON, validateUpsertRenderPlanInput)
+	input, msg, ok := decodeToolArgs[UpsertRenderPlanToolInput](toolUpsertRenderPlan, argumentsInJSON, nil)
 	if !ok {
 		return msg, nil
 	}
@@ -142,10 +143,13 @@ func (t *UpsertRenderPlanNativeTool) InvokableRun(ctx context.Context, arguments
 	if !ok {
 		return msg, nil
 	}
+	input = applyUpsertRenderPlanRuntimeDefaults(input, runtime)
+	if err := validateUpsertRenderPlanInput(input); err != nil {
+		return NaturalToolError(toolUpsertRenderPlan, err.Error(), "请修正参数后重试，不要重复提交相同错误参数。"), nil
+	}
 	if msg, ok := validateUpsertRenderPlanRuntime(runtime, input); !ok {
 		return msg, nil
 	}
-	input = normalizeUpsertRenderPlanInput(input)
 	if normalized, msg, ok := t.validateAndNormalizeReferenceBindings(ctx, runtime, input); !ok {
 		return msg, nil
 	} else {
@@ -268,7 +272,7 @@ func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {
 	if err := requireMode(input.ModelPromptProfile, "seedream_5_image", "seedance_2_video"); err != nil {
 		return err
 	}
-	if err := requireText(input.Operation, "operation"); err != nil {
+	if err := requireMode(input.Operation, "text_to_image", "image_to_image", "multi_image_to_image", "text_to_video", "image_to_video_first_frame", "image_to_video_first_last_frame", "multi_modal_reference_video", "video_edit", "video_extend", "video_bridge"); err != nil {
 		return err
 	}
 	if input.Mode == "mark_blocked" {
@@ -276,6 +280,9 @@ func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {
 			return fmt.Errorf("mark_blocked 需要 blocker.blocker_type 和 blocker.message")
 		}
 		return nil
+	}
+	if err := requireText(input.GenerationText, "generation_text"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -297,6 +304,14 @@ func validateUpsertRenderPlanRuntime(runtime NativeRuntimeContext, input UpsertR
 }
 
 func normalizeUpsertRenderPlanInput(input UpsertRenderPlanToolInput) UpsertRenderPlanToolInput {
+	generationText := strings.TrimSpace(input.GenerationText)
+	if generationText != "" {
+		input.GenerationText = generationText
+		input.PromptParts.Objective = generationText
+		if input.TargetPhase == renderplan.PhaseShotVideo && strings.TrimSpace(input.PromptParts.Action) == "" && len(input.PromptParts.Sequence) == 0 {
+			input.PromptParts.Action = generationText
+		}
+	}
 	if strings.TrimSpace(input.PromptParts.Objective) == "" {
 		input.PromptParts.Objective = strings.TrimSpace(input.Brief)
 	}
@@ -304,6 +319,75 @@ func normalizeUpsertRenderPlanInput(input UpsertRenderPlanToolInput) UpsertRende
 		input.Rationale = strings.TrimSpace(input.Brief)
 	}
 	return input
+}
+
+func applyUpsertRenderPlanRuntimeDefaults(input UpsertRenderPlanToolInput, runtime NativeRuntimeContext) UpsertRenderPlanToolInput {
+	if strings.TrimSpace(input.Scope.Type) == "" {
+		input.Scope.Type = strings.TrimSpace(runtime.ScopeType)
+	}
+	if strings.TrimSpace(input.Scope.ID) == "" && runtime.ScopeID.Valid {
+		input.Scope.ID = uuidString(runtime.ScopeID)
+	}
+	if strings.TrimSpace(input.TargetPhase) == "" {
+		input.TargetPhase = strings.TrimSpace(runtime.TargetPhase)
+	}
+	if strings.TrimSpace(input.TaskType) == "" {
+		input.TaskType = renderplan.TaskGenerate
+	}
+	if strings.TrimSpace(input.ModelPromptProfile) == "" {
+		input.ModelPromptProfile = inferRenderPlanProfile(input.TargetPhase)
+	}
+	if strings.TrimSpace(input.Operation) == "" {
+		input.Operation = inferRenderPlanOperation(input.TargetPhase, input.ReferenceBindings)
+	}
+	return normalizeUpsertRenderPlanInput(input)
+}
+
+func inferRenderPlanProfile(targetPhase string) string {
+	switch strings.TrimSpace(targetPhase) {
+	case renderplan.PhaseShotVideo:
+		return renderplan.ProfileSeedance2Video
+	case renderplan.PhaseReferenceImage, renderplan.PhasePreviewImage:
+		return renderplan.ProfileSeedream5Image
+	default:
+		return ""
+	}
+}
+
+func inferRenderPlanOperation(targetPhase string, bindings []ReferenceBindingInput) string {
+	switch strings.TrimSpace(targetPhase) {
+	case renderplan.PhaseShotVideo:
+		hasFirstFrame := false
+		hasLastFrame := false
+		for _, binding := range bindings {
+			switch strings.TrimSpace(binding.Role) {
+			case "first_frame":
+				hasFirstFrame = true
+			case "last_frame":
+				hasLastFrame = true
+			}
+		}
+		if hasFirstFrame && hasLastFrame {
+			return "image_to_video_first_last_frame"
+		}
+		if hasFirstFrame {
+			return "image_to_video_first_frame"
+		}
+		if len(bindings) > 0 {
+			return "multi_modal_reference_video"
+		}
+		return "text_to_video"
+	case renderplan.PhaseReferenceImage, renderplan.PhasePreviewImage:
+		if len(bindings) > 1 {
+			return "multi_image_to_image"
+		}
+		if len(bindings) == 1 {
+			return "image_to_image"
+		}
+		return "text_to_image"
+	default:
+		return ""
+	}
 }
 
 func (t *UpsertRenderPlanNativeTool) validateAndNormalizeReferenceBindings(ctx context.Context, runtime NativeRuntimeContext, input UpsertRenderPlanToolInput) (UpsertRenderPlanToolInput, string, bool) {

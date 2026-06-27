@@ -98,6 +98,18 @@ func TestProducerResponderForConfigUsesVolcengineWhenRealModeHasKey(t *testing.T
 	}
 }
 
+func TestAgentModelMaxTokenBudgetsAreLargeEnoughForNativeToolArguments(t *testing.T) {
+	if producerModelMaxTokens < 4096 {
+		t.Fatalf("producerModelMaxTokens = %d, want at least 4096", producerModelMaxTokens)
+	}
+	if craftsmanModelMaxTokens < 8192 {
+		t.Fatalf("craftsmanModelMaxTokens = %d, want at least 8192", craftsmanModelMaxTokens)
+	}
+	if reviewerModelMaxTokens < 4096 {
+		t.Fatalf("reviewerModelMaxTokens = %d, want at least 4096", reviewerModelMaxTokens)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

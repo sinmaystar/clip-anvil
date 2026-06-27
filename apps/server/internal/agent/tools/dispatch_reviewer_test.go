@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -55,6 +56,14 @@ func TestDispatchReviewerCreatesReviewerTask(t *testing.T) {
 	}
 	if runtime.createdTask.TaskType != "reviewer_turn" {
 		t.Fatalf("task type = %s", runtime.createdTask.TaskType)
+	}
+	var taskInput map[string]any
+	if err := json.Unmarshal(runtime.createdTask.Input, &taskInput); err != nil {
+		t.Fatal(err)
+	}
+	if taskInput["producer_thread_id"] != "02000000-0000-0000-0000-000000000000" ||
+		taskInput["producer_task_id"] != "03000000-0000-0000-0000-000000000000" {
+		t.Fatalf("reviewer task missing producer linkage: %#v", taskInput)
 	}
 	if len(enqueuer.tasks) != 1 {
 		t.Fatalf("enqueued tasks = %d", len(enqueuer.tasks))

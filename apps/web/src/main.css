@@ -5227,19 +5227,15 @@ a:focus-visible {
   gap: 12px;
 }
 
-.agent-workbench-shot-media-stack[data-layout="grid"] {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .agent-workbench-shot-media-button {
   position: relative;
   display: block;
-  width: 100%;
   min-height: 0;
   overflow: hidden;
+  max-width: 100%;
+  justify-self: center;
   border: 0;
   border-radius: inherit;
-  aspect-ratio: 16 / 9;
   background: transparent;
   color: inherit;
   cursor: pointer;

@@ -147,4 +147,86 @@ describe("agent workbench view model", () => {
     assert.ok(shot3.position.y > shot1.position.y);
     assert.ok(Number(scene.height) > Number(shot1.height) * 2);
   });
+
+  it("uses masonry layout so tall video shots do not stretch neighboring shots", () => {
+    const masonryWorkbench = {
+      ...workbench,
+      scenes: [
+        {
+          ...workbench.scenes[0],
+          shots: [
+            {
+              ...workbench.scenes[0].shots[0],
+              id: "shot-1",
+              client_key: "shot_01",
+              sequence_index: 1,
+              artifacts: [
+                {
+                  kind: "preview_image",
+                  status: "succeeded",
+                  node_id: "preview-1",
+                  width: 1024,
+                  height: 1024,
+                },
+              ],
+            },
+            {
+              ...workbench.scenes[0].shots[0],
+              id: "shot-2",
+              client_key: "shot_02",
+              sequence_index: 2,
+              artifacts: [
+                {
+                  kind: "preview_image",
+                  status: "succeeded",
+                  node_id: "preview-2",
+                  width: 1024,
+                  height: 1024,
+                },
+                {
+                  kind: "shot_video",
+                  status: "succeeded",
+                  node_id: "video-2",
+                  width: 1280,
+                  height: 720,
+                },
+              ],
+            },
+            {
+              ...workbench.scenes[0].shots[0],
+              id: "shot-3",
+              client_key: "shot_03",
+              sequence_index: 3,
+              artifacts: [
+                {
+                  kind: "preview_image",
+                  status: "succeeded",
+                  node_id: "preview-3",
+                  width: 1024,
+                  height: 1024,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const flow = agentWorkbenchToFlow(masonryWorkbench);
+    const shot1 = flow.nodes.find((node) => node.id === shotNodeId("shot-1"));
+    const shot2 = flow.nodes.find((node) => node.id === shotNodeId("shot-2"));
+    const shot3 = flow.nodes.find((node) => node.id === shotNodeId("shot-3"));
+
+    assert.ok(shot1);
+    assert.ok(shot2);
+    assert.ok(shot3);
+    assert.ok(Number(shot2.height) > Number(shot1.height));
+    assert.notEqual(shot1.height, shot2.height);
+    assert.equal(shot1.position.y, shot2.position.y);
+    assert.equal(shot3.position.x, shot1.position.x);
+    assert.equal(
+      shot3.position.y,
+      shot1.position.y + Number(shot1.height) + 32,
+    );
+  });
 });

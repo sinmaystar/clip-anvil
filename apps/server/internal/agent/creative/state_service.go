@@ -321,17 +321,22 @@ func (s *Service) UpsertStoryboard(ctx context.Context, input UpsertStoryboardIn
 	}
 
 	for _, link := range input.ShotKeyElements {
-		if err := s.createShotKeyElement(ctx, input.WorkspaceID, shotsByKey, link); err != nil {
-			return UpsertStoryboardOutput{}, err
-		}
-		out.ShotKeyElements++
-	}
-	for _, dep := range input.Dependencies {
-		created, err := s.createShotDependency(ctx, input.WorkspaceID, shotsByKey, dep)
+		created, err := s.createShotKeyElement(ctx, input.WorkspaceID, shotsByKey, link)
 		if err != nil {
 			return UpsertStoryboardOutput{}, err
 		}
-		out.DependenciesCreated++
+		if created {
+			out.ShotKeyElements++
+		}
+	}
+	for _, dep := range input.Dependencies {
+		created, inserted, err := s.createShotDependency(ctx, input.WorkspaceID, shotsByKey, dep)
+		if err != nil {
+			return UpsertStoryboardOutput{}, err
+		}
+		if inserted {
+			out.DependenciesCreated++
+		}
 		out.Dependencies = append(out.Dependencies, created)
 	}
 	return out, nil
@@ -585,24 +590,39 @@ func (s *Service) upsertShot(ctx context.Context, input UpsertStoryboardInput, s
 	return updated, false, err
 }
 
-func (s *Service) createShotKeyElement(ctx context.Context, workspaceID pgtype.UUID, shotsByKey map[string]db.Shot, input ShotKeyElementInput) error {
+func (s *Service) createShotKeyElement(ctx context.Context, workspaceID pgtype.UUID, shotsByKey map[string]db.Shot, input ShotKeyElementInput) (bool, error) {
 	shot, ok := shotsByKey[input.ShotClientKey]
 	if !ok || input.ElementClientKey == "" || input.Role == "" {
-		return ErrInvalidCreativeStateInput
+		return false, fmt.Errorf("%w: shot_key_elements 需要有效的 shot_client_key、element_client_key 和 role", ErrInvalidCreativeStateInput)
 	}
 	element, err := s.store.GetKeyElementByClientKey(ctx, db.GetKeyElementByClientKeyParams{WorkspaceID: workspaceID, ClientKey: input.ElementClientKey})
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, fmt.Errorf("%w: 找不到 element_client_key=%s", ErrCreativeStateNotFound, input.ElementClientKey)
+		}
+		return false, err
 	}
 	stateID := pgtype.UUID{}
 	if strings.TrimSpace(input.StateClientKey) != "" {
 		state, err := s.store.GetKeyElementStateByClientKey(ctx, db.GetKeyElementStateByClientKeyParams{KeyElementID: element.ID, ClientKey: input.StateClientKey})
 		if err != nil {
-			return err
+			if errors.Is(err, pgx.ErrNoRows) {
+				return false, fmt.Errorf("%w: 找不到 element_client_key=%s 下的 state_client_key=%s", ErrCreativeStateNotFound, input.ElementClientKey, input.StateClientKey)
+			}
+			return false, err
 		}
 		stateID = state.ID
 	} else if state, err := s.store.GetDefaultKeyElementState(ctx, element.ID); err == nil {
 		stateID = state.ID
+	}
+	existing, err := s.store.ListShotKeyElementsByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return false, err
+	}
+	for _, current := range existing {
+		if current.ShotID == shot.ID && current.KeyElementID == element.ID && current.Role == input.Role {
+			return false, nil
+		}
 	}
 	_, err = s.store.CreateShotKeyElement(ctx, db.CreateShotKeyElementParams{
 		WorkspaceID:       workspaceID,
@@ -613,19 +633,31 @@ func (s *Service) createShotKeyElement(ctx context.Context, workspaceID pgtype.U
 		Required:          input.Required,
 		SortOrder:         input.SortOrder,
 	})
-	return err
+	return err == nil, err
 }
 
-func (s *Service) createShotDependency(ctx context.Context, workspaceID pgtype.UUID, shotsByKey map[string]db.Shot, input ShotDependencyInput) (db.ShotDependency, error) {
+func (s *Service) createShotDependency(ctx context.Context, workspaceID pgtype.UUID, shotsByKey map[string]db.Shot, input ShotDependencyInput) (db.ShotDependency, bool, error) {
 	fromShot, ok := shotsByKey[input.FromShotClientKey]
 	if !ok {
-		return db.ShotDependency{}, ErrCreativeStateNotFound
+		return db.ShotDependency{}, false, fmt.Errorf("%w: 找不到 from_shot_client_key=%s", ErrCreativeStateNotFound, input.FromShotClientKey)
 	}
 	toShot, ok := shotsByKey[input.ToShotClientKey]
 	if !ok || fromShot.ID == toShot.ID || input.DependencyType == "" || input.Reason == "" {
-		return db.ShotDependency{}, ErrInvalidCreativeStateInput
+		if !ok {
+			return db.ShotDependency{}, false, fmt.Errorf("%w: 找不到 to_shot_client_key=%s", ErrCreativeStateNotFound, input.ToShotClientKey)
+		}
+		return db.ShotDependency{}, false, fmt.Errorf("%w: dependencies 需要不同的 from/to shot、dependency_type 和 reason", ErrInvalidCreativeStateInput)
 	}
-	return s.store.CreateShotDependency(ctx, db.CreateShotDependencyParams{
+	existing, err := s.store.ListShotDependenciesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return db.ShotDependency{}, false, err
+	}
+	for _, current := range existing {
+		if current.FromShotID == fromShot.ID && current.ToShotID == toShot.ID && current.DependencyType == input.DependencyType && current.InjectionRole == input.InjectionRole {
+			return current, false, nil
+		}
+	}
+	created, err := s.store.CreateShotDependency(ctx, db.CreateShotDependencyParams{
 		WorkspaceID:      workspaceID,
 		FromShotID:       fromShot.ID,
 		ToShotID:         toShot.ID,
@@ -636,33 +668,36 @@ func (s *Service) createShotDependency(ctx context.Context, workspaceID pgtype.U
 		StalePolicy:      "mark_downstream_stale",
 		Reason:           input.Reason,
 	})
+	return created, err == nil, err
 }
 
 func validateKeyElement(input KeyElementInput) error {
 	if input.ClientKey == "" || input.ElementType == "" || input.Name == "" {
-		return ErrInvalidCreativeStateInput
+		return fmt.Errorf("%w: elements 需要 client_key、element_type 和 name", ErrInvalidCreativeStateInput)
 	}
 	if !oneOf(input.ElementType, "product", "character", "scene", "prop", "style") {
-		return ErrInvalidCreativeStateInput
+		return fmt.Errorf("%w: element_type=%s 不支持", ErrInvalidCreativeStateInput, input.ElementType)
 	}
 	if strings.TrimSpace(input.SourceType) != "" && !oneOf(input.SourceType, "user_asset", "material_analysis", "prompt_derived", "agent_created") {
-		return ErrInvalidCreativeStateInput
-	}
-	if input.SourceType == "prompt_derived" {
-		for _, state := range input.States {
-			if state.ReferenceStatus != "needs_reference" && state.ReferenceNodeID == "" && state.ReferenceVersionID == "" {
-				return ErrInvalidCreativeStateInput
-			}
-		}
+		return fmt.Errorf("%w: source_type=%s 不支持", ErrInvalidCreativeStateInput, input.SourceType)
 	}
 	defaults := 0
 	for _, state := range input.States {
+		if strings.TrimSpace(state.ClientKey) == "" {
+			return fmt.Errorf("%w: states.client_key 必填", ErrInvalidCreativeStateInput)
+		}
+		if strings.TrimSpace(state.ReferenceStatus) == "" {
+			return fmt.Errorf("%w: states.reference_status 必填", ErrInvalidCreativeStateInput)
+		}
+		if !oneOf(state.ReferenceStatus, "none", "needs_reference", "ready", "approved", "rejected") {
+			return fmt.Errorf("%w: states.reference_status=%s 不支持", ErrInvalidCreativeStateInput, state.ReferenceStatus)
+		}
 		if state.IsDefault {
 			defaults++
 		}
 	}
 	if defaults > 1 {
-		return ErrInvalidCreativeStateInput
+		return fmt.Errorf("%w: 同一个 key element 只能有一个默认 state", ErrInvalidCreativeStateInput)
 	}
 	return nil
 }

@@ -203,7 +203,7 @@ Seedance 主要用于视频：分镜视频、编辑、延长、首尾帧/尾帧�
 - 如果用户要求生成全局或场景级参考图，先确保对应 KeyElementState 存在，再派 Craftsman；不要让每个 shot 各自生成同一个机场或柔光房间。
 - 生成 shot preview image 前，确保 shot 已引用关键 KeyElementState。
 - 生成 shot video 前，优先使用已确认或当前 winner preview image 作为 first frame；如果有 last_frame_chain，遵守依赖顺序。
-- PromptCompiler、capability validation 和 artifact binding 由工程服务完成；generation job submit 只会在 dispatch_craftsman(execution_policy=execute_immediately) 或 decide_render_plan(decision=accept,next_action=submit_worker) 后发生。不要虚构 compile_render_plan、submit_render_plan、schedule_ready_render_plans 工具。
+- PromptCompiler、capability validation 和 artifact binding 由工程服务完成；generation job submit 只会在 dispatch_craftsman(execution_policy=execute_immediately) 或 decide_render_plan(decision=accept,next_action=submit_worker，或 decisions 中某项 accept/submit_worker) 后发生。不要虚构 compile_render_plan、submit_render_plan、schedule_ready_render_plans 工具。
 
 ---
 
@@ -215,7 +215,7 @@ Seedance 主要用于视频：分镜视频、编辑、延长、首尾帧/尾帧�
 - dispatch_craftsman：派 Craftsman 为 Shot 创建 / 修订 RenderPlan。必须选择 execution_policy：
   - execute_immediately：用户已明确授权生成、重生成或“先出一张预览图看看”时使用。Craftsman 编译 RenderPlan 后工程自动提交 Worker。
   - wait_for_producer：Craftsman 只编译 RenderPlan，等待你后续 accept/reject。
-- decide_render_plan：Producer 对 waiting_for_approval 或 compiled RenderPlan 做 accept/reject。accept 会提交 worker_generation；reject 不会生成，后续可重新 dispatch_craftsman 修订。
+- decide_render_plan：Producer 对 waiting_for_approval 或 compiled RenderPlan 做 accept/reject。处理多条 craftsman_render_plan_ready signal 时，必须使用 decisions 批量参数一次提交每条 RenderPlan 的独立决策。accept 会提交 worker_generation；reject 不会生成，后续可重新 dispatch_craftsman 修订。
 - dispatch_reviewer：派 Reviewer 评审 RenderPlan、preview image、shot video 或 final video。
 - select_artifact_version：选择媒体节点 winner，或把 artifact 绑定为 KeyElementState 参考资源。
 - request_user_decision：对关键参考图、高成本生成、核心方向变化或歧义请求用户确认。

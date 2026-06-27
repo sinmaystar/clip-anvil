@@ -38,6 +38,11 @@ type producerSignalReleaser interface {
 	ReleaseProducerPendingSignalsForTask(ctx context.Context, workspaceID, taskID pgtype.UUID, reason string) ([]db.ProducerPendingSignal, error)
 }
 
+type producerSignalCompletionProcessor interface {
+	ListClaimedProducerSignalsByTask(ctx context.Context, workspaceID, producerThreadID, taskID pgtype.UUID) ([]db.ProducerPendingSignal, error)
+	MarkProducerPendingSignalProcessed(ctx context.Context, signalID, workspaceID, taskID pgtype.UUID) (db.ProducerPendingSignal, error)
+}
+
 type Runner interface {
 	Run(ctx context.Context, input ProducerTurnInput, options ...agenteino.RunOptions) (ProducerTurnOutput, error)
 }
@@ -244,11 +249,32 @@ func (e *Executor) releasePendingSignalsForTask(ctx context.Context, input RunTa
 	if e == nil || e.runtime == nil {
 		return
 	}
+	e.markInformationalSignalsProcessed(ctx, input, reason)
 	releaser, ok := e.runtime.(producerSignalReleaser)
 	if !ok {
 		return
 	}
 	_, _ = releaser.ReleaseProducerPendingSignalsForTask(ctx, input.WorkspaceID, input.TaskID, reason)
+}
+
+func (e *Executor) markInformationalSignalsProcessed(ctx context.Context, input RunTaskInput, reason string) {
+	if !strings.Contains(reason, "producer_turn_completed") {
+		return
+	}
+	processor, ok := e.runtime.(producerSignalCompletionProcessor)
+	if !ok || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid {
+		return
+	}
+	signals, err := processor.ListClaimedProducerSignalsByTask(ctx, input.WorkspaceID, input.ThreadID, input.TaskID)
+	if err != nil {
+		return
+	}
+	for _, signal := range signals {
+		if signal.SignalType != "worker_generation_completed" && signal.SignalType != "review_completed" {
+			continue
+		}
+		_, _ = processor.MarkProducerPendingSignalProcessed(ctx, signal.ID, input.WorkspaceID, input.TaskID)
+	}
 }
 
 func (e *Executor) persistNativeToolTrace(ctx context.Context, input RunTaskInput, messages []ProducerSameTurnMessage) error {
@@ -641,10 +667,21 @@ type producerTaskTriggerPayload struct {
 	Trigger           string `json:"trigger"`
 	CraftsmanTaskID   string `json:"craftsman_task_id"`
 	CraftsmanThreadID string `json:"craftsman_thread_id"`
+	WorkerTaskID      string `json:"worker_task_id"`
+	WorkerThreadID    string `json:"worker_thread_id"`
 	ScopeType         string `json:"scope_type"`
 	ScopeID           string `json:"scope_id"`
 	ShotID            string `json:"shot_id"`
 	TargetPhase       string `json:"target_phase"`
+	RenderPlanID      string `json:"render_plan_id"`
+	RenderPlanStatus  string `json:"render_plan_status"`
+	GenerationJobID   string `json:"generation_job_id"`
+	ArtifactVersionID string `json:"artifact_version_id"`
+	ArtifactKind      string `json:"artifact_kind"`
+	ReviewRecordID    string `json:"review_record_id"`
+	ReviewTask        string `json:"review_task"`
+	Verdict           string `json:"verdict"`
+	ShouldRetry       bool   `json:"should_retry"`
 	TriggerMessageID  string `json:"trigger_message_id"`
 	TriggerMessageSeq int64  `json:"trigger_message_seq"`
 }
@@ -669,6 +706,63 @@ func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 		}
 		if craftsmanTaskID := strings.TrimSpace(payload.CraftsmanTaskID); craftsmanTaskID != "" {
 			lines = append(lines, "Craftsman 任务："+craftsmanTaskID+"。")
+		}
+		lines = append(lines, "</system-reminder>")
+		return strings.Join(lines, "\n")
+	case "worker_generation_completed":
+		lines := []string{
+			"<system-reminder>",
+			"系统事件：Worker 已完成一次媒体生成，当前轮次由工程自动唤醒 Producer。",
+			"触发原因：worker_generation_completed。",
+			"下一步：请读取项目上下文，确认 RenderPlan、generation_job、artifact_version 和画布产物状态，再决定是否继续 Reviewer、重生成、推进下一阶段或回复用户。",
+		}
+		if targetPhase := strings.TrimSpace(payload.TargetPhase); targetPhase != "" {
+			lines = append(lines, "目标阶段："+targetPhase+"。")
+		}
+		if status := strings.TrimSpace(payload.RenderPlanStatus); status != "" {
+			lines = append(lines, "生成状态："+status+"。")
+		}
+		if renderPlanID := strings.TrimSpace(payload.RenderPlanID); renderPlanID != "" {
+			lines = append(lines, "RenderPlan："+renderPlanID+"。")
+		}
+		if generationJobID := strings.TrimSpace(payload.GenerationJobID); generationJobID != "" {
+			lines = append(lines, "GenerationJob："+generationJobID+"。")
+		}
+		if artifactVersionID := strings.TrimSpace(payload.ArtifactVersionID); artifactVersionID != "" {
+			lines = append(lines, "ArtifactVersion："+artifactVersionID+"。")
+		}
+		if scopeType := strings.TrimSpace(payload.ScopeType); scopeType != "" {
+			lines = append(lines, "目标范围："+scopeType+" "+strings.TrimSpace(payload.ScopeID)+"。")
+		}
+		if workerTaskID := strings.TrimSpace(payload.WorkerTaskID); workerTaskID != "" {
+			lines = append(lines, "Worker 任务："+workerTaskID+"。")
+		}
+		lines = append(lines, "</system-reminder>")
+		return strings.Join(lines, "\n")
+	case "review_completed":
+		lines := []string{
+			"<system-reminder>",
+			"系统事件：Reviewer 已提交评审结果，当前轮次由工程自动唤醒 Producer。",
+			"触发原因：review_completed。",
+			"下一步：请读取项目上下文，确认 review_record、artifact_issue 和 retry_recommendation，再决定接受、派 Craftsman 修复、重新生成、请求用户确认或回复用户。",
+		}
+		if reviewTask := strings.TrimSpace(payload.ReviewTask); reviewTask != "" {
+			lines = append(lines, "评审任务："+reviewTask+"。")
+		}
+		if verdict := strings.TrimSpace(payload.Verdict); verdict != "" {
+			lines = append(lines, "评审结论："+verdict+"。")
+		}
+		if payload.ShouldRetry {
+			lines = append(lines, "Reviewer 建议重试或修复。")
+		}
+		if reviewRecordID := strings.TrimSpace(payload.ReviewRecordID); reviewRecordID != "" {
+			lines = append(lines, "ReviewRecord："+reviewRecordID+"。")
+		}
+		if scopeType := strings.TrimSpace(payload.ScopeType); scopeType != "" {
+			lines = append(lines, "目标范围："+scopeType+" "+strings.TrimSpace(payload.ScopeID)+"。")
+		}
+		if renderPlanID := strings.TrimSpace(payload.RenderPlanID); renderPlanID != "" {
+			lines = append(lines, "RenderPlan："+renderPlanID+"。")
 		}
 		lines = append(lines, "</system-reminder>")
 		return strings.Join(lines, "\n")

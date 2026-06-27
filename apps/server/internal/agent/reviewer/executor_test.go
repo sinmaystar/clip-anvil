@@ -61,6 +61,59 @@ func TestReviewerExecutorRunsReviewerTurnTask(t *testing.T) {
 	}
 }
 
+func TestReviewerExecutorSignalsProducerWhenReviewCompleted(t *testing.T) {
+	runtime := &fakeReviewerExecutorRuntime{}
+	producerEnqueuer := &fakeProducerTaskEnqueuer{}
+	graph := &fakeReviewerRunner{output: GraphOutput{
+		Record:   db.ReviewRecord{ID: uuidWithByte(40)},
+		Decision: ReviewDecision{Status: ReviewStatusRejected, ShouldRetry: true},
+		Result:   ReviewResult{Critique: "Reviewer 发现阻塞问题，需要 Producer 决策。"},
+	}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph, ProducerEnqueuer: producerEnqueuer})
+	raw, _ := json.Marshal(TaskInput{
+		ReviewTask:        ReviewTaskPreviewImage,
+		TargetPhase:       TargetPhasePreviewImage,
+		ShotID:            uuidString(uuidWithByte(2)),
+		NodeID:            uuidString(uuidWithByte(3)),
+		ArtifactVersionID: uuidString(uuidWithByte(4)),
+		ProducerThreadID:  uuidString(uuidWithByte(7)),
+		ProducerTaskID:    uuidString(uuidWithByte(6)),
+		AttemptNo:         1,
+		MaxAttempts:       3,
+	})
+	task := db.AgentTask{
+		ID:          uuidWithByte(9),
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(8),
+		Role:        "reviewer",
+		ScopeType:   "shot",
+		ScopeID:     uuidWithByte(2),
+		TaskType:    "reviewer_turn",
+		Input:       raw,
+	}
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runtime.signals) != 1 {
+		t.Fatalf("signals = %#v", runtime.signals)
+	}
+	signal := runtime.signals[0]
+	if signal.SignalType != "review_completed" ||
+		signal.ProducerThreadID != uuidWithByte(7) ||
+		signal.SourceRole != "reviewer" ||
+		signal.SourceTaskID != uuidWithByte(9) ||
+		signal.ScopeType != "shot" ||
+		signal.ScopeID != uuidWithByte(2) ||
+		signal.DedupeKey != "review_completed:28000000-0000-0000-0000-000000000000" {
+		t.Fatalf("signal = %#v", signal)
+	}
+	if len(runtime.createdTasks) != 1 || len(producerEnqueuer.tasks) != 1 {
+		t.Fatalf("created tasks = %#v enqueued=%#v", runtime.createdTasks, producerEnqueuer.tasks)
+	}
+}
+
 func TestReviewerExecutorPassesTraceCallbacksToGraph(t *testing.T) {
 	runtime := &fakeReviewerExecutorRuntime{}
 	graph := &fakeReviewerRunner{output: GraphOutput{Decision: ReviewDecision{Status: ReviewStatusAccepted}}}
@@ -164,6 +217,10 @@ type fakeReviewerExecutorRuntime struct {
 	appendSeq        int64
 	appended         []db.AgentMessage
 	updated          []db.AgentMessage
+	signals          []agentruntime.CreateProducerPendingSignalParams
+	activeTasks      []db.AgentTask
+	createdTasks     []db.AgentTask
+	createdEvents    []agentruntime.CreateEventParams
 }
 
 func (f *fakeReviewerExecutorRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
@@ -217,6 +274,50 @@ func (f *fakeReviewerExecutorRuntime) UpdateMessage(_ context.Context, params ag
 	return db.AgentMessage{}, ErrInvalidInput
 }
 
+func (f *fakeReviewerExecutorRuntime) CreateProducerPendingSignal(_ context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error) {
+	f.signals = append(f.signals, params)
+	return db.ProducerPendingSignal{
+		ID:               uuidWithByte(byte(90 + len(f.signals))),
+		WorkspaceID:      params.WorkspaceID,
+		ProducerThreadID: params.ProducerThreadID,
+		SourceRole:       params.SourceRole,
+		SourceTaskID:     params.SourceTaskID,
+		SourceThreadID:   params.SourceThreadID,
+		SignalType:       params.SignalType,
+		ScopeType:        params.ScopeType,
+		ScopeID:          params.ScopeID,
+		RenderPlanID:     params.RenderPlanID,
+		Priority:         params.Priority,
+		DedupeKey:        params.DedupeKey,
+		Payload:          params.Payload,
+	}, nil
+}
+
+func (f *fakeReviewerExecutorRuntime) ListActiveAgentTasksByWorkspace(context.Context, pgtype.UUID) ([]db.AgentTask, error) {
+	return f.activeTasks, nil
+}
+
+func (f *fakeReviewerExecutorRuntime) CreateTask(_ context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {
+	task := db.AgentTask{
+		ID:          uuidWithByte(byte(100 + len(f.createdTasks))),
+		WorkspaceID: params.WorkspaceID,
+		ThreadID:    params.ThreadID,
+		Role:        params.Role,
+		ScopeType:   params.ScopeType,
+		ScopeID:     params.ScopeID,
+		TaskType:    params.TaskType,
+		MaxAttempts: params.MaxAttempts,
+		Input:       params.Input,
+	}
+	f.createdTasks = append(f.createdTasks, task)
+	return task, nil
+}
+
+func (f *fakeReviewerExecutorRuntime) CreateEvent(_ context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
+	f.createdEvents = append(f.createdEvents, params)
+	return db.AgentEvent{ID: uuidWithByte(byte(110 + len(f.createdEvents))), WorkspaceID: params.WorkspaceID, ThreadID: params.ThreadID, TaskID: params.TaskID, EventType: params.EventType}, nil
+}
+
 func (f *fakeReviewerExecutorRuntime) appendedMessageTypes() []string {
 	out := make([]string, 0, len(f.appended))
 	for _, msg := range f.appended {
@@ -260,4 +361,12 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+type fakeProducerTaskEnqueuer struct {
+	tasks []db.AgentTask
+}
+
+func (f *fakeProducerTaskEnqueuer) EnqueueProducerTask(_ context.Context, task db.AgentTask) {
+	f.tasks = append(f.tasks, task)
 }

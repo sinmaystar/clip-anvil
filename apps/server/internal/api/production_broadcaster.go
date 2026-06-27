@@ -39,6 +39,11 @@ type productionBroadcasterStore interface {
 type agentPreviewEventSink interface {
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
 	BroadcastAgentEvent(workspaceID pgtype.UUID, event db.AgentEvent)
+	GetOrCreateProducerThread(ctx context.Context, workspaceID pgtype.UUID) (db.AgentThread, error)
+	CreateProducerPendingSignal(ctx context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error)
+	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
+	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
+	EnqueueProducerTask(ctx context.Context, task db.AgentTask)
 }
 
 func NewProductionBroadcaster(hub *CanvasHub, queries productionBroadcasterStore, storage assetURLSigner) *ProductionBroadcaster {
@@ -215,6 +220,82 @@ func (b *ProductionBroadcaster) publishAgentProductionTerminalEvent(event produc
 		return
 	}
 	b.agentPreviewSink.BroadcastAgentEvent(event.WorkspaceID, agentEvent)
+	b.publishProducerWorkerCompletionSignal(ctx, event, node, artifactKind, job, task, versionID)
+}
+
+func (b *ProductionBroadcaster) publishProducerWorkerCompletionSignal(ctx context.Context, event production.ProductionEvent, node db.MediaNode, artifactKind string, job db.GenerationJob, task db.AgentTask, versionID string) {
+	if b == nil || b.agentPreviewSink == nil || job.RequestedByType != "agent_worker" || !task.ID.Valid || !event.JobID.Valid || !event.WorkspaceID.Valid {
+		return
+	}
+	thread, err := b.agentPreviewSink.GetOrCreateProducerThread(ctx, event.WorkspaceID)
+	if err != nil || !thread.ID.Valid {
+		return
+	}
+	status := statusForProductionEvent(event.Type)
+	targetPhase := targetPhaseForAgentArtifactKind(artifactKind)
+	payload := productionBroadcastJSON(map[string]any{
+		"trigger":             "worker_generation_completed",
+		"target_phase":        targetPhase,
+		"render_plan_id":      uuidString(task.RenderPlanID),
+		"render_plan_status":  status,
+		"scope_type":          task.ScopeType,
+		"scope_id":            uuidString(task.ScopeID),
+		"shot_id":             uuidString(node.ShotID),
+		"node_id":             uuidString(node.ID),
+		"generation_job_id":   uuidString(event.JobID),
+		"artifact_version_id": versionID,
+		"artifact_kind":       artifactKind,
+		"worker_task_id":      uuidString(task.ID),
+		"worker_thread_id":    uuidString(task.ThreadID),
+	})
+	_, err = b.agentPreviewSink.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
+		WorkspaceID:      event.WorkspaceID,
+		ProducerThreadID: thread.ID,
+		SourceRole:       "worker",
+		SourceTaskID:     task.ID,
+		SourceThreadID:   task.ThreadID,
+		SignalType:       "worker_generation_completed",
+		ScopeType:        defaultSignalScopeType(task.ScopeType),
+		ScopeID:          task.ScopeID,
+		RenderPlanID:     task.RenderPlanID,
+		Priority:         70,
+		DedupeKey:        "worker_generation_completed:" + uuidString(event.JobID),
+		Payload:          payload,
+	})
+	if err != nil {
+		return
+	}
+	b.ensureProducerWakeTask(ctx, event.WorkspaceID, thread.ID, payload)
+}
+
+func (b *ProductionBroadcaster) ensureProducerWakeTask(ctx context.Context, workspaceID, producerThreadID pgtype.UUID, input []byte) {
+	if b == nil || b.agentPreviewSink == nil || !workspaceID.Valid || !producerThreadID.Valid {
+		return
+	}
+	activeTasks, err := b.agentPreviewSink.ListActiveAgentTasksByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return
+	}
+	for _, task := range activeTasks {
+		if task.Role == "producer" &&
+			(task.TaskType == "producer_turn" || task.TaskType == "decision_resume") &&
+			(task.Status == "queued" || task.Status == "waiting_for_user") {
+			return
+		}
+	}
+	task, err := b.agentPreviewSink.CreateTask(ctx, agentruntime.CreateTaskParams{
+		WorkspaceID: workspaceID,
+		ThreadID:    producerThreadID,
+		Role:        "producer",
+		ScopeType:   "workspace",
+		TaskType:    "producer_turn",
+		MaxAttempts: 1,
+		Input:       input,
+	})
+	if err != nil {
+		return
+	}
+	b.agentPreviewSink.EnqueueProducerTask(ctx, task)
 }
 
 func productionBroadcastJSON(value any) []byte {
@@ -268,6 +349,24 @@ func terminalAgentEventForProductionEvent(artifactKind string, eventType string)
 	default:
 		return "", "", false
 	}
+}
+
+func targetPhaseForAgentArtifactKind(artifactKind string) string {
+	switch artifactKind {
+	case "preview_image":
+		return "preview_image"
+	case "shot_video":
+		return "shot_video"
+	default:
+		return artifactKind
+	}
+}
+
+func defaultSignalScopeType(scopeType string) string {
+	if strings.TrimSpace(scopeType) == "" {
+		return "workspace"
+	}
+	return scopeType
 }
 
 func agentArtifactKind(node db.MediaNode) (string, bool) {

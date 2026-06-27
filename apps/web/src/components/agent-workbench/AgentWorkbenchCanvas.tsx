@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Background,
   Controls,
@@ -15,6 +15,10 @@ import {
   type AgentWorkbenchEdge as AgentWorkbenchFlowEdge,
   type AgentWorkbenchNode,
 } from "../../lib/agentWorkbenchViewModel";
+import type {
+  AgentWorkbenchMediaDimensions,
+  AgentWorkbenchMediaDimensionsByKey,
+} from "../../lib/agentWorkbenchMediaLayout";
 import { AgentProjectOverviewNode } from "./AgentProjectOverviewNode";
 import { AgentSceneGroupNode } from "./AgentSceneGroupNode";
 import { AgentShotNode } from "./AgentShotNode";
@@ -50,14 +54,47 @@ function AgentWorkbenchCanvasContent({
   selected,
   onSelectObject,
 }: AgentWorkbenchCanvasProps) {
-  const flow = useMemo(() => agentWorkbenchToFlow(workbench), [workbench]);
-  const nodes = useMemo(
+  const [mediaDimensions, setMediaDimensions] =
+    useState<AgentWorkbenchMediaDimensionsByKey>({});
+  const handleMediaDimensionsChange = useCallback(
+    (key: string, dimensions: AgentWorkbenchMediaDimensions) => {
+      setMediaDimensions((current) => {
+        const previous = current[key];
+        if (
+          previous?.width === dimensions.width &&
+          previous?.height === dimensions.height
+        ) {
+          return current;
+        }
+        return { ...current, [key]: dimensions };
+      });
+    },
+    [],
+  );
+  const flow = useMemo(
+    () => agentWorkbenchToFlow(workbench, mediaDimensions),
+    [mediaDimensions, workbench],
+  );
+  const nodes = useMemo<AgentWorkbenchNode[]>(
     () =>
-      flow.nodes.map((node) => ({
-        ...node,
-        selected: isFlowNodeSelected(node, selected),
-      })),
-    [flow.nodes, selected],
+      flow.nodes.map((node) => {
+        if (node.type === "agentShot") {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              mediaDimensions,
+              onMediaDimensionsChange: handleMediaDimensionsChange,
+            },
+            selected: isFlowNodeSelected(node, selected),
+          };
+        }
+        return {
+          ...node,
+          selected: isFlowNodeSelected(node, selected),
+        };
+      }),
+    [flow.nodes, handleMediaDimensionsChange, mediaDimensions, selected],
   );
 
   return (

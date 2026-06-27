@@ -92,7 +92,11 @@ func (t *DispatchReviewerNativeTool) InvokableRun(ctx context.Context, arguments
 	if err != nil {
 		return NaturalToolError(toolDispatchReviewer, err.Error(), "请检查 reviewer thread scope 配置后重试。"), nil
 	}
-	rawInput, _ := json.Marshal(input)
+	rawInput, _ := json.Marshal(dispatchReviewerTaskInput{
+		DispatchReviewerInput: input,
+		ProducerThreadID:      uuidString(runtime.ThreadID),
+		ProducerTaskID:        uuidString(runtime.TaskID),
+	})
 	maxAttempts := input.Policy.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 3
@@ -135,6 +139,12 @@ func (t *DispatchReviewerNativeTool) InvokableRun(ctx context.Context, arguments
 		},
 		Next: "派发成功只表示评审任务已入队。Producer 应读取 review_record 和 artifact_issue 后决定是否接受、修复或请求用户确认。",
 	}.String(), nil
+}
+
+type dispatchReviewerTaskInput struct {
+	DispatchReviewerInput
+	ProducerThreadID string `json:"producer_thread_id,omitempty"`
+	ProducerTaskID   string `json:"producer_task_id,omitempty"`
 }
 
 func (t *DispatchReviewerNativeTool) appendDelegationMessage(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID, taskID pgtype.UUID, scopeType string, scopeID pgtype.UUID, input DispatchReviewerInput) error {

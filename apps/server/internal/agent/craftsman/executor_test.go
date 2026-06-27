@@ -163,6 +163,41 @@ func TestCraftsmanExecutorDoesNotWakeProducerWhenProducerWaitingForUser(t *testi
 	}
 }
 
+func TestCraftsmanExecutorQueuesNextProducerTurnWhenProducerRunning(t *testing.T) {
+	runtime := &fakeCraftsmanExecutorRuntime{
+		activeTasks: []db.AgentTask{
+			{ID: uuidWithByte(91), Role: "producer", TaskType: "producer_turn", Status: "running"},
+		},
+	}
+	producerEnqueuer := &fakeProducerTaskEnqueuer{}
+	graph := fakeCraftsmanRunner{output: GraphOutput{
+		AssistantText: "RenderPlan 已创建，等待 Producer 审批。",
+		Metadata:      map[string]any{"checkpoint_key": "craftsman:key"},
+	}}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:          runtime,
+		Graph:            &graph,
+		ProducerEnqueuer: producerEnqueuer,
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(30),
+		TaskID:      uuidWithByte(4),
+		ShotID:      uuidWithByte(2),
+		Input:       []byte(`{"target_phase":"preview_image","execution_policy":"wait_for_producer","producer_thread_id":"03000000-0000-0000-0000-000000000000","producer_task_id":"04000000-0000-0000-0000-000000000000"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.signals) != 1 {
+		t.Fatalf("signals = %#v", runtime.signals)
+	}
+	if len(runtime.createdTasks) != 1 || len(producerEnqueuer.tasks) != 1 {
+		t.Fatalf("created tasks = %#v, enqueued = %#v", runtime.createdTasks, producerEnqueuer.tasks)
+	}
+}
+
 func TestCraftsmanExecutorFailsWhenWaitingForProducerWithoutRenderPlan(t *testing.T) {
 	runtime := &fakeCraftsmanExecutorRuntime{renderPlanErr: errors.New("render plan not found")}
 	producerEnqueuer := &fakeProducerTaskEnqueuer{}

@@ -178,8 +178,9 @@ func main() {
 		)
 	}
 	productionRuntime = production.NewTracingRuntime(productionRuntime, agentTracing.Tracer)
+	producerEnqueuer := &agentProducerTaskEnqueuer{}
 	productionBroadcaster := api.NewProductionBroadcaster(canvasHub, queries, storageService)
-	productionBroadcaster.SetAgentPreviewEventSink(agentPreviewEventSink{runtime: agentRuntime, broadcaster: agentBroadcaster})
+	productionBroadcaster.SetAgentPreviewEventSink(agentPreviewEventSink{runtime: agentRuntime, broadcaster: agentBroadcaster, producerEnqueuer: producerEnqueuer})
 	productionRunner := production.NewProductionRunner(
 		productionService,
 		productionRuntime,
@@ -198,7 +199,6 @@ func main() {
 		Tracer:      agentTracing.Tracer,
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
-	producerEnqueuer := &agentProducerTaskEnqueuer{}
 	renderPlanSubmitter := agenttools.NewRenderPlanSubmitter(queries, agentRuntime, workerEnqueuer)
 	composerGraph, err := agentcomposer.NewGraph(agentcomposer.GraphConfig{
 		Runtime:          agentRuntime,
@@ -269,10 +269,11 @@ func main() {
 		os.Exit(1)
 	}
 	reviewerExecutor := agentreviewer.NewExecutor(agentreviewer.ExecutorConfig{
-		Runtime:        agentRuntime,
-		Graph:          reviewerGraph,
-		Broadcaster:    agentBroadcaster,
-		TraceCallbacks: agentTracing.Callbacks,
+		Runtime:          agentRuntime,
+		Graph:            reviewerGraph,
+		Broadcaster:      agentBroadcaster,
+		ProducerEnqueuer: producerEnqueuer,
+		TraceCallbacks:   agentTracing.Callbacks,
 	})
 	reviewerEnqueuer := agentReviewerTaskEnqueuer{executor: reviewerExecutor}
 	producerNativeToolRegistry, err := agenttools.NewNativeRegistry(
@@ -476,8 +477,9 @@ func main() {
 }
 
 type agentPreviewEventSink struct {
-	runtime     *agentruntime.Service
-	broadcaster *api.AgentBroadcaster
+	runtime          *agentruntime.Service
+	broadcaster      *api.AgentBroadcaster
+	producerEnqueuer *agentProducerTaskEnqueuer
 }
 
 func (s agentPreviewEventSink) CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error) {
@@ -492,6 +494,41 @@ func (s agentPreviewEventSink) BroadcastAgentEvent(workspaceID pgtype.UUID, even
 		return
 	}
 	s.broadcaster.BroadcastAgentEvent(workspaceID, event)
+}
+
+func (s agentPreviewEventSink) GetOrCreateProducerThread(ctx context.Context, workspaceID pgtype.UUID) (db.AgentThread, error) {
+	if s.runtime == nil {
+		return db.AgentThread{}, nil
+	}
+	return s.runtime.GetOrCreateProducerThread(ctx, workspaceID)
+}
+
+func (s agentPreviewEventSink) CreateProducerPendingSignal(ctx context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error) {
+	if s.runtime == nil {
+		return db.ProducerPendingSignal{}, nil
+	}
+	return s.runtime.CreateProducerPendingSignal(ctx, params)
+}
+
+func (s agentPreviewEventSink) ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error) {
+	if s.runtime == nil {
+		return nil, nil
+	}
+	return s.runtime.ListActiveAgentTasksByWorkspace(ctx, workspaceID)
+}
+
+func (s agentPreviewEventSink) CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {
+	if s.runtime == nil {
+		return db.AgentTask{}, nil
+	}
+	return s.runtime.CreateTask(ctx, params)
+}
+
+func (s agentPreviewEventSink) EnqueueProducerTask(ctx context.Context, task db.AgentTask) {
+	if s.producerEnqueuer == nil {
+		return
+	}
+	s.producerEnqueuer.EnqueueProducerTask(ctx, task)
 }
 
 type agentCraftsmanTaskEnqueuer struct {
@@ -660,6 +697,12 @@ func mustNativeRegistry(tools ...agenttools.NativeTool) *agenttools.NativeRegist
 	return registry
 }
 
+const (
+	producerModelMaxTokens  = 4096
+	craftsmanModelMaxTokens = 8192
+	reviewerModelMaxTokens  = 4096
+)
+
 func craftsmanResponderForConfig(cfg *config.Config) agentcraftsman.ToolCallingResponder {
 	craftsmanFixture := strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_CRAFTSMAN_FIXTURE"))
 	if craftsmanFixture == "m2_render_plan" || craftsmanFixture == "m3_reviewer_gate" {
@@ -671,7 +714,7 @@ func craftsmanResponderForConfig(cfg *config.Config) agentcraftsman.ToolCallingR
 		BaseURL:     cfg.Production.Volcengine.BaseURL,
 		Region:      cfg.Production.Volcengine.Region,
 		Model:       cfg.Production.Volcengine.TextModel,
-		MaxTokens:   1600,
+		MaxTokens:   craftsmanModelMaxTokens,
 		Temperature: 0.2,
 	})
 }
@@ -704,7 +747,7 @@ func producerResponderForConfig(cfg *config.Config) agentproducer.Responder {
 		BaseURL:     cfg.Production.Volcengine.BaseURL,
 		Region:      cfg.Production.Volcengine.Region,
 		Model:       cfg.Production.Volcengine.TextModel,
-		MaxTokens:   1200,
+		MaxTokens:   producerModelMaxTokens,
 		Temperature: 0.3,
 	})
 }
@@ -719,7 +762,7 @@ func reviewerResponderForConfig(cfg *config.Config) agentreviewer.ToolResponder 
 		BaseURL:     cfg.Production.Volcengine.BaseURL,
 		Region:      cfg.Production.Volcengine.Region,
 		Model:       cfg.Production.Volcengine.TextModel,
-		MaxTokens:   1200,
+		MaxTokens:   reviewerModelMaxTokens,
 		Temperature: 0.1,
 	})
 }
