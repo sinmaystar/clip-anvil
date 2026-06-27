@@ -74,14 +74,15 @@ type ProductionConfig struct {
 }
 
 type VolcengineConfig struct {
-	APIKey     string `mapstructure:"api_key"`
-	BaseURL    string `mapstructure:"base_url"`
-	Region     string `mapstructure:"region"`
-	TextModel  string `mapstructure:"text_model"`
-	ImageModel string `mapstructure:"image_model"`
-	VideoModel string `mapstructure:"video_model"`
-	AudioModel string `mapstructure:"audio_model"`
-	TOS        TOSConfig
+	APIKey                  string `mapstructure:"api_key"`
+	BaseURL                 string `mapstructure:"base_url"`
+	Region                  string `mapstructure:"region"`
+	TextModel               string `mapstructure:"text_model"`
+	ImageModel              string `mapstructure:"image_model"`
+	VideoModel              string `mapstructure:"video_model"`
+	VideoResolutionOverride string `mapstructure:"video_resolution_override"`
+	AudioModel              string `mapstructure:"audio_model"`
+	TOS                     TOSConfig
 }
 
 type TOSConfig struct {
@@ -163,6 +164,7 @@ func bindEnv(v *viper.Viper) error {
 		"production.volcengine.text_model",
 		"production.volcengine.image_model",
 		"production.volcengine.video_model",
+		"production.volcengine.video_resolution_override",
 		"production.volcengine.audio_model",
 		"production.volcengine.tos.access_key_id",
 		"production.volcengine.tos.secret_access_key",

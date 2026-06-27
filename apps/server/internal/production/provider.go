@@ -20,13 +20,14 @@ type ProviderConfig struct {
 }
 
 type VolcengineProviderConfig struct {
-	APIKey     string
-	BaseURL    string
-	Region     string
-	TextModel  string
-	ImageModel string
-	VideoModel string
-	AudioModel string
+	APIKey                  string
+	BaseURL                 string
+	Region                  string
+	TextModel               string
+	ImageModel              string
+	VideoModel              string
+	VideoResolutionOverride string
+	AudioModel              string
 }
 
 type ProviderRegistry struct {

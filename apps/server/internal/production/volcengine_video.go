@@ -124,6 +124,9 @@ func (r VolcengineVideoRuntime) generate(ctx context.Context, client volcengineV
 		return
 	}
 	request := videoTaskRequest(modelID, rendered, intent)
+	if resolution := strings.TrimSpace(r.cfg.VideoResolutionOverride); resolution != "" {
+		request.Resolution = &resolution
+	}
 	created, err := client.CreateTask(ctx, request)
 	if err != nil {
 		events <- ProductionEvent{Type: ProductionEventJobFailed, Progress: 100, Err: fmt.Errorf("%w: create ark video task: %v", ErrProviderExecution, err)}

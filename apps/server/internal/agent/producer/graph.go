@@ -59,6 +59,8 @@ type ProducerLoopState struct {
 	NewlyClaimedSignals        int
 	SignalReminderCount        int
 	SignalReminderKey          string
+	SignalDrainCompleted       bool
+	PersistentTriggerMessages  []ProducerTriggerMessage
 	FinalizeAfterAsyncDispatch bool
 }
 
@@ -140,6 +142,7 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 			return ProducerTurnOutput{}, err
 		}
 		out.SameTurnMessages = append([]ProducerSameTurnMessage(nil), state.Context.SameTurnMessages...)
+		out.PersistentTriggerMessages = append([]ProducerTriggerMessage(nil), state.PersistentTriggerMessages...)
 		return out, nil
 	})); err != nil {
 		return nil, err
@@ -175,8 +178,8 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 		return nil, err
 	}
 	if err := g.AddBranch("append_tool_results", compose.NewGraphBranch(routeProducerAfterToolResults(), map[string]bool{
-		"before_model":      true,
-		"finalize_response": true,
+		"before_model":                  true,
+		"check_signals_before_finalize": true,
 	})); err != nil {
 		return nil, err
 	}
@@ -196,25 +199,20 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 	return compileProducerGraph(g, config)
 }
 
-func applyProducerBeforeModel(ctx context.Context, signalRuntime ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
+func applyProducerBeforeModel(_ context.Context, _ ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
 	reminderState := toolloop.BeforeModel(producerLoopMessages(state.Context), state.ToolIterations, state.ReminderCooldowns, toolloop.DefaultConfig())
 	state.ReminderCooldowns = reminderState.Cooldowns
 	state.Context.PendingReminders = reminderState.PendingReminders
-	if state.ToolIterations > 0 {
-		return state, nil
-	}
-	signalReminders, newlyClaimed, err := producerSignalReminders(ctx, signalRuntime, state.Context.Input)
-	if err != nil {
-		return ProducerLoopState{}, err
-	}
-	state.NewlyClaimedSignals = newlyClaimed
-	state.SignalReminderCount = newlyClaimed
-	state.SignalReminderKey = signalReminderKey(signalReminders)
-	state.Context.PendingReminders = append(state.Context.PendingReminders, signalReminders...)
 	return state, nil
 }
 
 func applyProducerSignalCheck(ctx context.Context, signalRuntime ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
+	if state.SignalDrainCompleted {
+		state.NewlyClaimedSignals = 0
+		state.Context.PendingReminders = nil
+		return state, nil
+	}
+	state.SignalDrainCompleted = true
 	signalReminders, newlyClaimed, err := producerSignalReminders(ctx, signalRuntime, state.Context.Input)
 	if err != nil {
 		return ProducerLoopState{}, err
@@ -223,6 +221,15 @@ func applyProducerSignalCheck(ctx context.Context, signalRuntime ProducerSignalR
 	state.SignalReminderCount = newlyClaimed
 	state.SignalReminderKey = signalReminderKey(signalReminders)
 	state.Context.PendingReminders = signalReminders
+	for _, reminder := range signalReminders {
+		if text := strings.TrimSpace(reminder); text != "" {
+			state.PersistentTriggerMessages = append(state.PersistentTriggerMessages, ProducerTriggerMessage{
+				Text:    text,
+				Source:  "producer_pending_signal",
+				Trigger: "producer_pending_signal",
+			})
+		}
+	}
 	return state, nil
 }
 
@@ -342,7 +349,7 @@ func routeProducerModelOutput() compose.GraphBranchCondition[ProducerLoopState] 
 func routeProducerAfterToolResults() compose.GraphBranchCondition[ProducerLoopState] {
 	return func(_ context.Context, state ProducerLoopState) (string, error) {
 		if state.FinalizeAfterAsyncDispatch {
-			return "finalize_response", nil
+			return "check_signals_before_finalize", nil
 		}
 		return "before_model", nil
 	}

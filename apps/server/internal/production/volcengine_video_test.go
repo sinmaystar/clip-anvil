@@ -120,6 +120,36 @@ func TestVideoRuntimeResolvesImageRefsBeforeCreatingTask(t *testing.T) {
 	}
 }
 
+func TestVideoRuntimeOverridesResolutionWhenConfigured(t *testing.T) {
+	client := &fakeVideoTaskClient{
+		taskID: "task-video-resolution-override",
+		polls: []model.GetContentGenerationTaskResponse{{
+			ID:      "task-video-resolution-override",
+			Status:  model.StatusSucceeded,
+			Content: model.Content{VideoURL: "https://provider.invalid/video.mp4"},
+		}},
+	}
+	runtime := newVolcengineVideoRuntimeForTest(
+		VolcengineProviderConfig{
+			APIKey:                  "test-key",
+			VideoModel:              "doubao-seedance-2-0-260128",
+			VideoResolutionOverride: "480p",
+		},
+		client,
+		nil,
+		time.Millisecond,
+		time.Second,
+	)
+	intent := videoIntent()
+	intent.Model.ModelID = "doubao-seedance-2-0-260128"
+	intent.Params["resolution"] = "1080p"
+
+	_ = runVideoRuntime(t, runtime, intent)
+	if client.createReq.Resolution == nil || *client.createReq.Resolution != "480p" {
+		t.Fatalf("resolution = %#v, want 480p", client.createReq.Resolution)
+	}
+}
+
 func TestVideoRuntimeFailsForPrivateImageRefWithoutResolver(t *testing.T) {
 	client := &fakeVideoTaskClient{taskID: "task-private-image"}
 	runtime := newVolcengineVideoRuntimeForTest(
