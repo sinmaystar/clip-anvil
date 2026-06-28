@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/creative"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 type UpsertProjectBriefNativeTool struct {
@@ -18,7 +19,7 @@ type UpsertProjectBriefNativeTool struct {
 type UpsertProjectBriefToolInput struct {
 	Brief          string           `json:"brief" jsonschema:"required" jsonschema_description:"本次写入 CreativeBrief 的业务目的，例如为新广告创建 active brief。不要超过 160 个中文字符。"`
 	Mode           string           `json:"mode" jsonschema:"required,enum=create,enum=patch,enum=archive" jsonschema_description:"create 创建新 active brief；patch 局部更新已有 brief；archive 归档指定 brief。"`
-	BriefID        string           `json:"brief_id" jsonschema_description:"要 patch 或 archive 的 CreativeBrief UUID。create 时通常为空。为空 patch 时默认更新当前 active brief。"`
+	BriefID        string           `json:"brief_id" jsonschema_description:"兼容旧字段：要 patch 或 archive 的 CreativeBrief 内部 ID。create 时通常为空；为空 patch 时默认更新当前 active brief。模型通常不要填写。"`
 	Title          string           `json:"title" jsonschema_description:"视频项目标题，给用户和画布展示使用，例如“悦行行李箱机场广告”。"`
 	VideoType      string           `json:"video_type" jsonschema_description:"视频类型，例如 marketing_ad、product_demo、brand_story、social_short。不要写具体分镜。"`
 	TargetAudience string           `json:"target_audience" jsonschema_description:"目标受众，例如“短途商务出行用户”。如果用户没说，可以留空或写合理摘要。"`
@@ -89,8 +90,18 @@ func (t *UpsertProjectBriefNativeTool) InvokableRun(ctx context.Context, argumen
 			{Label: "视频类型", Value: brief.VideoType},
 			{Label: "比例", Value: brief.AspectRatio},
 		},
-		Next: fmt.Sprintf("继续检查是否需要更新 ProjectMemory 和关键元素。brief_id=%s", uuidString(brief.ID)),
+		Next: fmt.Sprintf("继续检查是否需要更新 ProjectMemory 和关键元素。creative_brief_ref=%s", creativeBriefRef(brief)),
 	}.String(), nil
+}
+
+func creativeBriefRef(brief db.CreativeBrief) string {
+	if key := strings.TrimSpace(brief.SemanticKey); key != "" {
+		return "creative_brief/" + key
+	}
+	if name := strings.TrimSpace(brief.DisplayName); name != "" {
+		return name
+	}
+	return "creative_brief.semantic_key_missing"
 }
 
 func validateUpsertProjectBriefInput(input UpsertProjectBriefToolInput) error {

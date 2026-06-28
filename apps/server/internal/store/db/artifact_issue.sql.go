@@ -25,10 +25,12 @@ INSERT INTO artifact_issue (
     evidence,
     suggested_fix,
     fix_hint,
-    requires_user_confirmation
+    requires_user_confirmation,
+    semantic_key,
+    display_name
 ) VALUES (
     $1, $2, $3, $4, 'open',
-    $5, $6, $7, $8, $9, $10, $11, $12
+    $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 ) RETURNING id, workspace_id, review_record_id, dimension, severity, status, target_object_type, target_object_id, title, description, evidence, suggested_fix, fix_hint, requires_user_confirmation, superseded_by_issue_id, resolved_by_review_record_id, created_at, updated_at, semantic_key, display_name
 `
 
@@ -45,6 +47,8 @@ type CreateArtifactIssueParams struct {
 	SuggestedFix             string      `json:"suggested_fix"`
 	FixHint                  string      `json:"fix_hint"`
 	RequiresUserConfirmation bool        `json:"requires_user_confirmation"`
+	SemanticKey              string      `json:"semantic_key"`
+	DisplayName              string      `json:"display_name"`
 }
 
 func (q *Queries) CreateArtifactIssue(ctx context.Context, arg CreateArtifactIssueParams) (ArtifactIssue, error) {
@@ -61,6 +65,8 @@ func (q *Queries) CreateArtifactIssue(ctx context.Context, arg CreateArtifactIss
 		arg.SuggestedFix,
 		arg.FixHint,
 		arg.RequiresUserConfirmation,
+		arg.SemanticKey,
+		arg.DisplayName,
 	)
 	var i ArtifactIssue
 	err := row.Scan(

@@ -44,17 +44,18 @@ type ContextLoader struct {
 	PSSBuilder  PSSBuilder
 }
 
-const reviewerContextMessageLimit int32 = 1000
-
 func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, error) {
 	if l.Store == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid {
 		return Context{}, ErrInvalidInput
 	}
-	if input.Task.TargetPhase != TargetPhasePreviewImage && input.Task.TargetPhase != TargetPhaseShotVideo {
+	if input.Task.TargetPhase != TargetPhasePreviewImage &&
+		input.Task.TargetPhase != TargetPhaseShotVideo &&
+		input.Task.TargetPhase != TargetPhaseFinalVideo {
 		return Context{}, fmt.Errorf("%w: unsupported review phase %q", ErrInvalidInput, input.Task.TargetPhase)
 	}
-	shotID, ok := pgUUIDFromString(input.Task.ShotID)
-	if !ok {
+	requiresShot := input.Task.TargetPhase != TargetPhaseFinalVideo
+	shotID, hasShotID := pgUUIDFromString(input.Task.ShotID)
+	if requiresShot && !hasShotID {
 		return Context{}, fmt.Errorf("%w: shot_id is required", ErrInvalidInput)
 	}
 	nodeID, ok := pgUUIDFromString(input.Task.NodeID)
@@ -65,9 +66,13 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 	if !ok {
 		return Context{}, fmt.Errorf("%w: artifact_version_id is required", ErrInvalidInput)
 	}
-	shot, err := l.Store.GetShotByID(ctx, shotID)
-	if err != nil {
-		return Context{}, err
+	shot := db.Shot{}
+	if requiresShot {
+		var err error
+		shot, err = l.Store.GetShotByID(ctx, shotID)
+		if err != nil {
+			return Context{}, err
+		}
 	}
 	node, err := l.Store.GetMediaNodeByID(ctx, nodeID)
 	if err != nil {
@@ -77,27 +82,29 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 	if err != nil {
 		return Context{}, err
 	}
-	if shot.WorkspaceID != input.WorkspaceID || node.WorkspaceID != input.WorkspaceID || version.WorkspaceID != input.WorkspaceID {
+	if requiresShot && shot.WorkspaceID != input.WorkspaceID {
 		return Context{}, ErrInvalidInput
 	}
-	if node.ShotID.Valid && node.ShotID != shot.ID {
+	if node.WorkspaceID != input.WorkspaceID || version.WorkspaceID != input.WorkspaceID {
+		return Context{}, ErrInvalidInput
+	}
+	if requiresShot && node.ShotID.Valid && node.ShotID != shot.ID {
 		return Context{}, ErrInvalidInput
 	}
 	if version.NodeID != node.ID {
 		return Context{}, ErrInvalidInput
-	}
-	messages := []db.AgentMessage{}
-	if l.Runtime != nil {
-		messages, err = l.Runtime.ListMessages(ctx, input.ThreadID, 0, reviewerContextMessageLimit)
-		if err != nil {
-			return Context{}, err
-		}
 	}
 	job := db.GenerationJob{}
 	if jobID, ok := pgUUIDFromString(input.Task.GenerationJobID); ok {
 		job, err = l.Store.GetGenerationJobByID(ctx, jobID)
 		if err != nil {
 			return Context{}, err
+		}
+		if job.WorkspaceID.Valid && job.WorkspaceID != input.WorkspaceID {
+			return Context{}, ErrInvalidInput
+		}
+		if job.TargetNodeID.Valid && job.TargetNodeID != node.ID {
+			return Context{}, ErrInvalidInput
 		}
 	}
 	assetURL, assetMime := "", ""
@@ -108,13 +115,17 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 		}
 		assetURL, assetMime = l.modelAssetReference(ctx, asset)
 	}
-	priorReviews, err := l.Store.ListReviewRecordsByShotPhase(ctx, db.ListReviewRecordsByShotPhaseParams{
-		WorkspaceID: input.WorkspaceID,
-		ShotID:      shot.ID,
-		TargetPhase: input.Task.TargetPhase,
-	})
-	if err != nil {
-		return Context{}, err
+	var priorReviews []db.ReviewRecord
+	if requiresShot {
+		var err error
+		priorReviews, err = l.Store.ListReviewRecordsByShotPhase(ctx, db.ListReviewRecordsByShotPhaseParams{
+			WorkspaceID: input.WorkspaceID,
+			ShotID:      shot.ID,
+			TargetPhase: input.Task.TargetPhase,
+		})
+		if err != nil {
+			return Context{}, err
+		}
 	}
 	productionText := ""
 	if l.PSSBuilder != nil {
@@ -130,7 +141,7 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 		Node:           node,
 		Version:        version,
 		GenerationJob:  job,
-		Messages:       messages,
+		Messages:       nil,
 		PriorReviews:   priorReviews,
 		ProductionText: productionText,
 		AssetURL:       assetURL,
@@ -147,6 +158,9 @@ func (l ContextLoader) modelAssetReference(ctx context.Context, asset db.MediaAs
 		return "", mime
 	}
 	if isModelAssetReference(rawURL) {
+		return rawURL, mime
+	}
+	if mime != "" && !strings.HasPrefix(mime, "image/") {
 		return rawURL, mime
 	}
 	if l.ImageReader == nil {
@@ -173,9 +187,11 @@ func buildReviewContextText(reviewContext Context) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Review Target\n")
 	fmt.Fprintf(&b, "- phase: %s\n", reviewContext.Input.Task.TargetPhase)
-	fmt.Fprintf(&b, "- shot: %s %s status=%s\n", reviewContext.Shot.ClientKey, reviewContext.Shot.Title, reviewContext.Shot.Status)
-	fmt.Fprintf(&b, "- node: %s type=%s status=%s\n", reviewContext.Node.Title, reviewContext.Node.NodeType, reviewContext.Node.Status)
-	fmt.Fprintf(&b, "- version: v%d status=%s\n", reviewContext.Version.VersionNo, reviewContext.Version.Status)
+	if reviewContext.Shot.ID.Valid {
+		fmt.Fprintf(&b, "- shot_ref: shot/%s %s status=%s\n", semanticOrFallback(reviewContext.Shot.SemanticKey, reviewContext.Shot.ClientKey), reviewContext.Shot.Title, reviewContext.Shot.Status)
+	}
+	fmt.Fprintf(&b, "- node_ref: media_node/%s type=%s status=%s\n", semanticOrFallback(reviewContext.Node.SemanticKey, reviewContext.Node.Title), reviewContext.Node.NodeType, reviewContext.Node.Status)
+	fmt.Fprintf(&b, "- artifact_version_ref: artifact_version/%s v%d status=%s\n", semanticOrFallback(reviewContext.Version.SemanticKey, reviewContext.Version.DisplayName), reviewContext.Version.VersionNo, reviewContext.Version.Status)
 	if strings.TrimSpace(reviewContext.GenerationJob.RenderedPrompt) != "" {
 		fmt.Fprintf(&b, "- prompt: %s\n", strings.TrimSpace(reviewContext.GenerationJob.RenderedPrompt))
 	}
@@ -189,6 +205,18 @@ func buildReviewContextText(reviewContext Context) string {
 		fmt.Fprintf(&b, "\nProduction State\n%s\n", strings.TrimSpace(reviewContext.ProductionText))
 	}
 	return b.String()
+}
+
+func semanticOrFallback(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
+	}
+	fallback = strings.TrimSpace(fallback)
+	if fallback != "" {
+		return fallback
+	}
+	return "semantic_key_missing"
 }
 
 func isModelAssetReference(value string) bool {

@@ -12,10 +12,12 @@ INSERT INTO artifact_issue (
     evidence,
     suggested_fix,
     fix_hint,
-    requires_user_confirmation
+    requires_user_confirmation,
+    semantic_key,
+    display_name
 ) VALUES (
     $1, $2, $3, $4, 'open',
-    $5, $6, $7, $8, $9, $10, $11, $12
+    $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 ) RETURNING *;
 
 -- name: ListArtifactIssuesByWorkspace :many

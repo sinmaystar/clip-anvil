@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -137,10 +138,17 @@ func (t ComposeFinalTool) currentShotVideoRefs(ctx context.Context, workspaceID 
 			return nil, err
 		}
 		if ok {
-			out = append(out, node.Title)
+			out = append(out, composeFinalNodeRef(node))
 		}
 	}
 	return out, nil
+}
+
+func composeFinalNodeRef(node db.MediaNode) string {
+	if ref := strings.TrimSpace(node.SemanticKey); ref != "" {
+		return ref
+	}
+	return uuidString(node.ID)
 }
 
 func (t ComposeFinalTool) currentShotVideoWinner(ctx context.Context, workspaceID pgtype.UUID, shot db.Shot) (db.MediaNode, bool, error) {

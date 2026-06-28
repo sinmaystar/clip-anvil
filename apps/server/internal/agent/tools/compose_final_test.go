@@ -19,8 +19,11 @@ func TestComposeFinalQueuesComposerTaskWithShotVideoWinners(t *testing.T) {
 			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SortOrder: 2, Status: "video_ready"},
 		},
 		nodes: map[pgtype.UUID][]db.MediaNode{
-			uuidWithByte(11): {{ID: uuidWithByte(21), WorkspaceID: uuidWithByte(1), ShotID: uuidWithByte(11), NodeType: db.NodeTypeVideo, Title: "shot-01 shot video", CurrentVersionID: uuidWithByte(31), Metadata: []byte(`{"agent_artifact_kind":"shot_video"}`)}},
-			uuidWithByte(12): {{ID: uuidWithByte(22), WorkspaceID: uuidWithByte(1), ShotID: uuidWithByte(12), NodeType: db.NodeTypeVideo, Title: "shot-02 shot video", CurrentVersionID: uuidWithByte(32), Metadata: []byte(`{"agent_artifact_kind":"shot_video"}`)}},
+			uuidWithByte(11): {{ID: uuidWithByte(21), WorkspaceID: uuidWithByte(1), ShotID: uuidWithByte(11), NodeType: db.NodeTypeVideo, Title: "shot-01 shot video", CurrentVersionID: uuidWithByte(31), Metadata: []byte(`{"agent_artifact_kind":"shot_video"}`), SemanticKey: "shot_01.shot_video.r1.node"}},
+			uuidWithByte(12): {
+				{ID: uuidWithByte(23), WorkspaceID: uuidWithByte(1), ShotID: uuidWithByte(12), NodeType: db.NodeTypeVideo, Title: "shot-02 shot video", Metadata: []byte(`{"agent_artifact_kind":"shot_video"}`), SemanticKey: "shot_02.shot_video.r1.node"},
+				{ID: uuidWithByte(22), WorkspaceID: uuidWithByte(1), ShotID: uuidWithByte(12), NodeType: db.NodeTypeVideo, Title: "shot-02 shot video", CurrentVersionID: uuidWithByte(32), Metadata: []byte(`{"agent_artifact_kind":"shot_video"}`), SemanticKey: "shot_02.shot_video.r2.node"},
+			},
 		},
 		versions: map[pgtype.UUID]db.ArtifactVersion{
 			uuidWithByte(31): {ID: uuidWithByte(31), WorkspaceID: uuidWithByte(1), NodeID: uuidWithByte(21), Status: db.JobStatusSucceeded},
@@ -43,7 +46,7 @@ func TestComposeFinalQueuesComposerTaskWithShotVideoWinners(t *testing.T) {
 		t.Fatal(err)
 	}
 	refs, _ := input["video_node_refs"].([]any)
-	if len(refs) != 2 || refs[0] != "shot-01 shot video" || refs[1] != "shot-02 shot video" {
+	if len(refs) != 2 || refs[0] != "shot_01.shot_video.r1.node" || refs[1] != "shot_02.shot_video.r2.node" {
 		t.Fatalf("task input = %#v", input)
 	}
 	if runtime.createdTasks[0].Role != "composer" || runtime.createdTasks[0].TaskType != "composer_turn" {

@@ -189,8 +189,10 @@ func (b *ProductionBroadcaster) publishAgentProductionTerminalEvent(event produc
 			task = loaded
 		}
 	}
+	version := db.ArtifactVersion{}
 	versionID := ""
-	if version, err := b.queries.GetArtifactVersionByJobID(ctx, event.JobID); err == nil {
+	if loadedVersion, err := b.queries.GetArtifactVersionByJobID(ctx, event.JobID); err == nil {
+		version = loadedVersion
 		versionID = uuidString(version.ID)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return
@@ -220,10 +222,11 @@ func (b *ProductionBroadcaster) publishAgentProductionTerminalEvent(event produc
 		return
 	}
 	b.agentPreviewSink.BroadcastAgentEvent(event.WorkspaceID, agentEvent)
-	b.publishProducerWorkerCompletionSignal(ctx, event, node, artifactKind, job, task, versionID)
+	b.publishProducerWorkerCompletionSignal(ctx, event, node, artifactKind, job, task, version, versionID)
+	b.publishProducerCompositionSignal(ctx, event, node, artifactKind, job, task, version, versionID)
 }
 
-func (b *ProductionBroadcaster) publishProducerWorkerCompletionSignal(ctx context.Context, event production.ProductionEvent, node db.MediaNode, artifactKind string, job db.GenerationJob, task db.AgentTask, versionID string) {
+func (b *ProductionBroadcaster) publishProducerWorkerCompletionSignal(ctx context.Context, event production.ProductionEvent, node db.MediaNode, artifactKind string, job db.GenerationJob, task db.AgentTask, version db.ArtifactVersion, versionID string) {
 	if b == nil || b.agentPreviewSink == nil || job.RequestedByType != "agent_worker" || !task.ID.Valid || !event.JobID.Valid || !event.WorkspaceID.Valid {
 		return
 	}
@@ -233,20 +236,36 @@ func (b *ProductionBroadcaster) publishProducerWorkerCompletionSignal(ctx contex
 	}
 	status := statusForProductionEvent(event.Type)
 	targetPhase := targetPhaseForAgentArtifactKind(artifactKind)
+	intentSemantic := productionJobSemantic(job)
+	nodeMetadata := mediaNodeMetadata(node)
+	scopeKey := firstNonEmpty(intentSemantic.ScopeKey, metadataString(nodeMetadata, "scope_key"), metadataString(nodeMetadata, "shot_client_key"))
+	renderPlanKey := firstNonEmpty(intentSemantic.RenderPlanKey, metadataString(nodeMetadata, "render_plan_key"))
 	payload := productionBroadcastJSON(map[string]any{
-		"trigger":             "worker_generation_completed",
-		"target_phase":        targetPhase,
-		"render_plan_id":      uuidString(task.RenderPlanID),
-		"render_plan_status":  status,
-		"scope_type":          task.ScopeType,
-		"scope_id":            uuidString(task.ScopeID),
-		"shot_id":             uuidString(node.ShotID),
-		"node_id":             uuidString(node.ID),
-		"generation_job_id":   uuidString(event.JobID),
-		"artifact_version_id": versionID,
-		"artifact_kind":       artifactKind,
-		"worker_task_id":      uuidString(task.ID),
-		"worker_thread_id":    uuidString(task.ThreadID),
+		"trigger":              "worker_generation_completed",
+		"target_phase":         targetPhase,
+		"render_plan_id":       uuidString(task.RenderPlanID),
+		"render_plan_key":      renderPlanKey,
+		"render_plan_ref":      objectRef("render_plan", renderPlanKey),
+		"render_plan_status":   status,
+		"scope_type":           task.ScopeType,
+		"scope_id":             uuidString(task.ScopeID),
+		"scope_key":            scopeKey,
+		"scope_ref":            objectRef(defaultSignalScopeType(task.ScopeType), scopeKey),
+		"shot_id":              uuidString(node.ShotID),
+		"shot_key":             firstNonEmpty(scopeKey, metadataString(nodeMetadata, "shot_client_key")),
+		"node_id":              uuidString(node.ID),
+		"node_key":             strings.TrimSpace(node.SemanticKey),
+		"node_ref":             objectRef("media_node", node.SemanticKey),
+		"generation_job_id":    uuidString(event.JobID),
+		"generation_job_key":   strings.TrimSpace(job.SemanticKey),
+		"generation_job_ref":   objectRef("generation_job", job.SemanticKey),
+		"artifact_version_id":  versionID,
+		"artifact_version_key": strings.TrimSpace(version.SemanticKey),
+		"artifact_version_ref": objectRef("artifact_version", version.SemanticKey),
+		"artifact_kind":        artifactKind,
+		"worker_task_id":       uuidString(task.ID),
+		"worker_task_key":      strings.TrimSpace(task.SemanticKey),
+		"worker_thread_id":     uuidString(task.ThreadID),
 	})
 	_, err = b.agentPreviewSink.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
 		WorkspaceID:      event.WorkspaceID,
@@ -266,6 +285,116 @@ func (b *ProductionBroadcaster) publishProducerWorkerCompletionSignal(ctx contex
 		return
 	}
 	b.ensureProducerWakeTask(ctx, event.WorkspaceID, thread.ID, payload)
+}
+
+func (b *ProductionBroadcaster) publishProducerCompositionSignal(ctx context.Context, event production.ProductionEvent, node db.MediaNode, artifactKind string, job db.GenerationJob, task db.AgentTask, version db.ArtifactVersion, versionID string) {
+	if b == nil || b.agentPreviewSink == nil || artifactKind != "final_video" || job.RequestedByType != "agent_composer" || !task.ID.Valid || !event.JobID.Valid || !event.WorkspaceID.Valid {
+		return
+	}
+	signalType := compositionSignalTypeForProductionEvent(event.Type)
+	if signalType == "" {
+		return
+	}
+	thread, err := b.agentPreviewSink.GetOrCreateProducerThread(ctx, event.WorkspaceID)
+	if err != nil || !thread.ID.Valid {
+		return
+	}
+	status := statusForProductionEvent(event.Type)
+	payload := productionBroadcastJSON(map[string]any{
+		"trigger":              signalType,
+		"status":               status,
+		"scope_type":           "final_output",
+		"scope_id":             uuidString(node.ID),
+		"scope_key":            strings.TrimSpace(node.SemanticKey),
+		"scope_ref":            objectRef("media_node", node.SemanticKey),
+		"node_id":              uuidString(node.ID),
+		"node_key":             strings.TrimSpace(node.SemanticKey),
+		"node_ref":             objectRef("media_node", node.SemanticKey),
+		"generation_job_id":    uuidString(event.JobID),
+		"generation_job_key":   strings.TrimSpace(job.SemanticKey),
+		"generation_job_ref":   objectRef("generation_job", job.SemanticKey),
+		"artifact_version_id":  versionID,
+		"artifact_version_key": strings.TrimSpace(version.SemanticKey),
+		"artifact_version_ref": objectRef("artifact_version", version.SemanticKey),
+		"artifact_kind":        artifactKind,
+		"composer_task_id":     uuidString(task.ID),
+		"composer_task_key":    strings.TrimSpace(task.SemanticKey),
+		"composer_thread_id":   uuidString(task.ThreadID),
+	})
+	_, err = b.agentPreviewSink.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
+		WorkspaceID:      event.WorkspaceID,
+		ProducerThreadID: thread.ID,
+		SourceRole:       "composer",
+		SourceTaskID:     task.ID,
+		SourceThreadID:   task.ThreadID,
+		SignalType:       signalType,
+		ScopeType:        "final_output",
+		ScopeID:          node.ID,
+		Priority:         80,
+		DedupeKey:        signalType + ":" + uuidString(event.JobID),
+		Payload:          payload,
+	})
+	if err != nil {
+		return
+	}
+	b.ensureProducerWakeTask(ctx, event.WorkspaceID, thread.ID, payload)
+}
+
+func compositionSignalTypeForProductionEvent(eventType string) string {
+	switch eventType {
+	case production.ProductionEventJobSucceeded:
+		return "composition_completed"
+	case production.ProductionEventJobFailed, production.ProductionEventJobCancelled:
+		return "composition_failed"
+	default:
+		return ""
+	}
+}
+
+func productionJobSemantic(job db.GenerationJob) production.SemanticInfo {
+	if len(job.Intent) == 0 {
+		return production.SemanticInfo{}
+	}
+	var intent production.GenerationIntent
+	if err := json.Unmarshal(job.Intent, &intent); err != nil {
+		return production.SemanticInfo{}
+	}
+	return intent.Semantic
+}
+
+func mediaNodeMetadata(node db.MediaNode) map[string]any {
+	if len(node.Metadata) == 0 {
+		return nil
+	}
+	var metadata map[string]any
+	_ = json.Unmarshal(node.Metadata, &metadata)
+	return metadata
+}
+
+func metadataString(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, _ := metadata[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func objectRef(objectType string, key string) string {
+	objectType = strings.TrimSpace(objectType)
+	key = strings.TrimSpace(key)
+	if objectType == "" || key == "" {
+		return ""
+	}
+	return objectType + "/" + key
 }
 
 func (b *ProductionBroadcaster) ensureProducerWakeTask(ctx context.Context, workspaceID, producerThreadID pgtype.UUID, input []byte) {

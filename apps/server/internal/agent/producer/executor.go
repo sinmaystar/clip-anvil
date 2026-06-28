@@ -43,6 +43,20 @@ type producerSignalCompletionProcessor interface {
 	MarkProducerPendingSignalProcessed(ctx context.Context, signalID, workspaceID, taskID pgtype.UUID) (db.ProducerPendingSignal, error)
 }
 
+type producerSignalClaimer interface {
+	ClaimProducerPendingSignals(ctx context.Context, params agentruntime.ClaimProducerPendingSignalsParams) ([]db.ProducerPendingSignal, error)
+}
+
+type producerPendingSignalWakeRuntime interface {
+	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
+	ListPendingProducerSignals(ctx context.Context, workspaceID pgtype.UUID, limit int32) ([]db.ProducerPendingSignal, error)
+	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
+}
+
+type ProducerTaskEnqueuer interface {
+	EnqueueProducerTask(ctx context.Context, task db.AgentTask)
+}
+
 type Runner interface {
 	Run(ctx context.Context, input ProducerTurnInput, options ...agenteino.RunOptions) (ProducerTurnOutput, error)
 }
@@ -56,23 +70,25 @@ type Broadcaster interface {
 }
 
 type ExecutorConfig struct {
-	Runtime        Runtime
-	Graph          Runner
-	Broadcaster    Broadcaster
-	MaxToolCalls   int
-	ToolTimeout    time.Duration
-	Logger         *slog.Logger
-	TraceCallbacks []callbacks.Handler
+	Runtime          Runtime
+	Graph            Runner
+	Broadcaster      Broadcaster
+	MaxToolCalls     int
+	ToolTimeout      time.Duration
+	Logger           *slog.Logger
+	TraceCallbacks   []callbacks.Handler
+	ProducerEnqueuer ProducerTaskEnqueuer
 }
 
 type Executor struct {
-	runtime        Runtime
-	graph          Runner
-	broadcaster    Broadcaster
-	maxToolCalls   int
-	toolTimeout    time.Duration
-	logger         *slog.Logger
-	traceCallbacks []callbacks.Handler
+	runtime          Runtime
+	graph            Runner
+	broadcaster      Broadcaster
+	maxToolCalls     int
+	toolTimeout      time.Duration
+	logger           *slog.Logger
+	traceCallbacks   []callbacks.Handler
+	producerEnqueuer ProducerTaskEnqueuer
 }
 
 type RunTaskInput struct {
@@ -97,13 +113,14 @@ func NewExecutor(config ExecutorConfig) *Executor {
 		toolTimeout = 300 * time.Second
 	}
 	return &Executor{
-		runtime:        config.Runtime,
-		graph:          config.Graph,
-		broadcaster:    config.Broadcaster,
-		maxToolCalls:   maxToolCalls,
-		toolTimeout:    toolTimeout,
-		logger:         config.Logger,
-		traceCallbacks: config.TraceCallbacks,
+		runtime:          config.Runtime,
+		graph:            config.Graph,
+		broadcaster:      config.Broadcaster,
+		maxToolCalls:     maxToolCalls,
+		toolTimeout:      toolTimeout,
+		logger:           config.Logger,
+		traceCallbacks:   config.TraceCallbacks,
+		producerEnqueuer: config.ProducerEnqueuer,
 	}
 }
 
@@ -116,6 +133,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		return err
 	}
 	triggerPayload := applyProducerTaskTriggerInput(&input, runningTask.Input)
+	if err := e.claimWakeSignalsForTask(ctx, &input, triggerPayload); err != nil {
+		return e.failTask(ctx, input, "producer_signal_claim_failed", err.Error())
+	}
 	e.broadcastTask(input.WorkspaceID, runningTask)
 
 	started, err := e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
@@ -244,6 +264,7 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		}))
 	}
 	e.releasePendingSignalsForTask(ctx, input, "producer_turn_completed: released unprocessed claimed signals")
+	e.enqueuePendingSignalWake(ctx, input, triggerPayload)
 
 	e.broadcastMessage(input.WorkspaceID, msg, completed)
 	e.broadcastEvent(input.WorkspaceID, completed)
@@ -263,6 +284,93 @@ func (e *Executor) releasePendingSignalsForTask(ctx context.Context, input RunTa
 	_, _ = releaser.ReleaseProducerPendingSignalsForTask(ctx, input.WorkspaceID, input.TaskID, reason)
 }
 
+func (e *Executor) claimWakeSignalsForTask(ctx context.Context, input *RunTaskInput, payload producerTaskTriggerPayload) error {
+	if e == nil || e.runtime == nil || input == nil {
+		return nil
+	}
+	if strings.TrimSpace(payload.Trigger) == "" {
+		return nil
+	}
+	claimer, ok := e.runtime.(producerSignalClaimer)
+	if !ok || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid {
+		return nil
+	}
+	signals, err := claimer.ClaimProducerPendingSignals(ctx, agentruntime.ClaimProducerPendingSignalsParams{
+		WorkspaceID:       input.WorkspaceID,
+		ProducerThreadID:  input.ThreadID,
+		ClaimedByTaskID:   input.TaskID,
+		Limit:             20,
+		StaleAfterSeconds: 600,
+	})
+	if err != nil {
+		return err
+	}
+	if len(signals) == 0 {
+		return nil
+	}
+	signalText := strings.TrimSpace(formatProducerSignalReminder(signals))
+	if signalText == "" {
+		return nil
+	}
+	if current := strings.TrimSpace(input.RuntimeTriggerText); current != "" {
+		input.RuntimeTriggerText = current + "\n\n" + signalText
+		return nil
+	}
+	input.RuntimeTriggerText = signalText
+	return nil
+}
+
+func (e *Executor) enqueuePendingSignalWake(ctx context.Context, input RunTaskInput, payload producerTaskTriggerPayload) {
+	if e == nil || e.runtime == nil || e.producerEnqueuer == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid {
+		return
+	}
+	if strings.TrimSpace(payload.Trigger) == "producer_pending_signal" {
+		return
+	}
+	runtime, ok := e.runtime.(producerPendingSignalWakeRuntime)
+	if !ok {
+		return
+	}
+	activeTasks, err := runtime.ListActiveAgentTasksByWorkspace(ctx, input.WorkspaceID)
+	if err != nil {
+		return
+	}
+	for _, task := range activeTasks {
+		if task.Role == "producer" && (task.TaskType == "producer_turn" || task.TaskType == "decision_resume") && task.ID != input.TaskID {
+			return
+		}
+	}
+	signals, err := runtime.ListPendingProducerSignals(ctx, input.WorkspaceID, 1)
+	if err != nil || len(signals) == 0 {
+		return
+	}
+	task, err := runtime.CreateTask(ctx, agentruntime.CreateTaskParams{
+		WorkspaceID: input.WorkspaceID,
+		ThreadID:    input.ThreadID,
+		Role:        "producer",
+		ScopeType:   "workspace",
+		TaskType:    "producer_turn",
+		MaxAttempts: 1,
+		Input:       mustJSON(producerTaskTriggerPayload{Trigger: "producer_pending_signal"}),
+	})
+	if err != nil {
+		return
+	}
+	_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
+		WorkspaceID: input.WorkspaceID,
+		ThreadID:    input.ThreadID,
+		TaskID:      task.ID,
+		EventType:   "producer_turn_queued",
+		SourceRole:  "system",
+		TargetRole:  "producer",
+		Payload: mustJSON(map[string]string{
+			"trigger": "producer_pending_signal",
+			"task_id": uuidString(task.ID),
+		}),
+	})
+	e.producerEnqueuer.EnqueueProducerTask(ctx, task)
+}
+
 func (e *Executor) markInformationalSignalsProcessed(ctx context.Context, input RunTaskInput, reason string) {
 	if !strings.Contains(reason, "producer_turn_completed") {
 		return
@@ -276,10 +384,19 @@ func (e *Executor) markInformationalSignalsProcessed(ctx context.Context, input 
 		return
 	}
 	for _, signal := range signals {
-		if signal.SignalType != "worker_generation_completed" && signal.SignalType != "review_completed" {
+		if !isInformationalProducerSignal(signal.SignalType) {
 			continue
 		}
 		_, _ = processor.MarkProducerPendingSignalProcessed(ctx, signal.ID, input.WorkspaceID, input.TaskID)
+	}
+}
+
+func isInformationalProducerSignal(signalType string) bool {
+	switch strings.TrimSpace(signalType) {
+	case "worker_generation_completed", "review_completed", "composition_completed", "composition_failed":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -332,7 +449,7 @@ func (e *Executor) persistTriggerMessage(ctx context.Context, input RunTaskInput
 	msg, err := e.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
 		WorkspaceID: input.WorkspaceID,
 		ThreadID:    input.ThreadID,
-		Role:        "system",
+		Role:        "user",
 		MessageType: "text",
 		Content:     content,
 		RawMessage: mustJSON(map[string]any{
@@ -737,30 +854,47 @@ func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) producerTask
 }
 
 type producerTaskTriggerPayload struct {
-	Trigger           string `json:"trigger"`
-	CraftsmanTaskID   string `json:"craftsman_task_id"`
-	CraftsmanThreadID string `json:"craftsman_thread_id"`
-	WorkerTaskID      string `json:"worker_task_id"`
-	WorkerThreadID    string `json:"worker_thread_id"`
-	ScopeType         string `json:"scope_type"`
-	ScopeID           string `json:"scope_id"`
-	ShotID            string `json:"shot_id"`
-	TargetPhase       string `json:"target_phase"`
-	RenderPlanID      string `json:"render_plan_id"`
-	RenderPlanStatus  string `json:"render_plan_status"`
-	GenerationJobID   string `json:"generation_job_id"`
-	ArtifactVersionID string `json:"artifact_version_id"`
-	ArtifactKind      string `json:"artifact_kind"`
-	ReviewRecordID    string `json:"review_record_id"`
-	ReviewTask        string `json:"review_task"`
-	Verdict           string `json:"verdict"`
-	ShouldRetry       bool   `json:"should_retry"`
-	TriggerMessageID  string `json:"trigger_message_id"`
-	TriggerMessageSeq int64  `json:"trigger_message_seq"`
+	Trigger            string `json:"trigger"`
+	CraftsmanTaskID    string `json:"craftsman_task_id"`
+	CraftsmanThreadID  string `json:"craftsman_thread_id"`
+	WorkerTaskID       string `json:"worker_task_id"`
+	WorkerThreadID     string `json:"worker_thread_id"`
+	ScopeType          string `json:"scope_type"`
+	ScopeID            string `json:"scope_id"`
+	ScopeKey           string `json:"scope_key"`
+	NodeKey            string `json:"node_key"`
+	ShotID             string `json:"shot_id"`
+	ShotKey            string `json:"shot_key"`
+	TargetPhase        string `json:"target_phase"`
+	RenderPlanID       string `json:"render_plan_id"`
+	RenderPlanKey      string `json:"render_plan_key"`
+	RenderPlanStatus   string `json:"render_plan_status"`
+	GenerationJobID    string `json:"generation_job_id"`
+	GenerationJobKey   string `json:"generation_job_key"`
+	ArtifactVersionID  string `json:"artifact_version_id"`
+	ArtifactVersionKey string `json:"artifact_version_key"`
+	ArtifactKind       string `json:"artifact_kind"`
+	ReviewRecordID     string `json:"review_record_id"`
+	ReviewRecordKey    string `json:"review_record_key"`
+	WorkerTaskKey      string `json:"worker_task_key"`
+	CraftsmanTaskKey   string `json:"craftsman_task_key"`
+	ReviewTask         string `json:"review_task"`
+	Verdict            string `json:"verdict"`
+	ShouldRetry        bool   `json:"should_retry"`
+	TriggerMessageID   string `json:"trigger_message_id"`
+	TriggerMessageSeq  int64  `json:"trigger_message_seq"`
 }
 
 func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 	switch strings.TrimSpace(payload.Trigger) {
+	case "producer_pending_signal":
+		return strings.Join([]string{
+			"<system-reminder>",
+			"系统事件：Producer 有待处理工程 signal，当前轮次由工程自动唤醒 Producer。",
+			"触发原因：producer_pending_signal。",
+			"下一步：请读取项目上下文，确认这些 signal 对应的 RenderPlan、generation_job、artifact_version、review_record 或成片状态，再决定是否 accept/reject、派发 Reviewer/Composer、请求用户确认或回复用户。",
+			"</system-reminder>",
+		}, "\n")
 	case "craftsman_render_plan_ready":
 		lines := []string{
 			"<system-reminder>",
@@ -772,13 +906,13 @@ func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 			lines = append(lines, "目标阶段："+targetPhase+"。")
 		}
 		if scopeType := strings.TrimSpace(payload.ScopeType); scopeType != "" {
-			lines = append(lines, "目标范围："+scopeType+" "+strings.TrimSpace(payload.ScopeID)+"。")
+			lines = append(lines, "目标范围："+producerPayloadScopeRef(payload)+"。")
 		}
-		if shotID := strings.TrimSpace(payload.ShotID); shotID != "" {
-			lines = append(lines, "关联分镜："+shotID+"。")
+		if shotKey := firstNonUUID(payload.ShotKey, payload.ShotID); shotKey != "" {
+			lines = append(lines, "关联分镜：shot/"+shotKey+"。")
 		}
-		if craftsmanTaskID := strings.TrimSpace(payload.CraftsmanTaskID); craftsmanTaskID != "" {
-			lines = append(lines, "Craftsman 任务："+craftsmanTaskID+"。")
+		if craftsmanTaskKey := firstNonUUID(payload.CraftsmanTaskKey); craftsmanTaskKey != "" {
+			lines = append(lines, "Craftsman 任务："+craftsmanTaskKey+"。")
 		}
 		lines = append(lines, "</system-reminder>")
 		return strings.Join(lines, "\n")
@@ -795,20 +929,20 @@ func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 		if status := strings.TrimSpace(payload.RenderPlanStatus); status != "" {
 			lines = append(lines, "生成状态："+status+"。")
 		}
-		if renderPlanID := strings.TrimSpace(payload.RenderPlanID); renderPlanID != "" {
-			lines = append(lines, "RenderPlan："+renderPlanID+"。")
+		if renderPlanKey := firstNonUUID(payload.RenderPlanKey, payload.RenderPlanID); renderPlanKey != "" {
+			lines = append(lines, "RenderPlan：render_plan/"+renderPlanKey+"。")
 		}
-		if generationJobID := strings.TrimSpace(payload.GenerationJobID); generationJobID != "" {
-			lines = append(lines, "GenerationJob："+generationJobID+"。")
+		if generationJobKey := firstNonUUID(payload.GenerationJobKey, payload.GenerationJobID); generationJobKey != "" {
+			lines = append(lines, "GenerationJob：generation_job/"+generationJobKey+"。")
 		}
-		if artifactVersionID := strings.TrimSpace(payload.ArtifactVersionID); artifactVersionID != "" {
-			lines = append(lines, "ArtifactVersion："+artifactVersionID+"。")
+		if artifactVersionKey := firstNonUUID(payload.ArtifactVersionKey, payload.ArtifactVersionID); artifactVersionKey != "" {
+			lines = append(lines, "ArtifactVersion：artifact_version/"+artifactVersionKey+"。")
 		}
 		if scopeType := strings.TrimSpace(payload.ScopeType); scopeType != "" {
-			lines = append(lines, "目标范围："+scopeType+" "+strings.TrimSpace(payload.ScopeID)+"。")
+			lines = append(lines, "目标范围："+producerPayloadScopeRef(payload)+"。")
 		}
-		if workerTaskID := strings.TrimSpace(payload.WorkerTaskID); workerTaskID != "" {
-			lines = append(lines, "Worker 任务："+workerTaskID+"。")
+		if workerTaskKey := firstNonUUID(payload.WorkerTaskKey); workerTaskKey != "" {
+			lines = append(lines, "Worker 任务："+workerTaskKey+"。")
 		}
 		lines = append(lines, "</system-reminder>")
 		return strings.Join(lines, "\n")
@@ -828,20 +962,70 @@ func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 		if payload.ShouldRetry {
 			lines = append(lines, "Reviewer 建议重试或修复。")
 		}
-		if reviewRecordID := strings.TrimSpace(payload.ReviewRecordID); reviewRecordID != "" {
-			lines = append(lines, "ReviewRecord："+reviewRecordID+"。")
+		if reviewRecordKey := firstNonUUID(payload.ReviewRecordKey, payload.ReviewRecordID); reviewRecordKey != "" {
+			lines = append(lines, "ReviewRecord：review_record/"+reviewRecordKey+"。")
 		}
 		if scopeType := strings.TrimSpace(payload.ScopeType); scopeType != "" {
-			lines = append(lines, "目标范围："+scopeType+" "+strings.TrimSpace(payload.ScopeID)+"。")
+			lines = append(lines, "目标范围："+producerPayloadScopeRef(payload)+"。")
 		}
-		if renderPlanID := strings.TrimSpace(payload.RenderPlanID); renderPlanID != "" {
-			lines = append(lines, "RenderPlan："+renderPlanID+"。")
+		if renderPlanKey := firstNonUUID(payload.RenderPlanKey, payload.RenderPlanID); renderPlanKey != "" {
+			lines = append(lines, "RenderPlan：render_plan/"+renderPlanKey+"。")
+		}
+		lines = append(lines, "</system-reminder>")
+		return strings.Join(lines, "\n")
+	case "composition_completed", "composition_failed":
+		trigger := strings.TrimSpace(payload.Trigger)
+		title := "Composer 已完成最终成片合成"
+		next := "下一步：请读取项目上下文，确认 final_video 画布节点、generation_job 和 artifact_version 状态，再决定是否派 Reviewer 评审成片或回复用户。"
+		if trigger == "composition_failed" {
+			title = "Composer 成片合成失败"
+			next = "下一步：请读取项目上下文，确认失败原因，再决定是否重派 Composer、改用更保守的拼接策略或请求用户确认。"
+		}
+		lines := []string{
+			"<system-reminder>",
+			"系统事件：" + title + "，当前轮次由工程自动唤醒 Producer。",
+			"触发原因：" + trigger + "。",
+			next,
+		}
+		if nodeKey := firstNonUUID(payload.NodeKey, payload.ScopeKey, payload.ScopeID); nodeKey != "" {
+			lines = append(lines, "FinalVideo：media_node/"+nodeKey+"。")
+		}
+		if generationJobKey := firstNonUUID(payload.GenerationJobKey, payload.GenerationJobID); generationJobKey != "" {
+			lines = append(lines, "GenerationJob：generation_job/"+generationJobKey+"。")
+		}
+		if artifactVersionKey := firstNonUUID(payload.ArtifactVersionKey, payload.ArtifactVersionID); artifactVersionKey != "" {
+			lines = append(lines, "ArtifactVersion：artifact_version/"+artifactVersionKey+"。")
 		}
 		lines = append(lines, "</system-reminder>")
 		return strings.Join(lines, "\n")
 	default:
 		return ""
 	}
+}
+
+func producerPayloadScopeRef(payload producerTaskTriggerPayload) string {
+	scopeType := strings.TrimSpace(payload.ScopeType)
+	if scopeType == "" {
+		scopeType = "workspace"
+	}
+	if key := firstNonUUID(payload.ScopeKey, payload.ShotKey, payload.ShotID, payload.ScopeID); key != "" {
+		return scopeType + "/" + key
+	}
+	return scopeType + ".semantic_key_missing"
+}
+
+func firstNonUUID(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := pgUUIDFromString(value); ok {
+			continue
+		}
+		return value
+	}
+	return ""
 }
 
 func mustJSON(value any) []byte {

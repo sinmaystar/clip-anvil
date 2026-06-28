@@ -147,6 +147,53 @@ func TestAgentWorkbenchArtifactSlotIncludesAssetDimensions(t *testing.T) {
 	}
 }
 
+func TestAgentWorkbenchFinalOutputFromTimelinePlan(t *testing.T) {
+	workspaceID := uuidWithByteForWorkbenchTest(50)
+	outputNodeID := uuidWithByteForWorkbenchTest(51)
+	versionID := uuidWithByteForWorkbenchTest(52)
+	assetID := uuidWithByteForWorkbenchTest(53)
+	plan := db.TimelinePlan{
+		ID:                uuidWithByteForWorkbenchTest(54),
+		WorkspaceID:       workspaceID,
+		OutputNodeID:      outputNodeID,
+		ArtifactVersionID: versionID,
+		SandboxJobID:      uuidWithByteForWorkbenchTest(55),
+		Status:            "completed",
+		TemplateKey:       "concat_with_fades",
+		PlanJson:          []byte(`{"template_key":"concat_with_fades"}`),
+		Result:            []byte(`{"summary":"rendered with fades"}`),
+		UpdatedAt:         pgtype.Timestamptz{Time: time.Unix(300, 0), Valid: true},
+	}
+	node := db.MediaNode{
+		ID:               outputNodeID,
+		WorkspaceID:      workspaceID,
+		NodeType:         db.NodeTypeVideo,
+		Title:            "Agent final video",
+		Status:           db.NodeStatusSucceeded,
+		CurrentVersionID: versionID,
+	}
+	version := db.ArtifactVersion{ID: versionID, NodeID: outputNodeID, AssetID: assetID}
+	asset := db.MediaAsset{
+		ID:          assetID,
+		WorkspaceID: workspaceID,
+		Type:        db.AssetTypeVideo,
+		Mime:        "video/mp4",
+		StorageUrl:  pgtype.Text{String: "workspace/final.mp4", Valid: true},
+	}
+
+	out := agentWorkbenchFinalOutputFromTimelinePlan(context.Background(), nil, plan, map[pgtype.UUID]db.MediaNode{outputNodeID: node}, map[pgtype.UUID]db.ArtifactVersion{versionID: version}, map[pgtype.UUID]db.MediaAsset{assetID: asset})
+
+	if out == nil || out.TimelinePlanID != uuidToString(plan.ID) || out.TemplateKey != "concat_with_fades" || out.Summary != "rendered with fades" {
+		t.Fatalf("final output = %#v", out)
+	}
+	if out.OutputNodeID != uuidToString(outputNodeID) || out.ArtifactVersionID != uuidToString(versionID) || out.AssetID != uuidToString(assetID) {
+		t.Fatalf("final output ids = %#v", out)
+	}
+	if out.Plan["template_key"] != "concat_with_fades" || out.Result["summary"] != "rendered with fades" {
+		t.Fatalf("final output plan/result = %#v %#v", out.Plan, out.Result)
+	}
+}
+
 func uuidWithByteForWorkbenchTest(value byte) pgtype.UUID {
 	return pgtype.UUID{
 		Bytes: [16]byte{value, value, value, value, value, value, value, value, value, value, value, value, value, value, value, value},

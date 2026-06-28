@@ -2,6 +2,7 @@ export interface AgentWorkbenchProjection {
   overview: AgentWorkbenchOverview;
   scenes: AgentWorkbenchScene[];
   counts: AgentWorkbenchCounts;
+  final_output?: AgentWorkbenchFinalOutput | null;
 }
 
 export interface AgentWorkbenchOverview {
@@ -136,6 +137,24 @@ export interface AgentWorkbenchIssueSummary {
   suggested_fix: string;
 }
 
+export interface AgentWorkbenchFinalOutput {
+  id: string;
+  timeline_plan_id: string;
+  output_node_id?: string;
+  artifact_version_id?: string;
+  sandbox_job_id?: string;
+  status: string;
+  template_key: string;
+  summary?: string;
+  asset_url?: string;
+  thumbnail_url?: string;
+  asset_id?: string;
+  mime?: string;
+  plan?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  updated_at?: string;
+}
+
 export interface AgentWorkbenchCounts {
   scenes: number;
   shots: number;
@@ -153,6 +172,7 @@ export function agentWorkbenchVisibleNodeCount(
   return (
     1 +
     workbench.scenes.length +
-    workbench.scenes.reduce((sum, scene) => sum + scene.shots.length, 0)
+    workbench.scenes.reduce((sum, scene) => sum + scene.shots.length, 0) +
+    (workbench.final_output ? 1 : 0)
   );
 }

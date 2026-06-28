@@ -32,6 +32,7 @@ type reviewerLoopState struct {
 	ReminderCooldowns    map[string]int
 	Submitted            bool
 	SubmittedRecordID    pgtype.UUID
+	SubmittedRecordKey   string
 	SubmittedVerdict     string
 }
 
@@ -160,6 +161,12 @@ func newNativeToolLoopGraph(config GraphConfig) (*Graph, error) {
 				if id, ok := reviewerToolResultUUID(message.Content, "review_record"); ok {
 					state.SubmittedRecordID = id
 				}
+				if id, ok := reviewerToolResultUUID(message.Content, "review_record_id"); ok {
+					state.SubmittedRecordID = id
+				}
+				if key := reviewerToolResultObjectKey(message.Content, "review_record_ref", "review_record"); key != "" {
+					state.SubmittedRecordKey = key
+				}
 				if verdict := reviewerToolResultValue(message.Content, "verdict"); verdict != "" {
 					state.SubmittedVerdict = verdict
 				}
@@ -178,7 +185,7 @@ func newNativeToolLoopGraph(config GraphConfig) (*Graph, error) {
 			status = ReviewStatusAccepted
 		}
 		return GraphOutput{
-			Record:           db.ReviewRecord{ID: state.SubmittedRecordID},
+			Record:           db.ReviewRecord{ID: state.SubmittedRecordID, SemanticKey: state.SubmittedRecordKey},
 			Decision:         ReviewDecision{Status: status, ShouldRetry: status == ReviewStatusRejected},
 			Result:           ReviewResult{Critique: state.LastOutput.AssistantText},
 			SameTurnMessages: append([]ReviewerSameTurnMessage(nil), state.Context.SameTurnMessages...),
@@ -384,11 +391,18 @@ func nativeReviewerToolRuntimeMiddleware(stateStore *reviewerLoopToolStateStore)
 							ToolCallID:                 input.CallID,
 							ReviewTask:                 state.Context.Input.Task.ReviewTask,
 							ReviewShotID:               state.Context.Input.Task.Target.ShotID,
+							ReviewShotKey:              state.Context.Input.Task.Target.ShotRef.Key,
 							ReviewNodeID:               state.Context.Input.Task.Target.NodeID,
+							ReviewNodeKey:              state.Context.Input.Task.Target.NodeRef.Key,
 							ReviewVersionID:            state.Context.Input.Task.Target.ArtifactVersionID,
+							ReviewVersionKey:           state.Context.Input.Task.Target.ArtifactVersionRef.Key,
 							ReviewJobID:                state.Context.Input.Task.Target.GenerationJobID,
 							ReviewRenderPlanID:         state.Context.Input.Task.Target.RenderPlanID,
+							ReviewRenderPlanKey:        state.Context.Input.Task.Target.RenderPlanRef.Key,
 							ReviewParentReviewRecordID: state.Context.Input.Task.Target.ParentReviewRecordID,
+							ReviewParentReviewKey:      state.Context.Input.Task.Target.ParentReviewRef.Key,
+							ReviewAttemptNo:            state.Context.Input.Task.AttemptNo,
+							ReviewMaxAttempts:          state.Context.Input.Task.MaxAttempts,
 						})
 					}
 				}
@@ -501,6 +515,16 @@ func reviewerToolResultValue(content string, label string) string {
 		if strings.HasPrefix(line, prefix) {
 			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
 		}
+	}
+	return ""
+}
+
+func reviewerToolResultObjectKey(content string, label string, objectType string) string {
+	value := reviewerToolResultValue(content, label)
+	value = strings.TrimSpace(value)
+	prefix := objectType + "/"
+	if strings.HasPrefix(value, prefix) {
+		return strings.TrimSpace(strings.TrimPrefix(value, prefix))
 	}
 	return ""
 }

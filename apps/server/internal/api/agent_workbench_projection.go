@@ -3,18 +3,21 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 type agentWorkbenchResponse struct {
-	Overview agentWorkbenchOverviewResponse `json:"overview"`
-	Scenes   []agentWorkbenchSceneResponse  `json:"scenes"`
-	Counts   agentWorkbenchCountsResponse   `json:"counts"`
+	Overview    agentWorkbenchOverviewResponse     `json:"overview"`
+	Scenes      []agentWorkbenchSceneResponse      `json:"scenes"`
+	Counts      agentWorkbenchCountsResponse       `json:"counts"`
+	FinalOutput *agentWorkbenchFinalOutputResponse `json:"final_output,omitempty"`
 }
 
 type agentWorkbenchOverviewResponse struct {
@@ -142,6 +145,24 @@ type agentWorkbenchIssueSummaryResponse struct {
 	SuggestedFix string `json:"suggested_fix"`
 }
 
+type agentWorkbenchFinalOutputResponse struct {
+	ID                string         `json:"id"`
+	TimelinePlanID    string         `json:"timeline_plan_id"`
+	OutputNodeID      string         `json:"output_node_id,omitempty"`
+	ArtifactVersionID string         `json:"artifact_version_id,omitempty"`
+	SandboxJobID      string         `json:"sandbox_job_id,omitempty"`
+	Status            string         `json:"status"`
+	TemplateKey       string         `json:"template_key"`
+	Summary           string         `json:"summary,omitempty"`
+	AssetURL          string         `json:"asset_url,omitempty"`
+	ThumbnailURL      string         `json:"thumbnail_url,omitempty"`
+	AssetID           string         `json:"asset_id,omitempty"`
+	Mime              string         `json:"mime,omitempty"`
+	Plan              map[string]any `json:"plan,omitempty"`
+	Result            map[string]any `json:"result,omitempty"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+}
+
 type agentWorkbenchCountsResponse struct {
 	Scenes           int `json:"scenes"`
 	Shots            int `json:"shots"`
@@ -240,7 +261,19 @@ func buildAgentWorkbenchProjection(ctx context.Context, queries *db.Queries, sig
 		}
 		versionsByID[node.CurrentVersionID] = version
 	}
+	nodesByID := make(map[pgtype.UUID]db.MediaNode, len(nodes))
+	for _, node := range nodes {
+		nodesByID[node.ID] = node
+	}
 	response.Overview.SourceMaterials = agentWorkbenchSourceMaterials(nodes)
+
+	if timelinePlan, ok, err := latestWorkbenchTimelinePlan(ctx, queries, workspaceID); err != nil {
+		return response, err
+	} else if ok {
+		response.FinalOutput = agentWorkbenchFinalOutputFromTimelinePlan(ctx, signer, timelinePlan, nodesByID, versionsByID, assetsByID)
+	} else if finalNode, ok := latestWorkbenchFinalVideoNode(nodes); ok {
+		response.FinalOutput = agentWorkbenchFinalOutputFromNode(ctx, signer, finalNode, versionsByID, assetsByID)
+	}
 
 	scenes, err := queries.ListActiveScenesByWorkspace(ctx, workspaceID)
 	if err != nil {
@@ -275,6 +308,145 @@ func buildAgentWorkbenchProjection(ctx context.Context, queries *db.Queries, sig
 	response.Counts.Scenes = len(response.Scenes)
 	response.Counts.Shots = len(shots)
 	return response, nil
+}
+
+func latestWorkbenchTimelinePlan(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID) (db.TimelinePlan, bool, error) {
+	plan, err := queries.GetLatestCompletedTimelinePlanByWorkspace(ctx, workspaceID)
+	if err == nil {
+		return plan, true, nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return db.TimelinePlan{}, false, err
+	}
+	plan, err = queries.GetLatestTimelinePlanByWorkspace(ctx, workspaceID)
+	if err == nil {
+		return plan, true, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.TimelinePlan{}, false, nil
+	}
+	return db.TimelinePlan{}, false, err
+}
+
+func agentWorkbenchFinalOutputFromTimelinePlan(
+	ctx context.Context,
+	signer assetURLSigner,
+	plan db.TimelinePlan,
+	nodes map[pgtype.UUID]db.MediaNode,
+	versions map[pgtype.UUID]db.ArtifactVersion,
+	assets map[pgtype.UUID]db.MediaAsset,
+) *agentWorkbenchFinalOutputResponse {
+	if !plan.ID.Valid {
+		return nil
+	}
+	out := &agentWorkbenchFinalOutputResponse{
+		ID:             uuidToString(plan.ID),
+		TimelinePlanID: uuidToString(plan.ID),
+		OutputNodeID:   uuidString(plan.OutputNodeID),
+		SandboxJobID:   uuidString(plan.SandboxJobID),
+		Status:         plan.Status,
+		TemplateKey:    plan.TemplateKey,
+		Plan:           jsonObjectValue(plan.PlanJson),
+		Result:         jsonObjectValue(plan.Result),
+		UpdatedAt:      timestamptzTime(plan.UpdatedAt),
+	}
+	if summary, ok := out.Result["summary"].(string); ok {
+		out.Summary = summary
+	}
+	versionID := plan.ArtifactVersionID
+	if !versionID.Valid {
+		if node, ok := nodes[plan.OutputNodeID]; ok {
+			versionID = node.CurrentVersionID
+		}
+	}
+	if versionID.Valid {
+		out.ArtifactVersionID = uuidToString(versionID)
+		if version, ok := versions[versionID]; ok {
+			if preview, err := toCanvasProductionPreview(ctx, signer, version, assets); err == nil && preview != nil {
+				out.AssetID = preview.AssetID
+				out.AssetURL = preview.AccessURL
+				out.ThumbnailURL = preview.ThumbnailURL
+				out.Mime = preview.Mime
+			}
+		}
+	}
+	return out
+}
+
+func latestWorkbenchFinalVideoNode(nodes []db.MediaNode) (db.MediaNode, bool) {
+	var out db.MediaNode
+	for _, node := range nodes {
+		if !isWorkbenchFinalVideoNode(node) {
+			continue
+		}
+		if !out.ID.Valid || timestamptzTime(node.UpdatedAt).After(timestamptzTime(out.UpdatedAt)) {
+			out = node
+		}
+	}
+	return out, out.ID.Valid
+}
+
+func isWorkbenchFinalVideoNode(node db.MediaNode) bool {
+	if node.NodeType != db.NodeTypeVideo {
+		return false
+	}
+	if agentWorkbenchArtifactKind(node.Metadata) == "final_video" {
+		return true
+	}
+	return node.OperationType == "compose_final_video"
+}
+
+func agentWorkbenchFinalOutputFromNode(
+	ctx context.Context,
+	signer assetURLSigner,
+	node db.MediaNode,
+	versions map[pgtype.UUID]db.ArtifactVersion,
+	assets map[pgtype.UUID]db.MediaAsset,
+) *agentWorkbenchFinalOutputResponse {
+	if !node.ID.Valid {
+		return nil
+	}
+	out := &agentWorkbenchFinalOutputResponse{
+		ID:           uuidToString(node.ID),
+		OutputNodeID: uuidToString(node.ID),
+		Status:       agentSlotStatus(node),
+		TemplateKey:  finalVideoTemplateKey(node),
+		Summary:      node.Title,
+		Result:       jsonObjectValue(node.Metadata),
+		UpdatedAt:    timestamptzTime(node.UpdatedAt),
+	}
+	if node.CurrentVersionID.Valid {
+		out.ArtifactVersionID = uuidToString(node.CurrentVersionID)
+		if version, ok := versions[node.CurrentVersionID]; ok {
+			if preview, err := toCanvasProductionPreview(ctx, signer, version, assets); err == nil && preview != nil {
+				out.AssetID = preview.AssetID
+				out.AssetURL = preview.AccessURL
+				out.ThumbnailURL = preview.ThumbnailURL
+				out.Mime = preview.Mime
+			}
+		}
+	}
+	return out
+}
+
+func finalVideoTemplateKey(node db.MediaNode) string {
+	metadata := jsonObjectValue(node.Metadata)
+	value, _ := metadata["composer_template_key"].(string)
+	if value == "" {
+		value = "simple_concat"
+	}
+	return value
+}
+
+func jsonObjectValue(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+		return map[string]any{}
+	}
+	return out
 }
 
 func agentWorkbenchSourceMaterials(nodes []db.MediaNode) []agentWorkbenchSourceMaterialResponse {

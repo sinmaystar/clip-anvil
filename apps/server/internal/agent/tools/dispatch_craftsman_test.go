@@ -304,7 +304,9 @@ func TestDispatchCraftsmanDispatchesKeyElementStateReferenceTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	dispatched := out.Result["dispatched"].([]map[string]any)
-	if len(dispatched) != 1 || dispatched[0]["scope_type"] != "key_element_state" || dispatched[0]["scope_id"] != uuidString(stateID) {
+	if len(dispatched) != 1 ||
+		dispatched[0]["scope_type"] != "key_element_state" ||
+		dispatched[0]["scope_ref"] != "key_element_state/element_airport.state_morning" {
 		t.Fatalf("dispatched = %#v", dispatched)
 	}
 	if len(runtime.createdTasks) != 1 || len(enqueuer.tasks) != 1 {
@@ -355,7 +357,7 @@ func TestDispatchCraftsmanResolvesKeyElementStateByClientKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	dispatched := out.Result["dispatched"].([]map[string]any)
-	if len(dispatched) != 1 || dispatched[0]["scope_id"] != uuidString(stateID) {
+	if len(dispatched) != 1 || dispatched[0]["scope_ref"] != "key_element_state/element_airport.state_morning" {
 		t.Fatalf("dispatched = %#v", dispatched)
 	}
 	if len(runtime.createdTasks) != 1 || runtime.createdTasks[0].ScopeID != stateID {

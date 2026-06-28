@@ -20,6 +20,7 @@ import type {
   AgentWorkbenchMediaDimensionsByKey,
 } from "../../lib/agentWorkbenchMediaLayout";
 import { AgentProjectOverviewNode } from "./AgentProjectOverviewNode";
+import { AgentFinalOutputNode } from "./AgentFinalOutputNode";
 import { AgentSceneGroupNode } from "./AgentSceneGroupNode";
 import { AgentShotNode } from "./AgentShotNode";
 import { AgentWorkbenchEdge } from "./AgentWorkbenchEdge";
@@ -33,6 +34,7 @@ interface AgentWorkbenchCanvasProps {
 
 const nodeTypes: NodeTypes = {
   agentOverview: AgentProjectOverviewNode,
+  agentFinalOutput: AgentFinalOutputNode,
   agentScene: AgentSceneGroupNode,
   agentShot: AgentShotNode,
 };
@@ -172,6 +174,13 @@ function selectionForNode(node: AgentWorkbenchNode): AgentWorkbenchSelection {
       label: node.data.scene.title,
     };
   }
+  if (node.type === "agentFinalOutput") {
+    return {
+      objectType: "final_output",
+      objectId: node.data.finalOutput.timeline_plan_id,
+      label: "Final Output",
+    };
+  }
   return {
     objectType: "shot",
     objectId: node.data.shot.id,
@@ -196,6 +205,12 @@ function isFlowNodeSelected(
     return (
       selected.objectType === "scene" &&
       selected.objectId === node.data.scene.id
+    );
+  }
+  if (node.type === "agentFinalOutput") {
+    return (
+      selected.objectType === "final_output" &&
+      selected.objectId === node.data.finalOutput.timeline_plan_id
     );
   }
   return (

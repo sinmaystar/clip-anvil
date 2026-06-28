@@ -23,7 +23,7 @@ func (t GenerateShotVideoTool) Definition() Definition {
 			"shot_refs": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
-				"description": "Shot UUIDs or stable client keys such as shot-01. Empty means all active planned shots.",
+				"description": "Shot semantic keys or stable client keys such as shot-01. Empty means all active planned shots.",
 			},
 			"force": map[string]any{
 				"type":        "boolean",

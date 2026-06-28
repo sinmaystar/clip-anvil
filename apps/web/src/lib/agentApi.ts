@@ -204,6 +204,7 @@ export interface AgentCanvasDetail {
   render_plan?: AgentCanvasRenderPlanDetail;
   review?: AgentCanvasReviewDetail;
   issue?: AgentCanvasIssueDetail;
+  final_output?: AgentCanvasFinalOutputDetail;
 }
 
 export interface AgentCanvasOverviewDetail {
@@ -213,6 +214,22 @@ export interface AgentCanvasOverviewDetail {
   key_elements: AgentCanvasKeyElementSummary[];
   key_element_states: AgentCanvasKeyElementStateSummary[];
   source_materials: AgentCanvasSourceMaterialSummary[];
+}
+
+export interface AgentCanvasFinalOutputDetail {
+  timeline_plan_id: string;
+  output_node?: AgentCanvasMediaNodeDetail;
+  output_version?: AgentCanvasArtifactVersion;
+  production_job_id?: string;
+  artifact_version_id?: string;
+  sandbox_job_id?: string;
+  status: string;
+  template_key: string;
+  plan?: AgentJsonValue;
+  result?: AgentJsonValue;
+  error_message?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface AgentCanvasCreativeBriefDetail {

@@ -3,6 +3,7 @@ package composer
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/cloudwego/eino/compose"
@@ -110,6 +111,13 @@ func loadCompositionContext(ctx context.Context, config GraphConfig, input Graph
 		return GraphInput{}, ErrInvalidConfig
 	}
 	if len(input.Input.VideoNodeRefs) == 0 {
+		refs, err := currentShotVideoRefs(ctx, config.Store, input.WorkspaceID)
+		if err != nil {
+			return GraphInput{}, err
+		}
+		input.Input.VideoNodeRefs = refs
+	}
+	if len(input.Input.VideoNodeRefs) == 0 {
 		return GraphInput{}, ErrInvalidInput
 	}
 	_, _ = config.Runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
@@ -126,6 +134,7 @@ func loadCompositionContext(ctx context.Context, config GraphConfig, input Graph
 func createGraphFinalNode(ctx context.Context, config GraphConfig, input GraphInput) (graphNodeState, error) {
 	modelParams, _ := json.Marshal(input.Input.Params)
 	canvasX, canvasY := finalVideoNodePosition(len(input.Input.VideoNodeRefs))
+	semanticKey := finalVideoNodeSemanticKey(input.TaskID)
 	node, err := config.Store.CreateAgentGenerationNode(ctx, db.CreateAgentGenerationNodeParams{
 		WorkspaceID:   input.WorkspaceID,
 		NodeType:      db.NodeTypeVideo,
@@ -140,10 +149,16 @@ func createGraphFinalNode(ctx context.Context, config GraphConfig, input GraphIn
 		ModelProvider: pgtype.Text{String: "internal_ffmpeg", Valid: true},
 		ModelID:       pgtype.Text{String: "ffmpeg-compose", Valid: true},
 		ModelParams:   defaultJSON(modelParams),
+		SemanticKey:   semanticKey,
+		DisplayName:   semanticKey,
+		ArtifactKind:  "final_video",
 		Metadata: mustJSON(map[string]any{
-			"agent_artifact_kind": "final_video",
-			"source_phase":        "shot_video",
-			"composer_task_id":    uuidString(input.TaskID),
+			"agent_artifact_kind":         "final_video",
+			"source_phase":                "shot_video",
+			"composer_task_id":            uuidString(input.TaskID),
+			"source_storyboard_node_id":   strings.TrimSpace(input.Input.SourceStoryboardNodeID),
+			"composer_template_key":       strings.TrimSpace(input.Input.TemplateKey),
+			"composer_producer_thread_id": strings.TrimSpace(input.Input.ProducerThreadID),
 		}),
 	})
 	if err != nil {
@@ -153,6 +168,10 @@ func createGraphFinalNode(ctx context.Context, config GraphConfig, input GraphIn
 		config.Broadcaster.BroadcastAgentNodeCreated(input.WorkspaceID, node)
 	}
 	return graphNodeState{Input: input, Node: node}, nil
+}
+
+func finalVideoNodeSemanticKey(taskID pgtype.UUID) string {
+	return "final_video." + shortUUID(taskID) + ".node"
 }
 
 func finalVideoNodePosition(videoCount int) (float32, float32) {
@@ -167,6 +186,64 @@ func finalVideoNodePosition(videoCount int) (float32, float32) {
 	}
 	rows := (videoCount + columns - 1) / columns
 	return startX, float32(startY + rows*stepY)
+}
+
+func currentShotVideoRefs(ctx context.Context, store Store, workspaceID pgtype.UUID) ([]string, error) {
+	shots, err := store.ListActiveShotsByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(shots, func(i, j int) bool {
+		return shots[i].SortOrder < shots[j].SortOrder
+	})
+	out := []string{}
+	for _, shot := range shots {
+		node, ok, err := currentShotVideoWinner(ctx, store, workspaceID, shot)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, composerNodeRef(node))
+		}
+	}
+	return out, nil
+}
+
+func composerNodeRef(node db.MediaNode) string {
+	if ref := strings.TrimSpace(node.SemanticKey); ref != "" {
+		return ref
+	}
+	return uuidString(node.ID)
+}
+
+func currentShotVideoWinner(ctx context.Context, store Store, workspaceID pgtype.UUID, shot db.Shot) (db.MediaNode, bool, error) {
+	nodes, err := store.ListMediaNodesByShot(ctx, db.ListMediaNodesByShotParams{WorkspaceID: workspaceID, ShotID: shot.ID})
+	if err != nil {
+		return db.MediaNode{}, false, err
+	}
+	for _, node := range nodes {
+		if node.NodeType != db.NodeTypeVideo || !node.CurrentVersionID.Valid {
+			continue
+		}
+		if kind := composerArtifactKind(node.Metadata); kind != "" && kind != "shot_video" {
+			continue
+		}
+		version, err := store.GetArtifactVersionByID(ctx, node.CurrentVersionID)
+		if err != nil || version.Status != db.JobStatusSucceeded {
+			continue
+		}
+		return node, true, nil
+	}
+	return db.MediaNode{}, false, nil
+}
+
+func composerArtifactKind(raw []byte) string {
+	var metadata map[string]any
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &metadata)
+	}
+	kind, _ := metadata["agent_artifact_kind"].(string)
+	return strings.TrimSpace(kind)
 }
 
 func submitCompositionIntent(ctx context.Context, config GraphConfig, state graphNodeState) (graphSubmissionState, error) {
@@ -184,6 +261,10 @@ func submitCompositionIntent(ctx context.Context, config GraphConfig, state grap
 		InputRefs:      inputRefs,
 		Model:          production.ModelSpec{Provider: "internal_ffmpeg", ModelID: "ffmpeg-compose"},
 		Params:         defaultParams(state.Input.Input.Params),
+		Semantic: production.SemanticInfo{
+			RenderPlanKey: finalVideoComposeSemanticKey(state.Node),
+			ArtifactKind:  "final_video",
+		},
 		RequestedBy: production.RequestedBy{
 			Type: "agent_composer",
 			ID:   uuidString(state.Input.TaskID),
@@ -201,6 +282,14 @@ func submitCompositionIntent(ctx context.Context, config GraphConfig, state grap
 		OperationType:     result.Job.OperationType,
 	}
 	return graphSubmissionState{Input: state.Input, Node: state.Node, Output: output}, nil
+}
+
+func finalVideoComposeSemanticKey(node db.MediaNode) string {
+	base := strings.TrimSpace(node.SemanticKey)
+	if base != "" {
+		return strings.TrimSuffix(base, ".node") + ".compose"
+	}
+	return "final_video." + shortUUID(node.ID) + ".compose"
 }
 
 func persistCompositionResult(ctx context.Context, config GraphConfig, state graphSubmissionState) (GraphOutput, error) {

@@ -56,13 +56,120 @@ func TestContextLoaderBuildsPreviewReviewContext(t *testing.T) {
 	if !strings.HasPrefix(out.AssetURL, "data:image/png;base64,") {
 		t.Fatalf("asset url = %q", out.AssetURL)
 	}
-	if len(out.Messages) != 1 || !strings.Contains(string(out.Messages[0].Content), "产品偏小") {
+	if len(out.Messages) != 0 {
 		t.Fatalf("messages = %#v", out.Messages)
 	}
 	for _, want := range []string{"shot-01", "bright product shot", "商品太小", "当前项目"} {
 		if !strings.Contains(out.Text, want) {
 			t.Fatalf("context text missing %q: %s", want, out.Text)
 		}
+	}
+}
+
+func TestModelAssetReferenceDoesNotInlineNonImageAssets(t *testing.T) {
+	loader := ContextLoader{
+		ImageReader: fakeReviewImageReader{
+			data: []byte("video-bytes-that-must-not-be-inlined"),
+			ref:  storage.ObjectRef{MIME: "video/mp4"},
+		},
+	}
+
+	url, mime := loader.modelAssetReference(context.Background(), db.MediaAsset{
+		ID:          uuidWithByte(5),
+		WorkspaceID: uuidWithByte(1),
+		Type:        db.AssetTypeVideo,
+		Mime:        "video/mp4",
+		StorageUrl:  pgtype.Text{String: "minio://internal/shot.mp4", Valid: true},
+	})
+
+	if url != "minio://internal/shot.mp4" {
+		t.Fatalf("url = %q", url)
+	}
+	if mime != "video/mp4" {
+		t.Fatalf("mime = %q", mime)
+	}
+}
+
+func TestContextLoaderBuildsFinalVideoReviewContext(t *testing.T) {
+	store := &fakeReviewContextStore{
+		node: db.MediaNode{
+			ID:               uuidWithByte(3),
+			WorkspaceID:      uuidWithByte(1),
+			Title:            "Agent final video",
+			NodeType:         db.NodeTypeVideo,
+			CurrentVersionID: uuidWithByte(4),
+			SemanticKey:      "final_video.abc.node",
+			ArtifactKind:     "final_video",
+		},
+		version: db.ArtifactVersion{
+			ID:           uuidWithByte(4),
+			WorkspaceID:  uuidWithByte(1),
+			NodeID:       uuidWithByte(3),
+			AssetID:      uuidWithByte(5),
+			VersionNo:    1,
+			Status:       db.JobStatusSucceeded,
+			SemanticKey:  "final_video.abc.compose.artifact.v1",
+			ArtifactKind: "final_video",
+		},
+		job: db.GenerationJob{
+			ID:             uuidWithByte(6),
+			WorkspaceID:    uuidWithByte(1),
+			TargetNodeID:   uuidWithByte(3),
+			RenderedPrompt: "final concat",
+			Status:         db.JobStatusSucceeded,
+		},
+		asset: db.MediaAsset{
+			ID:          uuidWithByte(5),
+			WorkspaceID: uuidWithByte(1),
+			Type:        db.AssetTypeVideo,
+			Mime:        "video/mp4",
+			StorageUrl:  pgtype.Text{String: "workspace/final.mp4", Valid: true},
+		},
+	}
+	loader := ContextLoader{
+		Store: store,
+		ImageReader: fakeReviewImageReader{
+			data: []byte("video-bytes-that-must-not-be-inlined"),
+			ref:  storage.ObjectRef{MIME: "video/mp4"},
+		},
+		PSSBuilder: fakeReviewPSSBuilder{text: "当前项目\n- Final: ready"},
+	}
+
+	out, err := loader.Load(context.Background(), GraphInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(8),
+		TaskID:      uuidWithByte(9),
+		Task: TaskInput{
+			TargetPhase:       TargetPhaseFinalVideo,
+			NodeID:            uuidString(uuidWithByte(3)),
+			ArtifactVersionID: uuidString(uuidWithByte(4)),
+			GenerationJobID:   uuidString(uuidWithByte(6)),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Shot.ID.Valid {
+		t.Fatalf("shot should be empty for final video review: %#v", out.Shot)
+	}
+	if out.AssetURL != "workspace/final.mp4" {
+		t.Fatalf("asset url = %q", out.AssetURL)
+	}
+	if out.AssetMime != "video/mp4" {
+		t.Fatalf("asset mime = %q", out.AssetMime)
+	}
+	for _, want := range []string{
+		"final_video",
+		"media_node/final_video.abc.node",
+		"artifact_version/final_video.abc.compose.artifact.v1",
+		"final concat",
+	} {
+		if !strings.Contains(out.Text, want) {
+			t.Fatalf("context text missing %q: %s", want, out.Text)
+		}
+	}
+	if strings.Contains(out.Text, "shot/semantic_key_missing") {
+		t.Fatalf("final video context should not include empty shot ref: %s", out.Text)
 	}
 }
 

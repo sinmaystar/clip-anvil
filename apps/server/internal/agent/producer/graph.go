@@ -56,10 +56,6 @@ type ProducerLoopState struct {
 	LastToolResults            []*schema.Message
 	ToolIterations             int
 	ReminderCooldowns          map[string]int
-	NewlyClaimedSignals        int
-	SignalReminderCount        int
-	SignalReminderKey          string
-	SignalDrainCompleted       bool
 	PersistentTriggerMessages  []ProducerTriggerMessage
 	FinalizeAfterAsyncDispatch bool
 }
@@ -131,11 +127,6 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 	})); err != nil {
 		return nil, err
 	}
-	if err := g.AddLambdaNode("check_signals_before_finalize", compose.InvokableLambda(func(ctx context.Context, state ProducerLoopState) (ProducerLoopState, error) {
-		return applyProducerSignalCheck(ctx, config.SignalRuntime, state)
-	})); err != nil {
-		return nil, err
-	}
 	if err := g.AddLambdaNode("finalize_response", compose.InvokableLambda(func(_ context.Context, state ProducerLoopState) (ProducerTurnOutput, error) {
 		out, err := finalizeProducerOutput(state.LastOutput)
 		if err != nil {
@@ -165,9 +156,9 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 		return nil, err
 	}
 	if err := g.AddBranch("call_model", compose.NewGraphBranch(routeProducerModelOutput(), map[string]bool{
-		"prepare_tool_message":          true,
-		"check_signals_before_finalize": true,
-		"fail_turn":                     true,
+		"prepare_tool_message": true,
+		"finalize_response":    true,
+		"fail_turn":            true,
 	})); err != nil {
 		return nil, err
 	}
@@ -178,13 +169,7 @@ func newExplicitToolLoopGraph(config GraphConfig) (*Graph, error) {
 		return nil, err
 	}
 	if err := g.AddBranch("append_tool_results", compose.NewGraphBranch(routeProducerAfterToolResults(), map[string]bool{
-		"before_model":                  true,
-		"check_signals_before_finalize": true,
-	})); err != nil {
-		return nil, err
-	}
-	if err := g.AddBranch("check_signals_before_finalize", compose.NewGraphBranch(routeProducerFinalizeCheck(), map[string]bool{
-		"call_model":        true,
+		"before_model":      true,
 		"finalize_response": true,
 	})); err != nil {
 		return nil, err
@@ -206,84 +191,98 @@ func applyProducerBeforeModel(_ context.Context, _ ProducerSignalRuntime, state 
 	return state, nil
 }
 
-func applyProducerSignalCheck(ctx context.Context, signalRuntime ProducerSignalRuntime, state ProducerLoopState) (ProducerLoopState, error) {
-	if state.SignalDrainCompleted {
-		state.NewlyClaimedSignals = 0
-		state.Context.PendingReminders = nil
-		return state, nil
-	}
-	state.SignalDrainCompleted = true
-	signalReminders, newlyClaimed, err := producerSignalReminders(ctx, signalRuntime, state.Context.Input)
-	if err != nil {
-		return ProducerLoopState{}, err
-	}
-	state.NewlyClaimedSignals = newlyClaimed
-	state.SignalReminderCount = newlyClaimed
-	state.SignalReminderKey = signalReminderKey(signalReminders)
-	state.Context.PendingReminders = signalReminders
-	for _, reminder := range signalReminders {
-		if text := strings.TrimSpace(reminder); text != "" {
-			state.PersistentTriggerMessages = append(state.PersistentTriggerMessages, ProducerTriggerMessage{
-				Text:    text,
-				Source:  "producer_pending_signal",
-				Trigger: "producer_pending_signal",
-			})
-		}
-	}
-	return state, nil
-}
-
-func producerSignalReminders(ctx context.Context, runtime ProducerSignalRuntime, input ProducerTurnInput) ([]string, int, error) {
-	if runtime == nil || !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid {
-		return nil, 0, nil
-	}
-	signals, err := runtime.ClaimProducerPendingSignals(ctx, agentruntime.ClaimProducerPendingSignalsParams{
-		WorkspaceID:       input.WorkspaceID,
-		ProducerThreadID:  input.ThreadID,
-		ClaimedByTaskID:   input.TaskID,
-		Limit:             20,
-		StaleAfterSeconds: 600,
-	})
-	if err != nil {
-		return nil, 0, err
-	}
-	if len(signals) == 0 {
-		return nil, 0, nil
-	}
-	return []string{formatProducerSignalReminder(signals)}, len(signals), nil
-}
-
-func signalReminderKey(reminders []string) string {
-	return strings.Join(reminders, "\n")
-}
-
 func formatProducerSignalReminder(signals []db.ProducerPendingSignal) string {
 	lines := []string{
 		"<system-reminder>",
 		fmt.Sprintf("你有 %d 个待处理 Producer signal。", len(signals)),
 		"这些 signal 是工程事件队列，不是普通用户需求；请读取项目上下文，然后按业务优先级处理。",
-		"处理 craftsman_render_plan_ready 时，应针对每条 signal 指定的 render_plan_id 调用 decide_render_plan；如果有多条 RenderPlan，请使用 decisions 批量参数一次提交每条的 accept/reject，或先派 Reviewer；不要只处理列表中的第一条。",
+		"处理 craftsman_render_plan_ready 时，应针对每条 signal 指定的 render_plan_ref 调用 decide_render_plan；如果有多条 RenderPlan，请使用 decisions 批量参数一次提交每条的 accept/reject，或先派 Reviewer；不要只处理列表中的第一条。",
 		"处理 worker_generation_completed 时，应读取项目上下文确认 RenderPlan、generation_job、artifact_version 和画布产物状态；这是信息型完成通知，通常不需要 accept/reject。",
 		"处理 review_completed 时，应读取项目上下文确认 review_record、artifact_issue 和 retry_recommendation；这是 Reviewer 结果通知，Producer 需要决定接受、修复、重生成或请求用户确认。",
 	}
 	for i, signal := range signals {
-		lines = append(lines, fmt.Sprintf("%d. %s: scope=%s/%s render_plan_id=%s target_phase=%s status=%s review_record_id=%s verdict=%s generation_job_id=%s artifact_version_id=%s source_task=%s",
+		lines = append(lines, fmt.Sprintf("%d. signal_ref=%s type=%s scope_ref=%s render_plan_ref=%s target_phase=%s status=%s review_record_ref=%s verdict=%s generation_job_ref=%s artifact_ref=%s",
 			i+1,
+			signalRef(signal),
 			strings.TrimSpace(signal.SignalType),
-			strings.TrimSpace(signal.ScopeType),
-			uuidString(signal.ScopeID),
-			uuidString(signal.RenderPlanID),
+			signalScopeRef(signal),
+			signalRenderPlanRef(signal),
 			signalPayloadString(signal.Payload, "target_phase"),
 			signalPayloadString(signal.Payload, "render_plan_status"),
-			signalPayloadString(signal.Payload, "review_record_id"),
+			signalPayloadObjectRef(signal.Payload, "review_record", "review_record_ref", "review_record_key", "review_record_semantic_key"),
 			signalPayloadString(signal.Payload, "verdict"),
-			signalPayloadString(signal.Payload, "generation_job_id"),
-			signalPayloadString(signal.Payload, "artifact_version_id"),
-			uuidString(signal.SourceTaskID),
+			signalPayloadObjectRef(signal.Payload, "generation_job", "generation_job_ref", "generation_job_key", "generation_job_semantic_key"),
+			signalPayloadObjectRef(signal.Payload, "artifact_version", "artifact_version_ref", "artifact_version_key", "artifact_version_semantic_key"),
 		))
 	}
 	lines = append(lines, "</system-reminder>")
 	return strings.Join(lines, "\n")
+}
+
+func signalRef(signal db.ProducerPendingSignal) string {
+	if key := strings.TrimSpace(signal.SemanticKey); key != "" {
+		return "producer_pending_signal/" + key
+	}
+	if name := strings.TrimSpace(signal.DisplayName); name != "" {
+		return name
+	}
+	return "producer_pending_signal.semantic_key_missing"
+}
+
+func signalScopeRef(signal db.ProducerPendingSignal) string {
+	scopeType := strings.TrimSpace(signal.ScopeType)
+	if scopeType == "" {
+		scopeType = "workspace"
+	}
+	if key := signalPayloadRef(signal.Payload, "scope_ref", "scope_key", "scope_semantic_key", "shot_ref", "shot_key", "shot_semantic_key"); key != "" {
+		if strings.Contains(key, "/") {
+			return key
+		}
+		return scopeType + "/" + key
+	}
+	return scopeType + ".semantic_key_missing"
+}
+
+func signalRenderPlanRef(signal db.ProducerPendingSignal) string {
+	if key := signalPayloadRef(signal.Payload, "render_plan_ref", "render_plan_key", "render_plan_semantic_key"); key != "" {
+		if strings.Contains(key, "/") {
+			return key
+		}
+		return "render_plan/" + key
+	}
+	if signal.RenderPlanID.Valid {
+		return "render_plan.semantic_key_missing"
+	}
+	return ""
+}
+
+func signalPayloadObjectRef(raw []byte, objectType string, keys ...string) string {
+	ref := signalPayloadRef(raw, keys...)
+	if ref == "" || strings.Contains(ref, "/") {
+		return ref
+	}
+	return strings.TrimSpace(objectType) + "/" + ref
+}
+
+func signalPayloadRef(raw []byte, keys ...string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	for _, key := range keys {
+		value := strings.TrimSpace(stringFromAny(payload[key]))
+		if value == "" {
+			continue
+		}
+		if _, ok := pgUUIDFromString(value); ok {
+			continue
+		}
+		return value
+	}
+	return ""
 }
 
 func signalPayloadString(raw []byte, key string) string {
@@ -342,25 +341,16 @@ func routeProducerModelOutput() compose.GraphBranchCondition[ProducerLoopState] 
 			}
 			return "prepare_tool_message", nil
 		}
-		return "check_signals_before_finalize", nil
+		return "finalize_response", nil
 	}
 }
 
 func routeProducerAfterToolResults() compose.GraphBranchCondition[ProducerLoopState] {
 	return func(_ context.Context, state ProducerLoopState) (string, error) {
 		if state.FinalizeAfterAsyncDispatch {
-			return "check_signals_before_finalize", nil
+			return "finalize_response", nil
 		}
 		return "before_model", nil
-	}
-}
-
-func routeProducerFinalizeCheck() compose.GraphBranchCondition[ProducerLoopState] {
-	return func(_ context.Context, state ProducerLoopState) (string, error) {
-		if state.NewlyClaimedSignals > 0 {
-			return "call_model", nil
-		}
-		return "finalize_response", nil
 	}
 }
 

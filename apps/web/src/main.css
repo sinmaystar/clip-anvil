@@ -5036,7 +5036,8 @@ a:focus-visible {
 
 .agent-workbench-overview-node,
 .agent-workbench-scene-node,
-.agent-workbench-shot-node {
+.agent-workbench-shot-node,
+.agent-workbench-final-output-node {
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -5201,10 +5202,112 @@ a:focus-visible {
 }
 
 .agent-workbench-shot-node[data-selected="true"],
-.agent-workbench-overview-node[data-selected="true"] {
+.agent-workbench-overview-node[data-selected="true"],
+.agent-workbench-final-output-node[data-selected="true"] {
   box-shadow:
     var(--shadow-card),
     0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+.agent-workbench-final-output-node {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  gap: 12px;
+  padding: 16px;
+  pointer-events: all;
+}
+
+.agent-workbench-final-output-node header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agent-workbench-final-output-node header span {
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-weight: 720;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.agent-workbench-final-output-node header strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-workbench-final-output-node header em {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg-primary) 7%, transparent);
+  color: var(--fg-secondary);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1;
+  padding: 5px 7px;
+  white-space: nowrap;
+}
+
+.agent-workbench-final-output-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg-primary) 92%, transparent);
+  color: var(--color-panel);
+  aspect-ratio: 16 / 9;
+}
+
+.agent-workbench-final-output-preview video,
+.agent-workbench-final-output-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.agent-workbench-final-output-node p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.agent-workbench-final-output-node dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.agent-workbench-final-output-node dl div {
+  min-width: 0;
+}
+
+.agent-workbench-final-output-node dt {
+  color: var(--fg-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.agent-workbench-final-output-node dd {
+  overflow: hidden;
+  margin: 2px 0 0;
+  color: var(--fg-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-workbench-shot-node[data-status="failed"] {

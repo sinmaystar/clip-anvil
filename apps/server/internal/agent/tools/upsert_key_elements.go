@@ -36,8 +36,8 @@ type KeyElementStateInput struct {
 	Label              string             `json:"label" jsonschema_description:"状态展示名，例如用户上传素材状态、现代机场晨光状态。"`
 	VisualDescription  string             `json:"visual_description" jsonschema_description:"该状态的具体视觉描述。人物/商品/场景的一致性主要看这个字段。不要写模型 prompt 语法。"`
 	ReferenceStatus    string             `json:"reference_status" jsonschema:"required,enum=none,enum=needs_reference,enum=ready,enum=approved,enum=rejected" jsonschema_description:"参考资源状态。none 表示这个状态只作为文字约束，不需要生成统一参考图；needs_reference 表示为了跨分镜一致性必须生成或上传参考；ready 表示已有可用参考；approved 表示用户确认；rejected 表示参考被否定。"`
-	ReferenceNodeID    string             `json:"reference_node_id" jsonschema_description:"参考素材所在 media_node UUID。needs_reference 时为空。"`
-	ReferenceVersionID string             `json:"reference_version_id" jsonschema_description:"被选中的 artifact_version UUID。M1 通常为空。"`
+	ReferenceNodeID    string             `json:"reference_node_id" jsonschema_description:"兼容旧字段：参考素材所在 media_node 内部 ID。needs_reference 时为空；模型通常不要填写。"`
+	ReferenceVersionID string             `json:"reference_version_id" jsonschema_description:"兼容旧字段：被选中的 artifact_version 内部 ID。M1 通常为空；模型通常不要填写。"`
 	IsDefault          bool               `json:"is_default" jsonschema_description:"是否为该 key element 默认状态。同一元素同一时间只能有一个默认状态。"`
 	StateFacts         []MemoryFactInput  `json:"state_facts" jsonschema_description:"该状态的结构化事实，例如 color=silver、lighting=morning。"`
 	SourceRefs         []ElementSourceRef `json:"source_refs" jsonschema_description:"该状态的来源引用。"`

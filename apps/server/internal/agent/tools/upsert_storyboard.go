@@ -28,7 +28,7 @@ type UpsertStoryboardToolInput struct {
 
 type StoryboardScope struct {
 	Type string `json:"type" jsonschema:"required,enum=workspace,enum=scene,enum=shot" jsonschema_description:"写入范围类型。workspace 表示整个项目；scene 表示一个场景；shot 表示一个分镜。"`
-	ID   string `json:"id" jsonschema_description:"scope 对象 UUID。workspace 可为空；scene 或 shot 必须填写。"`
+	ID   string `json:"id" jsonschema_description:"兼容旧字段：scope 对象内部 ID。workspace 可为空；scene 或 shot 通常使用 key/client_key，不要自行填写内部 ID。"`
 }
 
 type SceneInput struct {

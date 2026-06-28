@@ -128,6 +128,79 @@ func TestComposerGraphPlacesFinalVideoBelowShotRows(t *testing.T) {
 	}
 }
 
+func TestComposerGraphDerivesVideoRefsFromShotWinners(t *testing.T) {
+	shot1 := db.Shot{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), SortOrder: 2, Title: "shot 2"}
+	shot2 := db.Shot{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), SortOrder: 1, Title: "shot 1"}
+	node1 := sourceShotVideoNode(21, "shot-02 shot video")
+	node1.SemanticKey = "shot_02.shot_video.r3.node"
+	node1.ShotID = shot1.ID
+	node1.Metadata = mustJSON(map[string]any{"agent_artifact_kind": "shot_video"})
+	node2 := sourceShotVideoNode(22, "shot-01 shot video")
+	node2.SemanticKey = "shot_01.shot_video.r1.node"
+	node2.ShotID = shot2.ID
+	node2.Metadata = mustJSON(map[string]any{"agent_artifact_kind": "shot_video"})
+	staleDuplicate := sourceShotVideoNode(23, "shot-02 shot video")
+	staleDuplicate.SemanticKey = "shot_02.shot_video.r1.node"
+	staleDuplicate.ShotID = shot1.ID
+	staleDuplicate.CurrentVersionID = pgtype.UUID{}
+	staleDuplicate.Metadata = mustJSON(map[string]any{"agent_artifact_kind": "shot_video"})
+	store := composerStoreWithSourceVideo(node1, node2, staleDuplicate)
+	store.shots = []db.Shot{shot1, shot2}
+	store.nodesByShot = map[pgtype.UUID][]db.MediaNode{
+		shot1.ID: {staleDuplicate, node1},
+		shot2.ID: {node2},
+	}
+	productionService := &fakeComposerProduction{
+		result: production.RunResult{
+			Node:    db.MediaNode{ID: uuidWithByte(50), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeVideo},
+			Job:     db.GenerationJob{ID: uuidWithByte(60), TargetNodeID: uuidWithByte(50), OperationType: "compose_final_video", Status: db.JobStatusQueued},
+			Version: db.ArtifactVersion{ID: uuidWithByte(70), NodeID: uuidWithByte(50), JobID: uuidWithByte(60), Status: db.JobStatusQueued},
+		},
+	}
+	graph, err := NewGraph(GraphConfig{
+		Runtime:    &fakeComposerRuntime{},
+		Store:      store,
+		Production: productionService,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = graph.Run(context.Background(), GraphInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(10),
+		Input: CompositionInput{
+			SourceStoryboardNodeID: "21000000-0000-0000-0000-000000000000",
+			Instructions:           "把已完成分镜拼成 20 秒营销视频。",
+			Strategy:               "把已完成分镜拼成 20 秒营销视频。",
+			TemplateKey:            "simple_concat",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(productionService.intent.InputRefs) != 2 {
+		t.Fatalf("input refs = %#v", productionService.intent.InputRefs)
+	}
+	if productionService.intent.InputRefs[0].NodeID != node2.ID || productionService.intent.InputRefs[1].NodeID != node1.ID {
+		t.Fatalf("input refs order = %#v", productionService.intent.InputRefs)
+	}
+	if productionService.intent.Semantic.ArtifactKind != "final_video" {
+		t.Fatalf("intent semantic = %#v", productionService.intent.Semantic)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(store.createdNode.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["composer_template_key"] != "simple_concat" || metadata["source_storyboard_node_id"] == "" {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+	if store.createdNode.SemanticKey == "" || store.createdNode.ArtifactKind != "final_video" {
+		t.Fatalf("created final node semantic = key %q kind %q", store.createdNode.SemanticKey, store.createdNode.ArtifactKind)
+	}
+}
+
 func composerStoreWithSourceVideo(sourceNodes ...db.MediaNode) *fakeComposerStore {
 	versions := map[pgtype.UUID]db.ArtifactVersion{}
 	assets := map[pgtype.UUID]db.MediaAsset{}

@@ -77,13 +77,23 @@ type TaskInput struct {
 }
 
 type ReviewTarget struct {
-	WorkspaceScope       string `json:"workspace_scope"`
-	ShotID               string `json:"shot_id,omitempty"`
-	RenderPlanID         string `json:"render_plan_id,omitempty"`
-	NodeID               string `json:"node_id,omitempty"`
-	ArtifactVersionID    string `json:"artifact_version_id,omitempty"`
-	GenerationJobID      string `json:"generation_job_id,omitempty"`
-	ParentReviewRecordID string `json:"parent_review_record_id,omitempty"`
+	WorkspaceScope       string          `json:"workspace_scope"`
+	ShotRef              ReviewObjectRef `json:"shot_ref,omitempty"`
+	RenderPlanRef        ReviewObjectRef `json:"render_plan_ref,omitempty"`
+	NodeRef              ReviewObjectRef `json:"node_ref,omitempty"`
+	ArtifactVersionRef   ReviewObjectRef `json:"artifact_version_ref,omitempty"`
+	ParentReviewRef      ReviewObjectRef `json:"parent_review_ref,omitempty"`
+	ShotID               string          `json:"shot_id,omitempty"`
+	RenderPlanID         string          `json:"render_plan_id,omitempty"`
+	NodeID               string          `json:"node_id,omitempty"`
+	ArtifactVersionID    string          `json:"artifact_version_id,omitempty"`
+	GenerationJobID      string          `json:"generation_job_id,omitempty"`
+	ParentReviewRecordID string          `json:"parent_review_record_id,omitempty"`
+}
+
+type ReviewObjectRef struct {
+	Type string `json:"type,omitempty"`
+	Key  string `json:"key,omitempty"`
 }
 
 type GraphInput struct {

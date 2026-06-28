@@ -1,6 +1,7 @@
 import type { Edge, Node } from "@xyflow/react";
 import type {
   AgentWorkbenchArtifactSlot,
+  AgentWorkbenchFinalOutput,
   AgentWorkbenchProjection,
   AgentWorkbenchScene,
   AgentWorkbenchShot,
@@ -14,7 +15,8 @@ import {
 export type AgentWorkbenchNode =
   | Node<AgentWorkbenchOverviewNodeData, "agentOverview">
   | Node<AgentWorkbenchSceneNodeData, "agentScene">
-  | Node<AgentWorkbenchShotNodeData, "agentShot">;
+  | Node<AgentWorkbenchShotNodeData, "agentShot">
+  | Node<AgentWorkbenchFinalOutputNodeData, "agentFinalOutput">;
 
 export type AgentWorkbenchEdge = Edge<AgentWorkbenchEdgeData, "agentWorkbench">;
 
@@ -42,6 +44,11 @@ export interface AgentWorkbenchShotNodeData extends Record<string, unknown> {
   onShotHeightChange?: (shotId: string, height: number) => void;
 }
 
+export interface AgentWorkbenchFinalOutputNodeData extends Record<string, unknown> {
+  kind: "final_output";
+  finalOutput: AgentWorkbenchFinalOutput;
+}
+
 export interface AgentWorkbenchEdgeData extends Record<string, unknown> {
   label?: string;
 }
@@ -65,6 +72,8 @@ const ORIGIN_X = 40;
 const ORIGIN_Y = 40;
 const SCENE_X = ORIGIN_X + OVERVIEW_WIDTH + 80;
 const COMPACT_SCENE_MAX_WIDTH = SCENE_PADDING * 2 + SHOT_WIDTH + 24;
+const FINAL_OUTPUT_WIDTH = 440;
+const FINAL_OUTPUT_HEIGHT = 320;
 
 export function overviewNodeId() {
   return "agent-workbench-overview";
@@ -76,6 +85,10 @@ export function sceneNodeId(sceneId: string) {
 
 export function shotNodeId(shotId: string) {
   return `agent-shot-${shotId}`;
+}
+
+export function finalOutputNodeId(finalOutputId: string) {
+  return `agent-final-output-${finalOutputId}`;
 }
 
 export function agentWorkbenchToFlow(
@@ -176,6 +189,36 @@ export function agentWorkbenchToFlow(
     });
 
     sceneColumnHeights[sceneColumn] += sceneLayout.height + SCENE_GAP;
+  }
+
+  if (workbench.final_output) {
+    const sceneAreaWidth =
+      sceneColumnWidth > 0
+        ? sceneColumns * sceneColumnWidth + Math.max(0, sceneColumns - 1) * SCENE_GAP
+        : 0;
+    const sceneAreaHeight = Math.max(...sceneColumnHeights, 0);
+    nodes.push({
+      id: finalOutputNodeId(workbench.final_output.id),
+      type: "agentFinalOutput",
+      position: {
+        x: SCENE_X + sceneAreaWidth + 80,
+        y: ORIGIN_Y + Math.max(0, Math.min(sceneAreaHeight, 360)),
+      },
+      data: { kind: "final_output", finalOutput: workbench.final_output },
+      width: FINAL_OUTPUT_WIDTH,
+      height: FINAL_OUTPUT_HEIGHT,
+      measured: { width: FINAL_OUTPUT_WIDTH, height: FINAL_OUTPUT_HEIGHT },
+      style: { width: FINAL_OUTPUT_WIDTH, height: FINAL_OUTPUT_HEIGHT },
+      draggable: false,
+      selectable: true,
+    });
+    edges.push({
+      id: `agent-edge-overview-final-${workbench.final_output.id}`,
+      type: "agentWorkbench",
+      source: overviewNodeId(),
+      target: finalOutputNodeId(workbench.final_output.id),
+      data: { label: "final" },
+    });
   }
 
   return { nodes, edges };

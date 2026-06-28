@@ -43,6 +43,18 @@ type RunResult struct {
 	Version db.ArtifactVersion
 }
 
+type ComposerArtifactInput struct {
+	WorkspaceID    pgtype.UUID
+	OutputNodeID   pgtype.UUID
+	Intent         GenerationIntent
+	ProviderResult ProviderResult
+	SandboxJobID   pgtype.UUID
+	TaskID         pgtype.UUID
+	ParentJobID    pgtype.UUID
+	InputHash      string
+	MaxAttempts    int32
+}
+
 type ArtifactSelectionResult struct {
 	Node    db.MediaNode
 	Version db.ArtifactVersion
@@ -105,6 +117,7 @@ func (s *Service) SubmitNodeRun(ctx context.Context, nodeID pgtype.UUID, request
 	}
 	registry := s.providerRegistry()
 	intent := registry.ApplyDefaults(intentForNode(node, requestedBy))
+	intent = withComposerSemanticDefaults(node, intent)
 
 	capability, err := s.capabilityForIntent(ctx, intent)
 	if err != nil {
@@ -153,6 +166,7 @@ func (s *Service) SubmitGenerationIntent(ctx context.Context, intent GenerationI
 		return RunResult{}, err
 	}
 	intent = s.providerRegistry().ApplyDefaults(intent)
+	intent = withComposerSemanticDefaults(node, intent)
 	capability, err := s.capabilityForIntent(ctx, intent)
 	if err != nil {
 		job, jobErr := s.createFailedJob(ctx, node, intent, err, pgtype.UUID{}, 1, 1)
@@ -187,6 +201,90 @@ func (s *Service) SubmitGenerationIntent(ctx context.Context, intent GenerationI
 		s.runner.Enqueue(ctx, job)
 	}
 	return RunResult{Node: node, Job: job, Version: version}, nil
+}
+
+func (s *Service) PersistComposerArtifact(ctx context.Context, input ComposerArtifactInput) (RunResult, error) {
+	if s == nil || s.queries == nil || s.pool == nil {
+		return RunResult{}, fmt.Errorf("%w: production service is not configured", ErrProviderConfig)
+	}
+	node, err := s.queries.GetMediaNodeByID(ctx, input.OutputNodeID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	intent := input.Intent
+	if !intent.WorkspaceID.Valid {
+		intent.WorkspaceID = node.WorkspaceID
+	}
+	if !intent.TargetNodeID.Valid {
+		intent.TargetNodeID = node.ID
+	}
+	if strings.TrimSpace(intent.OutputType) == "" {
+		intent.OutputType = string(node.NodeType)
+	}
+	if strings.TrimSpace(intent.OutputType) == "" {
+		intent.OutputType = "video"
+	}
+	if strings.TrimSpace(intent.OperationType) == "" {
+		intent.OperationType = "compose_final_video"
+	}
+	intent = withComposerSemanticDefaults(node, intent)
+	if strings.TrimSpace(intent.Model.Provider) == "" {
+		intent.Model.Provider = "internal_ffmpeg"
+	}
+	if strings.TrimSpace(intent.Model.ModelID) == "" {
+		intent.Model.ModelID = "ffmpeg"
+	}
+	if strings.TrimSpace(intent.RequestedBy.Type) == "" {
+		intent.RequestedBy.Type = "agent_composer"
+	}
+	if strings.TrimSpace(intent.RequestedBy.ID) == "" && input.TaskID.Valid {
+		intent.RequestedBy.ID = uuidToString(input.TaskID)
+	}
+	result := input.ProviderResult
+	if strings.TrimSpace(result.AssetMIME) == "" {
+		result.AssetMIME = "video/mp4"
+	}
+	if result.ProviderResponse == nil {
+		result.ProviderResponse = map[string]any{}
+	}
+	if input.SandboxJobID.Valid {
+		result.ProviderResponse["sandbox_job_id"] = uuidToString(input.SandboxJobID)
+	}
+	maxAttempts := input.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	inputHash := strings.TrimSpace(input.InputHash)
+	if inputHash == "" {
+		inputHash = "composer:" + uuidToString(input.SandboxJobID)
+	}
+	job, _, err := s.createQueuedJobWithVersion(ctx, node, intent, input.ParentJobID, maxAttempts, inputHash)
+	if err != nil {
+		return RunResult{}, err
+	}
+	return s.persistQueuedJobSuccess(ctx, job.ID, result)
+}
+
+func withComposerSemanticDefaults(node db.MediaNode, intent GenerationIntent) GenerationIntent {
+	if strings.TrimSpace(intent.OperationType) != "compose_final_video" {
+		return intent
+	}
+	if strings.TrimSpace(intent.Semantic.ArtifactKind) == "" {
+		intent.Semantic.ArtifactKind = "final_video"
+	}
+	if strings.TrimSpace(intent.Semantic.RenderPlanKey) == "" {
+		intent.Semantic.RenderPlanKey = composerArtifactRenderKey(node)
+	}
+	return intent
+}
+
+func composerArtifactRenderKey(node db.MediaNode) string {
+	base := strings.TrimSpace(node.SemanticKey)
+	if base != "" {
+		base = strings.TrimSuffix(base, ".node")
+		return base + ".compose"
+	}
+	return "final_video." + shortUUID(node.ID) + ".compose"
 }
 
 func (s *Service) RetryJob(ctx context.Context, jobID pgtype.UUID, requestedBy RequestedBy) (RunResult, error) {
@@ -1641,4 +1739,12 @@ func uuidToString(value pgtype.UUID) string {
 		return ""
 	}
 	return fmt.Sprintf("%x-%x-%x-%x-%x", value.Bytes[0:4], value.Bytes[4:6], value.Bytes[6:8], value.Bytes[8:10], value.Bytes[10:16])
+}
+
+func shortUUID(value pgtype.UUID) string {
+	text := uuidToString(value)
+	if len(text) >= 8 {
+		return text[:8]
+	}
+	return "unknown"
 }

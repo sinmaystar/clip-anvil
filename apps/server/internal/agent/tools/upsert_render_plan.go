@@ -27,8 +27,8 @@ type UpsertRenderPlanToolInput struct {
 	Brief                string                    `json:"brief" jsonschema:"required" jsonschema_description:"本次写入 RenderPlan 的业务目的，例如为机场出发大厅状态创建 Seedream reference image 计划。不要超过 160 个中文字符。"`
 	Mode                 string                    `json:"mode" jsonschema:"required,enum=create,enum=update_draft,enum=fork_from,enum=mark_blocked" jsonschema_description:"create 创建新计划；update_draft 修改未执行草稿；fork_from 基于旧计划创建新 revision；mark_blocked 记录无法继续的阻塞原因。"`
 	GenerationText       string                    `json:"generation_text" jsonschema:"required" jsonschema_description:"本计划最重要的自由文本生成说明。请用自然语言完整写清楚要生成什么，不要写 JSON 字符串。必须覆盖：主体是谁以及必须保持的稳定特征；场景/空间/时间；光线和色彩；镜头语言、景别、构图和运镜；主体动作或视频事件顺序；整体风格和商业质感；音频、旁白或字幕诉求；必须避免的错误和不一致。图片计划写成一段详细画面描述；视频计划写成一段可执行镜头描述，只保留一个主要动作和一个主要运镜。建议 300 到 900 个中文字符，宁可写在这里，也不要把 prompt_parts、audit_hints、subject_bindings 填成很长的多层 JSON。"`
-	RenderPlanID         string                    `json:"render_plan_id" jsonschema_description:"update_draft 或 mark_blocked 时填写目标 RenderPlan UUID。create 时为空。"`
-	ForkFromRenderPlanID string                    `json:"fork_from_render_plan_id" jsonschema_description:"mode=fork_from 时填写来源 RenderPlan UUID。不能和 render_plan_id 同时作为写入目标。"`
+	RenderPlanID         string                    `json:"render_plan_id" jsonschema_description:"兼容旧字段：update_draft 或 mark_blocked 时的目标 RenderPlan 内部 ID。模型通常不要填写；create 时为空。"`
+	ForkFromRenderPlanID string                    `json:"fork_from_render_plan_id" jsonschema_description:"兼容旧字段：mode=fork_from 时的来源 RenderPlan 内部 ID。通常由当前任务上下文提供，不能和 render_plan_id 同时作为写入目标。"`
 	Scope                RenderPlanScopeInput      `json:"scope" jsonschema_description:"RenderPlan 归属对象。通常可以省略，工具会继承当前 Craftsman task scope；只有确有必要时才填写，且必须与当前 task scope 一致。"`
 	TargetPhase          string                    `json:"target_phase" jsonschema:"enum=reference_image,enum=preview_image,enum=shot_video" jsonschema_description:"目标阶段。通常可以省略，工具会继承当前 Craftsman task target_phase。reference_image 为关键元素参考图；preview_image 为分镜预览图；shot_video 为分镜视频。"`
 	TaskType             string                    `json:"task_type" jsonschema:"enum=generate,enum=edit,enum=extend,enum=bridge" jsonschema_description:"生成任务类型。通常省略，默认 generate；只有明确做编辑、延长、桥接时填写 edit/extend/bridge。"`
@@ -45,14 +45,14 @@ type UpsertRenderPlanToolInput struct {
 
 type RenderPlanScopeInput struct {
 	Type string `json:"type" jsonschema:"enum=key_element_state,enum=shot" jsonschema_description:"RenderPlan 归属类型。通常省略并继承当前 Craftsman task。key_element_state 通常对应 reference_image；shot 对应 preview_image 或 shot_video。"`
-	ID   string `json:"id" jsonschema_description:"归属对象 UUID。通常省略并继承当前 Craftsman task。"`
+	ID   string `json:"id" jsonschema_description:"兼容旧字段：归属对象内部 ID。通常省略并继承当前 Craftsman task。"`
 	Key  string `json:"key" jsonschema_description:"归属对象语义键，例如 scene_main.shot_01 或 element_airport.state_morning。通常省略并继承当前 Craftsman task；模型不要编造。"`
 }
 
 type ReferenceBindingInput struct {
 	ClientKey      string `json:"client_key" jsonschema:"required" jsonschema_description:"稳定业务键，例如 ref_product_luggage_default、ref_airport_scene_morning。用于重试和审计。"`
 	SourceType     string `json:"source_type" jsonschema:"required,enum=key_element_state,enum=media_node,enum=artifact_version,enum=shot_output" jsonschema_description:"参考来源类型。优先使用 key_element_state 或 artifact_version，而不是裸素材。"`
-	SourceID       string `json:"source_id" jsonschema:"required" jsonschema_description:"参考来源标识。media_node 可填写真实 UUID 或当前 workspace 内唯一标题，工具会校验并规范化；shot_output 必须填写 read_project_context 返回的语义 selector，例如 shot_01.preview_image.current 或 shot_02.shot_video.current。不要编造 UUID 或 selector。"`
+	SourceID       string `json:"source_id" jsonschema:"required" jsonschema_description:"参考来源标识。media_node 可填写 read_project_context 返回的 semantic_key 或当前 workspace 内唯一标题，工具会校验并规范化；shot_output 必须填写语义 selector，例如 shot_01.preview_image.current 或 shot_02.shot_video.current。不要编造内部 ID 或 selector。"`
 	ContentType    string `json:"content_type" jsonschema:"required,enum=image_url,enum=video_url,enum=audio_url" jsonschema_description:"官方 Seedance content item type。图片必须填 image_url；视频参考填 video_url；音频参考填 audio_url。"`
 	ModelRole      string `json:"model_role" jsonschema:"required,enum=first_frame,enum=last_frame,enum=reference_image,enum=reference_video,enum=reference_audio" jsonschema_description:"官方 Seedance content.role。image_url 只能用 first_frame、last_frame 或 reference_image；video_url 只能用 reference_video；audio_url 只能用 reference_audio。商品/场景/风格语义写入 semantic_target 或 notes，不要写进 model_role。"`
 	PromptAlias    string `json:"prompt_alias" jsonschema_description:"PromptCompiler 使用的可读别名，例如 图片1、视频1、音频1。不要手写 @图片1，交给编译器生成。"`
@@ -65,7 +65,7 @@ type ReferenceBindingInput struct {
 type SubjectBindingInput struct {
 	SubjectKey     string   `json:"subject_key" jsonschema:"required" jsonschema_description:"主体稳定键，例如 subject_luggage。"`
 	Label          string   `json:"label" jsonschema:"required" jsonschema_description:"主体展示名，例如悦行银灰色行李箱。"`
-	ElementStateID string   `json:"element_state_id" jsonschema_description:"对应 KeyElementState UUID。没有则为空。"`
+	ElementStateID string   `json:"element_state_id" jsonschema_description:"兼容旧字段：对应 KeyElementState 内部 ID。没有则为空，模型通常不要填写。"`
 	PromptHandle   string   `json:"prompt_handle" jsonschema_description:"主体句柄，例如 主体1。不要加尖括号，PromptCompiler 会渲染为 <主体1>。"`
 	StableTraits   []string `json:"stable_traits" jsonschema_description:"2 到 5 个稳定静态特征，例如银灰色硬壳、竖向拉杆、四个万向轮。"`
 	MustPreserve   bool     `json:"must_preserve" jsonschema_description:"是否必须保持一致。商品、人物通常为 true。"`
@@ -265,16 +265,16 @@ func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {
 		return err
 	}
 	if _, ok := pgUUIDFromString(input.Scope.ID); !ok {
-		return fmt.Errorf("scope.id 必须是 UUID")
+		return fmt.Errorf("scope.id 必须继承当前 Craftsman task 的内部 ID；模型通常不要填写")
 	}
 	if input.RenderPlanID != "" {
 		if _, ok := pgUUIDFromString(input.RenderPlanID); !ok {
-			return fmt.Errorf("render_plan_id 必须是 UUID")
+			return fmt.Errorf("render_plan_id 必须是系统已有 RenderPlan 的内部 ID；模型通常不要填写")
 		}
 	}
 	if input.ForkFromRenderPlanID != "" {
 		if _, ok := pgUUIDFromString(input.ForkFromRenderPlanID); !ok {
-			return fmt.Errorf("fork_from_render_plan_id 必须是 UUID")
+			return fmt.Errorf("fork_from_render_plan_id 必须是系统已有 RenderPlan 的内部 ID；模型通常不要填写")
 		}
 	}
 	if err := requireMode(input.TargetPhase, "reference_image", "preview_image", "shot_video"); err != nil {
@@ -501,7 +501,7 @@ func (t *UpsertRenderPlanNativeTool) validateAndNormalizeReferenceBindings(ctx c
 	}
 	normalized, problem, ok := normalizeMediaNodeReferenceBindings(input, nodes)
 	if !ok {
-		return input, NaturalToolError(toolUpsertRenderPlan, problem, "请先读取项目上下文，使用当前 workspace 中真实存在的 media_node UUID；如果只知道素材标题，必须填写唯一标题，不要编造 UUID。"), false
+		return input, NaturalToolError(toolUpsertRenderPlan, problem, "请先读取项目上下文，使用当前 workspace 中真实存在的 media_node semantic_key；如果只知道素材标题，必须填写唯一标题，不要编造内部 ID。"), false
 	}
 	return normalized, "", true
 }

@@ -75,19 +75,24 @@ type SubmitReviewResultNativeTool struct {
 }
 
 type ReviewTargetInput struct {
-	WorkspaceScope       string `json:"workspace_scope" jsonschema:"enum=shot,enum=render_plan,enum=final_video" jsonschema_description:"目标归属范围。必须沿用当前 Reviewer 任务 target，不要推断或替换。pre_render_plan_review 通常是 render_plan；preview_image_review / shot_video_review 通常是 shot；final_video_review 是 final_video。"`
-	ShotID               string `json:"shot_id" jsonschema_description:"分镜 UUID。preview_image_review 和 shot_video_review 必填。必须从当前 Reviewer 任务 target 原样复制；不要填写 media_node id。"`
-	RenderPlanID         string `json:"render_plan_id" jsonschema_description:"RenderPlan UUID。pre_render_plan_review 必填；artifact review 中可选。必须从当前 Reviewer 任务 target 原样复制；不要填写 node_id 或 artifact_version_id。"`
-	NodeID               string `json:"node_id" jsonschema_description:"媒体节点 UUID。artifact review 必填。必须从当前 Reviewer 任务 target 原样复制。"`
-	ArtifactVersionID    string `json:"artifact_version_id" jsonschema_description:"被评审 artifact_version UUID。artifact review 必填。必须从当前 Reviewer 任务 target 原样复制；它不是 node_id，也不是 generation_job_id。"`
-	GenerationJobID      string `json:"generation_job_id" jsonschema_description:"生成该 artifact 的 generation_job UUID。可选。必须从当前 Reviewer 任务 target 原样复制；不要自行编造。"`
-	ParentReviewRecordID string `json:"parent_review_record_id" jsonschema_description:"如果当前 Reviewer 任务 target 提供了上一条 review_record UUID，则原样复制；否则留空。不要填写 00000000-0000-0000-0000-000000000000。"`
+	WorkspaceScope       string        `json:"workspace_scope" jsonschema:"enum=shot,enum=render_plan,enum=final_video" jsonschema_description:"目标归属范围。必须沿用当前 Reviewer 任务 target，不要推断或替换。pre_render_plan_review 通常是 render_plan；preview_image_review / shot_video_review 通常是 shot；final_video_review 是 final_video。"`
+	ShotRef              ToolObjectRef `json:"shot_ref" jsonschema_description:"分镜语义引用。preview_image_review 和 shot_video_review 使用 read_project_context 返回的 type=shot,key=...。"`
+	RenderPlanRef        ToolObjectRef `json:"render_plan_ref" jsonschema_description:"RenderPlan 语义引用。pre_render_plan_review 必填；artifact review 中可选。使用 type=render_plan,key=...。"`
+	NodeRef              ToolObjectRef `json:"node_ref" jsonschema_description:"媒体节点语义引用。artifact review 使用 read_project_context 返回的 type=media_node,key=...。"`
+	ArtifactVersionRef   ToolObjectRef `json:"artifact_version_ref" jsonschema_description:"被评审 artifact_version 语义引用。artifact review 使用 type=artifact_version,key=...。"`
+	ParentReviewRef      ToolObjectRef `json:"parent_review_ref" jsonschema_description:"上一条 review_record 的语义引用；没有则留空。"`
+	ShotID               string        `json:"shot_id" jsonschema_description:"兼容旧字段：内部 ID 或历史语义键。模型不要填写；请优先使用 shot_ref。"`
+	RenderPlanID         string        `json:"render_plan_id" jsonschema_description:"兼容旧字段：内部 ID 或历史语义键。模型不要填写；请优先使用 render_plan_ref。"`
+	NodeID               string        `json:"node_id" jsonschema_description:"兼容旧字段：内部 ID 或历史语义键。模型不要填写；请优先使用 node_ref。"`
+	ArtifactVersionID    string        `json:"artifact_version_id" jsonschema_description:"兼容旧字段：内部 ID 或历史语义键。模型不要填写；请优先使用 artifact_version_ref。"`
+	GenerationJobID      string        `json:"generation_job_id" jsonschema_description:"兼容旧字段：内部 ID。通常由当前 Reviewer 任务 target 自动注入，模型不要填写。"`
+	ParentReviewRecordID string        `json:"parent_review_record_id" jsonschema_description:"兼容旧字段：内部 ID。通常由当前 Reviewer 任务 target 自动注入，模型不要填写。"`
 }
 
 type SubmitReviewResultInput struct {
 	Brief               string                   `json:"brief" jsonschema:"required" jsonschema_description:"提交评审结果的业务目的，例如提交 shot_01 视频评审并指出商品漂移问题。"`
 	ReviewTask          string                   `json:"review_task" jsonschema:"required,enum=pre_render_plan_review,enum=preview_image_review,enum=shot_video_review,enum=final_video_review" jsonschema_description:"评审任务类型。必须与当前 reviewer task 一致。"`
-	Target              ReviewTargetInput        `json:"target" jsonschema:"required" jsonschema_description:"被评审对象。必须与当前 reviewer task 一致。"`
+	Target              ReviewTargetInput        `json:"target" jsonschema:"required" jsonschema_description:"被评审对象。通常留空由当前 reviewer task 自动注入；如需填写，请使用 *_ref 语义引用，不要填写内部 ID。"`
 	Verdict             string                   `json:"verdict" jsonschema:"required,enum=accepted,enum=accepted_with_warnings,enum=rejected,enum=blocked" jsonschema_description:"最终评审结论。accepted 可继续；accepted_with_warnings 可继续但需提示；rejected 阻塞推进；blocked 表示无法可靠评审。"`
 	OverallScore        float64                  `json:"overall_score" jsonschema:"required" jsonschema_description:"整体评分，范围 0 到 1。blocked 时可填 0。"`
 	Rubric              []ReviewRubricAxisInput  `json:"rubric" jsonschema:"required" jsonschema_description:"10 轴 rubric 的评分结果。必须包含当前 review_task 的 required axes。"`
@@ -108,26 +113,28 @@ type ReviewRubricAxisInput struct {
 }
 
 type ReviewIssueInput struct {
-	Dimension                string `json:"dimension" jsonschema:"required" jsonschema_description:"问题维度。优先使用 10 轴之一；pre-render 可用 model_capability、prompt_validity、reference_role_validity、cost_risk、dependency_not_ready、project_memory_conflict。"`
-	Severity                 string `json:"severity" jsonschema:"required,enum=info,enum=warning,enum=blocking" jsonschema_description:"严重程度。blocking 会阻止继续推进。"`
-	Title                    string `json:"title" jsonschema:"required" jsonschema_description:"短标题，例如商品外观漂移、首尾帧不连续、运镜冲突。"`
-	Description              string `json:"description" jsonschema:"required" jsonschema_description:"问题描述。说明问题发生在哪里，以及为什么影响目标。"`
-	Evidence                 string `json:"evidence" jsonschema_description:"证据，例如画面区域、帧范围、prompt 片段、reference binding 或音频时间段。不要使用模型不可理解的裸 asset id。"`
-	TargetObjectType         string `json:"target_object_type" jsonschema:"required,enum=render_plan,enum=artifact_version,enum=shot,enum=final_video,enum=project_memory" jsonschema_description:"问题归属对象类型。不要把所有问题都挂在 artifact 上；prompt 问题归 RenderPlan，故事问题归 Shot。"`
-	TargetObjectID           string `json:"target_object_id" jsonschema:"required" jsonschema_description:"问题归属对象 UUID。必须属于当前 workspace。"`
-	SuggestedFix             string `json:"suggested_fix" jsonschema:"required,enum=none,enum=regenerate,enum=edit,enum=extend,enum=bridge,enum=revise_render_plan,enum=revise_shot_plan,enum=manual" jsonschema_description:"建议修复动作。Reviewer 只建议，Producer 决定是否执行。"`
-	FixHint                  string `json:"fix_hint" jsonschema:"required" jsonschema_description:"具体修复建议。应该能直接帮助 Producer 派 Craftsman 或请求用户确认。"`
-	RequiresUserConfirmation bool   `json:"requires_user_confirmation" jsonschema_description:"是否需要用户确认后才能修复。涉及审美偏好、成本较高或改变用户方向时为 true。"`
+	Dimension                string        `json:"dimension" jsonschema:"required" jsonschema_description:"问题维度。优先使用 10 轴之一；pre-render 可用 model_capability、prompt_validity、reference_role_validity、cost_risk、dependency_not_ready、project_memory_conflict。"`
+	Severity                 string        `json:"severity" jsonschema:"required,enum=info,enum=warning,enum=blocking" jsonschema_description:"严重程度。blocking 会阻止继续推进。"`
+	Title                    string        `json:"title" jsonschema:"required" jsonschema_description:"短标题，例如商品外观漂移、首尾帧不连续、运镜冲突。"`
+	Description              string        `json:"description" jsonschema:"required" jsonschema_description:"问题描述。说明问题发生在哪里，以及为什么影响目标。"`
+	Evidence                 string        `json:"evidence" jsonschema_description:"证据，例如画面区域、帧范围、prompt 片段、reference binding 或音频时间段。不要使用模型不可理解的裸 asset id。"`
+	TargetObjectType         string        `json:"target_object_type" jsonschema:"required,enum=render_plan,enum=artifact_version,enum=shot,enum=final_video,enum=project_memory" jsonschema_description:"问题归属对象类型。不要把所有问题都挂在 artifact 上；prompt 问题归 RenderPlan，故事问题归 Shot。"`
+	TargetObjectRef          ToolObjectRef `json:"target_object_ref" jsonschema_description:"问题归属对象语义引用。通常可留空；工具会按 target_object_type 从当前 target 自动派生。"`
+	TargetObjectID           string        `json:"target_object_id" jsonschema_description:"兼容旧字段：内部 ID。模型不要填写；优先使用 target_object_ref，或只填写 target_object_type 让工具自动派生。"`
+	SuggestedFix             string        `json:"suggested_fix" jsonschema:"required,enum=none,enum=regenerate,enum=edit,enum=extend,enum=bridge,enum=revise_render_plan,enum=revise_shot_plan,enum=manual" jsonschema_description:"建议修复动作。Reviewer 只建议，Producer 决定是否执行。"`
+	FixHint                  string        `json:"fix_hint" jsonschema:"required" jsonschema_description:"具体修复建议。应该能直接帮助 Producer 派 Craftsman 或请求用户确认。"`
+	RequiresUserConfirmation bool          `json:"requires_user_confirmation" jsonschema_description:"是否需要用户确认后才能修复。涉及审美偏好、成本较高或改变用户方向时为 true。"`
 }
 
 type RetryRecommendationInput struct {
-	ShouldRepair             bool     `json:"should_repair" jsonschema_description:"是否建议修复。accepted 通常 false；rejected 通常 true，blocked 视情况。"`
-	SuggestedFix             string   `json:"suggested_fix" jsonschema:"enum=none,enum=regenerate,enum=edit,enum=extend,enum=bridge,enum=revise_render_plan,enum=revise_shot_plan,enum=manual" jsonschema_description:"总体建议修复动作。"`
-	TargetObjectType         string   `json:"target_object_type" jsonschema:"enum=render_plan,enum=shot,enum=artifact_version,enum=final_video" jsonschema_description:"建议 Producer 下一步处理哪个对象。"`
-	TargetObjectID           string   `json:"target_object_id" jsonschema_description:"建议处理对象 UUID。"`
-	FixHints                 []string `json:"fix_hints" jsonschema_description:"给 Producer / Craftsman 的具体修复建议列表。"`
-	RequiresUserConfirmation bool     `json:"requires_user_confirmation" jsonschema_description:"是否必须先走 HITL。连续失败、高成本视频、manual 或审美争议通常为 true。"`
-	EscalationReason         string   `json:"escalation_reason" jsonschema_description:"如果建议停止自动修复，说明原因，例如同一维度连续失败 3 次。"`
+	ShouldRepair             bool          `json:"should_repair" jsonschema_description:"是否建议修复。accepted 通常 false；rejected 通常 true，blocked 视情况。"`
+	SuggestedFix             string        `json:"suggested_fix" jsonschema:"enum=none,enum=regenerate,enum=edit,enum=extend,enum=bridge,enum=revise_render_plan,enum=revise_shot_plan,enum=manual" jsonschema_description:"总体建议修复动作。"`
+	TargetObjectType         string        `json:"target_object_type" jsonschema:"enum=render_plan,enum=shot,enum=artifact_version,enum=final_video" jsonschema_description:"建议 Producer 下一步处理哪个对象。"`
+	TargetObjectRef          ToolObjectRef `json:"target_object_ref" jsonschema_description:"建议处理对象语义引用。通常可留空；Producer 会结合 target_object_type 和当前 target 判断。"`
+	TargetObjectID           string        `json:"target_object_id" jsonschema_description:"兼容旧字段：内部 ID。模型不要填写；优先使用 target_object_ref。"`
+	FixHints                 []string      `json:"fix_hints" jsonschema_description:"给 Producer / Craftsman 的具体修复建议列表。"`
+	RequiresUserConfirmation bool          `json:"requires_user_confirmation" jsonschema_description:"是否必须先走 HITL。连续失败、高成本视频、manual 或审美争议通常为 true。"`
+	EscalationReason         string        `json:"escalation_reason" jsonschema_description:"如果建议停止自动修复，说明原因，例如同一维度连续失败 3 次。"`
 }
 
 func NewSubmitReviewResultNativeTool(store SubmitReviewResultStore) *SubmitReviewResultNativeTool {
@@ -135,7 +142,7 @@ func NewSubmitReviewResultNativeTool(store SubmitReviewResultStore) *SubmitRevie
 }
 
 func (t *SubmitReviewResultNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfoFor[SubmitReviewResultInput](toolSubmitReviewResult, "Reviewer 提交当前评审任务的结构化结果。target 字段必须使用当前 Reviewer 任务 target 中的 ID，不要把 media_node id 当作 artifact_version_id，不要编造 generation_job_id 或 render_plan_id。工具会写入 review_record，并根据 issues 创建 artifact_issue；不会修改 RenderPlan、ShotPlan、ProjectMemory，也不会直接触发重跑。")
+	return toolInfoFor[SubmitReviewResultInput](toolSubmitReviewResult, "Reviewer 提交当前评审任务的结构化结果。target 通常由 runtime 自动注入；如需显式填写，请使用当前 Reviewer 任务 target 中的语义 ref，不要填写或编造内部 ID。工具会写入 review_record，并根据 issues 创建 artifact_issue；不会修改 RenderPlan、ShotPlan、ProjectMemory，也不会直接触发重跑。")
 }
 
 func (t *SubmitReviewResultNativeTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...einotool.Option) (string, error) {
@@ -167,7 +174,7 @@ func (t *SubmitReviewResultNativeTool) InvokableRun(ctx context.Context, argumen
 	return NaturalResult{
 		Title: fmt.Sprintf("已提交 Reviewer 评审结果：%s", input.Verdict),
 		Items: []NaturalResultItem{
-			{Label: "review_record", Value: uuidString(record.ID)},
+			{Label: "review_record_ref", Value: reviewRecordRef(record)},
 			{Label: "review_task", Value: input.ReviewTask},
 			{Label: "verdict", Value: input.Verdict},
 			{Label: "overall_score", Value: fmt.Sprintf("%.2f", input.OverallScore)},
@@ -185,11 +192,20 @@ func applySubmitReviewResultRuntimeTarget(input SubmitReviewResultInput, runtime
 	if strings.TrimSpace(runtime.ReviewShotID) != "" {
 		input.Target.ShotID = strings.TrimSpace(runtime.ReviewShotID)
 	}
+	if strings.TrimSpace(runtime.ReviewShotKey) != "" {
+		input.Target.ShotRef = ensureToolObjectRef(input.Target.ShotRef, "shot", runtime.ReviewShotKey)
+	}
 	if strings.TrimSpace(runtime.ReviewNodeID) != "" {
 		input.Target.NodeID = strings.TrimSpace(runtime.ReviewNodeID)
 	}
+	if strings.TrimSpace(runtime.ReviewNodeKey) != "" {
+		input.Target.NodeRef = ensureToolObjectRef(input.Target.NodeRef, "media_node", runtime.ReviewNodeKey)
+	}
 	if strings.TrimSpace(runtime.ReviewVersionID) != "" {
 		input.Target.ArtifactVersionID = strings.TrimSpace(runtime.ReviewVersionID)
+	}
+	if strings.TrimSpace(runtime.ReviewVersionKey) != "" {
+		input.Target.ArtifactVersionRef = ensureToolObjectRef(input.Target.ArtifactVersionRef, "artifact_version", runtime.ReviewVersionKey)
 	}
 	if strings.TrimSpace(runtime.ReviewJobID) != "" {
 		input.Target.GenerationJobID = strings.TrimSpace(runtime.ReviewJobID)
@@ -197,8 +213,14 @@ func applySubmitReviewResultRuntimeTarget(input SubmitReviewResultInput, runtime
 	if strings.TrimSpace(runtime.ReviewRenderPlanID) != "" {
 		input.Target.RenderPlanID = strings.TrimSpace(runtime.ReviewRenderPlanID)
 	}
+	if strings.TrimSpace(runtime.ReviewRenderPlanKey) != "" {
+		input.Target.RenderPlanRef = ensureToolObjectRef(input.Target.RenderPlanRef, "render_plan", runtime.ReviewRenderPlanKey)
+	}
 	if strings.TrimSpace(runtime.ReviewParentReviewRecordID) != "" {
 		input.Target.ParentReviewRecordID = strings.TrimSpace(runtime.ReviewParentReviewRecordID)
+	}
+	if strings.TrimSpace(runtime.ReviewParentReviewKey) != "" {
+		input.Target.ParentReviewRef = ensureToolObjectRef(input.Target.ParentReviewRef, "review_record", runtime.ReviewParentReviewKey)
 	}
 	if isZeroUUIDText(input.Target.ParentReviewRecordID) {
 		input.Target.ParentReviewRecordID = ""
@@ -210,14 +232,17 @@ func applySubmitReviewResultRuntimeTarget(input SubmitReviewResultInput, runtime
 		switch input.Issues[index].TargetObjectType {
 		case "artifact_version":
 			input.Issues[index].TargetObjectID = input.Target.ArtifactVersionID
+			input.Issues[index].TargetObjectRef = ensureToolObjectRef(input.Issues[index].TargetObjectRef, "artifact_version", input.Target.ArtifactVersionRef.Key)
 		case "render_plan":
 			if strings.TrimSpace(input.Target.RenderPlanID) != "" {
 				input.Issues[index].TargetObjectID = input.Target.RenderPlanID
 			}
+			input.Issues[index].TargetObjectRef = ensureToolObjectRef(input.Issues[index].TargetObjectRef, "render_plan", input.Target.RenderPlanRef.Key)
 		case "shot":
 			if strings.TrimSpace(input.Target.ShotID) != "" {
 				input.Issues[index].TargetObjectID = input.Target.ShotID
 			}
+			input.Issues[index].TargetObjectRef = ensureToolObjectRef(input.Issues[index].TargetObjectRef, "shot", input.Target.ShotRef.Key)
 		}
 	}
 	switch input.RetryRecommendation.TargetObjectType {
@@ -263,6 +288,15 @@ func (t *SubmitReviewResultNativeTool) createAndCompleteReview(ctx context.Conte
 	renderPlanID, _ := pgUUIDFromString(input.Target.RenderPlanID)
 	requiredAxes := reviewTaskAxes[input.ReviewTask]
 	requiredAxesJSON, _ := json.Marshal(requiredAxes)
+	attemptNo := runtime.ReviewAttemptNo
+	if attemptNo <= 0 {
+		attemptNo = 1
+	}
+	maxAttempts := runtime.ReviewMaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	reviewKey := reviewRecordSemanticKey(input, attemptNo)
 	record, err := t.store.CreateReviewRecord(ctx, db.CreateReviewRecordParams{
 		WorkspaceID:          runtime.WorkspaceID,
 		ShotID:               shotID,
@@ -277,9 +311,11 @@ func (t *SubmitReviewResultNativeTool) createAndCompleteReview(ctx context.Conte
 		TargetObjectType:     targetObjectType,
 		TargetObjectID:       targetObjectID,
 		RenderPlanID:         renderPlanID,
-		AttemptNo:            1,
-		MaxAttempts:          3,
+		AttemptNo:            attemptNo,
+		MaxAttempts:          maxAttempts,
 		RequiredAxes:         requiredAxesJSON,
+		SemanticKey:          reviewKey,
+		DisplayName:          reviewRecordDisplayName(input, reviewKey),
 	})
 	if err != nil {
 		return db.ReviewRecord{}, err
@@ -299,7 +335,7 @@ func (t *SubmitReviewResultNativeTool) createAndCompleteReview(ctx context.Conte
 	if err != nil {
 		return db.ReviewRecord{}, err
 	}
-	for _, issue := range input.Issues {
+	for index, issue := range input.Issues {
 		issueTargetID, _ := pgUUIDFromString(issue.TargetObjectID)
 		if _, err := t.store.CreateArtifactIssue(ctx, db.CreateArtifactIssueParams{
 			WorkspaceID:              runtime.WorkspaceID,
@@ -314,6 +350,8 @@ func (t *SubmitReviewResultNativeTool) createAndCompleteReview(ctx context.Conte
 			SuggestedFix:             issue.SuggestedFix,
 			FixHint:                  strings.TrimSpace(issue.FixHint),
 			RequiresUserConfirmation: issue.RequiresUserConfirmation,
+			SemanticKey:              artifactIssueSemanticKey(reviewKey, index),
+			DisplayName:              artifactIssueDisplayName(issue, index),
 		}); err != nil {
 			return db.ReviewRecord{}, err
 		}
@@ -370,28 +408,32 @@ func validateSubmitReviewResultInput(input SubmitReviewResultInput) error {
 func validateReviewTarget(reviewTask string, target ReviewTargetInput) error {
 	switch reviewTask {
 	case reviewTaskPreRenderPlan:
-		if _, ok := pgUUIDFromString(target.RenderPlanID); !ok {
-			return fmt.Errorf("pre_render_plan_review 需要 target.render_plan_id UUID")
+		if !hasReviewTargetRefOrValue(target.RenderPlanRef, target.RenderPlanID) {
+			return fmt.Errorf("pre_render_plan_review 需要 target.render_plan_ref，请使用 read_project_context 返回的 render_plan semantic_key")
 		}
 	case reviewTaskPreviewImage, reviewTaskShotVideo:
-		if _, ok := pgUUIDFromString(target.ShotID); !ok {
-			return fmt.Errorf("%s 需要 target.shot_id UUID", reviewTask)
+		if !hasReviewTargetRefOrValue(target.ShotRef, target.ShotID) {
+			return fmt.Errorf("%s 需要 target.shot_ref，请使用 read_project_context 返回的 shot semantic_key", reviewTask)
 		}
-		if _, ok := pgUUIDFromString(target.NodeID); !ok {
-			return fmt.Errorf("%s 需要 target.node_id UUID", reviewTask)
+		if !hasReviewTargetRefOrValue(target.NodeRef, target.NodeID) {
+			return fmt.Errorf("%s 需要 target.node_ref，请使用 read_project_context 返回的 media_node semantic_key", reviewTask)
 		}
-		if _, ok := pgUUIDFromString(target.ArtifactVersionID); !ok {
-			return fmt.Errorf("%s 需要 target.artifact_version_id UUID", reviewTask)
+		if !hasReviewTargetRefOrValue(target.ArtifactVersionRef, target.ArtifactVersionID) {
+			return fmt.Errorf("%s 需要 target.artifact_version_ref，请使用 read_project_context 返回的 artifact_version semantic_key", reviewTask)
 		}
 	case reviewTaskFinalVideo:
-		if _, ok := pgUUIDFromString(target.NodeID); !ok {
-			return fmt.Errorf("final_video_review 需要 target.node_id UUID")
+		if !hasReviewTargetRefOrValue(target.NodeRef, target.NodeID) {
+			return fmt.Errorf("final_video_review 需要 target.node_ref，请使用 read_project_context 返回的 media_node semantic_key")
 		}
-		if _, ok := pgUUIDFromString(target.ArtifactVersionID); !ok {
-			return fmt.Errorf("final_video_review 需要 target.artifact_version_id UUID")
+		if !hasReviewTargetRefOrValue(target.ArtifactVersionRef, target.ArtifactVersionID) {
+			return fmt.Errorf("final_video_review 需要 target.artifact_version_ref，请使用 read_project_context 返回的 artifact_version semantic_key")
 		}
 	}
 	return nil
+}
+
+func hasReviewTargetRefOrValue(ref ToolObjectRef, legacyValue string) bool {
+	return strings.TrimSpace(ref.Key) != "" || strings.TrimSpace(legacyValue) != ""
 }
 
 func validateReviewRubricAxes(reviewTask string, rubric []ReviewRubricAxisInput) error {
@@ -438,8 +480,15 @@ func validateReviewIssue(index int, issue ReviewIssueInput) error {
 	if err := requireMode(issue.TargetObjectType, "render_plan", "artifact_version", "shot", "final_video", "project_memory"); err != nil {
 		return fmt.Errorf("%s.target_object_type 无效：%w", prefix, err)
 	}
-	if _, ok := pgUUIDFromString(issue.TargetObjectID); !ok {
-		return fmt.Errorf("%s.target_object_id 必须是 UUID", prefix)
+	if strings.TrimSpace(issue.TargetObjectRef.Key) != "" {
+		if err := validateObjectRef(issue.TargetObjectRef, prefix+".target_object_ref"); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(issue.TargetObjectID) != "" {
+		if _, ok := pgUUIDFromString(issue.TargetObjectID); !ok {
+			return fmt.Errorf("%s.target_object_id 是兼容旧字段，请不要手写；改用 target_object_ref 或让工具按 target_object_type 自动派生", prefix)
+		}
 	}
 	if err := requireMode(issue.SuggestedFix, "none", "regenerate", "edit", "extend", "bridge", "revise_render_plan", "revise_shot_plan", "manual"); err != nil {
 		return fmt.Errorf("%s.suggested_fix 无效：%w", prefix, err)
@@ -455,13 +504,13 @@ func reviewTargetObject(input SubmitReviewResultInput) (string, pgtype.UUID, err
 	case reviewTaskPreRenderPlan:
 		id, ok := pgUUIDFromString(input.Target.RenderPlanID)
 		if !ok {
-			return "", pgtype.UUID{}, fmt.Errorf("target.render_plan_id 必须是 UUID")
+			return "", pgtype.UUID{}, fmt.Errorf("target.render_plan_ref 未解析到内部对象；请使用当前 Reviewer 任务 target，或填写 read_project_context 返回的 render_plan semantic_key")
 		}
 		return "render_plan", id, nil
 	case reviewTaskPreviewImage, reviewTaskShotVideo, reviewTaskFinalVideo:
 		id, ok := pgUUIDFromString(input.Target.ArtifactVersionID)
 		if !ok {
-			return "", pgtype.UUID{}, fmt.Errorf("target.artifact_version_id 必须是 UUID")
+			return "", pgtype.UUID{}, fmt.Errorf("target.artifact_version_ref 未解析到内部对象；请使用当前 Reviewer 任务 target，或填写 read_project_context 返回的 artifact_version semantic_key")
 		}
 		return "artifact_version", id, nil
 	default:
@@ -480,4 +529,69 @@ func targetPhaseForReviewTask(reviewTask string) string {
 	default:
 		return "preview_image"
 	}
+}
+
+func reviewRecordRef(record db.ReviewRecord) string {
+	if key := strings.TrimSpace(record.SemanticKey); key != "" {
+		return "review_record/" + key
+	}
+	if name := strings.TrimSpace(record.DisplayName); name != "" {
+		return name
+	}
+	return "review_record.semantic_key_missing"
+}
+
+func reviewRecordSemanticKey(input SubmitReviewResultInput, attemptNo int32) string {
+	base := reviewSemanticBaseKey(input)
+	if base == "" {
+		return ""
+	}
+	if attemptNo <= 0 {
+		attemptNo = 1
+	}
+	return fmt.Sprintf("%s.review.v%d", base, attemptNo)
+}
+
+func reviewSemanticBaseKey(input SubmitReviewResultInput) string {
+	switch input.ReviewTask {
+	case reviewTaskPreRenderPlan:
+		if key := strings.TrimSpace(input.Target.RenderPlanRef.Key); key != "" {
+			return key
+		}
+	case reviewTaskPreviewImage, reviewTaskShotVideo, reviewTaskFinalVideo:
+		if key := strings.TrimSpace(input.Target.ArtifactVersionRef.Key); key != "" {
+			return strings.TrimSuffix(key, ".artifact.v1")
+		}
+	}
+	for _, key := range []string{
+		input.Target.RenderPlanRef.Key,
+		input.Target.NodeRef.Key,
+		input.Target.ShotRef.Key,
+	} {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func reviewRecordDisplayName(input SubmitReviewResultInput, key string) string {
+	if key != "" {
+		return "Review " + key
+	}
+	return strings.TrimSpace(input.Brief)
+}
+
+func artifactIssueSemanticKey(reviewKey string, index int) string {
+	if strings.TrimSpace(reviewKey) == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s.issue.%02d", reviewKey, index+1)
+}
+
+func artifactIssueDisplayName(issue ReviewIssueInput, index int) string {
+	if title := strings.TrimSpace(issue.Title); title != "" {
+		return title
+	}
+	return fmt.Sprintf("Issue %02d", index+1)
 }

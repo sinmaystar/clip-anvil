@@ -29,11 +29,19 @@ type NativeRuntimeContext struct {
 
 	ReviewTask                 string
 	ReviewShotID               string
+	ReviewShotKey              string
 	ReviewNodeID               string
+	ReviewNodeKey              string
 	ReviewVersionID            string
+	ReviewVersionKey           string
 	ReviewJobID                string
+	ReviewJobKey               string
 	ReviewRenderPlanID         string
+	ReviewRenderPlanKey        string
 	ReviewParentReviewRecordID string
+	ReviewParentReviewKey      string
+	ReviewAttemptNo            int32
+	ReviewMaxAttempts          int32
 }
 
 type NativeToolTrace struct {

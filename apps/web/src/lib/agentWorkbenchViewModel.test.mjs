@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   agentWorkbenchToFlow,
+  finalOutputNodeId,
   sceneNodeId,
   shotNodeId,
 } from "../../dist-test/lib/agentWorkbenchViewModel.js";
@@ -106,6 +107,33 @@ describe("agent workbench view model", () => {
       flow.nodes.some((node) => node.id.includes("render-plan")),
       false,
     );
+  });
+
+  it("adds a final output node when backend projection has final_output", () => {
+    const finalWorkbench = {
+      ...workbench,
+      final_output: {
+        id: "timeline-1",
+        timeline_plan_id: "timeline-1",
+        output_node_id: "final-node-1",
+        artifact_version_id: "final-version-1",
+        sandbox_job_id: "sandbox-job-1",
+        status: "completed",
+        template_key: "concat_with_fades",
+        summary: "rendered with fades",
+        asset_url: "final.mp4",
+        updated_at: "2026-06-27T00:00:00Z",
+      },
+    };
+    const flow = agentWorkbenchToFlow(finalWorkbench);
+    const finalNode = flow.nodes.find(
+      (node) => node.id === finalOutputNodeId("timeline-1"),
+    );
+
+    assert.ok(finalNode);
+    assert.equal(finalNode.type, "agentFinalOutput");
+    assert.equal(finalNode.data.finalOutput.status, "completed");
+    assert.ok(finalNode.position.x > 0);
   });
 
   it("sorts shots by sequence index and lays them inside the scene lane", () => {

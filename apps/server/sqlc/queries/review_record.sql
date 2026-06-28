@@ -18,12 +18,14 @@ INSERT INTO review_record (
     max_attempts,
     model_provider,
     model_id,
-    required_axes
+    required_axes,
+    semantic_key,
+    display_name
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8,
     $9, $10, $11, $12, $13,
-    'running', $14, $15, $16, $17, $18
+    'running', $14, $15, $16, $17, $18, $19, $20
 ) RETURNING *;
 
 -- name: CompleteReviewRecord :one

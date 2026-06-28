@@ -32,6 +32,16 @@ func TestBuildAgentCanvasDetailRejectsUnsupportedObjectType(t *testing.T) {
 	}
 }
 
+func TestAgentCanvasDetailDefinesFinalOutputDetailShape(t *testing.T) {
+	if agentCanvasObjectFinalOutput != "final_output" {
+		t.Fatalf("final output object type = %q", agentCanvasObjectFinalOutput)
+	}
+	var detail agentCanvasDetailResponse
+	if detail.FinalOutput != nil {
+		t.Fatalf("zero detail final output = %#v", detail.FinalOutput)
+	}
+}
+
 func TestBuildAgentCanvasDetailRejectsInvalidObjectID(t *testing.T) {
 	_, err := buildAgentCanvasDetail(
 		context.Background(),

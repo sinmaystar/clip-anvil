@@ -84,8 +84,9 @@ func (t ReviewShotTool) Execute(ctx context.Context, input ExecuteInput) (Execut
 	skipped := []map[string]any{}
 	for _, shot := range shots {
 		node, version, ok, reason := t.currentPhaseWinner(ctx, input.WorkspaceID, shot, args.TargetPhase)
+		shotKey := firstNonEmptyString(shot.SemanticKey, shot.ClientKey)
 		if !ok {
-			skipped = append(skipped, map[string]any{"shot_id": uuidString(shot.ID), "client_key": shot.ClientKey, "reason": reason})
+			skipped = append(skipped, map[string]any{"shot_key": shotKey, "shot_ref": objectLabel("shot", shotKey), "client_key": shot.ClientKey, "reason": reason})
 			continue
 		}
 		thread, err := t.runtime.GetOrCreateReviewerThread(ctx, input.WorkspaceID, shot.ID)
@@ -129,7 +130,17 @@ func (t ReviewShotTool) Execute(ctx context.Context, input ExecuteInput) (Execut
 		if t.enqueuer != nil {
 			t.enqueuer.EnqueueReviewerTask(ctx, task)
 		}
-		queued = append(queued, map[string]any{"shot_id": uuidString(shot.ID), "client_key": shot.ClientKey, "reviewer_task_id": uuidString(task.ID)})
+		queued = append(queued, map[string]any{
+			"shot_key":          shotKey,
+			"shot_ref":          objectLabel("shot", shotKey),
+			"client_key":        shot.ClientKey,
+			"node_key":          node.SemanticKey,
+			"node_ref":          objectLabel("media_node", node.SemanticKey),
+			"version_key":       version.SemanticKey,
+			"version_ref":       objectLabel("artifact_version", version.SemanticKey),
+			"reviewer_task_key": task.SemanticKey,
+			"reviewer_task_ref": objectLabel("agent_task", task.SemanticKey),
+		})
 	}
 	label := reviewPhaseLabel(args.TargetPhase)
 	summary := fmt.Sprintf("已将 %d 个分镜的%s评审任务加入队列。", len(queued), label)
@@ -137,6 +148,15 @@ func (t ReviewShotTool) Execute(ctx context.Context, input ExecuteInput) (Execut
 		summary = fmt.Sprintf("已将 %d 个分镜的%s评审任务加入队列，%d 个分镜因没有可评审版本被跳过。", len(queued), label, len(skipped))
 	}
 	return ExecuteOutput{Summary: summary, Result: map[string]any{"status": "queued", "queued": queued, "skipped": skipped, "summary": summary}}, nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 type parsedReviewShotArgs struct {
