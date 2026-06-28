@@ -32,6 +32,8 @@ Producer 生成全片旁白脚本和音频策略
 - 旁白按全片生成，保证语气、节奏和音色连续。
 - BGM 第一版也由 `seed-audio-1.0` 生成。不要把用户上传音频或素材库作为第一版主路径。
 - 旁白和 BGM 必须拆成两个独立 RenderPlan，分别生成 audio artifact，再进入 timeline。
+- 每个 workspace 同一时间只保留一个 active AudioPlan。
+- Composer 完成后是否派发 final video review 由 Producer 决定，不自动固定触发。
 - `shot.audio_plan` 只存全片 AudioPlan 切分到该 shot 的 cue，不作为各分镜独立生成音频的事实源。
 - Composer 负责最终音轨混合，不让视频生成模型分别生成无法统一剪辑的音频。
 
@@ -254,7 +256,13 @@ CREATE TABLE audio_plan (
     CONSTRAINT audio_plan_status_check CHECK (status IN ('draft', 'waiting_for_user', 'approved', 'generating', 'voiceover_ready', 'composing', 'completed', 'blocked', 'failed')),
     CONSTRAINT audio_plan_kind_check CHECK (plan_kind IN ('marketing_voiceover_bgm'))
 );
+
+CREATE UNIQUE INDEX idx_audio_plan_workspace_active
+    ON audio_plan(workspace_id)
+    WHERE status IN ('draft', 'waiting_for_user', 'approved', 'generating', 'voiceover_ready', 'composing');
 ```
+
+每个 workspace 同一时间只允许一个 active AudioPlan。创建新计划前，Producer 必须归档或完成旧计划；不能在同一 workspace 下并行维护多个 active 音频方案。
 
 `cue_plan` 示例：
 
@@ -508,6 +516,13 @@ Composer 的 TimelinePlan 消费 AudioPlan，并写完整音轨结构：
 
 新增 audio runtime：`volcengine_audio.go`。
 
+运行时配置：
+
+- `.env` 必须配置火山语音 API Key，例如 `VOLCENGINE_AUDIO_API_KEY`。
+- 第一批预设音色 ID 也写入 `.env`，例如 `VOLCENGINE_AUDIO_DEFAULT_SPEAKER`、`VOLCENGINE_AUDIO_MARKETING_FEMALE_SPEAKER`。
+- `model_capability` 必须插入 `seed-audio-1.0` 的 audio_generation 能力行，并在 `defaults` 中记录默认格式、采样率、默认 speaker key 或 speaker id。
+- 运行时读取 `.env` 作为鉴权和本地默认配置；业务可见能力边界以 `model_capability` 为准。
+
 `GenerationIntent` 映射：
 
 ```json
@@ -643,6 +658,7 @@ Producer 应压缩脚本或改为多段生成。第一版若超过 2048 字符�
 ### Phase 1：AudioPlan 事实源和脚本确认
 
 - 新增 `audio_plan` migration / sqlc。
+- 新增每个 workspace 单 active AudioPlan 的唯一索引。
 - Producer native tool `upsert_audio_plan`。
 - `read_project_context` 返回 AudioPlan 摘要。
 - `shot.audio_plan` 写入 cue 摘要。
@@ -656,6 +672,7 @@ Producer 应压缩脚本或改为多段生成。第一版若超过 2048 字符�
 
 ### Phase 2：Volcengine audio generation
 
+- 在 `.env` 写入火山音频 API Key 和第一批预设 speaker 配置。
 - 扩展 `dispatch_craftsman` scope，支持 `audio_plan`。
 - 扩展 `render_plan` / RenderPlan submitter，支持 `target_phase=voiceover_audio|bgm_audio`、`operation=audio_generation`、`output_type=audio`。
 - 扩展 Craftsman prompt / context loader，读取 AudioPlan 并生成 audio RenderPlan。
@@ -689,6 +706,7 @@ Producer 应压缩脚本或改为多段生成。第一版若超过 2048 字符�
 
 - Reviewer final video loader 支持 final artifact + AudioPlan + TimelinePlan。
 - `audio_sync` 第一版 rubric 明确为旁白 / BGM / 分镜节奏。
+- Composer 完成后不自动固定派发 final video review；Producer 读取 composition_completed signal 后决定是否派发 Reviewer、请求用户确认或先修订。
 - Workbench 展示 AudioPlan 状态和 cue 摘要。
 
 验证：
@@ -708,9 +726,6 @@ Producer 应压缩脚本或改为多段生成。第一版若超过 2048 字符�
 7. 音频生成计划由 Craftsman 负责，Producer 只派发和审核，Worker 只执行。
 8. Composer 负责混音，不负责重写旁白，也不负责生成音频。
 9. `seed-audio-1.0` 生成结果必须上传到 ClipAnvil 自己的对象存储，不能长期依赖临时 URL。
-
-## 待确认问题
-
-- 第一批预设音色 ID 从火山控制台如何配置：写入 `.env` 还是 `model_capability.defaults`。
-- `audio_plan` 是否允许多个 active 版本，还是每个 workspace 只保留一个 active plan。
-- final video review 是否在 Composer 完成后自动派发，还是先让 Producer 决定。
+10. 火山音频 API Key 和第一批预设 speaker 写入 `.env`；`seed-audio-1.0` 能力和默认参数必须同步插入 `model_capability`。
+11. 每个 workspace 同一时间只保留一个 active AudioPlan。
+12. Composer 完成后是否派发 final video review 由 Producer 决定。
