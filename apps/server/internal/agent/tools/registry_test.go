@@ -41,13 +41,12 @@ func TestRegistryFindsRequiredM6Tools(t *testing.T) {
 		NewReviewShotTool(nil, nil, nil),
 		NewSelectVersionTool(nil, nil, nil),
 		NewRetryGenerationTool(nil, nil, nil),
-		NewComposeFinalTool(nil, nil, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"read_workspace_context", "create_agent_text_node", "request_user_decision", "dispatch_craftsman", "generate_shot_video", "review_shot", "select_version", "retry_generation", "compose_final"} {
+	for _, name := range []string{"read_workspace_context", "create_agent_text_node", "request_user_decision", "dispatch_craftsman", "generate_shot_video", "review_shot", "select_version", "retry_generation"} {
 		if _, ok := registry.Definition(name); !ok {
 			t.Fatalf("missing required tool %s", name)
 		}

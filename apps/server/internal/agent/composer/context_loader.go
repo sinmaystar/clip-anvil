@@ -3,6 +3,7 @@ package composer
 import (
 	"context"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -11,10 +12,14 @@ import (
 type Context struct {
 	WorkspaceID            pgtype.UUID `json:"workspace_id"`
 	SourceStoryboardNodeID pgtype.UUID `json:"source_storyboard_node_id,omitempty"`
+	Input                  GraphInput  `json:"-"`
 	Summary                string      `json:"summary"`
 	WorkspaceMode          string      `json:"workspace_mode,omitempty"`
 	SourceNodeTitle        string      `json:"source_node_title,omitempty"`
 	TimelinePlanCount      int         `json:"timeline_plan_count"`
+	ToolInfos              []*schema.ToolInfo
+	SameTurnMessages       []ComposerSameTurnMessage
+	PendingReminders       []string
 }
 
 type ContextLoader interface {

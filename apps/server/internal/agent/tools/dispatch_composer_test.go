@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
+	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -48,6 +50,17 @@ func TestDispatchComposerNativeToolCreatesComposerTask(t *testing.T) {
 		input["template_key"] != "concat_with_fades" ||
 		input["producer_thread_id"] != "02000000-0000-0000-0000-000000000000" {
 		t.Fatalf("task input = %#v", input)
+	}
+	if len(runtime.appendedMessages) != 1 {
+		t.Fatalf("appended messages = %#v", runtime.appendedMessages)
+	}
+	message := runtime.appendedMessages[0]
+	if message.ThreadID != uuidWithByte(44) || message.Role != "user" || message.MessageType != "text" {
+		t.Fatalf("delegation message = %#v", message)
+	}
+	if !strings.Contains(string(message.RawMessage), `"target_role":"composer"`) ||
+		!strings.Contains(string(message.RawMessage), `"schema":"clipanvil.agent.delegation.v1"`) {
+		t.Fatalf("delegation raw message = %s", message.RawMessage)
 	}
 }
 
@@ -101,4 +114,45 @@ func (f fakeComposerSourceResolver) GetAgentObjectBySemanticKey(_ context.Contex
 		return db.AgentObjectIndex{}, pgx.ErrNoRows
 	}
 	return f.object, nil
+}
+
+type fakeComposeRuntime struct {
+	createdTasks     []db.AgentTask
+	appendedMessages []agentruntime.AppendMessageParams
+}
+
+func (f *fakeComposeRuntime) GetOrCreateComposerThread(_ context.Context, workspaceID pgtype.UUID) (db.AgentThread, error) {
+	return db.AgentThread{ID: uuidWithByte(44), WorkspaceID: workspaceID, Role: "composer", ScopeType: "final_output"}, nil
+}
+
+func (f *fakeComposeRuntime) CreateTask(_ context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {
+	task := db.AgentTask{ID: uuidWithByte(byte(70 + len(f.createdTasks))), WorkspaceID: params.WorkspaceID, ThreadID: params.ThreadID, Role: params.Role, ScopeType: params.ScopeType, ScopeID: params.ScopeID, TaskType: params.TaskType, Status: "queued", MaxAttempts: params.MaxAttempts, Input: params.Input}
+	f.createdTasks = append(f.createdTasks, task)
+	return task, nil
+}
+
+func (f *fakeComposeRuntime) CreateEvent(context.Context, agentruntime.CreateEventParams) (db.AgentEvent, error) {
+	return db.AgentEvent{}, nil
+}
+
+func (f *fakeComposeRuntime) AppendMessage(_ context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error) {
+	f.appendedMessages = append(f.appendedMessages, params)
+	return db.AgentMessage{
+		ID:          uuidWithByte(byte(80 + len(f.appendedMessages))),
+		WorkspaceID: params.WorkspaceID,
+		ThreadID:    params.ThreadID,
+		Role:        params.Role,
+		MessageType: params.MessageType,
+		Content:     params.Content,
+		RawMessage:  params.RawMessage,
+		TaskID:      params.TaskID,
+	}, nil
+}
+
+type fakeComposerEnqueuer struct {
+	tasks []db.AgentTask
+}
+
+func (f *fakeComposerEnqueuer) EnqueueComposerTask(_ context.Context, task db.AgentTask) {
+	f.tasks = append(f.tasks, task)
 }

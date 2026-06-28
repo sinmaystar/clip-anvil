@@ -59,6 +59,7 @@ LIMIT 1;
 UPDATE timeline_plan
 SET
     status = sqlc.arg(status),
+    output_node_id = COALESCE(sqlc.narg(output_node_id), output_node_id),
     production_job_id = COALESCE(sqlc.narg(production_job_id), production_job_id),
     artifact_version_id = COALESCE(sqlc.narg(artifact_version_id), artifact_version_id),
     sandbox_job_id = COALESCE(sqlc.narg(sandbox_job_id), sandbox_job_id),

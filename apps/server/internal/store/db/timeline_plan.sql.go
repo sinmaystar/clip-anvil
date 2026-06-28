@@ -252,18 +252,20 @@ const updateTimelinePlanStatus = `-- name: UpdateTimelinePlanStatus :one
 UPDATE timeline_plan
 SET
     status = $1,
-    production_job_id = COALESCE($2, production_job_id),
-    artifact_version_id = COALESCE($3, artifact_version_id),
-    sandbox_job_id = COALESCE($4, sandbox_job_id),
-    result = COALESCE($5, result),
-    error_message = $6,
+    output_node_id = COALESCE($2, output_node_id),
+    production_job_id = COALESCE($3, production_job_id),
+    artifact_version_id = COALESCE($4, artifact_version_id),
+    sandbox_job_id = COALESCE($5, sandbox_job_id),
+    result = COALESCE($6, result),
+    error_message = $7,
     updated_at = now()
-WHERE id = $7
+WHERE id = $8
 RETURNING id, workspace_id, source_storyboard_node_id, output_node_id, production_job_id, artifact_version_id, sandbox_job_id, status, template_key, plan_json, render_settings, result, error_message, created_by_role, created_by_task_id, created_at, updated_at
 `
 
 type UpdateTimelinePlanStatusParams struct {
 	Status            string      `json:"status"`
+	OutputNodeID      pgtype.UUID `json:"output_node_id"`
 	ProductionJobID   pgtype.UUID `json:"production_job_id"`
 	ArtifactVersionID pgtype.UUID `json:"artifact_version_id"`
 	SandboxJobID      pgtype.UUID `json:"sandbox_job_id"`
@@ -275,6 +277,7 @@ type UpdateTimelinePlanStatusParams struct {
 func (q *Queries) UpdateTimelinePlanStatus(ctx context.Context, arg UpdateTimelinePlanStatusParams) (TimelinePlan, error) {
 	row := q.db.QueryRow(ctx, updateTimelinePlanStatus,
 		arg.Status,
+		arg.OutputNodeID,
 		arg.ProductionJobID,
 		arg.ArtifactVersionID,
 		arg.SandboxJobID,

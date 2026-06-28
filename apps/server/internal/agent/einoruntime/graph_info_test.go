@@ -59,7 +59,7 @@ func TestGraphInfoMermaidIsDeterministic(t *testing.T) {
 func TestGraphInfoJSONIncludesGraphNames(t *testing.T) {
 	registry := NewGraphInfoRegistry()
 	registry.OnFinish(context.Background(), &compose.GraphInfo{Name: "producer_turn"})
-	registry.OnFinish(context.Background(), &compose.GraphInfo{Name: "composer_final"})
+	registry.OnFinish(context.Background(), &compose.GraphInfo{Name: "composer_timeline"})
 
 	raw, err := registry.JSON()
 	if err != nil {
@@ -69,7 +69,7 @@ func TestGraphInfoJSONIncludesGraphNames(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["producer_turn"] == nil || payload["composer_final"] == nil {
+	if payload["producer_turn"] == nil || payload["composer_timeline"] == nil {
 		t.Fatalf("payload = %#v", payload)
 	}
 }

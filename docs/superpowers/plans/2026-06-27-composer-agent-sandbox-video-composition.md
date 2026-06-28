@@ -391,14 +391,9 @@ Expected result: the Composer artifact helper test passes and existing productio
 - Create: `apps/server/internal/agent/composer/system_prompt.go`
 - Create native tools under `apps/server/internal/agent/tools/`:
   - `dispatch_composer_native.go`
-  - `composer_context_native.go`
-  - `composer_stage_media_native.go`
-  - `composer_probe_media_native.go`
-  - `composer_timeline_plan_native.go`
-  - `composer_render_native.go`
-  - `composer_ffmpeg_native.go`
-  - `composer_submit_artifact_native.go`
-- Keep for compatibility until main wiring is updated: `apps/server/internal/agent/tools/compose_final.go`
+  - `composer_native.go`
+- Remove legacy compatibility tool after main wiring is updated:
+  - `apps/server/internal/agent/tools/compose_final.go`
 - Create tests:
   - `apps/server/internal/agent/composer/types_test.go`
   - `apps/server/internal/agent/tools/composer_tools_test.go`
@@ -960,10 +955,10 @@ git diff --check
 
 **Step 5: Review architecture consistency**
 
-- [ ] Confirm Composer implementation is Eino-native and does not depend on legacy linear `composer_final`.
-- [ ] Confirm Producer dispatches Composer through a native tool and sees Composer completion through pending signals.
-- [ ] Confirm final artifact persistence goes through production service helpers.
-- [ ] Confirm sandbox execution is constrained to ffmpeg/ffprobe and `/workspace`.
+- [x] Confirm Composer implementation is Eino-native and does not depend on legacy linear `composer_final`.
+- [x] Confirm Producer dispatches Composer through a native tool and sees Composer completion through pending signals.
+- [x] Confirm final artifact persistence goes through production service helpers.
+- [x] Confirm sandbox execution is constrained to ffmpeg/ffprobe and `/workspace`.
 - [ ] Confirm Workbench canvas renders final output from backend projection, not from client-only inference.
 
 Expected result: the repo has a working Phase 1 Composer path from Producer dispatch to sandbox render, production persistence, Producer signal, and Workbench final output projection.

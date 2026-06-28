@@ -49,7 +49,7 @@ type producerSignalClaimer interface {
 
 type producerPendingSignalWakeRuntime interface {
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
-	ListPendingProducerSignals(ctx context.Context, workspaceID pgtype.UUID, limit int32) ([]db.ProducerPendingSignal, error)
+	ListPendingProducerSignalsByThread(ctx context.Context, workspaceID, producerThreadID pgtype.UUID, limit int32) ([]db.ProducerPendingSignal, error)
 	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
 }
 
@@ -340,7 +340,7 @@ func (e *Executor) enqueuePendingSignalWake(ctx context.Context, input RunTaskIn
 			return
 		}
 	}
-	signals, err := runtime.ListPendingProducerSignals(ctx, input.WorkspaceID, 1)
+	signals, err := runtime.ListPendingProducerSignalsByThread(ctx, input.WorkspaceID, input.ThreadID, 1)
 	if err != nil || len(signals) == 0 {
 		return
 	}

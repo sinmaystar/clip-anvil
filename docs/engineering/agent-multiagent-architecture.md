@@ -7,11 +7,11 @@
 Agent 模式已经不是纯设计稿。当前服务端已落地：
 
 - Agent 对话入口、消息持久化、附件节点、WebSocket 广播和 Producer 后台任务。
-- Eino 图主路径：`producer_turn`、`craftsman_render_plan`、`reviewer_gate`。`composer_final` 代码仍保留并可构建，但当前三 Agent v1 主链路不依赖 Composer 做日常分镜生产闭环。
+- Eino 图主路径：`producer_turn`、`craftsman_render_plan`、`reviewer_gate`、`composer_timeline`。Producer 通过 native `dispatch_composer` 派发 Composer task；旧 `composer_final` 线性图已下线。
 - 原生 Eino checkpoint/resume：`agent:eino:<graph>:<workspace>:<thread>:<task>`，存入 `eino_checkpoint`。
 - 创作与生产事实表：`creative_brief`、`project_memory`、`key_element`、`key_element_state`、`scene`、`shot`、`shot_key_element`、`shot_dependency`、`render_plan`、`review_record`、`artifact_issue`。
 - Agent runtime 表：`agent_thread`、`agent_task`、`agent_event`、`agent_message`。
-- Producer、Craftsman、Reviewer 的新工具链都通过 Eino `compose.ToolsNode` 执行，主路径使用 Eino-native typed tools。旧 registry 工具文件仍可在代码中看到，但当前 `main.go` 注册的三 Agent 主链路不再依赖旧 registry 执行工具。
+- Producer、Craftsman、Reviewer、Composer 的新工具链都通过 Eino `compose.ToolsNode` 执行，主路径使用 Eino-native typed tools。旧 registry 工具文件仍可在代码中看到，但当前 `main.go` 注册的 Agent 主链路不再依赖旧 `RegistryToolExecutor` 执行工具。
 
 当前角色分工如下：
 
@@ -21,7 +21,7 @@ Agent 模式已经不是纯设计稿。当前服务端已落地：
 | Craftsman | 当前主要为 shot；目标包含 key_element_state / render_plan | `craftsman_render_plan` | `role='craftsman'`, 当前主要 `scope_type='shot'` | 将 Producer 的创意事实翻译成 `RenderPlan`，组织 reference bindings、subject bindings、prompt parts 和 model params | 对应 Studio 里“配置节点 prompt/operation/model 后点击运行”的策划部分，但不直接写 UI 属性面板 |
 | Worker | shot/node | 无 | 只有 task，`role='worker'` | 执行实际 `GenerationIntent`，复用共享 production service | 对应 Studio 的 production run、输入引用解析、dependency edge 自动建立、generation_job/artifact_version 写入 |
 | Reviewer | 当前支持 shot artifact；schema 已覆盖 render_plan / final_output | `reviewer_gate` | `role='reviewer'`, `scope_type='shot'|'render_plan'|'final_output'` | 质量 gate。读取目标上下文，提交 10 轴 rubric、`review_record`、`artifact_issue` 和 retry recommendation；不直接重跑、不直接选择 winner | 对应 Studio 的结果审阅/问题标注能力，并把评审和问题投影到制作画布 |
-| 留存 Composer | final_output | `composer_final` | `role='composer'`, `scope_type='final_output'` | 旧 M6 成片合成能力，创建成片节点并提交 `internal_ffmpeg` 合成任务 | 当前不是三 Agent v1 主角色；商业级 TimelinePlan / Composer 后续再设计 |
+| Composer | final_output | `composer_timeline` | `role='composer'`, `scope_type='final_output'` | 成片剪辑 Agent。读取成片上下文、stage/probe 媒体、写 TimelinePlan、通过受控 ffmpeg/sandbox 工具渲染并提交成片 artifact | 对应 Studio 后期剪辑/时间线能力；当前已接 Producer 派发链路，`simple_concat` 成片 E2E 已可跑通，音频/BGM/TTS 与更复杂模板仍需后续补齐 |
 | System scheduler / signal | workspace | 无 | `producer_pending_signal` + task | 计算依赖、接收 Worker/Reviewer/Craftsman 结果并唤醒 Producer | 对应 Studio 的 stale/依赖传播观察面，决策仍回到 Producer |
 
 ## 运行时入口
@@ -61,7 +61,7 @@ Studio 前端当前实际支持 5 类节点。节点创建入口在画布右键�
 |---|---|---|---|
 | `text` | 创建文本节点；文本生成；手工文本素材；prompt 编辑；`@` 引用；版本/重试/选择 | Producer 可用 `create_agent_text_node` 创建 Agent-owned 文本素材；Craftsman 可为 shot 起草文案/prompt；Worker 可生成文本类 production intent | 没有通用“创建任意文本生产节点/编辑任意节点 prompt”的 Producer 工具 |
 | `image` | 创建图片节点；上传图片素材；`text_to_image`；部分 frame extraction 目标；prompt refs；版本/重试/选择 | Agent 附件 API 可把图片变成 Agent-owned image source node；`dispatch_craftsman` + Craftsman + Worker 生成 preview image；Producer 可派 `dispatch_reviewer` 评审 preview image；Reviewer 通过 `submit_review_result` 写问题与建议 | 没有通用图片节点 CRUD；`image_to_image`、`multi_image_to_image` 等能力已进入 RenderPlan operation schema，但还不是完整手工节点工具 |
-| `video` | 创建视频节点；上传视频素材；`text_to_video`；版本/重试/选择；可作为成片节点 | Agent 附件 API 可把视频变成 Agent-owned video source node；`dispatch_craftsman(mode=shot_video)` 生成 shot video RenderPlan；`compose_final` 生成最终视频；Reviewer 可评审 shot video | 没有通用视频节点 CRUD；`text_to_video`、首尾帧、multi-reference video 等能力已进入 RenderPlan operation schema，但 provider 执行链路仍需继续补齐 |
+| `video` | 创建视频节点；上传视频素材；`text_to_video`；版本/重试/选择；可作为成片节点 | Agent 附件 API 可把视频变成 Agent-owned video source node；`dispatch_craftsman(mode=shot_video)` 生成 shot video RenderPlan；Producer 可用 `dispatch_composer` 派发 `composer_timeline`；Reviewer 可评审 shot video | 没有通用视频节点 CRUD；`text_to_video`、首尾帧、multi-reference video 等能力已进入 RenderPlan operation schema，但 provider 执行链路仍需继续补齐 |
 | `audio` | 创建音频节点；上传音频素材；资源树展示；当前默认 `manual`，不运行模型 | 当前没有专用 Agent 工具；Agent 附件 API 也不接受 audio | 音频素材导入、旁白/配乐生成、音频参与合成均未接入 Agent |
 | `reference_pack` | 创建参考包；维护直接成员；作为参考集合参与输入；不运行模型 | Producer PSS 可读取现有素材/节点上下文；Worker 可解析显式 `input_node_refs` | 没有创建/修改 Reference Pack 的 Agent 工具，也没有把参考包作为一等输入策略对象 |
 
@@ -91,7 +91,7 @@ Studio 前端当前实际支持 5 类节点。节点创建入口在画布右键�
 | Craftsman | 相当于 Studio 运行前的“生产配置/提示词策划”；为 reference image、preview image 或 shot video 生成 RenderPlan | `craftsman_render_plan` graph；`read_project_memory`、`upsert_render_plan`；`render_plan` + `worker_generation` task | 当前执行入口仍主要是 shot-scoped；key_element_state reference image 的端到端派发和绑定还没完整打通 |
 | Worker | 相当于 Studio run 的执行层；创建/复用目标节点；解析输入引用；提交 production；写 job/version；建立 dependency edge | `GenerationIntent`、`production.Service.SubmitGenerationIntent`、`CreateAgentGenerationNode`、`input_node_refs` 解析 | 不处理 UI 交互；不做用户可控的任意 operation 菜单 |
 | Reviewer | 相当于 Studio 结果审片和问题标注，但自动化程度更高 | `reviewer_gate` graph；`read_project_context`、`read_project_memory`、`submit_review_result`；`review_record`、`artifact_issue` | 不直接选择版本、不直接触发重试；`pre_render_plan_review` 和 `final_video_review` 仍是 schema/类型先行，loader 尚未完整支持 |
-| 留存 Composer | 相当于 Studio 里把多个视频节点合成为最终视频的专用生产节点 | `composer_final` graph；`internal_ffmpeg` provider | 不在当前三 Agent v1 主路径内；后续需要 TimelinePlan 后再重新设计 |
+| Composer | 相当于 Studio 里的后期剪辑/成片时间线 | `composer_timeline` graph；`get_composition_context`、`stage_media_inputs`、`probe_media`、`create_timeline_plan`、`update_timeline_plan_status`、`render_timeline_template`、`run_ffmpeg_command`、`submit_composition_artifact` | 当前已接 Producer 派发链路；`simple_concat` 会通过 sandbox ffmpeg 渲染、上传并持久化 final video artifact；音频/BGM/TTS 和更复杂模板仍需后续补齐 |
 | HITL | 相当于 Studio 里需要用户拍板的手工操作，但通过 decision card 挂起/恢复 Agent | `request_user_decision`、`decision_requested` event、Eino checkpoint/resume | 只覆盖明确决策，不覆盖所有 Studio 手工编辑动作 |
 | System scheduler | 相当于 Studio 依赖/stale 状态传播的后台观察者 | dependency dispatcher、`NotifyShotUpdated`、readiness event | 当前 video/composer readiness 仍未完整实现 |
 
@@ -236,23 +236,33 @@ Reviewer 的边界：
 
 ### ComposerGraph
 
-Eino 图名：`composer_final`
+Eino 图名：`composer_timeline`
 
 ```mermaid
 flowchart TD
-  START["START"] --> load_composition_context["load_composition_context"]
-  load_composition_context --> create_final_node["create_final_node"]
-  create_final_node --> submit_composition_intent["submit_composition_intent"]
-  submit_composition_intent --> persist_checkpoint_and_events["persist_checkpoint_and_events"]
-  persist_checkpoint_and_events --> END["END"]
+  START["start"] --> load_context["load_context"]
+  load_context --> prepare_turn_state["prepare_turn_state"]
+  prepare_turn_state --> before_model["before_model"]
+  before_model --> call_model["call_model"]
+  call_model -. "tool_calls" .-> prepare_tool_message["prepare_tool_message"]
+  prepare_tool_message --> execute_tools["execute_tools (*compose.ToolsNode)"]
+  execute_tools --> append_tool_results["append_tool_results"]
+  append_tool_results --> before_model
+  call_model -. "final" .-> finalize_response["finalize_response"]
+  call_model -. "exhausted" .-> fail_turn["fail_turn"]
+  finalize_response --> END["end"]
+  fail_turn --> END
 ```
 
 图节点：
 
-- `load_composition_context`: 校验 workspace/thread/task 和输入 video refs，写 `composer_started`。
-- `create_final_node`: 创建 `Agent final video` 节点，operation `compose_final_video`，provider `internal_ffmpeg`。
-- `submit_composition_intent`: 解析输入 video node refs，提交 `production.GenerationIntent`，`RequestedBy.Type='agent_composer'`。
-- `persist_checkpoint_and_events`: 写 composer checkpoint 和 `composition_submitted` 事件。
+- `load_context`: 读取 Composer task、source storyboard node、workspace 和 timeline plan 摘要，并注入 Composer native tool schema。
+- `prepare_turn_state`: 初始化 Composer tool loop state。
+- `before_model`: 注入工具循环 reminder，避免模型重复错误调用。
+- `call_model`: 调用 Composer responder。real mode 使用 Volcengine tool-calling；非 real mode 使用 deterministic responder 并返回 `blocked`，不再沿用旧线性合成伪造结果。
+- `execute_tools`: 真实 Eino `compose.ToolsNode`，执行 Composer native tools。
+- `append_tool_results`: 将工具结果回灌给 Composer，同一轮继续修正或完成。
+- `finalize_response`: 输出 `completed`、`blocked` 或 `failed` 结果；executor 根据结果写 `composition_completed` / `composition_blocked` / `composition_failed` signal 给 Producer。
 
 ## 工具
 
@@ -284,7 +294,7 @@ flowchart TD
 |---|---|
 | `read_workspace_context`、`get_production_state` | 旧 PSS / workspace 读取工具。新 prompt 更推荐 `read_project_context`。 |
 | `create_agent_text_node`、`update_storyboard` | 旧创作工具。M1 后由 `upsert_project_brief` / `upsert_storyboard` 等替代。 |
-| `generate_shot_video`、`review_shot`、`select_version`、`retry_generation`、`compose_final` | 兼容生产、成片和版本选择的旧工具集。当前主路径用 RenderPlan + `decide_render_plan` + `dispatch_reviewer`，Composer/版本选择尚未完全 native 化。 |
+| `generate_shot_video`、`review_shot`、`select_version`、`retry_generation` | 兼容生产和版本选择的旧工具集。当前主路径用 RenderPlan + `decide_render_plan` + `dispatch_reviewer`；旧 `compose_final` 工具已移除，Producer 使用 native `dispatch_composer`。 |
 
 下面保留旧工具 schema，作为历史兼容能力说明；三 Agent v1 新开发优先查看上面的 native typed tools。
 
@@ -573,21 +583,11 @@ flowchart TD
 
 安全属性：使用 production service，每轮最多调用 5 次。
 
-### `compose_final`
+### `dispatch_composer`
 
-用途：将已选择的 shot videos 合成为最终视频。它创建持久化 ComposerGraph task，并通过 `internal_ffmpeg` production provider 提交成片任务。
+用途：Producer 将最终成片任务派发给 Composer。工具只创建 `composer_turn` task 并入队；返回 queued 不代表成片已经完成。
 
-参数：
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "strategy": {"type": "string", "description": "可选的成片合成说明。"}
-  },
-  "additionalProperties": false
-}
-```
+参数包含 source storyboard 语义引用、成片 instructions 和可选 `simple_concat` / `concat_with_fades` template key。Composer 后续通过 native tools 读取成片上下文、stage/probe 媒体、写 TimelinePlan、运行受控 ffmpeg 工具并提交 artifact。
 
 返回：
 
@@ -1493,14 +1493,14 @@ v1 明确删除或不暴露这些工具：
 ## 当前限制与规划提示
 
 - Producer graph 已改为显式 Eino tool loop，并把 `execute_tools` 作为真实 `compose.ToolsNode` 暴露在 GraphInfo 中；条件分支记录在 Eino `GraphInfo.Branches`，不是普通 `Edges`。
-- 旧工具文件仍有留存。三 Agent v1 native tools 已改成 struct tag + ToolInfo，但复杂数组字段仍需要持续审视描述质量。
+- 旧工具文件仍有留存。Agent native tools 已改成 struct tag + ToolInfo，但复杂数组字段仍需要持续审视描述质量。
 - `dispatch_craftsman` native schema 已支持 `preview_image` / `shot_video`；key_element_state / reference_image scoped 派发还未端到端打通。
 - Reviewer graph compile name 已是 `reviewer_gate`；但 `reviewer.Executor` 的 checkpoint key 仍使用历史 `"reviewer_preview"`，需要后续改名并兼容旧 checkpoint。
 - Reviewer 类型和工具输入支持 `pre_render_plan_review` / `final_video_review`，但当前 loader 还不支持 render_plan / final target。
 - Worker 是唯一提交普通 shot 媒体生成的组件。Craftsman 产出策略，Worker 执行 production。
-- `compose_final` 当前按 shot order 收集 current shot video winners，不接受显式 shot 顺序输入。
+- `dispatch_composer` 当前只派发 Composer task；Composer 的 `get_composition_context` 可读取 current shot video winners，`simple_concat` timeline 可以通过 sandbox ffmpeg 渲染、上传并持久化 final video artifact。
 - `request_user_decision` 是当前唯一一等的暂停/恢复工具。其他后台任务通过 goroutine 和 queued task recovery 继续执行。
 - 当前队列是进程内 goroutine 加启动时 queued task recovery；还没有外部 worker queue。
-- Dependency scheduler 当前处理 preview/review readiness；`video` 和 `composer` phase 仍返回 unsupported readiness。
-- Agent 生成媒体输入引用时，Worker 会在解析 RenderPlan 输入引用时自动创建 dependency edges；留存 Composer 也有类似输入解析，但不是当前主链路。
+- Dependency scheduler 当前处理 preview/review readiness；`video` 和部分 `composer` phase 仍需要补齐 readiness E2E。
+- Agent 生成媒体输入引用时，Worker 会在解析 RenderPlan 输入引用时自动创建 dependency edges；Composer 后续应在 TimelinePlan/asset staging 阶段显式记录成片输入依赖。
 - Agent workspace 写入 API 继续和 Studio mode 分离；Agent tools/services 通过后端控制的 production 和 canvas helpers 写数据。

@@ -3,84 +3,189 @@ package composer
 import (
 	"context"
 	"encoding/json"
-	"sort"
+	"errors"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
-	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
-	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
+	"github.com/sinmaystar/clip-anvil/internal/agent/toolloop"
+	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	"github.com/sinmaystar/clip-anvil/internal/production"
-	"github.com/sinmaystar/clip-anvil/internal/store/db"
+)
+
+const (
+	composerLoopStateArgumentKey = "_clipanvil_composer_loop_state_key"
+	defaultComposerMaxToolCalls  = 1000
+	composerGraphMaxRunSteps     = 10000
 )
 
 type GraphConfig struct {
-	Runtime          Runtime
-	Store            Store
-	Production       ProductionSubmitter
-	Broadcaster      NodeBroadcaster
-	CheckPointStore  compose.CheckPointStore
-	CompileCallbacks []compose.GraphCompileCallback
+	Loader             ContextLoader
+	Runtime            Runtime
+	Store              Store
+	Production         ProductionSubmitter
+	ToolResponder      ToolResponder
+	NativeToolRegistry *agenttools.NativeRegistry
+	Broadcaster        NodeBroadcaster
+	CheckPointStore    compose.CheckPointStore
+	CompileCallbacks   []compose.GraphCompileCallback
 }
 
 type Graph struct {
 	runnable compose.Runnable[GraphInput, GraphOutput]
 }
 
-type graphNodeState struct {
-	Input GraphInput
-	Node  db.MediaNode
+type composerLoopState struct {
+	Context              Context
+	LastOutput           ComposerTurnOutput
+	LastAssistantMessage *schema.Message
+	LastToolCalls        []schema.ToolCall
+	LastToolResults      []*schema.Message
+	ToolIterations       int
+	ReminderCooldowns    map[string]int
 }
 
-type graphSubmissionState struct {
-	Input  GraphInput
-	Node   db.MediaNode
-	Output CompositionOutput
+type composerLoopToolStateStore struct {
+	mu     sync.Mutex
+	byKey  map[string]composerLoopState
+	byCall map[string]string
 }
 
 func NewGraph(config GraphConfig) (*Graph, error) {
-	if config.Runtime == nil || config.Store == nil || config.Production == nil {
+	if config.Loader == nil || config.ToolResponder == nil || config.NativeToolRegistry == nil {
 		return nil, ErrInvalidConfig
 	}
+	stateStore := newComposerLoopToolStateStore()
+	toolInfos, err := config.NativeToolRegistry.ToolInfos(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	toolNode, err := compose.NewToolNode(context.Background(), &compose.ToolsNodeConfig{
+		Tools:               config.NativeToolRegistry.BaseTools(),
+		ExecuteSequentially: true,
+		ToolCallMiddlewares: []compose.ToolMiddleware{nativeComposerToolRuntimeMiddleware(stateStore)},
+	})
+	if err != nil {
+		return nil, err
+	}
 	g := compose.NewGraph[GraphInput, GraphOutput]()
-	if err := g.AddLambdaNode("load_composition_context", compose.InvokableLambda(func(ctx context.Context, input GraphInput) (GraphInput, error) {
-		return loadCompositionContext(ctx, config, input)
+	if err := g.AddLambdaNode("load_context", compose.InvokableLambda(func(ctx context.Context, input GraphInput) (Context, error) {
+		req := Request{
+			WorkspaceID:            input.WorkspaceID,
+			ThreadID:               input.ThreadID,
+			TaskID:                 input.TaskID,
+			SourceStoryboardNodeID: sourceStoryboardNodeID(input),
+			Instructions:           strings.TrimSpace(input.Input.Instructions),
+		}
+		composerContext, err := config.Loader.LoadCompositionContext(ctx, req)
+		if err != nil {
+			return Context{}, err
+		}
+		composerContext.Input = input
+		composerContext.WorkspaceID = input.WorkspaceID
+		composerContext.SourceStoryboardNodeID = req.SourceStoryboardNodeID
+		composerContext.ToolInfos = toolInfos
+		return composerContext, nil
 	})); err != nil {
 		return nil, err
 	}
-	if err := g.AddLambdaNode("create_final_node", compose.InvokableLambda(func(ctx context.Context, input GraphInput) (graphNodeState, error) {
-		return createGraphFinalNode(ctx, config, input)
+	if err := g.AddLambdaNode("prepare_turn_state", compose.InvokableLambda(func(_ context.Context, input Context) (composerLoopState, error) {
+		return composerLoopState{Context: input}, nil
 	})); err != nil {
 		return nil, err
 	}
-	if err := g.AddLambdaNode("submit_composition_intent", compose.InvokableLambda(func(ctx context.Context, state graphNodeState) (graphSubmissionState, error) {
-		return submitCompositionIntent(ctx, config, state)
+	if err := g.AddLambdaNode("before_model", compose.InvokableLambda(func(_ context.Context, state composerLoopState) (composerLoopState, error) {
+		return applyComposerBeforeModel(state), nil
 	})); err != nil {
 		return nil, err
 	}
-	if err := g.AddLambdaNode("persist_checkpoint_and_events", compose.InvokableLambda(func(ctx context.Context, state graphSubmissionState) (GraphOutput, error) {
-		return persistCompositionResult(ctx, config, state)
+	if err := g.AddLambdaNode("call_model", compose.InvokableLambda(func(ctx context.Context, state composerLoopState) (composerLoopState, error) {
+		out, err := config.ToolResponder.Respond(ctx, state.Context)
+		if err != nil {
+			return composerLoopState{}, err
+		}
+		state.LastOutput = out
+		state.LastAssistantMessage = out.ModelMessage
+		state.LastToolCalls = append([]schema.ToolCall(nil), nativeToolCalls(out.ModelMessage)...)
+		state.LastToolResults = nil
+		return state, nil
 	})); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge(compose.START, "load_composition_context"); err != nil {
+	if err := g.AddLambdaNode("prepare_tool_message", compose.InvokableLambda(func(_ context.Context, state composerLoopState) (*schema.Message, error) {
+		return prepareComposerToolMessage(stateStore, state)
+	})); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("load_composition_context", "create_final_node"); err != nil {
+	if err := g.AddToolsNode("execute_tools", toolNode); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("create_final_node", "submit_composition_intent"); err != nil {
+	if err := g.AddLambdaNode("append_tool_results", compose.InvokableLambda(func(_ context.Context, toolResults []*schema.Message) (composerLoopState, error) {
+		state, err := composerLoopStateForToolResults(stateStore, toolResults)
+		if err != nil {
+			return composerLoopState{}, err
+		}
+		appendComposerSameTurnMessages(&state.Context, state.LastOutput, state.LastAssistantMessage, toolResults)
+		state.ToolIterations++
+		state.LastToolResults = nil
+		return state, nil
+	})); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("submit_composition_intent", "persist_checkpoint_and_events"); err != nil {
+	if err := g.AddLambdaNode("finalize_response", compose.InvokableLambda(func(_ context.Context, state composerLoopState) (GraphOutput, error) {
+		out := finalizeComposerOutput(state)
+		return GraphOutput{Output: out, CheckpointKey: "composer_timeline", AssistantText: state.LastOutput.AssistantText}, nil
+	})); err != nil {
 		return nil, err
 	}
-	if err := g.AddEdge("persist_checkpoint_and_events", compose.END); err != nil {
+	if err := g.AddLambdaNode("fail_turn", compose.InvokableLambda(func(_ context.Context, _ composerLoopState) (GraphOutput, error) {
+		return GraphOutput{}, errors.New("composer exceeded max tool calls")
+	})); err != nil {
 		return nil, err
 	}
-	compileOptions := []compose.GraphCompileOption{compose.WithGraphName("composer_final")}
+	if err := g.AddEdge(compose.START, "load_context"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("load_context", "prepare_turn_state"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("prepare_turn_state", "before_model"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("before_model", "call_model"); err != nil {
+		return nil, err
+	}
+	if err := g.AddBranch("call_model", compose.NewGraphBranch(routeComposerModelOutput(), map[string]bool{
+		"prepare_tool_message": true,
+		"finalize_response":    true,
+		"fail_turn":            true,
+	})); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("prepare_tool_message", "execute_tools"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("execute_tools", "append_tool_results"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("append_tool_results", "before_model"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("finalize_response", compose.END); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("fail_turn", compose.END); err != nil {
+		return nil, err
+	}
+	compileOptions := []compose.GraphCompileOption{
+		compose.WithGraphName("composer_timeline"),
+		compose.WithMaxRunSteps(composerGraphMaxRunSteps),
+	}
 	if config.CheckPointStore != nil {
 		compileOptions = append(compileOptions, compose.WithCheckPointStore(config.CheckPointStore))
 	}
@@ -106,225 +211,342 @@ func (g *Graph) Run(ctx context.Context, input GraphInput, options ...agenteino.
 	return g.runnable.Invoke(ctx, input, callOptions...)
 }
 
-func loadCompositionContext(ctx context.Context, config GraphConfig, input GraphInput) (GraphInput, error) {
-	if !input.WorkspaceID.Valid || !input.ThreadID.Valid || !input.TaskID.Valid {
-		return GraphInput{}, ErrInvalidConfig
+func newComposerLoopToolStateStore() *composerLoopToolStateStore {
+	return &composerLoopToolStateStore{byKey: map[string]composerLoopState{}, byCall: map[string]string{}}
+}
+
+func (s *composerLoopToolStateStore) rememberKey(key string, state composerLoopState) {
+	if s == nil {
+		return
 	}
-	if len(input.Input.VideoNodeRefs) == 0 {
-		refs, err := currentShotVideoRefs(ctx, config.Store, input.WorkspaceID)
-		if err != nil {
-			return GraphInput{}, err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byKey[key] = state
+}
+
+func (s *composerLoopToolStateStore) rememberCallWithKey(callID string, key string, state composerLoopState) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.byKey[key] = state
+	s.byCall[callID] = key
+}
+
+func (s *composerLoopToolStateStore) stateByKey(key string) (composerLoopState, bool) {
+	if s == nil {
+		return composerLoopState{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.byKey[key]
+	return state, ok
+}
+
+func (s *composerLoopToolStateStore) stateByCall(callID string) (composerLoopState, bool) {
+	if s == nil {
+		return composerLoopState{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.byCall[callID]
+	if !ok {
+		return composerLoopState{}, false
+	}
+	state, ok := s.byKey[key]
+	return state, ok
+}
+
+func (s *composerLoopToolStateStore) forgetCall(callID string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.byCall, callID)
+}
+
+func applyComposerBeforeModel(state composerLoopState) composerLoopState {
+	reminderState := toolloop.BeforeModel(composerLoopMessages(state.Context), state.ToolIterations, state.ReminderCooldowns, toolloop.DefaultConfig())
+	state.ReminderCooldowns = reminderState.Cooldowns
+	state.Context.PendingReminders = reminderState.PendingReminders
+	return state
+}
+
+func composerLoopMessages(context Context) []toolloop.Message {
+	out := make([]toolloop.Message, 0, len(context.SameTurnMessages)+1)
+	if strings.TrimSpace(context.Input.Input.Instructions) != "" {
+		out = append(out, toolloop.Message{Role: "user", MessageType: "text"})
+	}
+	for _, message := range context.SameTurnMessages {
+		out = append(out, toolloop.Message{
+			Role:        strings.TrimSpace(message.Role),
+			MessageType: strings.TrimSpace(message.MessageType),
+			ToolName:    strings.TrimSpace(message.ToolName),
+		})
+	}
+	return out
+}
+
+func routeComposerModelOutput() compose.GraphBranchCondition[composerLoopState] {
+	return func(_ context.Context, state composerLoopState) (string, error) {
+		if len(nativeToolCalls(state.LastAssistantMessage)) > 0 {
+			if state.ToolIterations >= defaultComposerMaxToolCalls {
+				return "fail_turn", nil
+			}
+			return "prepare_tool_message", nil
 		}
-		input.Input.VideoNodeRefs = refs
+		return "finalize_response", nil
 	}
-	if len(input.Input.VideoNodeRefs) == 0 {
-		return GraphInput{}, ErrInvalidInput
-	}
-	_, _ = config.Runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
-		WorkspaceID: input.WorkspaceID,
-		ThreadID:    input.ThreadID,
-		TaskID:      input.TaskID,
-		EventType:   "composer_started",
-		SourceRole:  "composer",
-		Payload:     mustJSON(map[string]any{"video_count": len(input.Input.VideoNodeRefs)}),
-	})
-	return input, nil
 }
 
-func createGraphFinalNode(ctx context.Context, config GraphConfig, input GraphInput) (graphNodeState, error) {
-	modelParams, _ := json.Marshal(input.Input.Params)
-	canvasX, canvasY := finalVideoNodePosition(len(input.Input.VideoNodeRefs))
-	semanticKey := finalVideoNodeSemanticKey(input.TaskID)
-	node, err := config.Store.CreateAgentGenerationNode(ctx, db.CreateAgentGenerationNodeParams{
-		WorkspaceID:   input.WorkspaceID,
-		NodeType:      db.NodeTypeVideo,
-		Title:         "Agent final video",
-		Prompt:        strings.TrimSpace(input.Input.Strategy),
-		OperationType: "compose_final_video",
-		CanvasX:       canvasX,
-		CanvasY:       canvasY,
-		CanvasW:       520,
-		CanvasH:       300,
-		ShotID:        pgtype.UUID{},
-		ModelProvider: pgtype.Text{String: "internal_ffmpeg", Valid: true},
-		ModelID:       pgtype.Text{String: "ffmpeg-compose", Valid: true},
-		ModelParams:   defaultJSON(modelParams),
-		SemanticKey:   semanticKey,
-		DisplayName:   semanticKey,
-		ArtifactKind:  "final_video",
-		Metadata: mustJSON(map[string]any{
-			"agent_artifact_kind":         "final_video",
-			"source_phase":                "shot_video",
-			"composer_task_id":            uuidString(input.TaskID),
-			"source_storyboard_node_id":   strings.TrimSpace(input.Input.SourceStoryboardNodeID),
-			"composer_template_key":       strings.TrimSpace(input.Input.TemplateKey),
-			"composer_producer_thread_id": strings.TrimSpace(input.Input.ProducerThreadID),
-		}),
-	})
-	if err != nil {
-		return graphNodeState{}, err
+func prepareComposerToolMessage(stateStore *composerLoopToolStateStore, state composerLoopState) (*schema.Message, error) {
+	assistantMessage := state.LastAssistantMessage
+	if assistantMessage == nil && len(state.LastToolCalls) > 0 {
+		assistantMessage = &schema.Message{Role: schema.Assistant, ToolCalls: append([]schema.ToolCall(nil), state.LastToolCalls...)}
 	}
-	if config.Broadcaster != nil {
-		config.Broadcaster.BroadcastAgentNodeCreated(input.WorkspaceID, node)
+	if assistantMessage == nil {
+		return nil, errors.New("composer model returned no tool call message")
 	}
-	return graphNodeState{Input: input, Node: node}, nil
-}
+	cleanMessage := cloneToolCallMessage(assistantMessage)
+	state.LastAssistantMessage = cloneToolCallMessage(cleanMessage)
+	state.LastToolCalls = append([]schema.ToolCall(nil), cleanMessage.ToolCalls...)
+	state.LastToolResults = nil
 
-func finalVideoNodeSemanticKey(taskID pgtype.UUID) string {
-	return "final_video." + shortUUID(taskID) + ".node"
-}
-
-func finalVideoNodePosition(videoCount int) (float32, float32) {
-	const (
-		startX  = 140
-		startY  = 140
-		columns = 3
-		stepY   = 900
-	)
-	if videoCount <= 0 {
-		videoCount = 1
-	}
-	rows := (videoCount + columns - 1) / columns
-	return startX, float32(startY + rows*stepY)
-}
-
-func currentShotVideoRefs(ctx context.Context, store Store, workspaceID pgtype.UUID) ([]string, error) {
-	shots, err := store.ListActiveShotsByWorkspace(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	sort.SliceStable(shots, func(i, j int) bool {
-		return shots[i].SortOrder < shots[j].SortOrder
-	})
-	out := []string{}
-	for _, shot := range shots {
-		node, ok, err := currentShotVideoWinner(ctx, store, workspaceID, shot)
-		if err != nil {
-			return nil, err
-		}
+	stateKey := uuid.NewString()
+	stateStore.rememberKey(stateKey, state)
+	messageForToolNode := cloneToolCallMessage(cleanMessage)
+	for i := range messageForToolNode.ToolCalls {
+		args, ok := toolCallArgumentsObject(messageForToolNode.ToolCalls[i].Function.Arguments)
 		if ok {
-			out = append(out, composerNodeRef(node))
+			args[composerLoopStateArgumentKey] = stateKey
+			raw, err := json.Marshal(args)
+			if err != nil {
+				return nil, err
+			}
+			messageForToolNode.ToolCalls[i].Function.Arguments = string(raw)
 		}
+		stateStore.rememberCallWithKey(messageForToolNode.ToolCalls[i].ID, stateKey, state)
 	}
-	return out, nil
+	return messageForToolNode, nil
 }
 
-func composerNodeRef(node db.MediaNode) string {
-	if ref := strings.TrimSpace(node.SemanticKey); ref != "" {
-		return ref
-	}
-	return uuidString(node.ID)
-}
-
-func currentShotVideoWinner(ctx context.Context, store Store, workspaceID pgtype.UUID, shot db.Shot) (db.MediaNode, bool, error) {
-	nodes, err := store.ListMediaNodesByShot(ctx, db.ListMediaNodesByShotParams{WorkspaceID: workspaceID, ShotID: shot.ID})
-	if err != nil {
-		return db.MediaNode{}, false, err
-	}
-	for _, node := range nodes {
-		if node.NodeType != db.NodeTypeVideo || !node.CurrentVersionID.Valid {
+func composerLoopStateForToolResults(stateStore *composerLoopToolStateStore, toolResults []*schema.Message) (composerLoopState, error) {
+	for _, result := range toolResults {
+		if result == nil {
 			continue
 		}
-		if kind := composerArtifactKind(node.Metadata); kind != "" && kind != "shot_video" {
-			continue
+		if state, ok := stateStore.stateByCall(result.ToolCallID); ok {
+			state.LastToolResults = toolResults
+			for _, completed := range toolResults {
+				if completed != nil {
+					stateStore.forgetCall(completed.ToolCallID)
+				}
+			}
+			return state, nil
 		}
-		version, err := store.GetArtifactVersionByID(ctx, node.CurrentVersionID)
-		if err != nil || version.Status != db.JobStatusSucceeded {
-			continue
-		}
-		return node, true, nil
 	}
-	return db.MediaNode{}, false, nil
+	return composerLoopState{}, errors.New("composer tool result state is missing")
 }
 
-func composerArtifactKind(raw []byte) string {
-	var metadata map[string]any
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &metadata)
-	}
-	kind, _ := metadata["agent_artifact_kind"].(string)
-	return strings.TrimSpace(kind)
-}
-
-func submitCompositionIntent(ctx context.Context, config GraphConfig, state graphNodeState) (graphSubmissionState, error) {
-	inputRefs, err := agentworker.ResolveInputRefs(ctx, config.Store, state.Input.WorkspaceID, state.Node.ID, state.Input.Input.VideoNodeRefs)
-	if err != nil {
-		return graphSubmissionState{}, err
-	}
-	intent := production.GenerationIntent{
-		WorkspaceID:    state.Input.WorkspaceID,
-		TargetNodeID:   state.Node.ID,
-		OutputType:     "video",
-		OperationType:  "compose_final_video",
-		PromptTemplate: strings.TrimSpace(state.Input.Input.Strategy),
-		RenderedPrompt: strings.TrimSpace(state.Input.Input.Strategy),
-		InputRefs:      inputRefs,
-		Model:          production.ModelSpec{Provider: "internal_ffmpeg", ModelID: "ffmpeg-compose"},
-		Params:         defaultParams(state.Input.Input.Params),
-		Semantic: production.SemanticInfo{
-			RenderPlanKey: finalVideoComposeSemanticKey(state.Node),
-			ArtifactKind:  "final_video",
+func nativeComposerToolRuntimeMiddleware(stateStore *composerLoopToolStateStore) compose.ToolMiddleware {
+	return compose.ToolMiddleware{
+		Invokable: func(next compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
+			return func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
+				if input == nil {
+					return next(ctx, input)
+				}
+				args := map[string]any{}
+				if input.Arguments != "" {
+					_ = json.Unmarshal([]byte(input.Arguments), &args)
+				}
+				if stateKey, _ := args[composerLoopStateArgumentKey].(string); stateKey != "" && stateStore != nil {
+					delete(args, composerLoopStateArgumentKey)
+					if raw, err := json.Marshal(args); err == nil {
+						input.Arguments = string(raw)
+					}
+					if state, ok := stateStore.stateByKey(stateKey); ok {
+						stateStore.rememberCallWithKey(input.CallID, stateKey, state)
+						ctx = agenttools.WithNativeRuntimeContext(ctx, composerNativeRuntime(input.CallID, state))
+					}
+				}
+				runtime, _ := agenttools.NativeRuntimeFromContext(ctx)
+				if strings.TrimSpace(runtime.ToolCallID) == "" {
+					runtime.ToolCallID = input.CallID
+				}
+				if sink, ok := agenttools.NativeToolTraceSinkFromContext(ctx); ok && sink != nil {
+					if err := sink.NativeToolCallStarted(ctx, runtime, agenttools.NativeToolTrace{
+						ToolName:  input.Name,
+						Arguments: args,
+					}); err != nil {
+						return nil, err
+					}
+				}
+				out, err := next(ctx, input)
+				trace := agenttools.NativeToolTrace{ToolName: input.Name}
+				if out != nil {
+					trace.Result = out.Result
+				}
+				if err != nil {
+					trace.Error = err.Error()
+				}
+				if _, interrupted := compose.IsInterruptRerunError(err); interrupted {
+					return out, err
+				}
+				if _, interrupted := compose.ExtractInterruptInfo(err); interrupted {
+					return out, err
+				}
+				if sink, ok := agenttools.NativeToolTraceSinkFromContext(ctx); ok && sink != nil {
+					if traceErr := sink.NativeToolCallCompleted(ctx, runtime, trace); traceErr != nil {
+						if err != nil {
+							return out, err
+						}
+						return out, traceErr
+					}
+				}
+				return out, err
+			}
 		},
-		RequestedBy: production.RequestedBy{
-			Type: "agent_composer",
-			ID:   uuidString(state.Input.TaskID),
-		},
 	}
-	result, err := config.Production.SubmitGenerationIntent(ctx, intent, production.RunOptions{MaxAttempts: 1})
-	if err != nil {
-		return graphSubmissionState{}, err
-	}
-	output := CompositionOutput{
-		Status:            "submitted",
-		NodeID:            uuidString(result.Node.ID),
-		GenerationJobID:   uuidString(result.Job.ID),
-		ArtifactVersionID: uuidString(result.Version.ID),
-		OperationType:     result.Job.OperationType,
-	}
-	return graphSubmissionState{Input: state.Input, Node: state.Node, Output: output}, nil
 }
 
-func finalVideoComposeSemanticKey(node db.MediaNode) string {
-	base := strings.TrimSpace(node.SemanticKey)
-	if base != "" {
-		return strings.TrimSuffix(base, ".node") + ".compose"
+func composerNativeRuntime(callID string, state composerLoopState) agenttools.NativeRuntimeContext {
+	scopeID := state.Context.SourceStoryboardNodeID
+	if !scopeID.Valid {
+		scopeID = sourceStoryboardNodeID(state.Context.Input)
 	}
-	return "final_video." + shortUUID(node.ID) + ".compose"
+	return agenttools.NativeRuntimeContext{
+		WorkspaceID: state.Context.Input.WorkspaceID,
+		ThreadID:    state.Context.Input.ThreadID,
+		TaskID:      state.Context.Input.TaskID,
+		ToolCallID:  callID,
+		ScopeType:   "final_output",
+		ScopeID:     scopeID,
+		TargetPhase: "final_video",
+	}
 }
 
-func persistCompositionResult(ctx context.Context, config GraphConfig, state graphSubmissionState) (GraphOutput, error) {
-	checkpointKey := CheckpointKey(state.Input.WorkspaceID, state.Input.ThreadID, state.Input.TaskID)
-	checkpointValue := mustJSON(map[string]any{
-		"node_id":             state.Output.NodeID,
-		"generation_job_id":   state.Output.GenerationJobID,
-		"artifact_version_id": state.Output.ArtifactVersionID,
-		"operation_type":      state.Output.OperationType,
-		"status":              state.Output.Status,
-	})
-	if _, err := config.Runtime.UpsertCheckpoint(ctx, agentruntime.UpsertCheckpointParams{
-		Key:         checkpointKey,
-		WorkspaceID: state.Input.WorkspaceID,
-		ThreadID:    state.Input.ThreadID,
-		TaskID:      state.Input.TaskID,
-		Value:       checkpointValue,
-		Metadata:    mustJSON(map[string]any{"kind": "composer_result"}),
-	}); err != nil {
-		return GraphOutput{}, err
+func finalizeComposerOutput(state composerLoopState) CompositionOutput {
+	out := state.LastOutput.Result
+	out = applySubmitArtifactToolResult(out, state.Context.SameTurnMessages)
+	if strings.TrimSpace(out.Status) == "" {
+		out.Status = "blocked"
 	}
-	_, _ = config.Runtime.SetThreadCheckpoint(ctx, state.Input.ThreadID, checkpointKey)
-	rawOutput := mustJSON(state.Output)
-	_, _ = config.Runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
-		WorkspaceID: state.Input.WorkspaceID,
-		ThreadID:    state.Input.ThreadID,
-		TaskID:      state.Input.TaskID,
-		EventType:   "composition_submitted",
-		SourceRole:  "composer",
-		TargetRole:  "producer",
-		Payload:     rawOutput,
-	})
-	return GraphOutput{Output: state.Output, CheckpointKey: checkpointKey}, nil
+	if strings.TrimSpace(out.OperationType) == "" {
+		out.OperationType = "compose_final_video"
+	}
+	out.SameTurnMessages = append([]ComposerSameTurnMessage(nil), state.Context.SameTurnMessages...)
+	return out
 }
 
-func CheckpointKey(workspaceID, threadID, taskID pgtype.UUID) string {
-	return "composer:" + uuidString(workspaceID) + ":" + uuidString(threadID) + ":" + uuidString(taskID)
+func applySubmitArtifactToolResult(out CompositionOutput, messages []ComposerSameTurnMessage) CompositionOutput {
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if strings.TrimSpace(message.ToolName) != "submit_composition_artifact" || strings.TrimSpace(message.Content) == "" {
+			continue
+		}
+		var result struct {
+			OutputNodeID       string `json:"output_node_id"`
+			GenerationJobID    string `json:"generation_job_id"`
+			ArtifactVersionID  string `json:"artifact_version_id"`
+			TimelinePlanID     string `json:"timeline_plan_id"`
+			SandboxJobID       string `json:"sandbox_job_id"`
+			GenerationJobState string `json:"generation_job_state"`
+		}
+		if err := json.Unmarshal([]byte(message.Content), &result); err != nil {
+			continue
+		}
+		if strings.TrimSpace(result.OutputNodeID) == "" ||
+			strings.TrimSpace(result.GenerationJobID) == "" ||
+			strings.TrimSpace(result.ArtifactVersionID) == "" {
+			continue
+		}
+		out.Status = "completed"
+		out.NodeID = firstNonEmpty(out.NodeID, result.OutputNodeID)
+		out.GenerationJobID = firstNonEmpty(out.GenerationJobID, result.GenerationJobID)
+		out.ArtifactVersionID = firstNonEmpty(out.ArtifactVersionID, result.ArtifactVersionID)
+		out.TimelinePlanID = firstNonEmpty(out.TimelinePlanID, result.TimelinePlanID)
+		out.SandboxJobID = firstNonEmpty(out.SandboxJobID, result.SandboxJobID)
+		break
+	}
+	return out
 }
+
+func firstNonEmpty(current, fallback string) string {
+	if strings.TrimSpace(current) != "" {
+		return current
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func nativeToolCalls(message *schema.Message) []schema.ToolCall {
+	if message == nil {
+		return nil
+	}
+	return message.ToolCalls
+}
+
+func cloneToolCallMessage(message *schema.Message) *schema.Message {
+	cloned := *message
+	cloned.Role = schema.Assistant
+	cloned.ToolCalls = append([]schema.ToolCall(nil), message.ToolCalls...)
+	for i := range cloned.ToolCalls {
+		if strings.TrimSpace(cloned.ToolCalls[i].ID) == "" {
+			cloned.ToolCalls[i].ID = uuid.NewString()
+		}
+		if strings.TrimSpace(cloned.ToolCalls[i].Type) == "" {
+			cloned.ToolCalls[i].Type = "function"
+		}
+	}
+	return &cloned
+}
+
+func toolCallArgumentsObject(raw string) (map[string]any, bool) {
+	args := map[string]any{}
+	if strings.TrimSpace(raw) == "" {
+		return args, true
+	}
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return nil, false
+	}
+	return args, true
+}
+
+func appendComposerSameTurnMessages(input *Context, out ComposerTurnOutput, assistant *schema.Message, toolResults []*schema.Message) {
+	if input == nil || assistant == nil {
+		return
+	}
+	for _, call := range assistant.ToolCalls {
+		args, _ := toolCallArgumentsObject(call.Function.Arguments)
+		input.SameTurnMessages = append(input.SameTurnMessages, ComposerSameTurnMessage{
+			Role:          "assistant",
+			MessageType:   "tool_call",
+			Content:       out.AssistantText,
+			ToolCallID:    call.ID,
+			ToolName:      call.Function.Name,
+			ToolArguments: args,
+		})
+	}
+	for _, result := range toolResults {
+		if result == nil {
+			continue
+		}
+		input.SameTurnMessages = append(input.SameTurnMessages, ComposerSameTurnMessage{
+			Role:        "tool",
+			MessageType: "tool_result",
+			Content:     result.Content,
+			ToolCallID:  result.ToolCallID,
+			ToolName:    result.ToolName,
+		})
+	}
+}
+
+func sourceStoryboardNodeID(input GraphInput) pgtype.UUID {
+	if id, ok := pgUUIDFromString(input.Input.SourceStoryboardNodeID); ok {
+		return id
+	}
+	return pgtype.UUID{}
+}
+
+var _ = production.GenerationIntent{}

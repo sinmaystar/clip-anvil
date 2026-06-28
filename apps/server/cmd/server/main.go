@@ -204,22 +204,37 @@ func main() {
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
 	renderPlanSubmitter := agenttools.NewRenderPlanSubmitter(queries, agentRuntime, workerEnqueuer)
+	composerNativeToolRegistry := mustNativeRegistry(
+		agenttools.NewGetCompositionContextNativeTool(agentcomposer.NewToolContextProvider(queries)),
+		agenttools.NewStageMediaInputsNativeTool(sandboxJobService),
+		agenttools.NewProbeMediaNativeTool(sandboxJobService),
+		agenttools.NewCreateTimelinePlanNativeTool(queries),
+		agenttools.NewUpdateTimelinePlanStatusNativeTool(queries),
+		agenttools.NewRenderTimelineTemplateNativeTool(agenttools.NewSandboxTimelineTemplateRenderer(sandboxJobService)),
+		agenttools.NewRunFFmpegCommandNativeTool(sandboxJobService),
+		agenttools.NewSubmitCompositionArtifactNativeTool(productionService, queries).WithOutputUploader(sandboxJobService),
+	)
 	composerGraph, err := agentcomposer.NewGraph(agentcomposer.GraphConfig{
-		Runtime:          agentRuntime,
-		Store:            queries,
-		Production:       productionService,
-		Broadcaster:      agentCanvasBroadcaster,
-		CheckPointStore:  agentEinoCheckpointStore,
-		CompileCallbacks: []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
+		Loader:             agentcomposer.NewStoreContextLoader(queries),
+		Runtime:            agentRuntime,
+		Store:              queries,
+		Production:         productionService,
+		ToolResponder:      composerResponderForConfig(cfg),
+		NativeToolRegistry: composerNativeToolRegistry,
+		Broadcaster:        agentCanvasBroadcaster,
+		CheckPointStore:    agentEinoCheckpointStore,
+		CompileCallbacks:   []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
 	})
 	if err != nil {
 		slog.Error("failed to create composer graph", "error", err)
 		os.Exit(1)
 	}
 	composerExecutor := agentcomposer.NewExecutor(agentcomposer.ExecutorConfig{
-		Runtime:        agentRuntime,
-		Graph:          composerGraph,
-		TraceCallbacks: agentTracing.Callbacks,
+		Runtime:          agentRuntime,
+		Graph:            composerGraph,
+		Broadcaster:      agentBroadcaster,
+		ProducerEnqueuer: producerEnqueuer,
+		TraceCallbacks:   agentTracing.Callbacks,
 	})
 	composerEnqueuer := agentComposerTaskEnqueuer{executor: composerExecutor}
 	craftsmanGraph, err := agentcraftsman.NewGraph(agentcraftsman.GraphConfig{
@@ -723,6 +738,7 @@ const (
 	producerModelMaxTokens  = 4096
 	craftsmanModelMaxTokens = 8192
 	reviewerModelMaxTokens  = 4096
+	composerModelMaxTokens  = 4096
 )
 
 func craftsmanResponderForConfig(cfg *config.Config) agentcraftsman.ToolCallingResponder {
@@ -786,6 +802,27 @@ func reviewerResponderForConfig(cfg *config.Config) agentreviewer.ToolResponder 
 		Model:       cfg.Production.Volcengine.TextModel,
 		MaxTokens:   reviewerModelMaxTokens,
 		Temperature: 0.1,
+	})
+}
+
+func composerResponderForConfig(cfg *config.Config) agentcomposer.ToolResponder {
+	if cfg.Production.ProviderMode != "real" ||
+		strings.TrimSpace(cfg.Production.Volcengine.APIKey) == "" {
+		slog.Warn(
+			"using deterministic composer responder",
+			"provider_mode", cfg.Production.ProviderMode,
+			"has_volcengine_api_key",
+			strings.TrimSpace(cfg.Production.Volcengine.APIKey) != "",
+		)
+		return agentcomposer.NewDeterministicResponder()
+	}
+	return agentcomposer.NewVolcengineModelResponder(agentcomposer.VolcengineModelResponderConfig{
+		APIKey:      cfg.Production.Volcengine.APIKey,
+		BaseURL:     cfg.Production.Volcengine.BaseURL,
+		Region:      cfg.Production.Volcengine.Region,
+		Model:       cfg.Production.Volcengine.TextModel,
+		MaxTokens:   composerModelMaxTokens,
+		Temperature: 0.2,
 	})
 }
 

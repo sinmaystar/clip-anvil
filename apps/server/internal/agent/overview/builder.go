@@ -232,7 +232,7 @@ func buildFinalOutputs(nodes []db.MediaNode, versionsByNode map[pgtype.UUID][]db
 	out := make([]FinalOutput, 0)
 	for _, node := range nodes {
 		kind := artifactKind(node)
-		if kind != "final_video" && node.OperationType != "compose_final" {
+		if kind != "final_video" && node.OperationType != "compose_final_video" {
 			continue
 		}
 		item := FinalOutput{
@@ -378,7 +378,7 @@ func eventLabel(eventType string) string {
 }
 
 func sandboxLabel(jobType, operation string) string {
-	if operation == "compose_final" {
+	if operation == "compose_final_video" {
 		return "渲染成片"
 	}
 	if jobType != "" {

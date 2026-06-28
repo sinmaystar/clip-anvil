@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/storage"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 type StageMediaInputsInput struct {
@@ -61,6 +62,14 @@ type RunFFmpegCommandInput struct {
 	Cwd          string
 	Args         []string
 	TimeoutSec   int
+}
+
+type UploadCompositionOutputInput struct {
+	WorkspaceID        pgtype.UUID
+	TargetNodeID       pgtype.UUID
+	SourceSandboxJobID pgtype.UUID
+	OutputPath         string
+	MimeHint           string
 }
 
 func (s *JobService) StageMediaInputs(ctx context.Context, input StageMediaInputsInput) (StageMediaInputsResult, error) {
@@ -165,6 +174,129 @@ func (s *JobService) RunFFmpegCommand(ctx context.Context, input RunFFmpegComman
 			"args":       input.Args,
 		},
 	})
+}
+
+func (s *JobService) UploadCompositionOutput(ctx context.Context, input UploadCompositionOutputInput) (SandboxJobResult, error) {
+	if s.manager == nil || s.client == nil || s.repo == nil || s.storage == nil {
+		return SandboxJobResult{}, errors.New("sandbox composition output upload is not configured")
+	}
+	outputPath, err := ValidateOutputPath(input.OutputPath)
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	inputJSON, err := json.Marshal(map[string]any{
+		"output_path":           outputPath,
+		"source_sandbox_job_id": uuidString(input.SourceSandboxJobID),
+		"mime_hint":             strings.TrimSpace(input.MimeHint),
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	job, err := s.repo.CreateSandboxJob(ctx, db.CreateSandboxJobParams{
+		WorkspaceID:   input.WorkspaceID,
+		TargetNodeID:  input.TargetNodeID,
+		JobType:       "internal_media",
+		OperationType: "upload_composition_output",
+		Input:         inputJSON,
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	workspaceSandbox, err := s.manager.EnsureSandbox(ctx, input.WorkspaceID)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_unavailable", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+	info, err := InspectArtifact(ctx, s.client, workspaceSandbox.SandboxID, outputPath)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_output_inspect_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+	if err := ValidateArtifactSize(info.SizeBytes); err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_output_too_large", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+	if !strings.HasPrefix(info.Mime, "video/") {
+		err := fmt.Errorf("unexpected composition output MIME %q", info.Mime)
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_output_invalid", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+	if err := s.storage.EnsureBucket(ctx, input.WorkspaceID); err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_output_upload_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+	objectKey := "production/" + uuidString(input.TargetNodeID) + "/" + uuidString(job.ID) + extensionForMIME(info.Mime)
+	putURL, err := s.storage.PresignedSandboxPutURL(ctx, input.WorkspaceID, objectKey, time.Hour)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_output_upload_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed}, err
+	}
+	job, err = s.repo.MarkSandboxJobRunning(ctx, db.MarkSandboxJobRunningParams{
+		ID:        job.ID,
+		SandboxID: pgtype.Text{String: workspaceSandbox.SandboxID, Valid: true},
+		Command:   "curl -sS -f -X PUT -T " + shellQuote(outputPath) + " " + shellQuote(putURL),
+		Cwd:       DefaultWorkdir,
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	uploadResult, err := UploadToMinIO(ctx, s.client, workspaceSandbox.SandboxID, outputPath, putURL)
+	if err != nil {
+		failed, failErr := s.markFailed(ctx, job.ID, uploadResult, "sandbox_output_upload_failed", err.Error(), nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: uploadResult}, err
+	}
+	if uploadResult.ExitCode != 0 {
+		message := strings.TrimSpace(uploadResult.Stderr)
+		failed, failErr := s.markFailed(ctx, job.ID, uploadResult, "sandbox_output_upload_failed", message, nil)
+		if failErr != nil {
+			return SandboxJobResult{}, failErr
+		}
+		return SandboxJobResult{Job: failed, Exec: uploadResult}, fmt.Errorf("sandbox output upload failed: %s", message)
+	}
+	asset := ArtifactObject{StorageURL: s.storage.StorageURL(input.WorkspaceID, objectKey)}
+	outputJSON, err := json.Marshal(map[string]any{
+		"output_path":           outputPath,
+		"storage_url":           asset.StorageURL,
+		"mime":                  info.Mime,
+		"size_bytes":            info.SizeBytes,
+		"source_sandbox_job_id": uuidString(input.SourceSandboxJobID),
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	job, err = s.repo.MarkSandboxJobSucceeded(ctx, db.MarkSandboxJobSucceededParams{
+		ID:         job.ID,
+		Output:     outputJSON,
+		ExitCode:   pgtype.Int4{Int32: int32(uploadResult.ExitCode), Valid: true},
+		Stdout:     uploadResult.Stdout,
+		Stderr:     uploadResult.Stderr,
+		DurationMs: int32(uploadResult.DurationMS),
+	})
+	if err != nil {
+		return SandboxJobResult{}, err
+	}
+	return SandboxJobResult{Job: job, Exec: uploadResult, Asset: asset, MIME: info.Mime, Size: info.SizeBytes}, nil
 }
 
 func (s *JobService) stageSourceURL(ctx context.Context, workspaceID pgtype.UUID, rawURL string) (string, error) {

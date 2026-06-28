@@ -159,3 +159,12 @@ WHERE workspace_id = $1
   AND status IN ('pending', 'claimed', 'failed')
 ORDER BY priority ASC, created_at ASC
 LIMIT $2;
+
+-- name: ListPendingProducerSignalsByThread :many
+SELECT *
+FROM producer_pending_signal
+WHERE workspace_id = $1
+  AND producer_thread_id = $2
+  AND status IN ('pending', 'claimed', 'failed')
+ORDER BY priority ASC, created_at ASC
+LIMIT $3;

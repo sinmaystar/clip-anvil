@@ -2,7 +2,15 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/sinmaystar/clip-anvil/internal/production"
+	"github.com/sinmaystar/clip-anvil/internal/sandbox"
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 func TestComposerNativeToolsRegisterExpectedNames(t *testing.T) {
@@ -44,4 +52,217 @@ func TestComposerNativeToolsRegisterExpectedNames(t *testing.T) {
 			t.Fatalf("missing composer native tool %q in %#v", want, got)
 		}
 	}
+}
+
+func TestRenderTimelineTemplateRunsSandboxConcat(t *testing.T) {
+	sandbox := &fakeCompositionSandbox{}
+	tool := NewRenderTimelineTemplateNativeTool(NewSandboxTimelineTemplateRenderer(sandbox))
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		TaskID:      uuidWithByte(2),
+		ScopeType:   "final_output",
+		ScopeID:     uuidWithByte(3),
+	})
+	got, err := tool.InvokableRun(ctx, `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"template_key":"simple_concat",
+		"plan":{"segments":[
+			{"workspace_path":"/workspace/input/a.mp4"},
+			{"workspace_path":"/workspace/input/b.mp4"}
+		]}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("render_timeline_template failed: %s", got)
+	}
+	if sandbox.ffmpegInput.Executable != "ffmpeg" {
+		t.Fatalf("executable = %q, want ffmpeg", sandbox.ffmpegInput.Executable)
+	}
+	args := strings.Join(sandbox.ffmpegInput.Args, " ")
+	for _, want := range []string{"/workspace/input/a.mp4", "/workspace/input/b.mp4", "concat=n=2:v=1:a=1", "/workspace/output/final-04000000.mp4"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("ffmpeg args %q missing %q", args, want)
+		}
+	}
+	if !strings.Contains(got, `"sandbox_job_id":"05000000-0000-0000-0000-000000000000"`) {
+		t.Fatalf("result missing sandbox job id: %s", got)
+	}
+}
+
+func TestSubmitCompositionArtifactCreatesNodeUploadsAndPersists(t *testing.T) {
+	store := &fakeCompositionArtifactStore{}
+	uploader := &fakeCompositionOutputUploader{
+		result: sandbox.SandboxJobResult{
+			Job:   db.SandboxJob{ID: uuidWithByte(8)},
+			Asset: sandbox.ArtifactObject{StorageURL: "workspace-01000000-0000-0000-0000-000000000000/production/final.mp4"},
+			MIME:  "video/mp4",
+			Size:  1234,
+		},
+	}
+	persister := &fakeCompositionArtifactPersister{}
+	tool := NewSubmitCompositionArtifactNativeTool(persister, store).WithOutputUploader(uploader)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		TaskID:      uuidWithByte(2),
+		ScopeType:   "final_output",
+		ScopeID:     uuidWithByte(3),
+	})
+	got, err := tool.InvokableRun(ctx, `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"sandbox_job_id":"05000000-0000-0000-0000-000000000000",
+		"output_path":"/workspace/output/final.mp4",
+		"result":{"duration":12.3}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("submit_composition_artifact failed: %s", got)
+	}
+	if !store.createdNode.ID.Valid {
+		t.Fatal("expected output node to be created")
+	}
+	if uploader.input.TargetNodeID != store.createdNode.ID {
+		t.Fatalf("uploader target node = %v, want created node %v", uploader.input.TargetNodeID, store.createdNode.ID)
+	}
+	if persister.input.OutputNodeID != store.createdNode.ID {
+		t.Fatalf("persister output node = %v, want created node %v", persister.input.OutputNodeID, store.createdNode.ID)
+	}
+	if persister.input.ProviderResult.AssetStorageURL != uploader.result.Asset.StorageURL {
+		t.Fatalf("persisted storage url = %q, want %q", persister.input.ProviderResult.AssetStorageURL, uploader.result.Asset.StorageURL)
+	}
+	if store.updatedTimeline.OutputNodeID != store.createdNode.ID || store.updatedTimeline.ArtifactVersionID != persister.result.Version.ID {
+		t.Fatalf("timeline was not linked to output node/artifact: %#v", store.updatedTimeline)
+	}
+}
+
+func TestUpdateTimelinePlanStatusMergesExistingResult(t *testing.T) {
+	store := &fakeCompositionTimelineStore{
+		plan: db.TimelinePlan{
+			ID:     uuidWithByte(4),
+			Status: "completed",
+			Result: []byte(`{"output_path":"/workspace/output/final.mp4","storage_url":"workspace-1/final.mp4","duration":10}`),
+		},
+	}
+	tool := NewUpdateTimelinePlanStatusNativeTool(store)
+	got, err := tool.InvokableRun(context.Background(), `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"status":"completed",
+		"result":{"segments_count":2}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("update_timeline_plan_status failed: %s", got)
+	}
+	var merged map[string]any
+	if err := json.Unmarshal(store.updated.Result, &merged); err != nil {
+		t.Fatal(err)
+	}
+	if merged["output_path"] != "/workspace/output/final.mp4" || merged["storage_url"] != "workspace-1/final.mp4" || merged["segments_count"].(float64) != 2 {
+		t.Fatalf("merged result = %#v", merged)
+	}
+}
+
+type fakeCompositionSandbox struct {
+	ffmpegInput sandbox.RunFFmpegCommandInput
+}
+
+func (f *fakeCompositionSandbox) StageMediaInputs(context.Context, sandbox.StageMediaInputsInput) (sandbox.StageMediaInputsResult, error) {
+	return sandbox.StageMediaInputsResult{}, nil
+}
+
+func (f *fakeCompositionSandbox) ProbeMedia(context.Context, sandbox.ProbeMediaInput) (sandbox.ProbeMediaResult, error) {
+	return sandbox.ProbeMediaResult{}, nil
+}
+
+func (f *fakeCompositionSandbox) RunFFmpegCommand(_ context.Context, input sandbox.RunFFmpegCommandInput) (sandbox.SandboxJobResult, error) {
+	f.ffmpegInput = input
+	return sandbox.SandboxJobResult{Job: db.SandboxJob{ID: uuidWithByte(5)}}, nil
+}
+
+type fakeCompositionArtifactStore struct {
+	createdNode     db.MediaNode
+	updatedTimeline db.UpdateTimelinePlanStatusParams
+}
+
+func (f *fakeCompositionArtifactStore) CreateTimelinePlan(context.Context, db.CreateTimelinePlanParams) (db.TimelinePlan, error) {
+	return db.TimelinePlan{}, nil
+}
+
+func (f *fakeCompositionArtifactStore) CreateAgentGenerationNode(_ context.Context, params db.CreateAgentGenerationNodeParams) (db.MediaNode, error) {
+	f.createdNode = db.MediaNode{
+		ID:            uuidWithByte(7),
+		WorkspaceID:   params.WorkspaceID,
+		NodeType:      params.NodeType,
+		OperationType: params.OperationType,
+		SemanticKey:   params.SemanticKey,
+		DisplayName:   params.DisplayName,
+		ArtifactKind:  params.ArtifactKind,
+	}
+	return f.createdNode, nil
+}
+
+func (f *fakeCompositionArtifactStore) GetTimelinePlan(context.Context, pgtype.UUID) (db.TimelinePlan, error) {
+	return db.TimelinePlan{ID: uuidWithByte(4), WorkspaceID: uuidWithByte(1), Status: "completed"}, nil
+}
+
+func (f *fakeCompositionArtifactStore) UpdateTimelinePlanStatus(_ context.Context, params db.UpdateTimelinePlanStatusParams) (db.TimelinePlan, error) {
+	f.updatedTimeline = params
+	return db.TimelinePlan{
+		ID:                params.ID,
+		WorkspaceID:       uuidWithByte(1),
+		Status:            params.Status,
+		OutputNodeID:      params.OutputNodeID,
+		ProductionJobID:   params.ProductionJobID,
+		ArtifactVersionID: params.ArtifactVersionID,
+		SandboxJobID:      params.SandboxJobID,
+		Result:            params.Result,
+	}, nil
+}
+
+type fakeCompositionOutputUploader struct {
+	input  sandbox.UploadCompositionOutputInput
+	result sandbox.SandboxJobResult
+}
+
+type fakeCompositionTimelineStore struct {
+	plan    db.TimelinePlan
+	updated db.UpdateTimelinePlanStatusParams
+}
+
+func (f *fakeCompositionTimelineStore) CreateTimelinePlan(context.Context, db.CreateTimelinePlanParams) (db.TimelinePlan, error) {
+	return db.TimelinePlan{}, nil
+}
+
+func (f *fakeCompositionTimelineStore) GetTimelinePlan(context.Context, pgtype.UUID) (db.TimelinePlan, error) {
+	return f.plan, nil
+}
+
+func (f *fakeCompositionTimelineStore) UpdateTimelinePlanStatus(_ context.Context, params db.UpdateTimelinePlanStatusParams) (db.TimelinePlan, error) {
+	f.updated = params
+	return db.TimelinePlan{ID: params.ID, Status: params.Status, Result: params.Result}, nil
+}
+
+func (f *fakeCompositionOutputUploader) UploadCompositionOutput(_ context.Context, input sandbox.UploadCompositionOutputInput) (sandbox.SandboxJobResult, error) {
+	f.input = input
+	return f.result, nil
+}
+
+type fakeCompositionArtifactPersister struct {
+	input  production.ComposerArtifactInput
+	result production.RunResult
+}
+
+func (f *fakeCompositionArtifactPersister) PersistComposerArtifact(_ context.Context, input production.ComposerArtifactInput) (production.RunResult, error) {
+	f.input = input
+	f.result = production.RunResult{
+		Node:    db.MediaNode{ID: input.OutputNodeID, WorkspaceID: input.WorkspaceID},
+		Job:     db.GenerationJob{ID: uuidWithByte(9), WorkspaceID: input.WorkspaceID},
+		Version: db.ArtifactVersion{ID: uuidWithByte(10), WorkspaceID: input.WorkspaceID, NodeID: input.OutputNodeID},
+	}
+	return f.result, nil
 }
