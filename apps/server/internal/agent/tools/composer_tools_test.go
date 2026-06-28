@@ -132,6 +132,7 @@ func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
 		"volume=1.000",
 		"volume=0.280",
 		"afade=t=in:st=0:d=0.500",
+		"asplit=2",
 		"sidechaincompress",
 		"-map [vout]",
 		"-map [aout]",

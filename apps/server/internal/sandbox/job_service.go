@@ -910,9 +910,11 @@ func composeVideosAudioFilterGraph(videoCount int, audioTracks []composeAudioTra
 	audioLabels := []string{}
 	voiceoverLabel := ""
 	duckingLabels := map[string]ComposeAudioDuckingInput{}
+	needsVoiceoverSidechain := composeNeedsVoiceoverSidechain(audioTracks)
 	for index, track := range audioTracks {
 		inputIndex := videoCount + index
 		label := fmt.Sprintf("a%d", index)
+		outputLabel := label
 		volume := track.Volume
 		if volume <= 0 {
 			volume = 1
@@ -937,8 +939,16 @@ func composeVideosAudioFilterGraph(videoCount int, audioTracks []composeAudioTra
 			}
 			filter += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", start, track.FadeOutSec)
 		}
-		filter += fmt.Sprintf("[%s]", label)
+		if track.Role == "voiceover" && needsVoiceoverSidechain {
+			outputLabel = label + "raw"
+		}
+		filter += fmt.Sprintf("[%s]", outputLabel)
 		parts = append(parts, filter)
+		if track.Role == "voiceover" && needsVoiceoverSidechain {
+			sidechainLabel := label + "side"
+			parts = append(parts, fmt.Sprintf("[%s]asplit=2[%s][%s]", outputLabel, label, sidechainLabel))
+			voiceoverLabel = sidechainLabel
+		}
 		if track.Role == "voiceover" && voiceoverLabel == "" {
 			voiceoverLabel = label
 		}
@@ -979,6 +989,15 @@ func composeVideosAudioFilterGraph(videoCount int, audioTracks []composeAudioTra
 		parts = append(parts, strings.Join(inputs, "")+fmt.Sprintf("amix=inputs=%d:duration=shortest:dropout_transition=0[aout]", len(audioLabels)))
 	}
 	return strings.Join(parts, ";")
+}
+
+func composeNeedsVoiceoverSidechain(audioTracks []composeAudioTrackPath) bool {
+	for _, track := range audioTracks {
+		if track.Role == "bgm" && track.Ducking.SidechainRole == "voiceover" {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeComposeAudioRole(role string) string {

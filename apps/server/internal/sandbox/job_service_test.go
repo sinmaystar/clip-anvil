@@ -223,7 +223,7 @@ func TestJobServiceComposeVideosMixesAudioTracks(t *testing.T) {
 	if strings.Count(joined, "curl -sS -f -L -o") < 4 {
 		t.Fatalf("expected video and audio downloads, got %q", joined)
 	}
-	for _, want := range []string{"voiceover.mp3", "bgm.mp3", "concat=n=2:v=1:a=0", "sidechaincompress", "[aout]", "-c:a aac", "-shortest"} {
+	for _, want := range []string{"voiceover.mp3", "bgm.mp3", "concat=n=2:v=1:a=0", "asplit=2", "sidechaincompress", "[aout]", "-c:a aac", "-shortest"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected compose audio command containing %q, got %q", want, joined)
 		}

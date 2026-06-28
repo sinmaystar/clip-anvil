@@ -61,9 +61,13 @@
 ### M7.3
 
 - 先写阶段实施计划，明确 TimelinePlan 音轨结构、Composer staging、ffmpeg filter graph、sandbox job 记录和 final artifact 回填。
+- 自动化 smoke 使用 `scripts/smoke-m7-3-audio-composer.sh` 生成本地 2 段测试视频、voiceover 和 BGM fixture，跑真实 ffmpeg 混音，并用 ffprobe 断言最终 MP4 含 AAC 音轨。
+- 真实 `seed-audio-1.0` 付费 smoke 仍需单独执行；第一版自动验收不依赖付费外部调用。
 - 验证命令：
   - `make server-build`
   - `make server-test`
+  - `bash -n scripts/smoke-m7-3-audio-composer.sh`
+  - `./scripts/smoke-m7-3-audio-composer.sh`
   - `git diff --check`
 - 必须补一个最小端到端 smoke：2-3 个分镜视频 + generated voiceover + generated BGM -> final video。
 
