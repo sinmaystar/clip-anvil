@@ -200,7 +200,7 @@ Expected: PASS.
 - Modify: `apps/server/internal/agent/tools/composer_native.go`
 - Modify tests: `apps/server/internal/agent/tools/composer_tools_test.go`
 
-- [ ] **Step 1: Write failing renderer tests**
+- [x] **Step 1: Write failing renderer tests**
 
 Add tests proving:
 - `render_timeline_template` accepts a plan with video `segments` and `audio_tracks`.
@@ -218,7 +218,7 @@ Run:
 
 Expected: FAIL because `timelineWorkspacePaths` and `concatFFmpegArgs` ignore audio tracks.
 
-- [ ] **Step 2: Add timeline parser helpers**
+- [x] **Step 2: Add timeline parser helpers**
 
 Add structured parser helpers inside `composer_native.go`:
 - `timelineSegments(plan)`
@@ -228,7 +228,7 @@ Add structured parser helpers inside `composer_native.go`:
 
 Validate all workspace paths with `path.Clean` and `/workspace/` prefix.
 
-- [ ] **Step 3: Build deterministic ffmpeg audio filter graph**
+- [x] **Step 3: Build deterministic ffmpeg audio filter graph**
 
 Implement `timelineFFmpegArgs(plan, outputPath)`:
 - video inputs first, audio inputs after video inputs;
@@ -242,7 +242,7 @@ Implement `timelineFFmpegArgs(plan, outputPath)`:
 
 Keep a no-audio fallback that preserves current behavior for existing video-only timeline plans.
 
-- [ ] **Step 4: Verify Task 3**
+- [x] **Step 4: Verify Task 3**
 
 Run:
 

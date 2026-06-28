@@ -91,6 +91,60 @@ func TestRenderTimelineTemplateRunsSandboxConcat(t *testing.T) {
 	}
 }
 
+func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
+	sandbox := &fakeCompositionSandbox{}
+	tool := NewRenderTimelineTemplateNativeTool(NewSandboxTimelineTemplateRenderer(sandbox))
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		TaskID:      uuidWithByte(2),
+		ScopeType:   "final_output",
+		ScopeID:     uuidWithByte(3),
+	})
+	got, err := tool.InvokableRun(ctx, `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"template_key":"concat_with_fades",
+		"plan":{
+			"segments":[
+				{"id":"shot-01","workspace_path":"/workspace/input/a.mp4","duration_sec":4.2},
+				{"id":"shot-02","workspace_path":"/workspace/input/b.mp4","duration_sec":4.0}
+			],
+			"audio_tracks":[
+				{"id":"voiceover-main","role":"voiceover","workspace_path":"/workspace/input/voiceover.mp3","start_sec":0,"duration_sec":8.2,"volume":1,"fade_in_sec":0.05,"fade_out_sec":0.1},
+				{"id":"bgm-main","role":"bgm","workspace_path":"/workspace/input/bgm.mp3","start_sec":0,"duration_sec":8.2,"volume":0.28,"fade_in_sec":0.5,"fade_out_sec":1.2,"ducking":{"sidechain_role":"voiceover","threshold":0.08,"ratio":8,"attack_ms":20,"release_ms":250}}
+			],
+			"output":{"workspace_path":"/workspace/output/final-audio.mp4","format":"mp4","audio_codec":"aac"}
+		}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("render_timeline_template failed: %s", got)
+	}
+	args := strings.Join(sandbox.ffmpegInput.Args, " ")
+	for _, want := range []string{
+		"/workspace/input/a.mp4",
+		"/workspace/input/b.mp4",
+		"/workspace/input/voiceover.mp3",
+		"/workspace/input/bgm.mp3",
+		"concat=n=2:v=1:a=0",
+		"atrim",
+		"volume=1.000",
+		"volume=0.280",
+		"afade=t=in:st=0:d=0.500",
+		"sidechaincompress",
+		"-map [vout]",
+		"-map [aout]",
+		"-c:a aac",
+		"-shortest",
+		"/workspace/output/final-audio.mp4",
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("ffmpeg args %q missing %q", args, want)
+		}
+	}
+}
+
 func TestSubmitCompositionArtifactCreatesNodeUploadsAndPersists(t *testing.T) {
 	store := &fakeCompositionArtifactStore{}
 	uploader := &fakeCompositionOutputUploader{
