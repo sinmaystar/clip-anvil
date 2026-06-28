@@ -1,8 +1,10 @@
 package composer
 
 import (
+	"context"
 	"errors"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -83,6 +85,7 @@ type GraphInput struct {
 type GraphOutput struct {
 	Output        CompositionOutput
 	CheckpointKey string
+	AssistantText string
 }
 
 type CompositionInput struct {
@@ -98,11 +101,32 @@ type CompositionInput struct {
 }
 
 type CompositionOutput struct {
-	Status            string `json:"status"`
-	TimelinePlanID    string `json:"timeline_plan_id,omitempty"`
-	NodeID            string `json:"node_id"`
-	GenerationJobID   string `json:"generation_job_id"`
-	ArtifactVersionID string `json:"artifact_version_id"`
-	SandboxJobID      string `json:"sandbox_job_id,omitempty"`
-	OperationType     string `json:"operation_type"`
+	Status            string                    `json:"status"`
+	TimelinePlanID    string                    `json:"timeline_plan_id,omitempty"`
+	NodeID            string                    `json:"node_id"`
+	GenerationJobID   string                    `json:"generation_job_id"`
+	ArtifactVersionID string                    `json:"artifact_version_id"`
+	SandboxJobID      string                    `json:"sandbox_job_id,omitempty"`
+	OperationType     string                    `json:"operation_type"`
+	SameTurnMessages  []ComposerSameTurnMessage `json:"same_turn_messages,omitempty"`
+}
+
+type ToolResponder interface {
+	Respond(ctx context.Context, context Context) (ComposerTurnOutput, error)
+}
+
+type ComposerTurnOutput struct {
+	AssistantText string
+	Result        CompositionOutput
+	Metadata      map[string]any
+	ModelMessage  *schema.Message
+}
+
+type ComposerSameTurnMessage struct {
+	Role          string         `json:"role"`
+	MessageType   string         `json:"message_type"`
+	Content       string         `json:"content"`
+	ToolCallID    string         `json:"tool_call_id,omitempty"`
+	ToolName      string         `json:"tool_name,omitempty"`
+	ToolArguments map[string]any `json:"tool_arguments,omitempty"`
 }

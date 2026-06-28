@@ -354,6 +354,67 @@ func (q *Queries) ListPendingProducerSignals(ctx context.Context, arg ListPendin
 	return items, nil
 }
 
+const listPendingProducerSignalsByThread = `-- name: ListPendingProducerSignalsByThread :many
+SELECT id, workspace_id, producer_thread_id, source_role, source_task_id, source_thread_id, signal_type, scope_type, scope_id, render_plan_id, message_id, status, priority, dedupe_key, payload, claimed_by_task_id, claimed_at, processed_by_task_id, processed_at, last_error, created_at, updated_at, semantic_key, display_name
+FROM producer_pending_signal
+WHERE workspace_id = $1
+  AND producer_thread_id = $2
+  AND status IN ('pending', 'claimed', 'failed')
+ORDER BY priority ASC, created_at ASC
+LIMIT $3
+`
+
+type ListPendingProducerSignalsByThreadParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	ProducerThreadID pgtype.UUID `json:"producer_thread_id"`
+	Limit            int32       `json:"limit"`
+}
+
+func (q *Queries) ListPendingProducerSignalsByThread(ctx context.Context, arg ListPendingProducerSignalsByThreadParams) ([]ProducerPendingSignal, error) {
+	rows, err := q.db.Query(ctx, listPendingProducerSignalsByThread, arg.WorkspaceID, arg.ProducerThreadID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProducerPendingSignal{}
+	for rows.Next() {
+		var i ProducerPendingSignal
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProducerThreadID,
+			&i.SourceRole,
+			&i.SourceTaskID,
+			&i.SourceThreadID,
+			&i.SignalType,
+			&i.ScopeType,
+			&i.ScopeID,
+			&i.RenderPlanID,
+			&i.MessageID,
+			&i.Status,
+			&i.Priority,
+			&i.DedupeKey,
+			&i.Payload,
+			&i.ClaimedByTaskID,
+			&i.ClaimedAt,
+			&i.ProcessedByTaskID,
+			&i.ProcessedAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SemanticKey,
+			&i.DisplayName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markProducerPendingSignalIgnored = `-- name: MarkProducerPendingSignalIgnored :one
 UPDATE producer_pending_signal
 SET status = 'ignored',

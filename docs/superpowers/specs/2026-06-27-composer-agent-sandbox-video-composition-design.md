@@ -317,8 +317,9 @@ Producer executor 当前会自动把 `worker_generation_completed`、`review_com
 新建或重写：
 
 - `apps/server/internal/agent/composer/context_loader.go`
-- `apps/server/internal/agent/composer/native_tool_loop.go`
+- `apps/server/internal/agent/composer/graph.go` 中的 `composer_timeline` native tool loop
 - `apps/server/internal/agent/composer/model_responder.go`
+- `apps/server/internal/agent/composer/tool_context_provider.go`
 - `apps/server/internal/agent/composer/system_prompt.go`
 - `apps/server/internal/agent/tools/dispatch_composer_native.go`
 - `apps/server/internal/agent/tools/composition_*_native.go`

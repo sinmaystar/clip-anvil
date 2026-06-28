@@ -12,6 +12,7 @@ import (
 
 	agentidentity "github.com/sinmaystar/clip-anvil/internal/agent/identity"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -19,6 +20,17 @@ type DispatchComposerNativeTool struct {
 	runtime  ComposeRuntime
 	enqueuer ComposerTaskEnqueuer
 	resolver ComposerSourceResolver
+}
+
+type ComposeRuntime interface {
+	GetOrCreateComposerThread(ctx context.Context, workspaceID pgtype.UUID) (db.AgentThread, error)
+	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
+	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
+	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
+}
+
+type ComposerTaskEnqueuer interface {
+	EnqueueComposerTask(ctx context.Context, task db.AgentTask)
 }
 
 type ComposerSourceResolver interface {
@@ -97,6 +109,9 @@ func (t DispatchComposerNativeTool) InvokableRun(ctx context.Context, raw string
 	if err != nil {
 		return NaturalToolError("dispatch_composer", err.Error(), "请确认 Composer task 可创建后重试。"), nil
 	}
+	if err := t.appendDelegationMessage(ctx, runtimeContext.WorkspaceID, thread.ID, task.ID, sourceID, sourceKey, taskInput); err != nil {
+		return NaturalToolError("dispatch_composer", err.Error(), "请确认 Composer thread message 可写入后重试。"), nil
+	}
 	_, _ = t.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: runtimeContext.WorkspaceID,
 		ThreadID:    thread.ID,
@@ -122,6 +137,50 @@ func (t DispatchComposerNativeTool) InvokableRun(ctx context.Context, raw string
 		Items: items,
 		Next:  "Composer 任务已入队。请等待 composition_completed、composition_blocked 或 composition_failed signal，不要把派发结果当作最终视频已完成。",
 	}.String(), nil
+}
+
+func (t DispatchComposerNativeTool) appendDelegationMessage(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID, taskID pgtype.UUID, sourceID pgtype.UUID, sourceKey string, taskInput map[string]any) error {
+	text := composerDelegationText(sourceID, sourceKey, taskInput)
+	content, err := uimessage.BuildUserMessageContent(uimessage.UserMessageInput{Text: text})
+	if err != nil {
+		return err
+	}
+	_, err = t.runtime.AppendMessage(ctx, agentruntime.AppendMessageParams{
+		WorkspaceID: workspaceID,
+		ThreadID:    threadID,
+		Role:        "user",
+		MessageType: "text",
+		Content:     content,
+		RawMessage: mustJSON(map[string]any{
+			"schema":      "clipanvil.agent.delegation.v1",
+			"target_role": "composer",
+			"scope_type":  "final_output",
+			"scope_id":    uuidString(sourceID),
+			"scope_key":   sourceKey,
+			"task_input":  taskInput,
+		}),
+		TaskID: taskID,
+	})
+	return err
+}
+
+func composerDelegationText(sourceID pgtype.UUID, sourceKey string, taskInput map[string]any) string {
+	lines := []string{
+		"Producer 派发 Composer 任务。",
+		"- scope: final_output",
+	}
+	if strings.TrimSpace(sourceKey) != "" {
+		lines = append(lines, "- source_ref: "+objectLabel(agentidentity.ObjectMediaNode, sourceKey))
+	} else {
+		lines = append(lines, "- source_node_id: "+uuidString(sourceID))
+	}
+	if templateKey, _ := taskInput["template_key"].(string); strings.TrimSpace(templateKey) != "" {
+		lines = append(lines, "- template: "+strings.TrimSpace(templateKey))
+	}
+	if instructions, _ := taskInput["instructions"].(string); strings.TrimSpace(instructions) != "" {
+		lines = append(lines, "- instructions: "+strings.TrimSpace(instructions))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func validateDispatchComposerInput(input DispatchComposerInput) error {

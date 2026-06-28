@@ -795,6 +795,26 @@ func (s *Service) ListPendingProducerSignals(ctx context.Context, workspaceID pg
 	})
 }
 
+func (s *Service) ListPendingProducerSignalsByThread(ctx context.Context, workspaceID, producerThreadID pgtype.UUID, limit int32) ([]db.ProducerPendingSignal, error) {
+	if s == nil || s.queries == nil {
+		return nil, ErrInvalidConfig
+	}
+	if !workspaceID.Valid || !producerThreadID.Valid {
+		return nil, ErrInvalidRequest
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	return s.queries.ListPendingProducerSignalsByThread(ctx, db.ListPendingProducerSignalsByThreadParams{
+		WorkspaceID:      workspaceID,
+		ProducerThreadID: producerThreadID,
+		Limit:            limit,
+	})
+}
+
 type UpsertCheckpointParams struct {
 	Key         string
 	WorkspaceID pgtype.UUID

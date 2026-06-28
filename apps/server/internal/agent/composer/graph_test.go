@@ -3,74 +3,41 @@ package composer
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
+	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
-	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
-func TestComposerGraphSubmitsCompositionAndPersistsCheckpoint(t *testing.T) {
-	sourceNode := db.MediaNode{ID: uuidWithByte(21), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeVideo, Title: "shot-01 shot video", CurrentVersionID: uuidWithByte(31), AssetID: uuidWithByte(41)}
-	store := composerStoreWithSourceVideo(sourceNode)
-	runtime := &fakeComposerRuntime{}
-	productionService := &fakeComposerProduction{
-		result: production.RunResult{
-			Node:    db.MediaNode{ID: uuidWithByte(50), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeVideo},
-			Job:     db.GenerationJob{ID: uuidWithByte(60), TargetNodeID: uuidWithByte(50), OperationType: "compose_final_video", Status: db.JobStatusQueued},
-			Version: db.ArtifactVersion{ID: uuidWithByte(70), NodeID: uuidWithByte(50), JobID: uuidWithByte(60), Status: db.JobStatusQueued},
-		},
-	}
-	graph, err := NewGraph(GraphConfig{
-		Runtime:    runtime,
-		Store:      store,
-		Production: productionService,
+func TestComposerGraphRequiresNativeToolLoopDependencies(t *testing.T) {
+	_, err := NewGraph(GraphConfig{
+		Runtime:    &fakeComposerRuntime{},
+		Store:      &fakeComposerStore{},
+		Production: &fakeComposerProduction{result: production.RunResult{Node: db.MediaNode{ID: uuidWithByte(50)}, Job: db.GenerationJob{ID: uuidWithByte(60)}, Version: db.ArtifactVersion{ID: uuidWithByte(70)}}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := graph.Run(context.Background(), GraphInput{
-		WorkspaceID: uuidWithByte(1),
-		ThreadID:    uuidWithByte(2),
-		TaskID:      uuidWithByte(10),
-		Input:       CompositionInput{VideoNodeRefs: []string{"shot-01 shot video"}, Strategy: "cut fast"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if out.Output.OperationType != "compose_final_video" || out.Output.Status != "submitted" {
-		t.Fatalf("output = %#v", out.Output)
-	}
-	if runtime.checkpointKey == "" {
-		t.Fatal("checkpoint was not persisted")
-	}
-	if runtime.threadCheckpoint != runtime.checkpointKey {
-		t.Fatalf("thread checkpoint = %q, want %q", runtime.threadCheckpoint, runtime.checkpointKey)
-	}
-	var checkpoint map[string]any
-	if err := json.Unmarshal(runtime.checkpointValue, &checkpoint); err != nil {
-		t.Fatal(err)
-	}
-	if checkpoint["node_id"] == "" || checkpoint["generation_job_id"] == "" {
-		t.Fatalf("checkpoint = %#v", checkpoint)
-	}
-	if len(runtime.eventsByType["composition_submitted"]) != 1 {
-		t.Fatalf("events = %#v", runtime.eventsByType)
+	if err == nil {
+		t.Fatal("expected missing native Composer tool-loop dependencies to fail")
 	}
 }
 
-func TestComposerGraphCompileCapturesGraphInfo(t *testing.T) {
+func TestComposerGraphUsesNativeToolLoop(t *testing.T) {
 	registry := agenteino.NewGraphInfoRegistry()
-	_, err := NewGraph(GraphConfig{
-		Runtime:    &fakeComposerRuntime{},
-		Store:      composerStoreWithSourceVideo(sourceShotVideoNode(21, "shot-01 shot video")),
-		Production: &fakeComposerProduction{result: production.RunResult{Node: db.MediaNode{ID: uuidWithByte(50)}, Job: db.GenerationJob{ID: uuidWithByte(60)}, Version: db.ArtifactVersion{ID: uuidWithByte(70)}}},
+	nativeTools := fakeComposerNativeRegistry(t, &runtimeCaptureTool{})
+	graph, err := NewGraph(GraphConfig{
+		Loader:             fakeComposerLoader{context: Context{WorkspaceID: uuidWithByte(1), SourceStoryboardNodeID: uuidWithByte(9), Summary: "context"}},
+		Runtime:            &fakeComposerRuntime{},
+		Store:              &fakeComposerStore{},
+		Production:         &fakeComposerProduction{result: production.RunResult{Node: db.MediaNode{ID: uuidWithByte(50)}, Job: db.GenerationJob{ID: uuidWithByte(60)}, Version: db.ArtifactVersion{ID: uuidWithByte(70)}}},
+		ToolResponder:      fakeComposerToolResponder{},
+		NativeToolRegistry: nativeTools,
 		CompileCallbacks: []compose.GraphCompileCallback{
 			registry.CompileCallback(),
 		},
@@ -78,149 +45,206 @@ func TestComposerGraphCompileCapturesGraphInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	info, ok := registry.Get("composer_final")
+	_ = graph
+	info, ok := registry.Get("composer_timeline")
 	if !ok {
-		t.Fatal("composer graph info was not captured")
+		t.Fatal("composer_timeline graph info was not captured")
 	}
-	for _, node := range []string{"load_composition_context", "create_final_node", "submit_composition_intent", "persist_checkpoint_and_events"} {
-		if _, ok := info.Nodes[node]; !ok {
-			t.Fatalf("node %q missing from graph info", node)
+	for _, want := range []string{"load_context", "prepare_turn_state", "before_model", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "finalize_response"} {
+		if _, ok := info.Nodes[want]; !ok {
+			t.Fatalf("composer graph missing node %q", want)
 		}
 	}
 }
 
-func TestComposerGraphPlacesFinalVideoBelowShotRows(t *testing.T) {
-	sourceNodes := []db.MediaNode{
-		sourceShotVideoNode(21, "shot-01 shot video"),
-		sourceShotVideoNode(22, "shot-02 shot video"),
-		sourceShotVideoNode(23, "shot-03 shot video"),
-		sourceShotVideoNode(24, "shot-04 shot video"),
-		sourceShotVideoNode(25, "shot-05 shot video"),
-	}
-	store := composerStoreWithSourceVideo(sourceNodes...)
+func TestComposerNativeToolLoopInjectsRuntime(t *testing.T) {
+	capture := &runtimeCaptureTool{}
+	nativeTools := fakeComposerNativeRegistry(t, capture)
 	graph, err := NewGraph(GraphConfig{
-		Runtime:    &fakeComposerRuntime{},
-		Store:      store,
-		Production: &fakeComposerProduction{result: production.RunResult{Node: db.MediaNode{ID: uuidWithByte(50)}, Job: db.GenerationJob{ID: uuidWithByte(60)}, Version: db.ArtifactVersion{ID: uuidWithByte(70)}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = graph.Run(context.Background(), GraphInput{
-		WorkspaceID: uuidWithByte(1),
-		ThreadID:    uuidWithByte(2),
-		TaskID:      uuidWithByte(10),
-		Input: CompositionInput{VideoNodeRefs: []string{
-			"shot-01 shot video",
-			"shot-02 shot video",
-			"shot-03 shot video",
-			"shot-04 shot video",
-			"shot-05 shot video",
+		Loader: fakeComposerLoader{context: Context{
+			WorkspaceID:            uuidWithByte(1),
+			SourceStoryboardNodeID: uuidWithByte(9),
+			Summary:                "context",
 		}},
+		Runtime:            &fakeComposerRuntime{},
+		Store:              &fakeComposerStore{},
+		Production:         &fakeComposerProduction{},
+		ToolResponder:      scriptedComposerResponder{},
+		NativeToolRegistry: nativeTools,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.createdNode.CanvasY < 1700 {
-		t.Fatalf("final video y = %v, want below all shot rows", store.createdNode.CanvasY)
-	}
-}
-
-func TestComposerGraphDerivesVideoRefsFromShotWinners(t *testing.T) {
-	shot1 := db.Shot{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), SortOrder: 2, Title: "shot 2"}
-	shot2 := db.Shot{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), SortOrder: 1, Title: "shot 1"}
-	node1 := sourceShotVideoNode(21, "shot-02 shot video")
-	node1.SemanticKey = "shot_02.shot_video.r3.node"
-	node1.ShotID = shot1.ID
-	node1.Metadata = mustJSON(map[string]any{"agent_artifact_kind": "shot_video"})
-	node2 := sourceShotVideoNode(22, "shot-01 shot video")
-	node2.SemanticKey = "shot_01.shot_video.r1.node"
-	node2.ShotID = shot2.ID
-	node2.Metadata = mustJSON(map[string]any{"agent_artifact_kind": "shot_video"})
-	staleDuplicate := sourceShotVideoNode(23, "shot-02 shot video")
-	staleDuplicate.SemanticKey = "shot_02.shot_video.r1.node"
-	staleDuplicate.ShotID = shot1.ID
-	staleDuplicate.CurrentVersionID = pgtype.UUID{}
-	staleDuplicate.Metadata = mustJSON(map[string]any{"agent_artifact_kind": "shot_video"})
-	store := composerStoreWithSourceVideo(node1, node2, staleDuplicate)
-	store.shots = []db.Shot{shot1, shot2}
-	store.nodesByShot = map[pgtype.UUID][]db.MediaNode{
-		shot1.ID: {staleDuplicate, node1},
-		shot2.ID: {node2},
-	}
-	productionService := &fakeComposerProduction{
-		result: production.RunResult{
-			Node:    db.MediaNode{ID: uuidWithByte(50), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeVideo},
-			Job:     db.GenerationJob{ID: uuidWithByte(60), TargetNodeID: uuidWithByte(50), OperationType: "compose_final_video", Status: db.JobStatusQueued},
-			Version: db.ArtifactVersion{ID: uuidWithByte(70), NodeID: uuidWithByte(50), JobID: uuidWithByte(60), Status: db.JobStatusQueued},
-		},
-	}
-	graph, err := NewGraph(GraphConfig{
-		Runtime:    &fakeComposerRuntime{},
-		Store:      store,
-		Production: productionService,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = graph.Run(context.Background(), GraphInput{
+	out, err := graph.Run(context.Background(), GraphInput{
 		WorkspaceID: uuidWithByte(1),
 		ThreadID:    uuidWithByte(2),
-		TaskID:      uuidWithByte(10),
-		Input: CompositionInput{
-			SourceStoryboardNodeID: "21000000-0000-0000-0000-000000000000",
-			Instructions:           "把已完成分镜拼成 20 秒营销视频。",
-			Strategy:               "把已完成分镜拼成 20 秒营销视频。",
-			TemplateKey:            "simple_concat",
-		},
+		TaskID:      uuidWithByte(3),
+		Input:       CompositionInput{SourceStoryboardNodeID: uuidString(uuidWithByte(9)), Instructions: "render final"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(productionService.intent.InputRefs) != 2 {
-		t.Fatalf("input refs = %#v", productionService.intent.InputRefs)
+	if capture.runtime.WorkspaceID != uuidWithByte(1) || capture.runtime.ThreadID != uuidWithByte(2) || capture.runtime.TaskID != uuidWithByte(3) {
+		t.Fatalf("runtime = %#v", capture.runtime)
 	}
-	if productionService.intent.InputRefs[0].NodeID != node2.ID || productionService.intent.InputRefs[1].NodeID != node1.ID {
-		t.Fatalf("input refs order = %#v", productionService.intent.InputRefs)
+	if capture.runtime.ScopeType != "final_output" || capture.runtime.ScopeID != uuidWithByte(9) {
+		t.Fatalf("scope runtime = %#v", capture.runtime)
 	}
-	if productionService.intent.Semantic.ArtifactKind != "final_video" {
-		t.Fatalf("intent semantic = %#v", productionService.intent.Semantic)
+	if out.Output.Status != "completed" || out.Output.TimelinePlanID != "timeline-1" {
+		t.Fatalf("output = %#v", out.Output)
 	}
-	var metadata map[string]any
-	if err := json.Unmarshal(store.createdNode.Metadata, &metadata); err != nil {
+	if len(out.Output.SameTurnMessages) != 2 {
+		t.Fatalf("same-turn messages = %#v", out.Output.SameTurnMessages)
+	}
+}
+
+func TestComposerNativeToolLoopEmitsTraceSinkEvents(t *testing.T) {
+	capture := &runtimeCaptureTool{}
+	traceSink := &fakeComposerTraceSink{}
+	nativeTools := fakeComposerNativeRegistry(t, capture)
+	graph, err := NewGraph(GraphConfig{
+		Loader: fakeComposerLoader{context: Context{
+			WorkspaceID:            uuidWithByte(1),
+			SourceStoryboardNodeID: uuidWithByte(9),
+			Summary:                "context",
+		}},
+		Runtime:            &fakeComposerRuntime{},
+		Store:              &fakeComposerStore{},
+		Production:         &fakeComposerProduction{},
+		ToolResponder:      scriptedComposerResponder{},
+		NativeToolRegistry: nativeTools,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata["composer_template_key"] != "simple_concat" || metadata["source_storyboard_node_id"] == "" {
-		t.Fatalf("metadata = %#v", metadata)
+	ctx := agenttools.WithNativeToolTraceSink(context.Background(), traceSink)
+	if _, err := graph.Run(ctx, GraphInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		Input:       CompositionInput{SourceStoryboardNodeID: uuidString(uuidWithByte(9)), Instructions: "render final"},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if store.createdNode.SemanticKey == "" || store.createdNode.ArtifactKind != "final_video" {
-		t.Fatalf("created final node semantic = key %q kind %q", store.createdNode.SemanticKey, store.createdNode.ArtifactKind)
+	if len(traceSink.started) != 1 || len(traceSink.completed) != 1 {
+		t.Fatalf("trace events started=%#v completed=%#v", traceSink.started, traceSink.completed)
 	}
-}
-
-func composerStoreWithSourceVideo(sourceNodes ...db.MediaNode) *fakeComposerStore {
-	versions := map[pgtype.UUID]db.ArtifactVersion{}
-	assets := map[pgtype.UUID]db.MediaAsset{}
-	for _, sourceNode := range sourceNodes {
-		versions[sourceNode.CurrentVersionID] = db.ArtifactVersion{ID: sourceNode.CurrentVersionID, WorkspaceID: sourceNode.WorkspaceID, NodeID: sourceNode.ID, AssetID: sourceNode.AssetID, InputHash: "hash-1", Status: db.JobStatusSucceeded}
-		assets[sourceNode.AssetID] = db.MediaAsset{ID: sourceNode.AssetID, WorkspaceID: sourceNode.WorkspaceID, Type: db.AssetTypeVideo, Mime: "video/mp4", StorageUrl: pgtypeText("workspace/final-input.mp4")}
+	if traceSink.started[0].runtime.ThreadID != uuidWithByte(2) || traceSink.started[0].trace.ToolName != "capture_runtime" {
+		t.Fatalf("started trace = %#v", traceSink.started[0])
 	}
-	return &fakeComposerStore{
-		nodes:    sourceNodes,
-		versions: versions,
-		assets:   assets,
+	if !strings.Contains(traceSink.completed[0].trace.Result, `"ok":"true"`) {
+		t.Fatalf("completed trace = %#v", traceSink.completed[0])
 	}
 }
 
-func sourceShotVideoNode(idByte byte, title string) db.MediaNode {
-	return db.MediaNode{ID: uuidWithByte(idByte), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeVideo, Title: title, CurrentVersionID: uuidWithByte(idByte + 20), AssetID: uuidWithByte(idByte + 40)}
+func TestFinalizeComposerOutputUsesSubmitArtifactToolResult(t *testing.T) {
+	out := finalizeComposerOutput(composerLoopState{
+		Context: Context{SameTurnMessages: []ComposerSameTurnMessage{
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				ToolName:    "submit_composition_artifact",
+				Content:     `{"output_node_id":"node-1","generation_job_id":"job-1","artifact_version_id":"version-1","timeline_plan_id":"timeline-1","sandbox_job_id":"sandbox-1"}`,
+			},
+		}},
+		LastOutput: ComposerTurnOutput{Result: CompositionOutput{OperationType: "compose_final_video"}},
+	})
+	if out.Status != "completed" || out.NodeID != "node-1" || out.GenerationJobID != "job-1" || out.ArtifactVersionID != "version-1" || out.TimelinePlanID != "timeline-1" || out.SandboxJobID != "sandbox-1" {
+		t.Fatalf("output = %#v", out)
+	}
 }
 
-func pgtypeText(value string) pgtype.Text {
-	return pgtype.Text{String: value, Valid: true}
+type fakeComposerToolResponder struct{}
+
+func (fakeComposerToolResponder) Respond(context.Context, Context) (ComposerTurnOutput, error) {
+	return ComposerTurnOutput{
+		AssistantText: "Composer tool loop finished.",
+		ModelMessage:  &schema.Message{Role: schema.Assistant, Content: "Composer tool loop finished."},
+	}, nil
 }
 
-var _ = agentruntime.UpsertCheckpointParams{}
+type scriptedComposerResponder struct{}
+
+func (scriptedComposerResponder) Respond(_ context.Context, context Context) (ComposerTurnOutput, error) {
+	if len(context.SameTurnMessages) == 0 {
+		return ComposerTurnOutput{
+			AssistantText: "Calling Composer tool.",
+			ModelMessage: &schema.Message{Role: schema.Assistant, Content: "Calling Composer tool.", ToolCalls: []schema.ToolCall{{
+				ID:   "call-runtime",
+				Type: "function",
+				Function: schema.FunctionCall{
+					Name:      "capture_runtime",
+					Arguments: `{}`,
+				},
+			}}},
+		}, nil
+	}
+	return ComposerTurnOutput{
+		AssistantText: "Composer completed.",
+		Result: CompositionOutput{
+			Status:         "completed",
+			TimelinePlanID: "timeline-1",
+			NodeID:         "node-1",
+			OperationType:  "compose_final_video",
+		},
+		ModelMessage: &schema.Message{Role: schema.Assistant, Content: "Composer completed."},
+	}, nil
+}
+
+type runtimeCaptureTool struct {
+	runtime agenttools.NativeRuntimeContext
+}
+
+func (t *runtimeCaptureTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: "capture_runtime", Desc: "capture Composer native runtime"}, nil
+}
+
+func (t *runtimeCaptureTool) InvokableRun(ctx context.Context, raw string, _ ...einotool.Option) (string, error) {
+	runtime, ok := agenttools.NativeRuntimeFromContext(ctx)
+	if !ok {
+		return "", nil
+	}
+	t.runtime = runtime
+	result := map[string]string{"ok": "true"}
+	encoded, _ := json.Marshal(result)
+	return string(encoded), nil
+}
+
+type fakeComposerTraceSink struct {
+	started   []fakeComposerTraceEvent
+	completed []fakeComposerTraceEvent
+}
+
+type fakeComposerTraceEvent struct {
+	runtime agenttools.NativeRuntimeContext
+	trace   agenttools.NativeToolTrace
+}
+
+func (f *fakeComposerTraceSink) NativeToolCallStarted(_ context.Context, runtime agenttools.NativeRuntimeContext, trace agenttools.NativeToolTrace) error {
+	f.started = append(f.started, fakeComposerTraceEvent{runtime: runtime, trace: trace})
+	return nil
+}
+
+func (f *fakeComposerTraceSink) NativeToolCallCompleted(_ context.Context, runtime agenttools.NativeRuntimeContext, trace agenttools.NativeToolTrace) error {
+	f.completed = append(f.completed, fakeComposerTraceEvent{runtime: runtime, trace: trace})
+	return nil
+}
+
+type fakeComposerLoader struct {
+	context Context
+}
+
+func (f fakeComposerLoader) LoadCompositionContext(context.Context, Request) (Context, error) {
+	return f.context, nil
+}
+
+func fakeComposerNativeRegistry(t *testing.T, tools ...agenttools.NativeTool) *agenttools.NativeRegistry {
+	t.Helper()
+	registry, err := agenttools.NewNativeRegistry(tools...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registry
+}
+
+var _ = pgtype.UUID{}

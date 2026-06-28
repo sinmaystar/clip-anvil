@@ -18,56 +18,6 @@ import (
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
-func TestComposerCreatesFinalVideoNodeAndSubmitsComposeIntent(t *testing.T) {
-	sourceNode := db.MediaNode{ID: uuidWithByte(21), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeVideo, Title: "shot-01 shot video", CurrentVersionID: uuidWithByte(31), AssetID: uuidWithByte(41)}
-	store := &fakeComposerStore{
-		nodes: []db.MediaNode{sourceNode},
-		versions: map[pgtype.UUID]db.ArtifactVersion{
-			uuidWithByte(31): {ID: uuidWithByte(31), WorkspaceID: uuidWithByte(1), NodeID: uuidWithByte(21), AssetID: uuidWithByte(41), InputHash: "hash-1", Status: db.JobStatusSucceeded},
-		},
-		assets: map[pgtype.UUID]db.MediaAsset{
-			uuidWithByte(41): {ID: uuidWithByte(41), WorkspaceID: uuidWithByte(1), Type: db.AssetTypeVideo, Mime: "video/mp4", StorageUrl: pgtype.Text{String: "workspace/final-input.mp4", Valid: true}},
-		},
-	}
-	runtime := &fakeComposerRuntime{}
-	productionService := &fakeComposerProduction{
-		result: production.RunResult{
-			Node:    db.MediaNode{ID: uuidWithByte(50), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeVideo},
-			Job:     db.GenerationJob{ID: uuidWithByte(60), TargetNodeID: uuidWithByte(50), OperationType: "compose_final_video", Status: db.JobStatusQueued},
-			Version: db.ArtifactVersion{ID: uuidWithByte(70), NodeID: uuidWithByte(50), JobID: uuidWithByte(60), Status: db.JobStatusQueued},
-		},
-	}
-	graph, err := NewGraph(GraphConfig{Runtime: runtime, Store: store, Production: productionService, CheckPointStore: fakeEinoCheckpointStore{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
-	task := composerTaskWithInput(t, CompositionInput{VideoNodeRefs: []string{"shot-01 shot video"}})
-
-	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
-		t.Fatal(err)
-	}
-	if store.createdNode.NodeType != db.NodeTypeVideo || store.createdNode.OperationType != "compose_final_video" {
-		t.Fatalf("created node = %#v", store.createdNode)
-	}
-	var metadata map[string]any
-	if err := json.Unmarshal(store.createdNode.Metadata, &metadata); err != nil {
-		t.Fatal(err)
-	}
-	if metadata["agent_artifact_kind"] != "final_video" {
-		t.Fatalf("metadata = %#v", metadata)
-	}
-	if productionService.intent.OutputType != "video" || productionService.intent.OperationType != "compose_final_video" {
-		t.Fatalf("intent = %#v", productionService.intent)
-	}
-	if len(productionService.intent.InputRefs) != 1 || productionService.intent.InputRefs[0].NodeID != sourceNode.ID {
-		t.Fatalf("input refs = %#v", productionService.intent.InputRefs)
-	}
-	if !runtime.succeeded {
-		t.Fatal("composer task was not marked succeeded")
-	}
-}
-
 func TestComposerExecutorPassesDeterministicCheckpointID(t *testing.T) {
 	runtime := &fakeComposerRuntime{}
 	graph := &fakeComposerRunner{output: GraphOutput{Output: CompositionOutput{Status: "submitted"}}}
@@ -78,7 +28,7 @@ func TestComposerExecutorPassesDeterministicCheckpointID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "agent:eino:composer_final:01000000-0000-0000-0000-000000000000:02000000-0000-0000-0000-000000000000:0a000000-0000-0000-0000-000000000000"
+	want := "agent:eino:composer_timeline:01000000-0000-0000-0000-000000000000:02000000-0000-0000-0000-000000000000:0a000000-0000-0000-0000-000000000000"
 	if graph.runOptions.CheckPointID != want {
 		t.Fatalf("checkpoint id = %q, want %q", graph.runOptions.CheckPointID, want)
 	}
@@ -131,6 +81,56 @@ func TestComposerExecutorAcceptsDispatchComposerInput(t *testing.T) {
 	}
 }
 
+func TestComposerExecutorPersistsThreadMessages(t *testing.T) {
+	runtime := &fakeComposerRuntime{}
+	graph := &fakeComposerRunner{output: GraphOutput{
+		Output: CompositionOutput{
+			Status: "completed",
+			SameTurnMessages: []ComposerSameTurnMessage{
+				{
+					Role:          "assistant",
+					MessageType:   "tool_call",
+					ToolCallID:    "call_create_plan",
+					ToolName:      "create_timeline_plan",
+					ToolArguments: map[string]any{"template_key": "simple_concat"},
+				},
+				{
+					Role:        "tool",
+					MessageType: "tool_result",
+					ToolCallID:  "call_create_plan",
+					ToolName:    "create_timeline_plan",
+					Content:     `{"timeline_plan_id":"timeline-1"}`,
+				},
+			},
+		},
+		AssistantText: "Composer completed.",
+	}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+	task := composerTaskWithInput(t, CompositionInput{VideoNodeRefs: []string{"shot-01 shot video"}})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.appendedMessages) != 3 {
+		t.Fatalf("appended messages = %#v", runtime.appendedMessages)
+	}
+	if runtime.appendedMessages[0].MessageType != "tool_call" || runtime.appendedMessages[0].Role != "assistant" {
+		t.Fatalf("first message = %#v", runtime.appendedMessages[0])
+	}
+	if runtime.appendedMessages[1].MessageType != "tool_result" || runtime.appendedMessages[1].Role != "tool" {
+		t.Fatalf("second message = %#v", runtime.appendedMessages[1])
+	}
+	if runtime.appendedMessages[2].MessageType != "text" || runtime.appendedMessages[2].Role != "assistant" {
+		t.Fatalf("third message = %#v", runtime.appendedMessages[2])
+	}
+	if !strings.Contains(string(runtime.appendedMessages[2].RawMessage), "Composer completed") {
+		t.Fatalf("assistant raw message = %s", runtime.appendedMessages[2].RawMessage)
+	}
+	if len(runtime.updatedMessages) != 1 {
+		t.Fatalf("updated messages = %#v", runtime.updatedMessages)
+	}
+}
+
 func TestComposerExecutorSignalsProducerWhenCompositionCompletes(t *testing.T) {
 	runtime := &fakeComposerRuntime{producerThread: db.AgentThread{ID: uuidWithByte(90), WorkspaceID: uuidWithByte(1), Role: "producer"}}
 	graph := &fakeComposerRunner{output: GraphOutput{Output: CompositionOutput{
@@ -141,7 +141,8 @@ func TestComposerExecutorSignalsProducerWhenCompositionCompletes(t *testing.T) {
 		SandboxJobID:      "35000000-0000-0000-0000-000000000000",
 		TimelinePlanID:    "36000000-0000-0000-0000-000000000000",
 	}}}
-	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+	enqueuer := &fakeComposerProducerEnqueuer{}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph, ProducerEnqueuer: enqueuer})
 	task := composerTaskWithInput(t, CompositionInput{VideoNodeRefs: []string{"shot-01 shot video"}})
 
 	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
@@ -159,6 +160,50 @@ func TestComposerExecutorSignalsProducerWhenCompositionCompletes(t *testing.T) {
 	}
 	if !strings.Contains(string(signal.Payload), "artifact_version_id") || signal.DedupeKey == "" {
 		t.Fatalf("signal payload/dedupe = %q %q", string(signal.Payload), signal.DedupeKey)
+	}
+	if len(runtime.createdTasks) != 1 {
+		t.Fatalf("created wake tasks = %#v", runtime.createdTasks)
+	}
+	wakeTask := runtime.createdTasks[0]
+	if wakeTask.Role != "producer" || wakeTask.TaskType != "producer_turn" || wakeTask.ThreadID != runtime.producerThread.ID {
+		t.Fatalf("wake task = %#v", wakeTask)
+	}
+	if !strings.Contains(string(wakeTask.Input), "composition_completed") {
+		t.Fatalf("wake task input = %s", wakeTask.Input)
+	}
+	if len(enqueuer.tasks) != 1 || enqueuer.tasks[0].ID != uuidWithByte(111) {
+		t.Fatalf("enqueued producer tasks = %#v", enqueuer.tasks)
+	}
+}
+
+func TestComposerExecutorDoesNotQueueProducerWakeWhenProducerAlreadyActive(t *testing.T) {
+	runtime := &fakeComposerRuntime{
+		producerThread: db.AgentThread{ID: uuidWithByte(90), WorkspaceID: uuidWithByte(1), Role: "producer"},
+		activeTasks: []db.AgentTask{{
+			ID:          uuidWithByte(91),
+			Role:        "producer",
+			TaskType:    "producer_turn",
+			Status:      "running",
+			ThreadID:    uuidWithByte(90),
+			WorkspaceID: uuidWithByte(1),
+		}},
+	}
+	graph := &fakeComposerRunner{output: GraphOutput{Output: CompositionOutput{
+		Status: "completed",
+		NodeID: "32000000-0000-0000-0000-000000000000",
+	}}}
+	enqueuer := &fakeComposerProducerEnqueuer{}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph, ProducerEnqueuer: enqueuer})
+	task := composerTaskWithInput(t, CompositionInput{VideoNodeRefs: []string{"shot-01 shot video"}})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.signals) != 1 {
+		t.Fatalf("signals = %#v", runtime.signals)
+	}
+	if len(runtime.createdTasks) != 0 || len(enqueuer.tasks) != 0 {
+		t.Fatalf("created/enqueued wake tasks = %#v / %#v", runtime.createdTasks, enqueuer.tasks)
 	}
 }
 
@@ -184,6 +229,14 @@ type fakeComposerRuntime struct {
 	eventsByType     map[string][]agentruntime.CreateEventParams
 	producerThread   db.AgentThread
 	signals          []agentruntime.CreateProducerPendingSignalParams
+	activeTasks      []db.AgentTask
+	createdTasks     []agentruntime.CreateTaskParams
+	appendedMessages []agentruntime.AppendMessageParams
+	updatedMessages  []agentruntime.UpdateMessageParams
+}
+
+type fakeComposerProducerEnqueuer struct {
+	tasks []db.AgentTask
 }
 
 type fakeComposerRunner struct {
@@ -191,16 +244,6 @@ type fakeComposerRunner struct {
 	output     GraphOutput
 	runOptions agenteino.RunOptions
 	ctx        context.Context
-}
-
-type fakeEinoCheckpointStore struct{}
-
-func (fakeEinoCheckpointStore) Get(context.Context, string) ([]byte, bool, error) {
-	return nil, false, nil
-}
-
-func (fakeEinoCheckpointStore) Set(context.Context, string, []byte) error {
-	return nil
 }
 
 func (f *fakeComposerRunner) Run(ctx context.Context, input GraphInput, options ...agenteino.RunOptions) (GraphOutput, error) {
@@ -242,6 +285,29 @@ func (f *fakeComposerRuntime) CreateEvent(_ context.Context, params agentruntime
 	return db.AgentEvent{}, nil
 }
 
+func (f *fakeComposerRuntime) AppendMessage(_ context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error) {
+	f.appendedMessages = append(f.appendedMessages, params)
+	return db.AgentMessage{
+		ID:          uuidWithByte(byte(80 + len(f.appendedMessages))),
+		WorkspaceID: params.WorkspaceID,
+		ThreadID:    params.ThreadID,
+		Role:        params.Role,
+		MessageType: params.MessageType,
+		Content:     params.Content,
+		RawMessage:  params.RawMessage,
+		TaskID:      params.TaskID,
+	}, nil
+}
+
+func (f *fakeComposerRuntime) UpdateMessage(_ context.Context, params agentruntime.UpdateMessageParams) (db.AgentMessage, error) {
+	f.updatedMessages = append(f.updatedMessages, params)
+	return db.AgentMessage{
+		ID:         params.ID,
+		Content:    params.Content,
+		RawMessage: params.RawMessage,
+	}, nil
+}
+
 func (f *fakeComposerRuntime) UpsertCheckpoint(_ context.Context, params agentruntime.UpsertCheckpointParams) (db.EinoCheckpoint, error) {
 	f.checkpointKey = params.Key
 	f.checkpointValue = params.Value
@@ -263,6 +329,34 @@ func (f *fakeComposerRuntime) GetOrCreateProducerThread(_ context.Context, works
 func (f *fakeComposerRuntime) CreateProducerPendingSignal(_ context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error) {
 	f.signals = append(f.signals, params)
 	return db.ProducerPendingSignal{ID: uuidWithByte(byte(100 + len(f.signals))), WorkspaceID: params.WorkspaceID, SignalType: params.SignalType}, nil
+}
+
+func (f *fakeComposerRuntime) ListActiveAgentTasksByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error) {
+	out := []db.AgentTask{}
+	for _, task := range f.activeTasks {
+		if task.WorkspaceID == workspaceID {
+			out = append(out, task)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeComposerRuntime) CreateTask(_ context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {
+	f.createdTasks = append(f.createdTasks, params)
+	return db.AgentTask{
+		ID:          uuidWithByte(111),
+		WorkspaceID: params.WorkspaceID,
+		ThreadID:    params.ThreadID,
+		Role:        params.Role,
+		ScopeType:   params.ScopeType,
+		TaskType:    params.TaskType,
+		Status:      "queued",
+		Input:       params.Input,
+	}, nil
+}
+
+func (f *fakeComposerProducerEnqueuer) EnqueueProducerTask(_ context.Context, task db.AgentTask) {
+	f.tasks = append(f.tasks, task)
 }
 
 type fakeComposerStore struct {

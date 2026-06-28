@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	einotool "github.com/cloudwego/eino/components/tool"
@@ -41,15 +42,26 @@ type CompositionSandbox interface {
 
 type CompositionTimelineStore interface {
 	CreateTimelinePlan(ctx context.Context, arg db.CreateTimelinePlanParams) (db.TimelinePlan, error)
+	GetTimelinePlan(ctx context.Context, id pgtype.UUID) (db.TimelinePlan, error)
 	UpdateTimelinePlanStatus(ctx context.Context, arg db.UpdateTimelinePlanStatusParams) (db.TimelinePlan, error)
 }
 
 type CompositionTemplateRenderer interface {
-	RenderTimelineTemplate(ctx context.Context, input RenderTimelineTemplateInput) (RenderTimelineTemplateResult, error)
+	RenderTimelineTemplate(ctx context.Context, runtime NativeRuntimeContext, input RenderTimelineTemplateInput) (RenderTimelineTemplateResult, error)
 }
 
 type CompositionArtifactPersister interface {
 	PersistComposerArtifact(ctx context.Context, input production.ComposerArtifactInput) (production.RunResult, error)
+}
+
+type CompositionArtifactStore interface {
+	CreateAgentGenerationNode(ctx context.Context, params db.CreateAgentGenerationNodeParams) (db.MediaNode, error)
+	GetTimelinePlan(ctx context.Context, id pgtype.UUID) (db.TimelinePlan, error)
+	UpdateTimelinePlanStatus(ctx context.Context, arg db.UpdateTimelinePlanStatusParams) (db.TimelinePlan, error)
+}
+
+type CompositionOutputUploader interface {
+	UploadCompositionOutput(ctx context.Context, input sandbox.UploadCompositionOutputInput) (sandbox.SandboxJobResult, error)
 }
 
 type GetCompositionContextNativeTool struct{ provider CompositionContextProvider }
@@ -59,7 +71,15 @@ type CreateTimelinePlanNativeTool struct{ store CompositionTimelineStore }
 type UpdateTimelinePlanStatusNativeTool struct{ store CompositionTimelineStore }
 type RenderTimelineTemplateNativeTool struct{ renderer CompositionTemplateRenderer }
 type RunFFmpegCommandNativeTool struct{ sandbox CompositionSandbox }
-type SubmitCompositionArtifactNativeTool struct{ persister CompositionArtifactPersister }
+type SubmitCompositionArtifactNativeTool struct {
+	persister CompositionArtifactPersister
+	store     CompositionArtifactStore
+	uploader  CompositionOutputUploader
+}
+
+type SandboxTimelineTemplateRenderer struct {
+	sandbox CompositionSandbox
+}
 
 type GetCompositionContextInput struct {
 	SourceStoryboardNodeID string `json:"source_storyboard_node_id,omitempty" jsonschema_description:"可选兼容字段。来源媒体/故事板节点内部 ID；通常由 dispatch_composer task 自动提供，模型不要自行填写。为空时读取 workspace 下可用于成片的候选素材。"`
@@ -119,12 +139,12 @@ type RunFFmpegCommandToolInput struct {
 }
 
 type SubmitCompositionArtifactInput struct {
-	OutputNodeID   string         `json:"output_node_id" jsonschema:"required" jsonschema_description:"最终成片输出 media_node 内部 ID。必须从 create_timeline_plan 或 render/persist 上下文返回值原样复制。"`
+	OutputNodeID   string         `json:"output_node_id,omitempty" jsonschema_description:"可选。最终成片输出 media_node 内部 ID；通常不要填写，工具会根据 timeline_plan_id 自动创建或复用。"`
 	OutputPath     string         `json:"output_path" jsonschema:"required" jsonschema_description:"sandbox 内 /workspace/output 下的最终视频路径。"`
-	TimelinePlanID string         `json:"timeline_plan_id,omitempty" jsonschema_description:"对应 timeline_plan 内部 ID。必须从 create_timeline_plan 返回结果原样复制。"`
+	TimelinePlanID string         `json:"timeline_plan_id" jsonschema:"required" jsonschema_description:"对应 timeline_plan 内部 ID。必须从 create_timeline_plan 返回结果原样复制；工具会用它自动创建/复用最终输出节点并回填 timeline。"`
 	SandboxJobID   string         `json:"sandbox_job_id,omitempty" jsonschema_description:"渲染 sandbox_job 内部 ID。必须从 render_timeline_template 或 run_ffmpeg_command 返回结果原样复制。"`
 	MimeType       string         `json:"mime_type,omitempty" jsonschema_description:"默认 video/mp4。"`
-	StorageURL     string         `json:"storage_url" jsonschema:"required" jsonschema_description:"已上传到对象存储后的 storage url。"`
+	StorageURL     string         `json:"storage_url,omitempty" jsonschema_description:"可选。已上传到对象存储后的 storage url；通常不要填写，工具会从 output_path 自动上传到对象存储。"`
 	SizeBytes      int64          `json:"size_bytes,omitempty"`
 	Result         map[string]any `json:"result,omitempty"`
 }
@@ -157,8 +177,21 @@ func NewRunFFmpegCommandNativeTool(sandbox CompositionSandbox) RunFFmpegCommandN
 	return RunFFmpegCommandNativeTool{sandbox: sandbox}
 }
 
-func NewSubmitCompositionArtifactNativeTool(persister CompositionArtifactPersister) SubmitCompositionArtifactNativeTool {
-	return SubmitCompositionArtifactNativeTool{persister: persister}
+func NewSandboxTimelineTemplateRenderer(sandbox CompositionSandbox) SandboxTimelineTemplateRenderer {
+	return SandboxTimelineTemplateRenderer{sandbox: sandbox}
+}
+
+func NewSubmitCompositionArtifactNativeTool(persister CompositionArtifactPersister, store ...CompositionArtifactStore) SubmitCompositionArtifactNativeTool {
+	tool := SubmitCompositionArtifactNativeTool{persister: persister}
+	if len(store) > 0 {
+		tool.store = store[0]
+	}
+	return tool
+}
+
+func (t SubmitCompositionArtifactNativeTool) WithOutputUploader(uploader CompositionOutputUploader) SubmitCompositionArtifactNativeTool {
+	t.uploader = uploader
+	return t
 }
 
 func (t GetCompositionContextNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -302,6 +335,11 @@ func (t UpdateTimelinePlanStatusNativeTool) InvokableRun(ctx context.Context, ra
 	artifactVersionID, _ := pgUUIDFromString(input.ArtifactVersionID)
 	sandboxJobID, _ := pgUUIDFromString(input.SandboxJobID)
 	resultJSON, _ := json.Marshal(input.Result)
+	if len(input.Result) > 0 {
+		if plan, err := t.store.GetTimelinePlan(ctx, planID); err == nil {
+			resultJSON = mergeComposerResultJSON(plan.Result, resultJSON)
+		}
+	}
 	plan, err := t.store.UpdateTimelinePlanStatus(ctx, db.UpdateTimelinePlanStatusParams{
 		ID:                planID,
 		Status:            input.Status,
@@ -329,7 +367,11 @@ func (t RenderTimelineTemplateNativeTool) InvokableRun(ctx context.Context, raw 
 	if t.renderer == nil {
 		return NaturalToolError(toolRenderTimelineTemplate, "timeline template renderer 未配置。", "请检查 Composer graph wiring。"), nil
 	}
-	result, err := t.renderer.RenderTimelineTemplate(ctx, input)
+	runtime, msg, ok := runtimeOrError(ctx, toolRenderTimelineTemplate)
+	if !ok {
+		return msg, nil
+	}
+	result, err := t.renderer.RenderTimelineTemplate(ctx, runtime, input)
 	if err != nil {
 		return NaturalToolError(toolRenderTimelineTemplate, err.Error(), "请先 stage/probe 媒体并确认 timeline plan 可渲染。"), nil
 	}
@@ -387,29 +429,69 @@ func (t SubmitCompositionArtifactNativeTool) InvokableRun(ctx context.Context, r
 	if t.persister == nil {
 		return NaturalToolError(toolSubmitCompositionArtifact, "production artifact persister 未配置。", "请检查 Composer graph wiring。"), nil
 	}
-	outputNodeID, _ := pgUUIDFromString(input.OutputNodeID)
+	outputNode, err := t.resolveOutputNode(ctx, runtime, input)
+	if err != nil {
+		return NaturalToolError(toolSubmitCompositionArtifact, err.Error(), "请确认 timeline_plan_id 或 output_node_id 后重试。"), nil
+	}
 	sandboxJobID, _ := pgUUIDFromString(input.SandboxJobID)
 	mime := strings.TrimSpace(input.MimeType)
 	if mime == "" {
 		mime = "video/mp4"
 	}
+	storageURL := strings.TrimSpace(input.StorageURL)
+	sizeBytes := input.SizeBytes
+	if storageURL == "" {
+		if t.uploader == nil {
+			return NaturalToolError(toolSubmitCompositionArtifact, "composition output uploader 未配置。", "请配置 sandbox uploader，或提供已上传 storage_url。"), nil
+		}
+		upload, err := t.uploader.UploadCompositionOutput(ctx, sandbox.UploadCompositionOutputInput{
+			WorkspaceID:        runtime.WorkspaceID,
+			TargetNodeID:       outputNode.ID,
+			SourceSandboxJobID: sandboxJobID,
+			OutputPath:         input.OutputPath,
+			MimeHint:           mime,
+		})
+		if err != nil {
+			return NaturalToolError(toolSubmitCompositionArtifact, err.Error(), "请确认 output_path 指向 sandbox 内已生成的视频。"), nil
+		}
+		storageURL = upload.Asset.StorageURL
+		if strings.TrimSpace(upload.MIME) != "" {
+			mime = upload.MIME
+		}
+		if upload.Size > 0 {
+			sizeBytes = upload.Size
+		}
+		if input.Result == nil {
+			input.Result = map[string]any{}
+		}
+		input.Result["upload_sandbox_job_id"] = uuidString(upload.Job.ID)
+	}
+	if input.Result == nil {
+		input.Result = map[string]any{}
+	}
+	input.Result["output_path"] = input.OutputPath
+	input.Result["storage_url"] = storageURL
+	input.Result["mime_type"] = mime
+	if sizeBytes > 0 {
+		input.Result["size_bytes"] = sizeBytes
+	}
 	providerResponse := map[string]any{
 		"output_path": input.OutputPath,
-		"storage_url": input.StorageURL,
+		"storage_url": storageURL,
 	}
 	if input.TimelinePlanID != "" {
 		providerResponse["timeline_plan_id"] = input.TimelinePlanID
 	}
 	result, err := t.persister.PersistComposerArtifact(ctx, production.ComposerArtifactInput{
 		WorkspaceID:  runtime.WorkspaceID,
-		OutputNodeID: outputNodeID,
+		OutputNodeID: outputNode.ID,
 		SandboxJobID: sandboxJobID,
 		TaskID:       runtime.TaskID,
 		ProviderResult: production.ProviderResult{
 			RenderedPrompt:    "Composer final video",
 			AssetMIME:         mime,
-			AssetStorageURL:   input.StorageURL,
-			AssetSizeBytes:    input.SizeBytes,
+			AssetStorageURL:   storageURL,
+			AssetSizeBytes:    sizeBytes,
 			AssetMetadata:     input.Result,
 			ProviderRequest:   map[string]any{"output_path": input.OutputPath},
 			ProviderResponse:  providerResponse,
@@ -419,12 +501,177 @@ func (t SubmitCompositionArtifactNativeTool) InvokableRun(ctx context.Context, r
 	if err != nil {
 		return NaturalToolError(toolSubmitCompositionArtifact, err.Error(), "请确认 output_node_id、storage_url 和 sandbox_job_id 后重试。"), nil
 	}
+	if err := t.updateTimelineAfterSubmit(ctx, input, result, sandboxJobID, input.Result); err != nil {
+		return NaturalToolError(toolSubmitCompositionArtifact, err.Error(), "最终 artifact 已持久化，但 timeline_plan 回填失败。"), nil
+	}
 	return jsonStringResult(toolSubmitCompositionArtifact, map[string]any{
 		"output_node_id":       uuidString(result.Node.ID),
 		"generation_job_id":    uuidString(result.Job.ID),
 		"artifact_version_id":  uuidString(result.Version.ID),
+		"timeline_plan_id":     strings.TrimSpace(input.TimelinePlanID),
+		"sandbox_job_id":       uuidString(sandboxJobID),
 		"generation_job_state": string(result.Job.Status),
 	})
+}
+
+func (r SandboxTimelineTemplateRenderer) RenderTimelineTemplate(ctx context.Context, runtime NativeRuntimeContext, input RenderTimelineTemplateInput) (RenderTimelineTemplateResult, error) {
+	if r.sandbox == nil {
+		return RenderTimelineTemplateResult{}, errors.New("composition sandbox 未配置")
+	}
+	segments, err := timelineWorkspacePaths(input.Plan)
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	outputPath := "/workspace/output/final-" + shortToolID(input.TimelinePlanID) + ".mp4"
+	args := concatFFmpegArgs(segments, outputPath)
+	result, err := r.sandbox.RunFFmpegCommand(ctx, sandbox.RunFFmpegCommandInput{
+		WorkspaceID:  runtime.WorkspaceID,
+		TargetNodeID: runtime.ScopeID,
+		Executable:   "ffmpeg",
+		Args:         args,
+		TimeoutSec:   180,
+	})
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	return RenderTimelineTemplateResult{
+		OutputPath:   outputPath,
+		SandboxJobID: result.Job.ID,
+		Summary:      fmt.Sprintf("rendered %d segments with %s", len(segments), input.TemplateKey),
+	}, nil
+}
+
+func (t SubmitCompositionArtifactNativeTool) resolveOutputNode(ctx context.Context, runtime NativeRuntimeContext, input SubmitCompositionArtifactInput) (db.MediaNode, error) {
+	if outputNodeID, ok := pgUUIDFromString(input.OutputNodeID); ok {
+		return db.MediaNode{ID: outputNodeID, WorkspaceID: runtime.WorkspaceID, NodeType: db.NodeTypeVideo, OperationType: "compose_final_video"}, nil
+	}
+	if t.store == nil {
+		return db.MediaNode{}, errors.New("composition artifact store 未配置，无法自动创建最终成片节点")
+	}
+	timelinePlanID, ok := pgUUIDFromString(input.TimelinePlanID)
+	if !ok {
+		return db.MediaNode{}, errors.New("缺少 timeline_plan_id，无法自动创建最终成片节点")
+	}
+	plan, err := t.store.GetTimelinePlan(ctx, timelinePlanID)
+	if err != nil {
+		return db.MediaNode{}, err
+	}
+	if plan.OutputNodeID.Valid {
+		return db.MediaNode{ID: plan.OutputNodeID, WorkspaceID: runtime.WorkspaceID, NodeType: db.NodeTypeVideo, OperationType: "compose_final_video"}, nil
+	}
+	metadata, _ := json.Marshal(map[string]any{
+		"timeline_plan_id": input.TimelinePlanID,
+		"created_by":       "composer",
+	})
+	node, err := t.store.CreateAgentGenerationNode(ctx, db.CreateAgentGenerationNodeParams{
+		WorkspaceID:   runtime.WorkspaceID,
+		NodeType:      db.NodeTypeVideo,
+		Title:         "Composer final video",
+		Prompt:        "Composer final video",
+		OperationType: "compose_final_video",
+		CanvasX:       0,
+		CanvasY:       0,
+		CanvasW:       320,
+		CanvasH:       180,
+		ModelProvider: pgtype.Text{String: "internal_ffmpeg", Valid: true},
+		ModelID:       pgtype.Text{String: "ffmpeg", Valid: true},
+		ModelParams:   []byte("{}"),
+		Metadata:      metadata,
+		SemanticKey:   "composer.final_output." + shortToolID(input.TimelinePlanID) + ".node",
+		DisplayName:   "Composer final video",
+		ArtifactKind:  "final_video",
+	})
+	if err != nil {
+		return db.MediaNode{}, err
+	}
+	return node, nil
+}
+
+func (t SubmitCompositionArtifactNativeTool) updateTimelineAfterSubmit(ctx context.Context, input SubmitCompositionArtifactInput, result production.RunResult, sandboxJobID pgtype.UUID, resultMetadata map[string]any) error {
+	if t.store == nil || strings.TrimSpace(input.TimelinePlanID) == "" {
+		return nil
+	}
+	timelinePlanID, ok := pgUUIDFromString(input.TimelinePlanID)
+	if !ok {
+		return nil
+	}
+	resultJSON, _ := json.Marshal(resultMetadata)
+	_, err := t.store.UpdateTimelinePlanStatus(ctx, db.UpdateTimelinePlanStatusParams{
+		ID:                timelinePlanID,
+		Status:            "completed",
+		OutputNodeID:      result.Node.ID,
+		ProductionJobID:   result.Job.ID,
+		ArtifactVersionID: result.Version.ID,
+		SandboxJobID:      sandboxJobID,
+		Result:            defaultComposerJSON(resultJSON),
+	})
+	return err
+}
+
+func timelineWorkspacePaths(plan map[string]any) ([]string, error) {
+	rawSegments, ok := plan["segments"].([]any)
+	if !ok || len(rawSegments) == 0 {
+		return nil, errors.New("plan.segments 至少需要 1 个 segment")
+	}
+	paths := make([]string, 0, len(rawSegments))
+	for index, raw := range rawSegments {
+		segment, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("plan.segments[%d] 必须是对象", index)
+		}
+		workspacePath := strings.TrimSpace(compositionStringValue(segment["workspace_path"]))
+		if workspacePath == "" {
+			return nil, fmt.Errorf("plan.segments[%d].workspace_path 必填", index)
+		}
+		if !strings.HasPrefix(path.Clean(workspacePath), "/workspace/") {
+			return nil, fmt.Errorf("plan.segments[%d].workspace_path 必须位于 /workspace", index)
+		}
+		paths = append(paths, workspacePath)
+	}
+	return paths, nil
+}
+
+func concatFFmpegArgs(segments []string, outputPath string) []string {
+	args := []string{"-y"}
+	for _, segment := range segments {
+		args = append(args, "-i", segment)
+	}
+	if len(segments) == 1 {
+		return append(args, "-c", "copy", outputPath)
+	}
+	parts := make([]string, 0, len(segments))
+	for index := range segments {
+		parts = append(parts, fmt.Sprintf("[%d:v][%d:a]", index, index))
+	}
+	filter := strings.Join(parts, "") + fmt.Sprintf("concat=n=%d:v=1:a=1[v][a]", len(segments))
+	return append(args,
+		"-filter_complex", filter,
+		"-map", "[v]",
+		"-map", "[a]",
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-crf", "23",
+		"-c:a", "aac",
+		"-b:a", "128k",
+		outputPath,
+	)
+}
+
+func shortToolID(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 8 {
+		return value[:8]
+	}
+	return "unknown"
+}
+
+func compositionStringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return ""
+	}
 }
 
 func validateStageMediaInputs(input StageMediaInputsInput) error {
@@ -492,17 +739,21 @@ func validateRunFFmpegCommand(input RunFFmpegCommandToolInput) error {
 }
 
 func validateSubmitCompositionArtifact(input SubmitCompositionArtifactInput) error {
-	for field, value := range map[string]string{
-		"output_node_id": input.OutputNodeID,
-		"output_path":    input.OutputPath,
-		"storage_url":    input.StorageURL,
-	} {
-		if err := requireText(value, field); err != nil {
-			return err
+	if err := requireText(input.OutputPath, "output_path"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(input.OutputNodeID) == "" && strings.TrimSpace(input.TimelinePlanID) == "" {
+		return errors.New("output_node_id 或 timeline_plan_id 至少需要一个")
+	}
+	if strings.TrimSpace(input.OutputNodeID) != "" {
+		if _, ok := pgUUIDFromString(input.OutputNodeID); !ok {
+			return errors.New("output_node_id 必须从上下文返回值原样复制")
 		}
 	}
-	if _, ok := pgUUIDFromString(input.OutputNodeID); !ok {
-		return errors.New("output_node_id 必须从 create_timeline_plan 或上下文返回值原样复制")
+	if strings.TrimSpace(input.TimelinePlanID) != "" {
+		if _, ok := pgUUIDFromString(input.TimelinePlanID); !ok {
+			return errors.New("timeline_plan_id 必须从 create_timeline_plan 返回结果原样复制")
+		}
 	}
 	return nil
 }
@@ -518,6 +769,21 @@ func jsonStringResult(toolName string, value any) (string, error) {
 func defaultComposerJSON(raw []byte) []byte {
 	if len(raw) == 0 || string(raw) == "null" {
 		return []byte("{}")
+	}
+	return raw
+}
+
+func mergeComposerResultJSON(existing []byte, next []byte) []byte {
+	merged := map[string]any{}
+	_ = json.Unmarshal(defaultComposerJSON(existing), &merged)
+	incoming := map[string]any{}
+	_ = json.Unmarshal(defaultComposerJSON(next), &incoming)
+	for key, value := range incoming {
+		merged[key] = value
+	}
+	raw, err := json.Marshal(merged)
+	if err != nil {
+		return defaultComposerJSON(next)
 	}
 	return raw
 }

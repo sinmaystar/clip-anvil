@@ -484,6 +484,38 @@ func TestExecutorEnqueuesPendingSignalWakeAfterFinalAssistantMessage(t *testing.
 	}
 }
 
+func TestExecutorIgnoresPendingSignalWakeForDifferentProducerThread(t *testing.T) {
+	runtime := &fakeRuntime{
+		pendingSignals: []db.ProducerPendingSignal{
+			{
+				ID:               uuidWithByte(81),
+				WorkspaceID:      uuidWithByte(1),
+				ProducerThreadID: uuidWithByte(99),
+				SignalType:       "composition_completed",
+				ScopeType:        "final_output",
+				ScopeID:          uuidWithByte(41),
+				Status:           "pending",
+			},
+		},
+	}
+	enqueuer := &fakeProducerEnqueuer{}
+	graph := &fakeGraph{output: ProducerTurnOutput{AssistantText: "当前轮已经正常收尾。"}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph, ProducerEnqueuer: enqueuer})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runtime.createdTasks) != 0 || len(enqueuer.tasks) != 0 {
+		t.Fatalf("created/enqueued wake tasks = %#v / %#v", runtime.createdTasks, enqueuer.tasks)
+	}
+}
+
 func TestExecutorPersistsPendingSignalWakeAsUserMessageWithClaimedSignals(t *testing.T) {
 	runtime := &fakeRuntime{
 		runningTaskInput: []byte(`{"trigger":"producer_pending_signal"}`),
@@ -1092,8 +1124,14 @@ func (f *fakeRuntime) CreateTask(_ context.Context, params agentruntime.CreateTa
 	return task, nil
 }
 
-func (f *fakeRuntime) ListPendingProducerSignals(context.Context, pgtype.UUID, int32) ([]db.ProducerPendingSignal, error) {
-	return f.pendingSignals, nil
+func (f *fakeRuntime) ListPendingProducerSignalsByThread(_ context.Context, workspaceID, producerThreadID pgtype.UUID, _ int32) ([]db.ProducerPendingSignal, error) {
+	out := []db.ProducerPendingSignal{}
+	for _, signal := range f.pendingSignals {
+		if signal.WorkspaceID == workspaceID && signal.ProducerThreadID == producerThreadID {
+			out = append(out, signal)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeRuntime) ClaimProducerPendingSignals(_ context.Context, params agentruntime.ClaimProducerPendingSignalsParams) ([]db.ProducerPendingSignal, error) {
