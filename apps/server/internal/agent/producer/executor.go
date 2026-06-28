@@ -976,7 +976,7 @@ func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 	case "composition_completed", "composition_failed":
 		trigger := strings.TrimSpace(payload.Trigger)
 		title := "Composer 已完成最终成片合成"
-		next := "下一步：请读取项目上下文，确认 final_video 画布节点、generation_job 和 artifact_version 状态，再决定是否派 Reviewer 评审成片或回复用户。"
+		next := "下一步：请读取项目上下文，确认 final_video 画布节点、generation_job、artifact_version、AudioPlan、voiceover/BGM 和 final audio track 状态；如果最终 artifact 可评审且没有终态 final_video_review，应调用 dispatch_reviewer(final_video_review)，并要求 Reviewer 覆盖 audio_sync；如果已有终态评审，避免重复 final_video_review；如果决定跳过评审，必须调用 request_user_decision 或给出面向用户的明确理由。"
 		if trigger == "composition_failed" {
 			title = "Composer 成片合成失败"
 			next = "下一步：请读取项目上下文，确认失败原因，再决定是否重派 Composer、改用更保守的拼接策略或请求用户确认。"

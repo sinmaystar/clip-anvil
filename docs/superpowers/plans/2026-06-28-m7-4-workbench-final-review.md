@@ -318,7 +318,7 @@ Result: PASS. Both commands reported the existing Node engine warning because th
 - Modify: `apps/server/internal/agent/producer/system_prompt.go`
 - Modify tests if present: `apps/server/internal/agent/producer/*_test.go`
 
-- [ ] **Step 1: Write failing trigger tests**
+- [x] **Step 1: Write failing trigger tests**
 
 Add tests proving `producerRuntimeTriggerText(composition_completed)` says:
 - read project context;
@@ -336,7 +336,7 @@ Run:
 
 Expected: FAIL because current trigger text lacks explicit audio/final review instructions.
 
-- [ ] **Step 2: Update Producer reminder and prompt**
+- [x] **Step 2: Update Producer reminder and prompt**
 
 Update `composition_completed` reminder:
 - mention AudioPlan, voiceover/BGM, final audio track, `audio_sync`;
@@ -348,7 +348,7 @@ Update Producer system prompt:
 - Reviewer final video review must cover audio_sync and platform selling power;
 - do not silently mark final video complete without either final review or explicit user-facing rationale.
 
-- [ ] **Step 3: Verify Task 4**
+- [x] **Step 3: Verify Task 4**
 
 Run:
 
@@ -358,6 +358,15 @@ git diff --check
 ```
 
 Expected: PASS.
+
+Actual:
+
+```bash
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -run 'CompositionSignals|FinalReview|Audio|SystemPromptStable' -count=1)
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/producer -count=1)
+```
+
+Result: PASS.
 
 ## Task 5: Reviewer Final Video Audio Context
 

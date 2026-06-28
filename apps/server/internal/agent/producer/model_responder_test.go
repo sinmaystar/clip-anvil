@@ -471,6 +471,11 @@ func TestProducerPromptMessagesKeepsSystemPromptStable(t *testing.T) {
 			t.Fatalf("system prompt missing audio guidance %q", want)
 		}
 	}
+	for _, want := range []string{"final video", "audio_sync", "platform selling power", "final_video_review"} {
+		if !strings.Contains(messages[0].Content, want) {
+			t.Fatalf("system prompt missing final review guidance %q", want)
+		}
+	}
 }
 
 func TestProducerPromptMessagesAppendsPendingRemindersToUserMessage(t *testing.T) {
