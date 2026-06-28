@@ -30,7 +30,7 @@
 - Modify: `apps/server/internal/agent/tools/upsert_render_plan.go`
 - Modify tests: `apps/server/internal/agent/tools/render_plan_tools_test.go`
 
-- [ ] **Step 1: Write failing renderplan service tests**
+- [x] **Step 1: Write failing renderplan service tests**
 
 Add tests proving:
 - `scope_type=audio_plan`, `target_phase=voiceover_audio`, `model_prompt_profile=seed_audio_1`, `operation=text_to_audio` validates.
@@ -46,7 +46,7 @@ Run:
 
 Expected: FAIL because constants and validation do not support audio.
 
-- [ ] **Step 2: Add migration for RenderPlan constraints**
+- [x] **Step 2: Add migration for RenderPlan constraints**
 
 Create `apps/server/migrations/033_m7_2_audio_render_plan.sql`:
 
@@ -78,7 +78,7 @@ ALTER TABLE render_plan ADD CONSTRAINT render_plan_scope_type_check
     CHECK (scope_type IN ('key_element_state', 'shot'));
 ```
 
-- [ ] **Step 3: Extend renderplan constants and validation**
+- [x] **Step 3: Extend renderplan constants and validation**
 
 Add:
 - `ScopeAudioPlan = "audio_plan"`
@@ -93,7 +93,7 @@ Validation rules:
 - `seed_audio_1` cannot be used by image/video phases.
 - `prompt_parts.objective` and `rationale` remain required.
 
-- [ ] **Step 4: Extend `upsert_render_plan` native tool schema**
+- [x] **Step 4: Extend `upsert_render_plan` native tool schema**
 
 Update `UpsertRenderPlanToolInput` JSON schema descriptions and enums:
 - scope type includes `audio_plan`.
@@ -106,7 +106,7 @@ Update runtime defaults:
 - audio target phases default scope to current task `audio_plan`.
 - `voiceover_audio` / `bgm_audio` default `task_type=generate`, `model_prompt_profile=seed_audio_1`, `operation=text_to_audio`.
 
-- [ ] **Step 5: Verify Task 1**
+- [x] **Step 5: Verify Task 1**
 
 Run:
 

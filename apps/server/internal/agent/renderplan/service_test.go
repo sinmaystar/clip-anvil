@@ -91,6 +91,66 @@ func TestServiceRejectsUnsupportedSeedanceDurationBeforeCreatingPlan(t *testing.
 	}
 }
 
+func TestServiceAcceptsVoiceoverAudioRenderPlan(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validAudioInput()
+	input.TargetPhase = PhaseVoiceoverAudio
+
+	plan, err := service.Upsert(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ScopeType != ScopeAudioPlan || plan.TargetPhase != PhaseVoiceoverAudio || plan.ModelPromptProfile != ProfileSeedAudio1 {
+		t.Fatalf("plan = %#v", plan)
+	}
+	if plan.Operation != "text_to_audio" {
+		t.Fatalf("operation = %q", plan.Operation)
+	}
+}
+
+func TestServiceAcceptsBGMAudioRenderPlan(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validAudioInput()
+	input.TargetPhase = PhaseBGMAudio
+	input.PromptParts.Objective = "生成 12 秒轻快电子流行 BGM，旁白期间可 ducking。"
+
+	plan, err := service.Upsert(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.TargetPhase != PhaseBGMAudio || plan.ModelPromptProfile != ProfileSeedAudio1 {
+		t.Fatalf("plan = %#v", plan)
+	}
+}
+
+func TestServiceRejectsAudioPlanScopeForImagePhase(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validAudioInput()
+	input.TargetPhase = PhasePreviewImage
+	input.ModelPromptProfile = ProfileSeedream5Image
+	input.Operation = "text_to_image"
+
+	_, err := service.Upsert(context.Background(), input)
+	if err == nil || !strings.Contains(err.Error(), "audio_plan 只能用于 voiceover_audio 或 bgm_audio") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestServiceRejectsAudioPhaseWithVideoProfile(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validAudioInput()
+	input.ModelPromptProfile = ProfileSeedance2Video
+
+	_, err := service.Upsert(context.Background(), input)
+	if err == nil || !strings.Contains(err.Error(), "音频阶段必须使用 seed_audio_1") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestServiceForksExecutedPlanInsteadOfUpdating(t *testing.T) {
 	store := newFakeStore()
 	service := NewService(store, NewPromptCompiler())
@@ -146,6 +206,28 @@ func validReferenceInput() UpsertInput {
 		},
 		Params:    Params{Ratio: "9:16", MaxImages: 1},
 		Rationale: "先生成场景锚点，避免每个分镜各自发明机场。",
+	}
+}
+
+func validAudioInput() UpsertInput {
+	return UpsertInput{
+		WorkspaceID:        uuidWithByte(1),
+		ThreadID:           uuidWithByte(2),
+		TaskID:             uuidWithByte(3),
+		Brief:              "为已确认 AudioPlan 创建旁白音频计划。",
+		Mode:               "create",
+		Scope:              Scope{Type: ScopeAudioPlan, ID: uuidWithByte(9), Key: "audio_plan.active"},
+		TargetPhase:        PhaseVoiceoverAudio,
+		TaskType:           TaskGenerate,
+		ModelPromptProfile: ProfileSeedAudio1,
+		Operation:          "text_to_audio",
+		PromptParts: PromptParts{
+			Objective: "使用清爽可信的年轻女声生成完整营销短视频旁白。",
+			Narration: "现在出发，让旅程更轻松。",
+			Audio:     "旁白清晰，语速自然。",
+		},
+		Params:    Params{},
+		Rationale: "AudioPlan 已确认，先生成整片连续旁白。",
 	}
 }
 

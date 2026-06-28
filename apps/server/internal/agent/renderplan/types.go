@@ -9,10 +9,13 @@ import (
 const (
 	ScopeKeyElementState = "key_element_state"
 	ScopeShot            = "shot"
+	ScopeAudioPlan       = "audio_plan"
 
 	PhaseReferenceImage = "reference_image"
 	PhasePreviewImage   = "preview_image"
 	PhaseShotVideo      = "shot_video"
+	PhaseVoiceoverAudio = "voiceover_audio"
+	PhaseBGMAudio       = "bgm_audio"
 
 	TaskGenerate = "generate"
 	TaskEdit     = "edit"
@@ -21,6 +24,7 @@ const (
 
 	ProfileSeedream5Image = "seedream_5_image"
 	ProfileSeedance2Video = "seedance_2_video"
+	ProfileSeedAudio1     = "seed_audio_1"
 
 	StatusDraft              = "draft"
 	StatusBlocked            = "blocked"
@@ -110,6 +114,12 @@ type Params struct {
 	DurationSec               float64 `json:"duration_sec,omitempty"`
 	Resolution                string  `json:"resolution,omitempty"`
 	Watermark                 bool    `json:"watermark,omitempty"`
+	Speaker                   string  `json:"speaker,omitempty"`
+	Format                    string  `json:"format,omitempty"`
+	SampleRate                int     `json:"sample_rate,omitempty"`
+	SpeechRate                float64 `json:"speech_rate,omitempty"`
+	PitchRate                 float64 `json:"pitch_rate,omitempty"`
+	LoudnessRate              float64 `json:"loudness_rate,omitempty"`
 	GenerateAudio             bool    `json:"generate_audio,omitempty"`
 	ReturnLastFrame           bool    `json:"return_last_frame,omitempty"`
 	CameraFixed               bool    `json:"camera_fixed,omitempty"`
