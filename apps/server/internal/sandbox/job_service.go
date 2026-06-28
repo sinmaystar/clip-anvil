@@ -59,6 +59,26 @@ type ComposeVideosInput struct {
 	WorkspaceID  pgtype.UUID
 	TargetNodeID pgtype.UUID
 	Sources      []SandboxAssetInput
+	AudioTracks  []ComposeAudioTrackInput
+}
+
+type ComposeAudioTrackInput struct {
+	Role        string
+	Source      SandboxAssetInput
+	StartSec    float64
+	DurationSec float64
+	Volume      float64
+	FadeInSec   float64
+	FadeOutSec  float64
+	Ducking     ComposeAudioDuckingInput
+}
+
+type ComposeAudioDuckingInput struct {
+	SidechainRole string
+	Threshold     float64
+	Ratio         float64
+	AttackMS      int
+	ReleaseMS     int
 }
 
 type RemoteAssetInput struct {
@@ -379,7 +399,7 @@ func (s *JobService) ComposeVideos(ctx context.Context, input ComposeVideosInput
 	if len(input.Sources) == 0 {
 		return SandboxJobResult{}, errors.New("compose videos requires at least one source")
 	}
-	inputJSON, err := json.Marshal(map[string]any{"source_count": len(input.Sources)})
+	inputJSON, err := json.Marshal(map[string]any{"source_count": len(input.Sources), "audio_track_count": len(input.AudioTracks)})
 	if err != nil {
 		return SandboxJobResult{}, err
 	}
@@ -445,9 +465,55 @@ func (s *JobService) ComposeVideos(ctx context.Context, input ComposeVideosInput
 		}
 		sourcePaths = append(sourcePaths, sourcePath)
 	}
+	audioTracks := make([]composeAudioTrackPath, 0, len(input.AudioTracks))
+	for index, track := range input.AudioTracks {
+		source := track.Source
+		sourceKey, err := storage.KeyFromStorageURL(input.WorkspaceID, source.StorageURL)
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_input_invalid", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed}, err
+		}
+		getURL, err := s.storage.PresignedSandboxGetURL(ctx, input.WorkspaceID, sourceKey, time.Hour)
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, ExecResult{}, "sandbox_input_presign_failed", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed}, err
+		}
+		role := normalizeComposeAudioRole(track.Role)
+		sourcePath := path.Join(AssetsDir, fmt.Sprintf("%s%s", role, extensionForMIME(source.Mime)))
+		if role == "audio" {
+			sourcePath = path.Join(AssetsDir, fmt.Sprintf("compose-audio-%02d-%s%s", index+1, safePathComponent(source.AssetID), extensionForMIME(source.Mime)))
+		}
+		downloadResult, err := DownloadFromMinIO(ctx, s.client, workspaceSandbox.SandboxID, getURL, sourcePath)
+		if err != nil {
+			failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_input_download_failed", err.Error(), nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: downloadResult}, err
+		}
+		if downloadResult.ExitCode != 0 {
+			message := strings.TrimSpace(downloadResult.Stderr)
+			failed, failErr := s.markFailed(ctx, job.ID, downloadResult, "sandbox_input_download_failed", message, nil)
+			if failErr != nil {
+				return SandboxJobResult{}, failErr
+			}
+			return SandboxJobResult{Job: failed, Exec: downloadResult}, fmt.Errorf("sandbox input download failed: %s", message)
+		}
+		track.Role = role
+		audioTracks = append(audioTracks, composeAudioTrackPath{ComposeAudioTrackInput: track, WorkspacePath: sourcePath})
+	}
 
 	outputPath := path.Join(OutputDir, "final-"+uuidString(job.ID)+".mp4")
 	command := composeVideosCommand(sourcePaths, outputPath, path.Join(AssetsDir, "concat-"+uuidString(job.ID)+".txt"))
+	if len(audioTracks) > 0 {
+		command = composeVideosWithAudioCommand(sourcePaths, audioTracks, outputPath)
+	}
 	job, err = s.repo.MarkSandboxJobRunning(ctx, db.MarkSandboxJobRunningParams{
 		ID:        job.ID,
 		SandboxID: pgtype.Text{String: workspaceSandbox.SandboxID, Valid: true},
@@ -527,10 +593,11 @@ func (s *JobService) ComposeVideos(ctx context.Context, input ComposeVideosInput
 	}
 	asset := ArtifactObject{StorageURL: s.storage.StorageURL(input.WorkspaceID, objectKey)}
 	outputJSON, err := json.Marshal(map[string]any{
-		"output_path": outputPath,
-		"storage_url": asset.StorageURL,
-		"mime":        info.Mime,
-		"size_bytes":  info.SizeBytes,
+		"output_path":       outputPath,
+		"storage_url":       asset.StorageURL,
+		"mime":              info.Mime,
+		"size_bytes":        info.SizeBytes,
+		"audio_track_count": len(audioTracks),
 	})
 	if err != nil {
 		return SandboxJobResult{}, err
@@ -796,6 +863,135 @@ func composeVideosCommand(sourcePaths []string, outputPath string, concatListPat
 		"ffmpeg -y -f concat -safe 0 -i " + shellQuote(concatListPath) + " -c copy " + shellQuote(outputPath)
 }
 
+type composeAudioTrackPath struct {
+	ComposeAudioTrackInput
+	WorkspacePath string
+}
+
+func composeVideosWithAudioCommand(sourcePaths []string, audioTracks []composeAudioTrackPath, outputPath string) string {
+	args := []string{"ffmpeg", "-y"}
+	for _, sourcePath := range sourcePaths {
+		args = append(args, "-i", shellQuote(sourcePath))
+	}
+	for _, track := range audioTracks {
+		if track.Role == "bgm" {
+			args = append(args, "-stream_loop", "-1")
+		}
+		args = append(args, "-i", shellQuote(track.WorkspacePath))
+	}
+	filter := composeVideosAudioFilterGraph(len(sourcePaths), audioTracks)
+	args = append(args,
+		"-filter_complex", shellQuote(filter),
+		"-map", shellQuote("[vout]"),
+		"-map", shellQuote("[aout]"),
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-crf", "23",
+		"-c:a", "aac",
+		"-b:a", "128k",
+		"-shortest",
+		shellQuote(outputPath),
+	)
+	return strings.Join(args, " ")
+}
+
+func composeVideosAudioFilterGraph(videoCount int, audioTracks []composeAudioTrackPath) string {
+	parts := []string{}
+	if videoCount == 1 {
+		parts = append(parts, "[0:v]setpts=PTS-STARTPTS,format=yuv420p,setsar=1[vout]")
+	} else {
+		videoInputs := make([]string, 0, videoCount)
+		for index := 0; index < videoCount; index++ {
+			videoInputs = append(videoInputs, fmt.Sprintf("[%d:v]", index))
+		}
+		parts = append(parts, strings.Join(videoInputs, "")+fmt.Sprintf("concat=n=%d:v=1:a=0[vcat]", videoCount))
+		parts = append(parts, "[vcat]format=yuv420p,setsar=1[vout]")
+	}
+	audioLabels := []string{}
+	voiceoverLabel := ""
+	duckingLabels := map[string]ComposeAudioDuckingInput{}
+	for index, track := range audioTracks {
+		inputIndex := videoCount + index
+		label := fmt.Sprintf("a%d", index)
+		volume := track.Volume
+		if volume <= 0 {
+			volume = 1
+		}
+		filter := fmt.Sprintf("[%d:a]atrim=start=0", inputIndex)
+		if track.DurationSec > 0 {
+			filter += fmt.Sprintf(":duration=%.3f", track.DurationSec)
+		}
+		filter += ",asetpts=PTS-STARTPTS"
+		if track.StartSec > 0 {
+			delayMS := int(track.StartSec * 1000)
+			filter += fmt.Sprintf(",adelay=%d|%d", delayMS, delayMS)
+		}
+		filter += fmt.Sprintf(",volume=%.3f", volume)
+		if track.FadeInSec > 0 {
+			filter += fmt.Sprintf(",afade=t=in:st=0:d=%.3f", track.FadeInSec)
+		}
+		if track.FadeOutSec > 0 && track.DurationSec > 0 {
+			start := track.DurationSec - track.FadeOutSec
+			if start < 0 {
+				start = 0
+			}
+			filter += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", start, track.FadeOutSec)
+		}
+		filter += fmt.Sprintf("[%s]", label)
+		parts = append(parts, filter)
+		if track.Role == "voiceover" && voiceoverLabel == "" {
+			voiceoverLabel = label
+		}
+		if track.Role == "bgm" && track.Ducking.SidechainRole == "voiceover" {
+			duckingLabels[label] = track.Ducking
+			continue
+		}
+		audioLabels = append(audioLabels, label)
+	}
+	for label, ducking := range duckingLabels {
+		if voiceoverLabel == "" {
+			audioLabels = append(audioLabels, label)
+			continue
+		}
+		if ducking.Threshold <= 0 {
+			ducking.Threshold = 0.08
+		}
+		if ducking.Ratio <= 0 {
+			ducking.Ratio = 8
+		}
+		if ducking.AttackMS <= 0 {
+			ducking.AttackMS = 20
+		}
+		if ducking.ReleaseMS <= 0 {
+			ducking.ReleaseMS = 250
+		}
+		out := label + "duck"
+		parts = append(parts, fmt.Sprintf("[%s][%s]sidechaincompress=threshold=%.3f:ratio=%.3f:attack=%d:release=%d[%s]", label, voiceoverLabel, ducking.Threshold, ducking.Ratio, ducking.AttackMS, ducking.ReleaseMS, out))
+		audioLabels = append(audioLabels, out)
+	}
+	if len(audioLabels) == 1 {
+		parts = append(parts, fmt.Sprintf("[%s]anull[aout]", audioLabels[0]))
+	} else {
+		inputs := make([]string, 0, len(audioLabels))
+		for _, label := range audioLabels {
+			inputs = append(inputs, fmt.Sprintf("[%s]", label))
+		}
+		parts = append(parts, strings.Join(inputs, "")+fmt.Sprintf("amix=inputs=%d:duration=shortest:dropout_transition=0[aout]", len(audioLabels)))
+	}
+	return strings.Join(parts, ";")
+}
+
+func normalizeComposeAudioRole(role string) string {
+	switch strings.TrimSpace(role) {
+	case "voiceover":
+		return "voiceover"
+	case "bgm":
+		return "bgm"
+	default:
+		return "audio"
+	}
+}
+
 func normalizeFrameMode(mode FrameMode) (FrameMode, error) {
 	switch mode {
 	case FrameFirst, "":
@@ -839,6 +1035,14 @@ func extensionForMIME(mime string) string {
 		return ".webp"
 	case "image/gif":
 		return ".gif"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/L16":
+		return ".pcm"
 	default:
 		return ".bin"
 	}

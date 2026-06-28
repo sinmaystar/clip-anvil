@@ -124,6 +124,37 @@ func TestInternalFFmpegProviderUsesSandboxComposer(t *testing.T) {
 	}
 }
 
+func TestInternalFFmpegProviderUsesSandboxComposerWithAudioTracks(t *testing.T) {
+	operator := &fakeSandboxFrameExtractor{}
+	provider := NewInternalFFmpegProvider(operator)
+	result, err := provider.Run(context.Background(), GenerationIntent{
+		WorkspaceID:    pgtype.UUID{Bytes: [16]byte{0xaa}, Valid: true},
+		TargetNodeID:   pgtype.UUID{Bytes: [16]byte{0xbb}, Valid: true},
+		OutputType:     "video",
+		OperationType:  "compose_final_video",
+		Model:          ModelSpec{Provider: "internal_ffmpeg", ModelID: "ffmpeg-compose"},
+		PromptTemplate: "compose final with audio",
+		InputRefs: []InputRef{
+			{Kind: "dependency", NodeType: "video", AssetID: "asset-1", Mime: "video/mp4", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-1.mp4"},
+			{Kind: "dependency", NodeType: "video", AssetID: "asset-2", Mime: "video/mp4", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-2.mp4"},
+			{Kind: "dependency", NodeType: "audio", ModelRole: "voiceover", AssetID: "voiceover-audio", Mime: "audio/mpeg", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/voiceover.mp3"},
+			{Kind: "dependency", NodeType: "audio", ModelRole: "bgm", AssetID: "bgm-audio", Mime: "audio/mpeg", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/bgm.mp3"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operator.composeInput.AudioTracks) != 2 {
+		t.Fatalf("compose input = %#v", operator.composeInput)
+	}
+	if operator.composeInput.AudioTracks[0].Role != "voiceover" || operator.composeInput.AudioTracks[1].Role != "bgm" {
+		t.Fatalf("audio tracks = %#v", operator.composeInput.AudioTracks)
+	}
+	if result.ProviderRequest["audio_track_count"] != 2 || result.ProviderResponse["audio_track_count"] != 2 {
+		t.Fatalf("provider metadata = %#v / %#v", result.ProviderRequest, result.ProviderResponse)
+	}
+}
+
 func TestInternalFFmpegProviderPersistsReadableFailure(t *testing.T) {
 	provider := NewInternalFFmpegProvider(&fakeSandboxFrameExtractor{err: errors.New("ffmpeg failed")})
 	_, err := provider.Run(context.Background(), GenerationIntent{

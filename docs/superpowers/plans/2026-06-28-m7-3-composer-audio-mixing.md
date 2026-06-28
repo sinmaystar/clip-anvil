@@ -261,7 +261,7 @@ Expected: PASS.
 - Modify: `apps/server/internal/production/internal_ffmpeg_provider.go`
 - Modify tests: `apps/server/internal/production/internal_ffmpeg_provider_test.go`
 
-- [ ] **Step 1: Write failing provider and sandbox tests**
+- [x] **Step 1: Write failing provider and sandbox tests**
 
 Add tests proving:
 - `InternalFFmpegProvider` converts video `InputRef`s and audio `InputRef`s into `sandbox.ComposeVideosInput`.
@@ -279,7 +279,7 @@ Run:
 
 Expected: FAIL because sandbox input has no audio track support.
 
-- [ ] **Step 2: Extend sandbox input contract**
+- [x] **Step 2: Extend sandbox input contract**
 
 Add:
 - `ComposeAudioTrackInput`
@@ -289,7 +289,7 @@ Add:
 
 Keep existing `Sources` unchanged for compatibility.
 
-- [ ] **Step 3: Implement audio downloads and ffmpeg command**
+- [x] **Step 3: Implement audio downloads and ffmpeg command**
 
 In `JobService.ComposeVideos`:
 - include `video_count` and `audio_track_count` in sandbox job input JSON;
@@ -298,7 +298,7 @@ In `JobService.ComposeVideos`:
 - ensure output MIME remains `video/mp4`;
 - include `audio_track_count` in sandbox output JSON.
 
-- [ ] **Step 4: Extend provider mapping**
+- [x] **Step 4: Extend provider mapping**
 
 In `InternalFFmpegProvider.runCompose`:
 - keep video refs ordered as before;
@@ -307,7 +307,7 @@ In `InternalFFmpegProvider.runCompose`:
 - pass tracks to sandbox;
 - report `source_count` and `audio_track_count`.
 
-- [ ] **Step 5: Verify Task 4**
+- [x] **Step 5: Verify Task 4**
 
 Run:
 

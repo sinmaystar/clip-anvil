@@ -145,11 +145,14 @@ func (p InternalFFmpegProvider) runCompose(ctx context.Context, intent Generatio
 		WorkspaceID:  intent.WorkspaceID,
 		TargetNodeID: intent.TargetNodeID,
 		Sources:      sources,
+		AudioTracks:  audioInputRefs(intent.InputRefs),
 	})
+	audioTrackCount := len(audioInputRefs(intent.InputRefs))
 	response := map[string]any{
-		"sandbox_job_id": uuidToString(result.Job.ID),
-		"mime":           result.MIME,
-		"size_bytes":     result.Size,
+		"sandbox_job_id":    uuidToString(result.Job.ID),
+		"mime":              result.MIME,
+		"size_bytes":        result.Size,
+		"audio_track_count": audioTrackCount,
 	}
 	if err != nil {
 		return ProviderResult{}, ProviderRunError{
@@ -168,9 +171,10 @@ func (p InternalFFmpegProvider) runCompose(ctx context.Context, intent Generatio
 			"sandbox_job_id": uuidToString(result.Job.ID),
 		},
 		ProviderRequest: map[string]any{
-			"provider":       "internal_ffmpeg",
-			"operation_type": intent.OperationType,
-			"source_count":   len(sources),
+			"provider":          "internal_ffmpeg",
+			"operation_type":    intent.OperationType,
+			"source_count":      len(sources),
+			"audio_track_count": audioTrackCount,
 		},
 		ProviderResponse: response,
 	}, nil
@@ -216,6 +220,50 @@ func videoInputRefs(refs []InputRef) []sandbox.SandboxAssetInput {
 		})
 	}
 	return out
+}
+
+func audioInputRefs(refs []InputRef) []sandbox.ComposeAudioTrackInput {
+	out := []sandbox.ComposeAudioTrackInput{}
+	for _, ref := range refs {
+		if ref.NodeType != "audio" || strings.TrimSpace(ref.StorageURL) == "" {
+			continue
+		}
+		role := audioRoleForInputRef(ref)
+		if role == "" {
+			continue
+		}
+		track := sandbox.ComposeAudioTrackInput{
+			Role: role,
+			Source: sandbox.SandboxAssetInput{
+				AssetID:    ref.AssetID,
+				StorageURL: ref.StorageURL,
+				Mime:       ref.Mime,
+			},
+			Volume: 1,
+		}
+		if role == "bgm" {
+			track.Volume = 0.28
+			track.FadeInSec = 0.5
+			track.FadeOutSec = 1.2
+			track.Ducking = sandbox.ComposeAudioDuckingInput{SidechainRole: "voiceover", Threshold: 0.08, Ratio: 8, AttackMS: 20, ReleaseMS: 250}
+		} else {
+			track.FadeInSec = 0.05
+			track.FadeOutSec = 0.1
+		}
+		out = append(out, track)
+	}
+	return out
+}
+
+func audioRoleForInputRef(ref InputRef) string {
+	haystack := strings.ToLower(strings.Join([]string{ref.ModelRole, ref.Kind, ref.AssetID, ref.ContentType, ref.CurrentVersionID}, " "))
+	if strings.Contains(haystack, "voiceover") || strings.Contains(haystack, "narration") {
+		return "voiceover"
+	}
+	if strings.Contains(haystack, "bgm") || strings.Contains(haystack, "music") {
+		return "bgm"
+	}
+	return ""
 }
 
 func boolParam(params map[string]any, key string) bool {
