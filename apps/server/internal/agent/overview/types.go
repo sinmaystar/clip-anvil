@@ -30,6 +30,7 @@ type ProductionOverview struct {
 	WorkspaceID  string         `json:"workspace_id"`
 	Phase        Phase          `json:"phase"`
 	Counts       Counts         `json:"counts"`
+	AudioPlan    *AudioPlan     `json:"audio_plan,omitempty"`
 	Shots        []ShotSummary  `json:"shots"`
 	Timeline     []TimelineItem `json:"timeline"`
 	FinalOutputs []FinalOutput  `json:"final_outputs"`
@@ -46,6 +47,28 @@ type Counts struct {
 	RunningTasks     int `json:"running_tasks"`
 	FailedTasks      int `json:"failed_tasks"`
 	WaitingDecisions int `json:"waiting_decisions"`
+	AudioReady       int `json:"audio_ready"`
+	AudioMissing     int `json:"audio_missing"`
+	FinalReviews     int `json:"final_reviews"`
+}
+
+type AudioPlan struct {
+	ID                    string         `json:"id"`
+	Status                string         `json:"status"`
+	Title                 string         `json:"title"`
+	PlanKind              string         `json:"plan_kind,omitempty"`
+	Language              string         `json:"language,omitempty"`
+	TargetDurationSec     *float64       `json:"target_duration_sec,omitempty"`
+	VoiceoverScript       string         `json:"voiceover_script,omitempty"`
+	VoiceProfile          map[string]any `json:"voice_profile,omitempty"`
+	BGMPlan               map[string]any `json:"bgm_plan,omitempty"`
+	VoiceoverNodeID       string         `json:"voiceover_node_id,omitempty"`
+	VoiceoverStatus       Status         `json:"voiceover_status"`
+	BGMNodeID             string         `json:"bgm_node_id,omitempty"`
+	BGMStatus             Status         `json:"bgm_status"`
+	TimelinePlanID        string         `json:"timeline_plan_id,omitempty"`
+	VoiceoverRenderPlanID string         `json:"voiceover_render_plan_id,omitempty"`
+	BGMRenderPlanID       string         `json:"bgm_render_plan_id,omitempty"`
 }
 
 type ShotSummary struct {

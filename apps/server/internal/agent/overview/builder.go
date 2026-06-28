@@ -3,10 +3,12 @@ package overview
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -20,6 +22,7 @@ type Store interface {
 	ListAgentEventsByWorkspace(ctx context.Context, arg db.ListAgentEventsByWorkspaceParams) ([]db.AgentEvent, error)
 	ListReviewRecordsByWorkspace(ctx context.Context, arg db.ListReviewRecordsByWorkspaceParams) ([]db.ReviewRecord, error)
 	ListSandboxJobsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.SandboxJob, error)
+	GetActiveAudioPlanByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (db.AudioPlan, error)
 	ListGenerationJobsByNode(ctx context.Context, nodeID pgtype.UUID) ([]db.GenerationJob, error)
 	ListArtifactVersionsByNode(ctx context.Context, nodeID pgtype.UUID) ([]db.ArtifactVersion, error)
 }
@@ -62,6 +65,10 @@ func (b *Builder) Build(ctx context.Context, workspaceID pgtype.UUID) (Productio
 	if err != nil {
 		return ProductionOverview{}, err
 	}
+	audioPlan, hasAudioPlan, err := b.activeAudioPlan(ctx, workspaceID)
+	if err != nil {
+		return ProductionOverview{}, err
+	}
 
 	versionsByNode := make(map[pgtype.UUID][]db.ArtifactVersion)
 	jobsByNode := make(map[pgtype.UUID][]db.GenerationJob)
@@ -81,7 +88,13 @@ func (b *Builder) Build(ctx context.Context, workspaceID pgtype.UUID) (Productio
 	shotSummaries, counts := buildShots(shots, nodes, reviews)
 	timeline := buildTimeline(tasks, events, sandboxes)
 	finalOutputs := buildFinalOutputs(nodes, versionsByNode)
+	var audioPlanSummary *AudioPlan
+	if hasAudioPlan {
+		audioPlanSummary = buildAudioPlan(audioPlan, nodes)
+		countAudioPlan(audioPlanSummary, &counts)
+	}
 	counts.FinalOutputs = len(finalOutputs)
+	counts.FinalReviews = countFinalReviews(reviews)
 	counts.FailedTasks += countFailedNodes(nodes)
 	for _, task := range tasks {
 		switch task.Status {
@@ -101,6 +114,7 @@ func (b *Builder) Build(ctx context.Context, workspaceID pgtype.UUID) (Productio
 		WorkspaceID:  uuidString(workspace.ID),
 		Phase:        inferPhase(counts, nodes, tasks, events),
 		Counts:       counts,
+		AudioPlan:    audioPlanSummary,
 		Shots:        shotSummaries,
 		Timeline:     timeline,
 		FinalOutputs: finalOutputs,
@@ -113,6 +127,17 @@ func (b *Builder) Build(ctx context.Context, workspaceID pgtype.UUID) (Productio
 		},
 		UpdatedAt: timestamp(b.now()),
 	}, nil
+}
+
+func (b *Builder) activeAudioPlan(ctx context.Context, workspaceID pgtype.UUID) (db.AudioPlan, bool, error) {
+	plan, err := b.store.GetActiveAudioPlanByWorkspace(ctx, workspaceID)
+	if err == nil {
+		return plan, plan.ID.Valid, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.AudioPlan{}, false, nil
+	}
+	return db.AudioPlan{}, false, err
 }
 
 func buildShots(shots []db.Shot, nodes []db.MediaNode, reviews []db.ReviewRecord) ([]ShotSummary, Counts) {
@@ -182,6 +207,78 @@ func buildShots(shots []db.Shot, nodes []db.MediaNode, reviews []db.ReviewRecord
 		out = append(out, summary)
 	}
 	return out, counts
+}
+
+func buildAudioPlan(plan db.AudioPlan, nodes []db.MediaNode) *AudioPlan {
+	if !plan.ID.Valid {
+		return nil
+	}
+	nodesByID := make(map[pgtype.UUID]db.MediaNode, len(nodes))
+	for _, node := range nodes {
+		nodesByID[node.ID] = node
+	}
+	out := &AudioPlan{
+		ID:                    uuidString(plan.ID),
+		Status:                plan.Status,
+		Title:                 plan.Title,
+		PlanKind:              plan.PlanKind,
+		Language:              plan.Language,
+		VoiceoverScript:       plan.VoiceoverScript,
+		VoiceProfile:          jsonMap(plan.VoiceProfile),
+		BGMPlan:               jsonMap(plan.BgmPlan),
+		VoiceoverNodeID:       uuidString(plan.VoiceoverNodeID),
+		VoiceoverStatus:       linkedAudioNodeStatus(plan.VoiceoverNodeID, nodesByID),
+		BGMNodeID:             uuidString(plan.BgmNodeID),
+		BGMStatus:             linkedAudioNodeStatus(plan.BgmNodeID, nodesByID),
+		TimelinePlanID:        uuidString(plan.TimelinePlanID),
+		VoiceoverRenderPlanID: uuidString(plan.VoiceoverRenderPlanID),
+		BGMRenderPlanID:       uuidString(plan.BgmRenderPlanID),
+	}
+	if plan.TargetDurationSec.Valid {
+		value := plan.TargetDurationSec.Float64
+		out.TargetDurationSec = &value
+	}
+	return out
+}
+
+func linkedAudioNodeStatus(nodeID pgtype.UUID, nodes map[pgtype.UUID]db.MediaNode) Status {
+	if !nodeID.Valid {
+		return StatusNone
+	}
+	node, ok := nodes[nodeID]
+	if !ok {
+		return StatusNone
+	}
+	return nodeStatus(node.Status)
+}
+
+func countAudioPlan(plan *AudioPlan, counts *Counts) {
+	if plan == nil || counts == nil {
+		return
+	}
+	countAudioStatus(plan.VoiceoverNodeID, plan.VoiceoverStatus, counts)
+	countAudioStatus(plan.BGMNodeID, plan.BGMStatus, counts)
+}
+
+func countAudioStatus(nodeID string, status Status, counts *Counts) {
+	if nodeID == "" && status == StatusNone {
+		return
+	}
+	if status == StatusReady {
+		counts.AudioReady++
+		return
+	}
+	counts.AudioMissing++
+}
+
+func countFinalReviews(reviews []db.ReviewRecord) int {
+	count := 0
+	for _, review := range reviews {
+		if review.ReviewTask == "final_video_review" || review.TargetPhase == "final_video" {
+			count++
+		}
+	}
+	return count
 }
 
 func buildTimeline(tasks []db.AgentTask, events []db.AgentEvent, sandboxes []db.SandboxJob) []TimelineItem {

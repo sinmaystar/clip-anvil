@@ -157,7 +157,7 @@ Result: PASS.
 - Modify: `apps/server/internal/api/agent_canvas_detail.go`
 - Modify tests: `apps/server/internal/api/agent_canvas_detail_test.go`
 
-- [ ] **Step 1: Write failing overview tests**
+- [x] **Step 1: Write failing overview tests**
 
 Add tests proving production overview includes:
 - `audio_plan.status`;
@@ -174,7 +174,7 @@ Run:
 
 Expected: FAIL because overview store and response types do not expose AudioPlan.
 
-- [ ] **Step 2: Extend overview store and response**
+- [x] **Step 2: Extend overview store and response**
 
 Add to `overview.Store`:
 - `GetActiveAudioPlanByWorkspace(ctx, workspaceID pgtype.UUID) (db.AudioPlan, error)`
@@ -185,7 +185,7 @@ Add:
 - `Counts.AudioMissing`
 - `Counts.FinalReviews`
 
-- [ ] **Step 3: Populate overview audio summary**
+- [x] **Step 3: Populate overview audio summary**
 
 In `Builder.Build`:
 - load active AudioPlan;
@@ -193,7 +193,7 @@ In `Builder.Build`:
 - ignore `pgx.ErrNoRows`;
 - count final-video review records from existing `reviews`.
 
-- [ ] **Step 4: Write failing detail API tests**
+- [x] **Step 4: Write failing detail API tests**
 
 Add tests proving:
 - overview detail includes active AudioPlan JSON;
@@ -208,7 +208,7 @@ Run:
 
 Expected: FAIL until detail response fields are populated.
 
-- [ ] **Step 5: Populate detail API fields**
+- [x] **Step 5: Populate detail API fields**
 
 In `agent_canvas_detail.go`:
 - populate overview `AudioPlan`;
@@ -216,7 +216,7 @@ In `agent_canvas_detail.go`:
 - load reviews by output node or artifact version;
 - keep existing `Plan` and `Result` JSON.
 
-- [ ] **Step 6: Verify Task 2**
+- [x] **Step 6: Verify Task 2**
 
 Run:
 
@@ -227,6 +227,17 @@ git diff --check
 ```
 
 Expected: PASS.
+
+Actual:
+
+```bash
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/overview -run 'AudioPlan|FinalReview' -count=1)
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/api -run 'AgentCanvas.*Audio|FinalOutput.*Audio' -count=1)
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/overview -count=1)
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/api -count=1)
+```
+
+Result: PASS.
 
 ## Task 3: Frontend Workbench Audio UI
 
