@@ -234,7 +234,7 @@ production:
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TEXT_MODEL", "doubao-cheap")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_VIDEO_RESOLUTION_OVERRIDE", "480p")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_REGION", "cn-beijing")
-	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_MODEL", "")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_MODEL", "seed-audio-1.0")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_ACCESS_KEY_ID", "tos-ak")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_SECRET_ACCESS_KEY", "tos-sk")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_BUCKET", "clip-anvil-temp-bucket")
@@ -269,8 +269,8 @@ production:
 	if cfg.Production.Volcengine.Region != "cn-beijing" {
 		t.Fatalf("Volcengine.Region = %q, want cn-beijing", cfg.Production.Volcengine.Region)
 	}
-	if cfg.Production.Volcengine.AudioModel != "" {
-		t.Fatalf("Volcengine.AudioModel = %q, want empty", cfg.Production.Volcengine.AudioModel)
+	if cfg.Production.Volcengine.AudioModel != "seed-audio-1.0" {
+		t.Fatalf("Volcengine.AudioModel = %q, want seed-audio-1.0", cfg.Production.Volcengine.AudioModel)
 	}
 	if cfg.Production.Volcengine.TOS.AccessKeyID != "tos-ak" {
 		t.Fatalf("Volcengine.TOS.AccessKeyID was not loaded from env")

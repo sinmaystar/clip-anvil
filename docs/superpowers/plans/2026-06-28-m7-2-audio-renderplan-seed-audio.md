@@ -291,7 +291,7 @@ Expected: PASS.
 - Modify: `apps/server/internal/config/config_test.go`
 - Modify docs if needed: `docs/milestones/m7-agent-audio-plan-composer.md`
 
-- [ ] **Step 1: Add model capability migration**
+- [x] **Step 1: Add model capability migration**
 
 Create a migration that:
 - disables or supersedes `volcengine-audio-hold`.
@@ -303,7 +303,7 @@ Create a migration that:
   - limits for max prompt chars, 120s output duration, supported formats, supported sample rates, reference audio count/size.
   - defaults `{"format":"mp3","sample_rate":48000,"watermark":false}`.
 
-- [ ] **Step 2: Update env examples and local `.env`**
+- [x] **Step 2: Update env examples and local `.env`**
 
 Update `.env.example`:
 
@@ -314,11 +314,11 @@ CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_DEFAULT_SPEAKER=
 
 Write the same keys into ignored local `.env` if missing. Keep secrets blank unless the user has already set real values.
 
-- [ ] **Step 3: Verify config loading**
+- [x] **Step 3: Verify config loading**
 
 If adding a default speaker config field, extend `config.go` and config tests. If storing speaker only in RenderPlan params, no new config field is needed; document that `AUDIO_DEFAULT_SPEAKER` is reserved for a follow-up.
 
-- [ ] **Step 4: Verify Task 5**
+- [x] **Step 4: Verify Task 5**
 
 Run:
 
