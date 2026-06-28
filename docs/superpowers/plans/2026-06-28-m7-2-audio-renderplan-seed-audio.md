@@ -128,7 +128,7 @@ Expected: PASS.
 - Modify tests: `apps/server/internal/agent/craftsman/*_test.go`
 - Modify: `apps/server/internal/agent/craftsman/system_prompt.go`
 
-- [ ] **Step 1: Write failing dispatch tests**
+- [x] **Step 1: Write failing dispatch tests**
 
 Add tests proving Producer can call:
 - `dispatch_craftsman(scope.type=audio_plan, scope.key=audio_plan.active, target_phase=voiceover_audio)`
@@ -136,7 +136,7 @@ Add tests proving Producer can call:
 
 The tool must resolve the active approved AudioPlan and create a Craftsman task with audio scope and target phase.
 
-- [ ] **Step 2: Add AudioPlan context loading**
+- [x] **Step 2: Add AudioPlan context loading**
 
 Extend Craftsman context store with:
 - `GetAudioPlan`
@@ -152,7 +152,7 @@ When `scope_type=audio_plan`, load:
 
 Block context loading if the active AudioPlan is missing or not `approved`.
 
-- [ ] **Step 3: Update Craftsman prompt**
+- [x] **Step 3: Update Craftsman prompt**
 
 Add audio-specific rules:
 - For `target_phase=voiceover_audio`, create exactly one RenderPlan scoped to the approved AudioPlan.
@@ -162,7 +162,7 @@ Add audio-specific rules:
 - BGM first version must use `seed-audio-1.0`; do not use uploaded audio or a library.
 - `generation_text` should be concise enough for provider prompt limits and should include voice/BGM style, duration target, cue/script, and language.
 
-- [ ] **Step 4: Verify Task 2**
+- [x] **Step 4: Verify Task 2**
 
 Run:
 

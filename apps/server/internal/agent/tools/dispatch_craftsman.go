@@ -24,6 +24,8 @@ type CraftsmanDispatcherStore interface {
 	GetShotByClientKey(ctx context.Context, params db.GetShotByClientKeyParams) (db.Shot, error)
 	GetKeyElementStateByID(ctx context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error)
 	ListActiveKeyElementStatesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.KeyElementState, error)
+	GetAudioPlan(ctx context.Context, params db.GetAudioPlanParams) (db.AudioPlan, error)
+	GetActiveAudioPlanByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (db.AudioPlan, error)
 	SetShotCraftsmanThread(ctx context.Context, params db.SetShotCraftsmanThreadParams) (db.Shot, error)
 	UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error)
 }
@@ -65,12 +67,12 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 				"properties": map[string]any{
 					"type": map[string]any{
 						"type":        "string",
-						"enum":        []string{"shot", "key_element_state"},
-						"description": "生产归属范围。shot 用于分镜图/视频；key_element_state 用于共享参考图。",
+						"enum":        []string{"shot", "key_element_state", "audio_plan"},
+						"description": "生产归属范围。shot 用于分镜图/视频；key_element_state 用于共享参考图；audio_plan 用于全片旁白或 BGM 音频。",
 					},
 					"id": map[string]any{
 						"type":        "string",
-						"description": "兼容旧字段。模型不要填写内部 ID；请填写 read_project_context 返回的 semantic_key，或留空并用 shot_refs 批量派发 shot。",
+						"description": "兼容旧字段。模型不要填写内部 ID；shot/key_element_state 请填写 read_project_context 返回的 semantic_key；audio_plan 请填写 audio_plan.active。",
 					},
 				},
 			},
@@ -81,8 +83,8 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 			},
 			"target_phase": map[string]any{
 				"type":        "string",
-				"enum":        []string{"reference_image", "preview_image", "shot_video"},
-				"description": "要派发的生成阶段。reference_image 生成共享参考图；preview_image 生成分镜预览图；shot_video 生成分镜视频。",
+				"enum":        []string{"reference_image", "preview_image", "shot_video", "voiceover_audio", "bgm_audio"},
+				"description": "要派发的生成阶段。reference_image 生成共享参考图；preview_image 生成分镜预览图；shot_video 生成分镜视频；voiceover_audio / bgm_audio 基于已批准 AudioPlan 创建音频 RenderPlan。",
 			},
 			"mode": map[string]any{
 				"type":        "string",
@@ -415,7 +417,7 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 	if targetPhase == "" {
 		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("invalid dispatch_craftsman target_phase")
 	}
-	if targetPhase != "reference_image" && targetPhase != "preview_image" && targetPhase != "shot_video" {
+	if targetPhase != "reference_image" && targetPhase != "preview_image" && targetPhase != "shot_video" && targetPhase != "voiceover_audio" && targetPhase != "bgm_audio" {
 		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("unsupported dispatch_craftsman target_phase %q", targetPhase)
 	}
 	executionPolicy := stringValue(raw, "execution_policy")
@@ -446,7 +448,7 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 	if scopeRaw, ok := raw["scope"].(map[string]any); ok {
 		scopeRef = strings.TrimSpace(stringValue(scopeRaw, "id"))
 	}
-	if scopeType != "shot" && scopeType != "key_element_state" {
+	if scopeType != "shot" && scopeType != "key_element_state" && scopeType != "audio_plan" {
 		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("unsupported dispatch_craftsman scope.type %q", scopeType)
 	}
 	if scopeType == "key_element_state" {
@@ -459,6 +461,17 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 	}
 	if scopeType == "shot" && targetPhase == "reference_image" {
 		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("shot 不能派发 reference_image")
+	}
+	if scopeType == "shot" && (targetPhase == "voiceover_audio" || targetPhase == "bgm_audio") {
+		return parsedDispatchCraftsmanArgs{}, fmt.Errorf("shot 不能派发音频阶段；请使用 scope.type=audio_plan")
+	}
+	if scopeType == "audio_plan" {
+		if targetPhase != "voiceover_audio" && targetPhase != "bgm_audio" {
+			return parsedDispatchCraftsmanArgs{}, fmt.Errorf("audio_plan 只能派发 voiceover_audio 或 bgm_audio")
+		}
+		if len(stringSliceValue(raw, "shot_refs")) > 0 {
+			return parsedDispatchCraftsmanArgs{}, fmt.Errorf("audio_plan scope 不支持 shot_refs")
+		}
 	}
 	shotRefs := stringSliceValue(raw, "shot_refs")
 	return parsedDispatchCraftsmanArgs{
@@ -499,6 +512,19 @@ func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pg
 			return nil, fmt.Errorf("key_element_state.reference_status=%s，不需要生成参考图；如需重做请设置 force=true", state.ReferenceStatus)
 		}
 		return []craftsmanDispatchScope{{ScopeType: "key_element_state", ScopeID: state.ID, ScopeKey: semanticScopeKey(state.SemanticKey, "key_element_state", state.ClientKey), ClientKey: state.ClientKey}}, nil
+	}
+	if args.ScopeType == "audio_plan" {
+		audioPlan, err := t.resolveAudioPlanRef(ctx, workspaceID, args)
+		if err != nil {
+			return nil, err
+		}
+		if audioPlan.WorkspaceID != workspaceID {
+			return nil, errScopeNotFound
+		}
+		if audioPlan.Status != "approved" {
+			return nil, fmt.Errorf("audio_plan.status=%s，必须先批准 approved 后才能派发音频生成", audioPlan.Status)
+		}
+		return []craftsmanDispatchScope{{ScopeType: "audio_plan", ScopeID: audioPlan.ID, ScopeKey: semanticScopeKey(audioPlan.SemanticKey, "audio_plan", "active"), ClientKey: "audio_plan.active"}}, nil
 	}
 	shots, err := t.resolveShots(ctx, workspaceID, args)
 	if err != nil {
@@ -547,6 +573,21 @@ func (t DispatchCraftsmanTool) resolveKeyElementStateRef(ctx context.Context, wo
 		return db.KeyElementState{}, fmt.Errorf("找不到 key_element_state ref=%s，请先读取项目上下文确认真实 semantic_key", args.ScopeRef)
 	}
 	return *matched, nil
+}
+
+func (t DispatchCraftsmanTool) resolveAudioPlanRef(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) (db.AudioPlan, error) {
+	if args.ScopeID.Valid {
+		return t.store.GetAudioPlan(ctx, db.GetAudioPlanParams{ID: args.ScopeID, WorkspaceID: workspaceID})
+	}
+	ref := strings.TrimSpace(args.ScopeRef)
+	audioPlan, err := t.store.GetActiveAudioPlanByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return db.AudioPlan{}, err
+	}
+	if ref == "" || ref == "audio_plan.active" || ref == audioPlan.SemanticKey || ref == audioPlan.DisplayName {
+		return audioPlan, nil
+	}
+	return db.AudioPlan{}, fmt.Errorf("找不到 audio_plan ref=%s，请使用 read_project_context 返回的 audio_plan.active", ref)
 }
 
 func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) ([]db.Shot, error) {

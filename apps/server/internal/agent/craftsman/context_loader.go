@@ -2,6 +2,7 @@ package craftsman
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -14,6 +15,10 @@ import (
 type ContextStore interface {
 	GetShotByID(ctx context.Context, id pgtype.UUID) (db.Shot, error)
 	GetKeyElementStateByID(ctx context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error)
+	GetAudioPlan(ctx context.Context, params db.GetAudioPlanParams) (db.AudioPlan, error)
+	GetActiveAudioPlanByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (db.AudioPlan, error)
+	ListActiveShotsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.Shot, error)
+	ListRenderPlansByScope(ctx context.Context, params db.ListRenderPlansByScopeParams) ([]db.RenderPlan, error)
 	ListMediaNodesByShot(ctx context.Context, params db.ListMediaNodesByShotParams) ([]db.MediaNode, error)
 	ListSourceMaterialNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error)
 	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
@@ -52,6 +57,9 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 	}
 	if input.ScopeType == "key_element_state" {
 		return l.loadKeyElementStateContext(ctx, input, messages)
+	}
+	if input.ScopeType == "audio_plan" {
+		return l.loadAudioPlanContext(ctx, input, messages)
 	}
 	return l.loadShotContext(ctx, input, messages)
 }
@@ -178,6 +186,71 @@ func (l ContextLoader) loadKeyElementStateContext(ctx context.Context, input Gra
 	}, nil
 }
 
+func (l ContextLoader) loadAudioPlanContext(ctx context.Context, input GraphInput, messages []db.AgentMessage) (Context, error) {
+	audioPlan, err := l.resolveAudioPlan(ctx, input)
+	if err != nil {
+		return Context{}, err
+	}
+	if audioPlan.WorkspaceID != input.WorkspaceID {
+		return Context{}, ErrInvalidInput
+	}
+	if audioPlan.Status != "approved" {
+		return Context{}, fmt.Errorf("audio_plan.status=%s; context requires approved AudioPlan", audioPlan.Status)
+	}
+	shots, err := l.Store.ListActiveShotsByWorkspace(ctx, input.WorkspaceID)
+	if err != nil {
+		return Context{}, err
+	}
+	renderPlans, err := l.Store.ListRenderPlansByScope(ctx, db.ListRenderPlansByScopeParams{
+		WorkspaceID: input.WorkspaceID,
+		ScopeType:   "audio_plan",
+		ScopeID:     audioPlan.ID,
+	})
+	if err != nil {
+		return Context{}, err
+	}
+	structured := map[string]any{
+		"task": map[string]any{
+			"target_phase":     input.Mode,
+			"execution_policy": input.ExecutionPolicy,
+		},
+		"scope": map[string]any{
+			"type": "audio_plan",
+			"id":   uuidString(audioPlan.ID),
+			"key":  input.ScopeKey,
+		},
+		"audio_plan": map[string]any{
+			"id":                  uuidString(audioPlan.ID),
+			"status":              audioPlan.Status,
+			"title":               audioPlan.Title,
+			"language":            audioPlan.Language,
+			"target_duration_sec": float8Value(audioPlan.TargetDurationSec),
+			"voiceover_excerpt":   trimText(audioPlan.VoiceoverScript, 160),
+			"voice_profile":       jsonMap(audioPlan.VoiceProfile),
+			"bgm_plan":            jsonMap(audioPlan.BgmPlan),
+			"cue_count":           jsonArrayCount(audioPlan.CuePlan),
+		},
+		"shot_count":        len(shots),
+		"render_plan_count": len(renderPlans),
+	}
+	return Context{
+		Input:       input,
+		AudioPlan:   audioPlan,
+		Messages:    messages,
+		Shots:       shots,
+		RenderPlans: renderPlans,
+		Text:        buildAudioPlanContextText(input, audioPlan, shots, renderPlans),
+		Structured:  structured,
+	}, nil
+}
+
+func (l ContextLoader) resolveAudioPlan(ctx context.Context, input GraphInput) (db.AudioPlan, error) {
+	if input.ScopeID.Valid {
+		return l.Store.GetAudioPlan(ctx, db.GetAudioPlanParams{ID: input.ScopeID, WorkspaceID: input.WorkspaceID})
+	}
+	return l.Store.GetActiveAudioPlanByWorkspace(ctx, input.WorkspaceID)
+}
+
 func (l ContextLoader) loadNodeState(ctx context.Context, node db.MediaNode) (NodeState, error) {
 	jobs, err := l.Store.ListGenerationJobsByNode(ctx, node.ID)
 	if err != nil {
@@ -268,6 +341,63 @@ func buildKeyElementStateContextText(input GraphInput, state db.KeyElementState,
 	return b.String()
 }
 
+func buildAudioPlanContextText(input GraphInput, audioPlan db.AudioPlan, shots []db.Shot, renderPlans []db.RenderPlan) string {
+	var b strings.Builder
+	writeTaskContext(&b, input)
+	fmt.Fprintf(&b, "AudioPlan\n")
+	fmt.Fprintf(&b, "- id: %s\n", uuidString(audioPlan.ID))
+	fmt.Fprintf(&b, "- scope_key: %s\n", input.ScopeKey)
+	fmt.Fprintf(&b, "- title: %s\n", audioPlan.Title)
+	fmt.Fprintf(&b, "- status: %s\n", audioPlan.Status)
+	fmt.Fprintf(&b, "- language: %s\n", audioPlan.Language)
+	if audioPlan.TargetDurationSec.Valid {
+		fmt.Fprintf(&b, "- target_duration_sec: %.1f\n", audioPlan.TargetDurationSec.Float64)
+	}
+	if strings.TrimSpace(audioPlan.VoiceoverScript) != "" {
+		fmt.Fprintf(&b, "- voiceover_script: %s\n", trimText(audioPlan.VoiceoverScript, 240))
+	}
+	if voiceProfile := compactJSONText(audioPlan.VoiceProfile); voiceProfile != "" {
+		fmt.Fprintf(&b, "- voice_profile: %s\n", voiceProfile)
+	}
+	if bgmPlan := compactJSONText(audioPlan.BgmPlan); bgmPlan != "" {
+		fmt.Fprintf(&b, "- bgm_plan: %s\n", bgmPlan)
+	}
+	if cuePlan := compactJSONText(audioPlan.CuePlan); cuePlan != "" {
+		fmt.Fprintf(&b, "- cue_plan: %s\n", cuePlan)
+	}
+	if len(shots) == 0 {
+		fmt.Fprintf(&b, "\nShots\n- none\n")
+	} else {
+		fmt.Fprintf(&b, "\nShots\n")
+		for _, shot := range shots {
+			fmt.Fprintf(&b, "- %s sort=%d title=%s status=%s duration=%s narration=%s dialogue=%s\n",
+				shot.ClientKey,
+				shot.SortOrder,
+				shot.Title,
+				shot.Status,
+				float8Text(shot.DurationSec),
+				trimText(shot.Narration, 80),
+				trimText(shot.Dialogue, 80),
+			)
+		}
+	}
+	if len(renderPlans) == 0 {
+		fmt.Fprintf(&b, "\nExisting Audio RenderPlans\n- none\n")
+	} else {
+		fmt.Fprintf(&b, "\nExisting Audio RenderPlans\n")
+		for _, plan := range renderPlans {
+			fmt.Fprintf(&b, "- %s status=%s profile=%s operation=%s revision=%d\n",
+				plan.TargetPhase,
+				plan.Status,
+				plan.ModelPromptProfile,
+				plan.Operation,
+				plan.Revision,
+			)
+		}
+	}
+	return b.String()
+}
+
 func writeTaskContext(b *strings.Builder, input GraphInput) {
 	if strings.TrimSpace(input.Mode) == "" && strings.TrimSpace(input.ExecutionPolicy) == "" {
 		return
@@ -280,6 +410,66 @@ func writeTaskContext(b *strings.Builder, input GraphInput) {
 		fmt.Fprintf(b, "- execution_policy: %s\n", input.ExecutionPolicy)
 	}
 	fmt.Fprintf(b, "\n")
+}
+
+func float8Value(value pgtype.Float8) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.Float64
+}
+
+func float8Text(value pgtype.Float8) string {
+	if !value.Valid {
+		return ""
+	}
+	return fmt.Sprintf("%.1f", value.Float64)
+}
+
+func jsonMap(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+func jsonArrayCount(raw []byte) int {
+	if len(raw) == 0 {
+		return 0
+	}
+	var out []any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return 0
+	}
+	return len(out)
+}
+
+func compactJSONText(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return trimText(string(raw), 240)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return trimText(string(encoded), 360)
+}
+
+func trimText(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 || len([]rune(text)) <= limit {
+		return text
+	}
+	runes := []rune(text)
+	return string(runes[:limit]) + "..."
 }
 
 func writeNodeState(b *strings.Builder, node NodeState) {

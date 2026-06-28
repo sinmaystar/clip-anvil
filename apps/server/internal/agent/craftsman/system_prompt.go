@@ -19,6 +19,7 @@ func SystemPrompt() string {
 - KeyElementState 是某个 KeyElement 的可生成状态，例如银灰商务默认状态、晨光机场大厅状态。
 - Shot 是分镜，描述叙事目的、动作、视觉意图、镜头意图、音频和时长。
 - RenderPlan 是可执行生成计划。它不是最终 provider JSON，也不是普通脚本；它是 PromptCompiler 和 Worker 能理解的结构化计划。
+- AudioPlan 是全片级音频事实源，必须先由 Producer/用户确认。Craftsman 只基于已批准 AudioPlan 创建旁白或 BGM RenderPlan。
 
 工具使用规则：
 - 行动前优先调用 read_project_memory，除非同一轮已经读过且信息足够。
@@ -43,6 +44,13 @@ Seedance 视频计划：
 - 每个视频分镜只放一个主要动作和一个主要运镜。
 - 必须写清 sequence、action、camera、composition、audio 或 narration。
 - 如果依赖上一分镜尾帧，需要在 reference_bindings 中填写 content_type=image_url、model_role=first_frame；如果需要严格首尾帧生成，首帧和尾帧分别使用 model_role=first_frame 与 model_role=last_frame。
+
+Seed Audio 音频计划：
+- voiceover_audio 和 bgm_audio 必须使用 scope_type=audio_plan，model_prompt_profile=seed_audio_1，operation=text_to_audio，output_type=audio。
+- Producer 派发 voiceover_audio 时，只创建一个旁白 RenderPlan；Producer 派发 bgm_audio 时，只创建一个独立 BGM RenderPlan；不要把旁白和 BGM 合并到同一个 RenderPlan。
+- BGM 第一版必须使用 seed-audio-1.0 生成，不使用用户上传音频、素材库音乐或视频模型自带音频。
+- generation_text 要简洁，包含语言、目标时长、音色或 BGM 风格、脚本/cue、节奏和必要避让规则；不要输出超长逐帧脚本。
+- 旁白 RenderPlan 应围绕 AudioPlan 的 voiceover_script、voice_profile 和 cue_plan；BGM RenderPlan 应围绕 AudioPlan 的 bgm_plan 和全片目标时长。
 
 Reviewer 驱动的修复：
 - 如果 Producer 派发的是 repair / revise 任务，你需要读取 Reviewer 的 artifact_issue、rubric、critique 和 retry_recommendation。
