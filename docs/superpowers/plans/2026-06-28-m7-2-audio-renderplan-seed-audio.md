@@ -337,7 +337,7 @@ Expected: PASS, and `.env` is ignored.
 - Create or modify smoke script under `scripts/` only if an existing smoke pattern fits.
 - Modify: `docs/milestones/m7-agent-audio-plan-composer.md`
 
-- [ ] **Step 1: Add focused smoke or integration test**
+- [x] **Step 1: Add focused smoke or integration test**
 
 Prove the mock path:
 - approved AudioPlan exists.
@@ -346,7 +346,7 @@ Prove the mock path:
 - two audio media nodes and artifact versions are created.
 - audio_plan has render plan and node links.
 
-- [ ] **Step 2: Run full M7.2 verification**
+- [x] **Step 2: Run full M7.2 verification**
 
 Run:
 
@@ -360,7 +360,7 @@ git check-ignore -v .env
 
 If Volcengine credentials are available in local `.env`, run one manual real-provider smoke for `seed-audio-1.0`. If credentials are absent, record that real-provider smoke was not executed.
 
-- [ ] **Step 3: Update milestone and commit**
+- [x] **Step 3: Update milestone and commit**
 
 Update `docs/milestones/m7-agent-audio-plan-composer.md` M7.2 row with verification evidence.
 
