@@ -9,6 +9,7 @@
 - [M7.1 实施计划](../superpowers/plans/2026-06-28-m7-1-audioplan-producer-confirmation.md)
 - [M7.2 实施计划](../superpowers/plans/2026-06-28-m7-2-audio-renderplan-seed-audio.md)
 - [M7.3 实施计划](../superpowers/plans/2026-06-28-m7-3-composer-audio-mixing.md)
+- [M7.4 实施计划](../superpowers/plans/2026-06-28-m7-4-workbench-final-review.md)
 
 ## Codex Goal 建议
 
