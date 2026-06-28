@@ -2,7 +2,7 @@
 
 **状态**：待评审
 **日期**：2026-06-28
-**适用范围**：ClipAnvil Agent 模式，营销短视频旁白 + BGM 第一版音频链路，Producer / Composer / shared production / 火山豆包语音集成
+**适用范围**：ClipAnvil Agent 模式，营销短视频旁白 + BGM 第一版音频链路，Producer / Craftsman / Worker / Composer / shared production / 火山豆包语音集成
 
 ## 结论
 
@@ -14,6 +14,9 @@
 Producer 生成全片旁白脚本和音频策略
   -> 用户确认或修改脚本 / 音色 / BGM 方向
   -> AudioPlan 持久化为全片级事实源
+  -> Producer dispatch_craftsman(target_phase=voiceover_audio)
+  -> Craftsman 生成 voiceover_audio RenderPlan
+  -> Producer decide_render_plan accept
   -> Worker 调用 seed-audio-1.0 生成旁白音频
   -> Composer stage 分镜视频、旁白、BGM
   -> Composer 用 TimelinePlan 混音、ducking、fade、concat
@@ -25,7 +28,7 @@ Producer 生成全片旁白脚本和音频策略
 
 - 分镜视频默认生成无声，`generate_audio=false`。
 - 旁白按全片生成，保证语气、节奏和音色连续。
-- BGM 第一版优先来自上传素材或素材库；可选支持 `seed-audio-1.0` 生成短 BGM/氛围音乐，但仍作为独立 audio artifact 进入 timeline。
+- BGM 第一版优先来自上传素材或素材库；可选支持 `seed-audio-1.0` 生成短 BGM/氛围音乐，但也必须走 Craftsman RenderPlan -> Worker -> audio artifact，再进入 timeline。
 - `shot.audio_plan` 只存全片 AudioPlan 切分到该 shot 的 cue，不作为各分镜独立生成音频的事实源。
 - Composer 负责最终音轨混合，不让视频生成模型分别生成无法统一剪辑的音频。
 
@@ -41,7 +44,7 @@ Producer 生成全片旁白脚本和音频策略
 - Composer 目前已落地 `timeline_plan`、`simple_concat` / `concat_with_fades`、sandbox ffmpeg、final video artifact 提交。
 - 当前 Agent 文档仍明确标记：音频素材导入、旁白 / BGM / TTS、音频参与合成未接入 Agent。
 
-因此下一步不是从零加一个音频功能，而是把已有字段收束成稳定产品路径：全片 AudioPlan -> audio artifact -> TimelinePlan 混音。
+因此下一步不是从零加一个音频功能，而是把已有字段收束成稳定产品路径：全片 AudioPlan -> audio RenderPlan -> audio artifact -> TimelinePlan 混音。
 
 ## 火山豆包语音能力边界
 
@@ -74,7 +77,8 @@ Producer 生成全片旁白脚本和音频策略
 
 - Agent 模式全片级 AudioPlan 事实源。
 - Producer 生成并请求用户确认旁白脚本、音色和 BGM 方向。
-- Worker / production 接入 `seed-audio-1.0`，生成旁白 audio artifact。
+- Craftsman 支持 `voiceover_audio` RenderPlan，把 AudioPlan 翻译成模型 prompt、speaker、format、sample_rate、speech_rate 等执行计划。
+- Worker / production 接入 `seed-audio-1.0`，按 audio RenderPlan 生成旁白 audio artifact。
 - Agent 支持上传 / 读取 audio source node。
 - Composer TimelinePlan 支持旁白轨、BGM 轨、ducking、fade、音量、音频与分镜时长对齐。
 - Reviewer final video review 使用 `audio_sync` 评估旁白节奏、BGM 音量、音画匹配。
@@ -131,7 +135,7 @@ BGM：轻快电子流行，前 2 秒抓注意力，中段降低音量突出卖�
 - 选择不要 BGM。
 - 上传自己的 BGM。
 
-确认后，Agent 生成旁白音频并进入 Composer 混音。
+确认后，Producer 派发 Craftsman 创建旁白音频 RenderPlan；RenderPlan 被 Producer 接受后，Worker 生成旁白音频并进入 Composer 混音。
 
 ## Agent 职责边界
 
@@ -143,21 +147,43 @@ Producer 是全局音频策略 owner：
 - 选择默认音色方向和 BGM 方向。
 - 把全片脚本切分成 shot cues。
 - 请求用户确认关键音频决策。
-- 派发音频生成和 Composer。
+- 派发 Craftsman 创建音频 RenderPlan。
+- 接受或拒绝音频 RenderPlan。
+- 在音频 artifact ready 后派发 Composer。
 
 Producer 不做：
 
 - 不直接写 ffmpeg 命令。
+- 不直接写 provider prompt 或 provider 私有参数。
 - 不让每个 shot 独立生成旁白音频。
 - 不把视频模型自带音频当作多分镜最终音轨。
 - 不在未确认音色 / 脚本时静默生成最终音频，除非用户明确要求自动推进。
+
+### Craftsman
+
+Craftsman 负责把 AudioPlan 翻译成可执行的 audio RenderPlan：
+
+- 读取 approved AudioPlan、ProjectMemory、Storyboard、目标平台和可用音色配置。
+- 生成 `target_phase=voiceover_audio` 的 RenderPlan。
+- 编译适合 `seed-audio-1.0` 的 `generation_text` / `prompt_parts.audio`。
+- 设置 `operation=audio_generation`、`output_type=audio`、`model_prompt_profile=seed_audio_1`。
+- 设置 `params.speaker`、`format`、`sample_rate`、`speech_rate`、`pitch_rate`、`loudness_rate`、`watermark`。
+- 如后续支持 BGM 生成，生成独立 `target_phase=bgm_audio` RenderPlan。
+
+Craftsman 不做：
+
+- 不修改 AudioPlan 原始脚本。
+- 不直接提交 generation job。
+- 不把 BGM 和旁白混在同一个 RenderPlan 里生成。
+- 不绕过 Producer 的 `decide_render_plan`。
 
 ### Worker / Production
 
 Worker 执行音频生成：
 
 - 使用 shared production `GenerationIntent`。
-- 新增 `operation_type=audio_generation` 或 `text_to_audio`。
+- 从 accepted audio RenderPlan 构造 `GenerationIntent`。
+- 新增 `operation_type=audio_generation`，`output_type=audio`。
 - 调用 Volcengine `seed-audio-1.0`。
 - 把 base64 / 临时 URL 结果上传到 MinIO。
 - 创建 audio `media_node`、`generation_job`、`artifact_version`。
@@ -208,6 +234,8 @@ CREATE TABLE audio_plan (
     bgm_plan JSONB NOT NULL DEFAULT '{}',
     cue_plan JSONB NOT NULL DEFAULT '[]',
     generation_params JSONB NOT NULL DEFAULT '{}',
+    voiceover_render_plan_id UUID REFERENCES render_plan(id) ON DELETE SET NULL,
+    bgm_render_plan_id UUID REFERENCES render_plan(id) ON DELETE SET NULL,
     voiceover_node_id UUID REFERENCES media_node(id) ON DELETE SET NULL,
     bgm_node_id UUID REFERENCES media_node(id) ON DELETE SET NULL,
     timeline_plan_id UUID REFERENCES timeline_plan(id) ON DELETE SET NULL,
@@ -337,15 +365,15 @@ Composer 的 TimelinePlan 消费 AudioPlan，并写完整音轨结构：
 - `text_prompt` 最终进入 `seed-audio-1.0` 前必须控制在 2048 字符内。
 - 如果用户要求换脚本，更新 AudioPlan 而不是直接改 TimelinePlan。
 
-### Producer `dispatch_audio_generation`
+### Producer `dispatch_craftsman`
 
-职责：把 approved AudioPlan 派发给 Worker 生成旁白 audio artifact。
+职责：把 approved AudioPlan 派发给 Craftsman 创建音频 RenderPlan。复用现有 `dispatch_craftsman` 工具，不新增绕过 RenderPlan 的 `dispatch_audio_generation`。
 
 ```json
 {
-  "brief": "生成已确认 AudioPlan 的全片旁白音频。",
-  "audio_plan_ref": "audio_plan.marketing_voiceover.v1",
-  "target": "voiceover",
+  "brief": "为已确认 AudioPlan 创建全片旁白音频 RenderPlan。",
+  "scope": {"type": "audio_plan", "key": "audio_plan.marketing_voiceover.v1"},
+  "target_phase": "voiceover_audio",
   "execution_policy": "execute_immediately"
 }
 ```
@@ -353,8 +381,56 @@ Composer 的 TimelinePlan 消费 AudioPlan，并写完整音轨结构：
 规则：
 
 - AudioPlan 必须是 `approved`。
-- 第一版只允许 `target=voiceover`。
-- 如果 BGM 走生成模型，后续可加 `target=bgm`，但不要和旁白共用同一次生成。
+- 第一版只允许 `target_phase=voiceover_audio`。
+- `dispatch_craftsman` 需要扩展 scope enum，支持 `audio_plan`。
+- 如果 BGM 走生成模型，后续可加 `target_phase=bgm_audio`，但不要和旁白共用同一个 RenderPlan。
+
+### Craftsman `upsert_render_plan`
+
+职责：为 AudioPlan 创建或修订 audio RenderPlan。
+
+```json
+{
+  "brief": "为已确认 AudioPlan 生成 seed-audio-1.0 旁白计划。",
+  "mode": "create",
+  "scope": {"type": "audio_plan", "key": "audio_plan.marketing_voiceover.v1"},
+  "target_phase": "voiceover_audio",
+  "operation": "audio_generation",
+  "model_prompt_profile": "seed_audio_1",
+  "generation_text": "用年轻女声、清爽有信任感的语气朗读：出发前，先把行李这件事变简单...",
+  "prompt_parts": {
+    "audio": "营销短视频旁白，清爽、有信任感、轻微兴奋；不要加入背景音乐或音效。",
+    "narration": "出发前，先把行李这件事变简单。悦行银灰色行李箱..."
+  },
+  "params": {
+    "speaker": "marketing_female_clear",
+    "format": "mp3",
+    "sample_rate": 48000,
+    "speech_rate": 0,
+    "pitch_rate": 0,
+    "loudness_rate": 0,
+    "watermark": {"enable": false}
+  }
+}
+```
+
+规则：
+
+- `scope.type=audio_plan` 时，`target_phase` 第一版只能是 `voiceover_audio`。
+- `generation_text` 必须来自 AudioPlan 的 confirmed script 和 voice profile，不得重写卖点或改脚本含义。
+- `generation_text` / 最终 `text_prompt` 必须满足 `seed-audio-1.0` 2048 字符限制。
+- 旁白 RenderPlan 不包含 BGM、环境声或音效，除非 AudioPlan 明确要求合成到同一条旁白中；第一版默认禁止。
+- 如果缺少 `speaker` 或音色配置不合法，Craftsman 应 `mark_blocked`，交给 Producer 请求用户选择音色。
+
+### Producer `decide_render_plan`
+
+职责：Producer 审核并接受 audio RenderPlan。接受后 Worker 才能执行模型调用。
+
+规则：
+
+- audio RenderPlan 和 preview / shot video RenderPlan 一样，必须经过 `decide_render_plan`。
+- 如果 RenderPlan 改写了已确认旁白脚本，Producer 应 reject 并要求 Craftsman 修订。
+- 如果只是补全 provider 参数、采样率和音量策略，Producer 可以 accept。
 
 ### Composer `create_timeline_plan`
 
@@ -541,6 +617,9 @@ Producer 应压缩脚本或改为多段生成。第一版若超过 2048 字符�
 
 ### Phase 2：Volcengine audio generation
 
+- 扩展 `dispatch_craftsman` scope，支持 `audio_plan`。
+- 扩展 `render_plan` / RenderPlan submitter，支持 `target_phase=voiceover_audio`、`operation=audio_generation`、`output_type=audio`。
+- 扩展 Craftsman prompt / context loader，读取 AudioPlan 并生成 audio RenderPlan。
 - 新增 `volcengine_audio.go` runtime。
 - 扩展 `model_capability` seed-audio-1.0。
 - 支持 `audio_generation` `GenerationIntent`。
@@ -549,6 +628,8 @@ Producer 应压缩脚本或改为多段生成。第一版若超过 2048 字符�
 
 验证：
 
+- Craftsman audio RenderPlan 单测。
+- `decide_render_plan` accept audio RenderPlan 单测。
 - provider request builder 单测。
 - mock audio generation 单测。
 - server build / test。
@@ -585,8 +666,9 @@ Producer 应压缩脚本或改为多段生成。第一版若超过 2048 字符�
 3. 旁白脚本由 Producer 生成全片版本，并请求用户确认。
 4. 音色第一版优先使用预设 `speaker`，后续再接上传参考音频 / 声音复刻。
 5. AudioPlan 是全片级事实源，TimelinePlan 是后期执行计划。
-6. Composer 负责混音，不负责重写旁白。
-7. `seed-audio-1.0` 生成结果必须上传到 ClipAnvil 自己的对象存储，不能长期依赖临时 URL。
+6. 音频生成计划由 Craftsman 负责，Producer 只派发和审核，Worker 只执行。
+7. Composer 负责混音，不负责重写旁白，也不负责生成音频。
+8. `seed-audio-1.0` 生成结果必须上传到 ClipAnvil 自己的对象存储，不能长期依赖临时 URL。
 
 ## 待确认问题
 
