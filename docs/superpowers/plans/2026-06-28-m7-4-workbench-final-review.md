@@ -80,7 +80,7 @@ Frontend workbench should render:
 - Modify tests: `apps/server/internal/api/agent_workbench_projection_test.go`
 - Modify TypeScript contract later in Task 3: `apps/web/src/lib/agentWorkbench.ts`
 
-- [ ] **Step 1: Write failing API projection tests**
+- [x] **Step 1: Write failing API projection tests**
 
 Add tests proving:
 - `agentWorkbenchOverviewResponse` includes active AudioPlan fields.
@@ -96,7 +96,7 @@ Run:
 
 Expected: FAIL because these fields are not defined.
 
-- [ ] **Step 2: Add response structs and helpers**
+- [x] **Step 2: Add response structs and helpers**
 
 Add:
 - `agentWorkbenchAudioPlanResponse`
@@ -110,7 +110,7 @@ Add helpers:
 - `agentWorkbenchAudioSummary(planJSON []byte, resultJSON []byte) agentWorkbenchAudioSummaryResponse`
 - `latestFinalVideoReview(reviews []db.ReviewRecord, outputNodeID pgtype.UUID, versionID pgtype.UUID) *agentWorkbenchReviewSummaryResponse`
 
-- [ ] **Step 3: Load and project active AudioPlan**
+- [x] **Step 3: Load and project active AudioPlan**
 
 In `buildAgentWorkbenchProjection`:
 - call `queries.GetActiveAudioPlanByWorkspace(ctx, workspaceID)`;
@@ -118,7 +118,7 @@ In `buildAgentWorkbenchProjection`:
 - add `response.Overview.AudioPlan`;
 - pass `audioPlan` into final output projection so `audio_plan.timeline_plan_id` can be used as an authoritative link when present.
 
-- [ ] **Step 4: Project final review and counts**
+- [x] **Step 4: Project final review and counts**
 
 Extend `agentWorkbenchCountsResponse`:
 - `AudioReady int json:"audio_ready"`
@@ -128,7 +128,7 @@ Extend `agentWorkbenchCountsResponse`:
 Count voiceover/BGM node statuses from active AudioPlan.
 Count terminal or running `final_video_review` records.
 
-- [ ] **Step 5: Verify Task 1**
+- [x] **Step 5: Verify Task 1**
 
 Run:
 
@@ -138,6 +138,15 @@ git diff --check
 ```
 
 Expected: PASS.
+
+Actual:
+
+```bash
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/api -run 'AgentWorkbench.*Audio|FinalOutput.*Review|FinalOutputFromTimelinePlan' -count=1)
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/api -count=1)
+```
+
+Result: PASS.
 
 ## Task 2: Production Overview and Detail API Audio Fields
 
