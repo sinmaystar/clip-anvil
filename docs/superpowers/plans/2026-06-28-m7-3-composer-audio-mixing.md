@@ -135,7 +135,7 @@ Expected: PASS.
 - Modify: `apps/server/internal/agent/composer/executor.go`
 - Modify tests: `apps/server/internal/agent/composer/*_test.go`
 
-- [ ] **Step 1: Write failing context tests**
+- [x] **Step 1: Write failing context tests**
 
 Add tests proving `get_composition_context` returns:
 - the active approved `AudioPlan` summary, including `id`, `status`, `semantic_key`, `target_duration_sec`, `voiceover_script`, `voice_profile`, `bgm_plan`, and `cue_plan`;
@@ -152,7 +152,7 @@ Run:
 
 Expected: FAIL because Composer store/context does not load AudioPlan or audio nodes.
 
-- [ ] **Step 2: Extend Composer store interfaces**
+- [x] **Step 2: Extend Composer store interfaces**
 
 Add the minimum store methods needed by Composer:
 - `GetActiveAudioPlanByWorkspace(ctx, workspaceID)`
@@ -161,7 +161,7 @@ Add the minimum store methods needed by Composer:
 
 Keep context loading tolerant of a missing active AudioPlan, but mark the audio path blocked later if final composition requires generated audio and assets are missing.
 
-- [ ] **Step 3: Add audio assets to composition context**
+- [x] **Step 3: Add audio assets to composition context**
 
 Return `available_composition_assets` entries with:
 - `role`: `clip`, `voiceover`, or `bgm`
@@ -172,7 +172,7 @@ Use deterministic file names:
 - `voiceover.mp3` / `voiceover.wav` based on MIME
 - `bgm.mp3` / `bgm.wav` based on MIME
 
-- [ ] **Step 4: Update Composer system prompt**
+- [x] **Step 4: Update Composer system prompt**
 
 Tell Composer:
 - use approved AudioPlan as read-only input;
@@ -183,7 +183,7 @@ Tell Composer:
 - block with a clear missing-input reason when the approved AudioPlan requires audio but generated artifacts are absent;
 - final output must include AAC audio when audio tracks are present.
 
-- [ ] **Step 5: Verify Task 2**
+- [x] **Step 5: Verify Task 2**
 
 Run:
 
