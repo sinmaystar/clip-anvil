@@ -185,7 +185,7 @@ Expected: PASS.
 - Modify: `apps/server/sqlc/queries/audio_plan.sql`
 - Modify generated: `apps/server/internal/store/db/audio_plan.sql.go`
 
-- [ ] **Step 1: Write failing worker tests**
+- [x] **Step 1: Write failing worker tests**
 
 Add tests proving:
 - `voiceover_audio` creates or resolves an audio `media_node` with `node_type=audio`, `operation_type=text_to_audio`, and `agent_artifact_kind=voiceover_audio`.
@@ -193,7 +193,7 @@ Add tests proving:
 - submitted `GenerationIntent` has `OutputType="audio"`, `OperationType="text_to_audio"`, Volcengine provider/model from RenderPlan params or defaults, and prompt from compiled RenderPlan.
 - successful Worker submission updates the matching `audio_plan.voiceover_node_id` / `bgm_node_id` and render plan output fields.
 
-- [ ] **Step 2: Extend worker generation spec**
+- [x] **Step 2: Extend worker generation spec**
 
 Update generation spec helpers so:
 - `target_phase=voiceover_audio` maps to `OutputType=audio`, `OperationType=text_to_audio`, `ArtifactKind=voiceover_audio`, `SourcePhase=voiceover_audio`.
@@ -201,7 +201,7 @@ Update generation spec helpers so:
 - audio scopes do not require `shot_id`.
 - audio target node title and semantic key use `audio_plan.active.voiceover_audio` / `audio_plan.active.bgm_audio`.
 
-- [ ] **Step 3: Add audio_plan linkage queries**
+- [x] **Step 3: Add audio_plan linkage queries**
 
 Add sqlc queries:
 - `SetAudioPlanVoiceoverRenderPlan`
@@ -212,7 +212,7 @@ Add sqlc queries:
 
 Worker or submitter should connect RenderPlan IDs when submitting and node IDs when production is submitted.
 
-- [ ] **Step 4: Verify Task 3**
+- [x] **Step 4: Verify Task 3**
 
 Run:
 

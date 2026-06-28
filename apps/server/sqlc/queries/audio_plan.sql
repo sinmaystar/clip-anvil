@@ -83,6 +83,46 @@ WHERE id = sqlc.arg(id)
   AND archived_at IS NULL
 RETURNING *;
 
+-- name: SetAudioPlanVoiceoverRenderPlan :one
+UPDATE audio_plan
+SET
+    voiceover_render_plan_id = sqlc.arg(voiceover_render_plan_id),
+    updated_at = now()
+WHERE id = sqlc.arg(id)
+  AND workspace_id = sqlc.arg(workspace_id)
+  AND archived_at IS NULL
+RETURNING *;
+
+-- name: SetAudioPlanBGMRenderPlan :one
+UPDATE audio_plan
+SET
+    bgm_render_plan_id = sqlc.arg(bgm_render_plan_id),
+    updated_at = now()
+WHERE id = sqlc.arg(id)
+  AND workspace_id = sqlc.arg(workspace_id)
+  AND archived_at IS NULL
+RETURNING *;
+
+-- name: SetAudioPlanVoiceoverNode :one
+UPDATE audio_plan
+SET
+    voiceover_node_id = sqlc.arg(voiceover_node_id),
+    updated_at = now()
+WHERE id = sqlc.arg(id)
+  AND workspace_id = sqlc.arg(workspace_id)
+  AND archived_at IS NULL
+RETURNING *;
+
+-- name: SetAudioPlanBGMNode :one
+UPDATE audio_plan
+SET
+    bgm_node_id = sqlc.arg(bgm_node_id),
+    updated_at = now()
+WHERE id = sqlc.arg(id)
+  AND workspace_id = sqlc.arg(workspace_id)
+  AND archived_at IS NULL
+RETURNING *;
+
 -- name: ArchiveActiveAudioPlansByWorkspace :exec
 UPDATE audio_plan
 SET

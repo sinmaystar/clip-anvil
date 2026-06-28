@@ -276,6 +276,119 @@ func TestWorkerCreatesReferenceImageNodeAndMarksKeyElementStateReady(t *testing.
 	}
 }
 
+func TestWorkerCreatesVoiceoverAudioNodeAndSubmitsTextToAudioIntent(t *testing.T) {
+	audioPlanID := uuidWithByte(71)
+	store := &fakeWorkerStore{}
+	runtime := &fakeWorkerRuntime{}
+	productionService := &fakeProductionSubmitter{
+		result: production.RunResult{
+			Node:    db.MediaNode{ID: uuidWithByte(20), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeAudio},
+			Job:     db.GenerationJob{ID: uuidWithByte(30), TargetNodeID: uuidWithByte(20), OperationType: "text_to_audio", Status: db.JobStatusQueued},
+			Version: db.ArtifactVersion{ID: uuidWithByte(40), NodeID: uuidWithByte(20), JobID: uuidWithByte(30), Status: db.JobStatusQueued},
+		},
+	}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Store: store, Production: productionService})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:              "voiceover_audio",
+		TargetPhase:       "voiceover_audio",
+		ScopeType:         "audio_plan",
+		ScopeID:           uuidString(audioPlanID),
+		ScopeKey:          "audio_plan.active",
+		RenderPlanKey:     "audio_plan.active.voiceover_audio.r1",
+		CraftsmanThreadID: uuidString(uuidWithByte(3)),
+		CraftsmanTaskID:   uuidString(uuidWithByte(4)),
+		Strategy:          "生成全片旁白音频",
+		Prompt:            "zh, 12 seconds, warm female voice, script: 现在出发，让旅程更轻松。",
+		OutputType:        "audio",
+		OperationType:     "text_to_audio",
+		Model:             ModelSpec{Provider: "volcengine", ModelID: "seed-audio-1.0"},
+		Params:            map[string]any{"speaker": "warm_female", "format": "mp3"},
+		MaxAttempts:       3,
+	})
+	task.ScopeType = "audio_plan"
+	task.ScopeID = audioPlanID
+	task.RenderPlanID = uuidWithByte(77)
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if store.createdNode.NodeType != db.NodeTypeAudio || store.createdNode.OperationType != "text_to_audio" {
+		t.Fatalf("created node = %#v", store.createdNode)
+	}
+	if store.createdNode.ShotID.Valid {
+		t.Fatalf("audio node should not bind shot id: %#v", store.createdNode.ShotID)
+	}
+	if store.createdNode.ArtifactKind != "voiceover_audio" || store.createdNode.SemanticKey != "audio_plan.active.voiceover_audio.r1.node" {
+		t.Fatalf("created node semantic fields = %#v", store.createdNode)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(store.createdNode.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["agent_artifact_kind"] != "voiceover_audio" || metadata["source_phase"] != "voiceover_audio" || metadata["scope_type"] != "audio_plan" {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+	intent := productionService.intent
+	if intent.OutputType != "audio" || intent.OperationType != "text_to_audio" || intent.Model.Provider != "volcengine" || intent.Model.ModelID != "seed-audio-1.0" {
+		t.Fatalf("intent = %#v", intent)
+	}
+	if intent.Semantic.ArtifactKind != "voiceover_audio" || intent.Semantic.ScopeKey != "audio_plan.active" {
+		t.Fatalf("intent semantic = %#v", intent.Semantic)
+	}
+	if len(store.voiceoverNodeLinks) != 1 || store.voiceoverNodeLinks[0].ID != audioPlanID || store.voiceoverNodeLinks[0].VoiceoverNodeID != uuidWithByte(20) {
+		t.Fatalf("voiceover links = %#v", store.voiceoverNodeLinks)
+	}
+	if len(store.renderPlanSubmissions) != 1 || store.renderPlanSubmissions[0].OutputNodeID != uuidWithByte(20) {
+		t.Fatalf("render plan submissions = %#v", store.renderPlanSubmissions)
+	}
+}
+
+func TestWorkerCreatesBGMAudioNodeAndLinksAudioPlan(t *testing.T) {
+	audioPlanID := uuidWithByte(71)
+	store := &fakeWorkerStore{}
+	runtime := &fakeWorkerRuntime{}
+	productionService := &fakeProductionSubmitter{
+		result: production.RunResult{
+			Node:    db.MediaNode{ID: uuidWithByte(20), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeAudio},
+			Job:     db.GenerationJob{ID: uuidWithByte(30), TargetNodeID: uuidWithByte(20), OperationType: "text_to_audio", Status: db.JobStatusQueued},
+			Version: db.ArtifactVersion{ID: uuidWithByte(40), NodeID: uuidWithByte(20), JobID: uuidWithByte(30), Status: db.JobStatusQueued},
+		},
+	}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Store: store, Production: productionService})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:              "bgm_audio",
+		TargetPhase:       "bgm_audio",
+		ScopeType:         "audio_plan",
+		ScopeID:           uuidString(audioPlanID),
+		ScopeKey:          "audio_plan.active",
+		RenderPlanKey:     "audio_plan.active.bgm_audio.r1",
+		CraftsmanThreadID: uuidString(uuidWithByte(3)),
+		CraftsmanTaskID:   uuidString(uuidWithByte(4)),
+		Strategy:          "生成全片 BGM",
+		Prompt:            "12 seconds bright electronic pop BGM, no vocals, duck under voiceover.",
+		OutputType:        "audio",
+		OperationType:     "text_to_audio",
+		Model:             ModelSpec{Provider: "volcengine", ModelID: "seed-audio-1.0"},
+		MaxAttempts:       3,
+	})
+	task.ScopeType = "audio_plan"
+	task.ScopeID = audioPlanID
+	task.RenderPlanID = uuidWithByte(78)
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if store.createdNode.NodeType != db.NodeTypeAudio || store.createdNode.ArtifactKind != "bgm_audio" {
+		t.Fatalf("created node = %#v", store.createdNode)
+	}
+	if len(store.bgmNodeLinks) != 1 || store.bgmNodeLinks[0].ID != audioPlanID || store.bgmNodeLinks[0].BgmNodeID != uuidWithByte(20) {
+		t.Fatalf("bgm links = %#v", store.bgmNodeLinks)
+	}
+	if !runtime.hasEvent("audio_generation_submitted") {
+		t.Fatalf("events = %#v", runtime.events)
+	}
+}
+
 func TestWorkerTracesGenerationSubmit(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -880,6 +993,9 @@ type fakeWorkerStore struct {
 	createdEdges           []db.CreateMediaEdgeParams
 	statusUpdates          []db.UpdateShotStatusParams
 	renderPlanCompletions  []db.MarkRenderPlanCompletedParams
+	renderPlanSubmissions  []db.MarkRenderPlanSubmittedParams
+	voiceoverNodeLinks     []db.SetAudioPlanVoiceoverNodeParams
+	bgmNodeLinks           []db.SetAudioPlanBGMNodeParams
 }
 
 type fakeWorkerNodeBroadcaster struct {
@@ -1003,6 +1119,21 @@ func (f *fakeWorkerStore) UpdateKeyElementState(_ context.Context, params db.Upd
 func (f *fakeWorkerStore) MarkRenderPlanCompleted(_ context.Context, params db.MarkRenderPlanCompletedParams) (db.RenderPlan, error) {
 	f.renderPlanCompletions = append(f.renderPlanCompletions, params)
 	return db.RenderPlan{ID: params.ID, WorkspaceID: params.WorkspaceID, Status: params.Status, OutputNodeID: params.OutputNodeID, OutputVersionID: params.OutputVersionID}, nil
+}
+
+func (f *fakeWorkerStore) MarkRenderPlanSubmitted(_ context.Context, params db.MarkRenderPlanSubmittedParams) (db.RenderPlan, error) {
+	f.renderPlanSubmissions = append(f.renderPlanSubmissions, params)
+	return db.RenderPlan{ID: params.ID, WorkspaceID: params.WorkspaceID, Status: "submitted", SubmittedWorkerTaskID: params.SubmittedWorkerTaskID, OutputNodeID: params.OutputNodeID}, nil
+}
+
+func (f *fakeWorkerStore) SetAudioPlanVoiceoverNode(_ context.Context, params db.SetAudioPlanVoiceoverNodeParams) (db.AudioPlan, error) {
+	f.voiceoverNodeLinks = append(f.voiceoverNodeLinks, params)
+	return db.AudioPlan{ID: params.ID, WorkspaceID: params.WorkspaceID, VoiceoverNodeID: params.VoiceoverNodeID}, nil
+}
+
+func (f *fakeWorkerStore) SetAudioPlanBGMNode(_ context.Context, params db.SetAudioPlanBGMNodeParams) (db.AudioPlan, error) {
+	f.bgmNodeLinks = append(f.bgmNodeLinks, params)
+	return db.AudioPlan{ID: params.ID, WorkspaceID: params.WorkspaceID, BgmNodeID: params.BgmNodeID}, nil
 }
 
 type fakeProductionSubmitter struct {

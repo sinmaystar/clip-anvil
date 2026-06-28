@@ -138,6 +138,69 @@ func TestDecideRenderPlanAcceptKeepsShotOutputInputRefs(t *testing.T) {
 	}
 }
 
+func TestDecideRenderPlanAcceptSubmitsAudioPlanWorkerTask(t *testing.T) {
+	store := &fakeRenderPlanDecisionStore{
+		plan: db.RenderPlan{
+			ID:                 uuidWithByte(21),
+			WorkspaceID:        uuidWithByte(1),
+			ScopeType:          "audio_plan",
+			ScopeID:            uuidWithByte(11),
+			TargetPhase:        "voiceover_audio",
+			ModelPromptProfile: "seed_audio_1",
+			Operation:          "text_to_audio",
+			Status:             "waiting_for_approval",
+			CompiledPrompt:     "zh, 12 seconds, warm female voice, script: 现在出发，让旅程更轻松。",
+			Params:             []byte(`{"model":"seed-audio-1.0","speaker":"warm_female","format":"mp3"}`),
+			Rationale:          "基于已确认 AudioPlan 生成全片旁白。",
+			CreatedByThreadID:  uuidWithByte(12),
+			CreatedByTaskID:    uuidWithByte(13),
+			SemanticKey:        "audio_plan.active.voiceover_audio.r1",
+		},
+	}
+	runtime := &fakeRenderPlanDecisionRuntime{}
+	enqueuer := &fakeWorkerTaskEnqueuer{}
+	tool := NewDecideRenderPlanNativeTool(store, runtime, enqueuer)
+
+	args := fmt.Sprintf(`{
+		"brief":"接受旁白音频 RenderPlan 并提交 Worker。",
+		"render_plan_ref":{"type":"render_plan","key":%q},
+		"decision":"accept",
+		"reason":"用户已确认 AudioPlan",
+		"next_action":"submit_worker"
+	}`, store.plan.SemanticKey)
+	got, err := tool.InvokableRun(contextWithNativeRuntime(uuidWithByte(1), uuidWithByte(2), uuidWithByte(3)), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "已接受 RenderPlan") {
+		t.Fatalf("result = %s", got)
+	}
+	if len(runtime.createdTasks) != 1 || len(enqueuer.tasks) != 1 {
+		t.Fatalf("created tasks = %d, enqueued = %d", len(runtime.createdTasks), len(enqueuer.tasks))
+	}
+	task := runtime.createdTasks[0]
+	if task.ScopeType != "audio_plan" || task.ScopeID != uuidWithByte(11) || task.RenderPlanID != store.plan.ID {
+		t.Fatalf("task = %#v", task)
+	}
+	var input map[string]any
+	if err := json.Unmarshal(task.Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["mode"] != "voiceover_audio" || input["scope_type"] != "audio_plan" || input["scope_key"] != "audio_plan.active" {
+		t.Fatalf("worker input = %#v", input)
+	}
+	if input["output_type"] != "audio" || input["operation_type"] != "text_to_audio" {
+		t.Fatalf("worker input generation fields = %#v", input)
+	}
+	model, _ := input["model"].(map[string]any)
+	if model["provider"] != "volcengine" || model["model_id"] != "seed-audio-1.0" {
+		t.Fatalf("worker input model = %#v", model)
+	}
+	if input["shot_id"] != "" {
+		t.Fatalf("audio worker input must not require shot_id: %#v", input)
+	}
+}
+
 func TestDecideRenderPlanRejectDoesNotSubmitWorkerTask(t *testing.T) {
 	store := &fakeRenderPlanDecisionStore{
 		plan: db.RenderPlan{ID: uuidWithByte(21), WorkspaceID: uuidWithByte(1), ScopeType: "shot", ScopeID: uuidWithByte(11), TargetPhase: "preview_image", Status: "waiting_for_approval"},
@@ -263,6 +326,8 @@ type fakeRenderPlanDecisionStore struct {
 	keyElementState db.KeyElementState
 	submitted       bool
 	submittedPlans  []pgtype.UUID
+	voiceoverLinks  []db.SetAudioPlanVoiceoverRenderPlanParams
+	bgmLinks        []db.SetAudioPlanBGMRenderPlanParams
 	rejected        bool
 	rejectedPlans   []pgtype.UUID
 }
@@ -330,6 +395,16 @@ func (f *fakeRenderPlanDecisionStore) MarkRenderPlanSubmitted(_ context.Context,
 	f.plan.Status = "submitted"
 	f.plan.SubmittedWorkerTaskID = params.SubmittedWorkerTaskID
 	return f.plan, nil
+}
+
+func (f *fakeRenderPlanDecisionStore) SetAudioPlanVoiceoverRenderPlan(_ context.Context, params db.SetAudioPlanVoiceoverRenderPlanParams) (db.AudioPlan, error) {
+	f.voiceoverLinks = append(f.voiceoverLinks, params)
+	return db.AudioPlan{ID: params.ID, WorkspaceID: params.WorkspaceID, VoiceoverRenderPlanID: params.VoiceoverRenderPlanID}, nil
+}
+
+func (f *fakeRenderPlanDecisionStore) SetAudioPlanBGMRenderPlan(_ context.Context, params db.SetAudioPlanBGMRenderPlanParams) (db.AudioPlan, error) {
+	f.bgmLinks = append(f.bgmLinks, params)
+	return db.AudioPlan{ID: params.ID, WorkspaceID: params.WorkspaceID, BgmRenderPlanID: params.BgmRenderPlanID}, nil
 }
 
 func (f *fakeRenderPlanDecisionStore) MarkRenderPlanRejected(_ context.Context, params db.MarkRenderPlanRejectedParams) (db.RenderPlan, error) {

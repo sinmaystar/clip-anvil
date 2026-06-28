@@ -117,7 +117,7 @@ SET status = 'submitted',
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
-  AND status IN ('compiled', 'waiting_for_approval')
+  AND status IN ('compiled', 'waiting_for_approval', 'submitted')
   AND archived_at IS NULL
 RETURNING *;
 

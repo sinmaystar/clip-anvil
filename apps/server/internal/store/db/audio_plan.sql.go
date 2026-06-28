@@ -270,6 +270,202 @@ func (q *Queries) ListAudioPlansByWorkspace(ctx context.Context, arg ListAudioPl
 	return items, nil
 }
 
+const setAudioPlanBGMNode = `-- name: SetAudioPlanBGMNode :one
+UPDATE audio_plan
+SET
+    bgm_node_id = $1,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND archived_at IS NULL
+RETURNING id, workspace_id, status, title, plan_kind, language, target_duration_sec, voiceover_script, voice_profile, bgm_plan, cue_plan, generation_params, voiceover_render_plan_id, bgm_render_plan_id, voiceover_node_id, bgm_node_id, timeline_plan_id, created_by_role, created_by_task_id, semantic_key, display_name, archived_at, created_at, updated_at
+`
+
+type SetAudioPlanBGMNodeParams struct {
+	BgmNodeID   pgtype.UUID `json:"bgm_node_id"`
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) SetAudioPlanBGMNode(ctx context.Context, arg SetAudioPlanBGMNodeParams) (AudioPlan, error) {
+	row := q.db.QueryRow(ctx, setAudioPlanBGMNode, arg.BgmNodeID, arg.ID, arg.WorkspaceID)
+	var i AudioPlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Status,
+		&i.Title,
+		&i.PlanKind,
+		&i.Language,
+		&i.TargetDurationSec,
+		&i.VoiceoverScript,
+		&i.VoiceProfile,
+		&i.BgmPlan,
+		&i.CuePlan,
+		&i.GenerationParams,
+		&i.VoiceoverRenderPlanID,
+		&i.BgmRenderPlanID,
+		&i.VoiceoverNodeID,
+		&i.BgmNodeID,
+		&i.TimelinePlanID,
+		&i.CreatedByRole,
+		&i.CreatedByTaskID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setAudioPlanBGMRenderPlan = `-- name: SetAudioPlanBGMRenderPlan :one
+UPDATE audio_plan
+SET
+    bgm_render_plan_id = $1,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND archived_at IS NULL
+RETURNING id, workspace_id, status, title, plan_kind, language, target_duration_sec, voiceover_script, voice_profile, bgm_plan, cue_plan, generation_params, voiceover_render_plan_id, bgm_render_plan_id, voiceover_node_id, bgm_node_id, timeline_plan_id, created_by_role, created_by_task_id, semantic_key, display_name, archived_at, created_at, updated_at
+`
+
+type SetAudioPlanBGMRenderPlanParams struct {
+	BgmRenderPlanID pgtype.UUID `json:"bgm_render_plan_id"`
+	ID              pgtype.UUID `json:"id"`
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) SetAudioPlanBGMRenderPlan(ctx context.Context, arg SetAudioPlanBGMRenderPlanParams) (AudioPlan, error) {
+	row := q.db.QueryRow(ctx, setAudioPlanBGMRenderPlan, arg.BgmRenderPlanID, arg.ID, arg.WorkspaceID)
+	var i AudioPlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Status,
+		&i.Title,
+		&i.PlanKind,
+		&i.Language,
+		&i.TargetDurationSec,
+		&i.VoiceoverScript,
+		&i.VoiceProfile,
+		&i.BgmPlan,
+		&i.CuePlan,
+		&i.GenerationParams,
+		&i.VoiceoverRenderPlanID,
+		&i.BgmRenderPlanID,
+		&i.VoiceoverNodeID,
+		&i.BgmNodeID,
+		&i.TimelinePlanID,
+		&i.CreatedByRole,
+		&i.CreatedByTaskID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setAudioPlanVoiceoverNode = `-- name: SetAudioPlanVoiceoverNode :one
+UPDATE audio_plan
+SET
+    voiceover_node_id = $1,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND archived_at IS NULL
+RETURNING id, workspace_id, status, title, plan_kind, language, target_duration_sec, voiceover_script, voice_profile, bgm_plan, cue_plan, generation_params, voiceover_render_plan_id, bgm_render_plan_id, voiceover_node_id, bgm_node_id, timeline_plan_id, created_by_role, created_by_task_id, semantic_key, display_name, archived_at, created_at, updated_at
+`
+
+type SetAudioPlanVoiceoverNodeParams struct {
+	VoiceoverNodeID pgtype.UUID `json:"voiceover_node_id"`
+	ID              pgtype.UUID `json:"id"`
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) SetAudioPlanVoiceoverNode(ctx context.Context, arg SetAudioPlanVoiceoverNodeParams) (AudioPlan, error) {
+	row := q.db.QueryRow(ctx, setAudioPlanVoiceoverNode, arg.VoiceoverNodeID, arg.ID, arg.WorkspaceID)
+	var i AudioPlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Status,
+		&i.Title,
+		&i.PlanKind,
+		&i.Language,
+		&i.TargetDurationSec,
+		&i.VoiceoverScript,
+		&i.VoiceProfile,
+		&i.BgmPlan,
+		&i.CuePlan,
+		&i.GenerationParams,
+		&i.VoiceoverRenderPlanID,
+		&i.BgmRenderPlanID,
+		&i.VoiceoverNodeID,
+		&i.BgmNodeID,
+		&i.TimelinePlanID,
+		&i.CreatedByRole,
+		&i.CreatedByTaskID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setAudioPlanVoiceoverRenderPlan = `-- name: SetAudioPlanVoiceoverRenderPlan :one
+UPDATE audio_plan
+SET
+    voiceover_render_plan_id = $1,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND archived_at IS NULL
+RETURNING id, workspace_id, status, title, plan_kind, language, target_duration_sec, voiceover_script, voice_profile, bgm_plan, cue_plan, generation_params, voiceover_render_plan_id, bgm_render_plan_id, voiceover_node_id, bgm_node_id, timeline_plan_id, created_by_role, created_by_task_id, semantic_key, display_name, archived_at, created_at, updated_at
+`
+
+type SetAudioPlanVoiceoverRenderPlanParams struct {
+	VoiceoverRenderPlanID pgtype.UUID `json:"voiceover_render_plan_id"`
+	ID                    pgtype.UUID `json:"id"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) SetAudioPlanVoiceoverRenderPlan(ctx context.Context, arg SetAudioPlanVoiceoverRenderPlanParams) (AudioPlan, error) {
+	row := q.db.QueryRow(ctx, setAudioPlanVoiceoverRenderPlan, arg.VoiceoverRenderPlanID, arg.ID, arg.WorkspaceID)
+	var i AudioPlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Status,
+		&i.Title,
+		&i.PlanKind,
+		&i.Language,
+		&i.TargetDurationSec,
+		&i.VoiceoverScript,
+		&i.VoiceProfile,
+		&i.BgmPlan,
+		&i.CuePlan,
+		&i.GenerationParams,
+		&i.VoiceoverRenderPlanID,
+		&i.BgmRenderPlanID,
+		&i.VoiceoverNodeID,
+		&i.BgmNodeID,
+		&i.TimelinePlanID,
+		&i.CreatedByRole,
+		&i.CreatedByTaskID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateAudioPlan = `-- name: UpdateAudioPlan :one
 UPDATE audio_plan
 SET
