@@ -12,6 +12,8 @@ export function AgentFinalOutputNode({
 }: NodeProps<FinalOutputNode>) {
   const finalOutput = data.finalOutput;
   const mediaURL = finalOutput.asset_url || finalOutput.thumbnail_url;
+  const audioSummary = finalOutput.audio_summary;
+  const finalReview = finalOutput.final_review;
 
   return (
     <article
@@ -38,6 +40,23 @@ export function AgentFinalOutputNode({
         )}
       </div>
       <p>{finalOutput.summary || finalOutput.output_node_id || "pending"}</p>
+      {audioSummary ? (
+        <div className="agent-workbench-final-output-audio">
+          <span>
+            {audioSummary.track_count} tracks
+            {audioSummary.audio_codec ? ` · ${audioSummary.audio_codec}` : ""}
+          </span>
+          <span>
+            {[
+              audioSummary.has_voiceover ? "VO" : "",
+              audioSummary.has_bgm ? "BGM" : "",
+              audioSummary.ducking ? "ducking" : "",
+            ]
+              .filter(Boolean)
+              .join(" · ") || "no audio"}
+          </span>
+        </div>
+      ) : null}
       <dl>
         <div>
           <dt>Plan</dt>
@@ -46,6 +65,10 @@ export function AgentFinalOutputNode({
         <div>
           <dt>Artifact</dt>
           <dd>{finalOutput.artifact_version_id || "none"}</dd>
+        </div>
+        <div>
+          <dt>Review</dt>
+          <dd>{finalReview?.verdict || finalReview?.status || "none"}</dd>
         </div>
       </dl>
     </article>

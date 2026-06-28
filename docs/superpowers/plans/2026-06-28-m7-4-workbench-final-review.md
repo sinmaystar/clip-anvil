@@ -247,9 +247,9 @@ Result: PASS.
 - Modify: `apps/web/src/components/agent-workbench/AgentProjectOverviewNode.tsx`
 - Modify: `apps/web/src/components/agent-workbench/AgentFinalOutputNode.tsx`
 - Modify: `apps/web/src/components/agent-workbench/AgentCanvasDetailPanel.tsx`
-- Modify CSS where existing workbench styles live: `apps/web/src/index.css`
+- Modify CSS where existing workbench styles live: `apps/web/src/main.css`
 
-- [ ] **Step 1: Add TypeScript API types**
+- [x] **Step 1: Add TypeScript API types**
 
 Extend types:
 - `AgentWorkbenchOverview.audio_plan?: AgentWorkbenchAudioPlan`
@@ -267,7 +267,7 @@ pnpm --filter @clip-anvil/web... build
 
 Expected: FAIL until components consume the new optional fields correctly or generated type mismatches are fixed.
 
-- [ ] **Step 2: Render AudioPlan on overview node**
+- [x] **Step 2: Render AudioPlan on overview node**
 
 In `AgentProjectOverviewNode`:
 - show a compact audio row with AudioPlan status;
@@ -275,20 +275,20 @@ In `AgentProjectOverviewNode`:
 - show a clipped voiceover script or BGM direction if present;
 - do not add instructional text or marketing copy.
 
-- [ ] **Step 3: Render final output audio and review summary**
+- [x] **Step 3: Render final output audio and review summary**
 
 In `AgentFinalOutputNode`:
 - show `audio_summary.audio_codec`, track count, ducking status;
 - show `final_review.verdict` and score when present;
 - keep node height stable and avoid text overflow.
 
-- [ ] **Step 4: Render audio details in detail panel**
+- [x] **Step 4: Render audio details in detail panel**
 
 In `AgentCanvasDetailPanel`:
 - overview detail shows AudioPlan script, voice profile, BGM plan, cue plan;
 - final output detail shows audio summary, audio tracks, final review and issues.
 
-- [ ] **Step 5: Verify frontend**
+- [x] **Step 5: Verify frontend**
 
 Run:
 
@@ -299,6 +299,15 @@ git diff --check
 ```
 
 Expected: PASS.
+
+Actual:
+
+```bash
+pnpm --filter @clip-anvil/web... build
+pnpm --filter @clip-anvil/web lint
+```
+
+Result: PASS. Both commands reported the existing Node engine warning because this shell is on Node v24.14.0 while the repo expects Node >=26 <27.
 
 ## Task 4: Producer Post-Composer Review Decision
 

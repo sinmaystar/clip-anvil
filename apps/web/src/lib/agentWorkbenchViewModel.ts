@@ -54,7 +54,7 @@ export interface AgentWorkbenchEdgeData extends Record<string, unknown> {
 }
 
 const OVERVIEW_WIDTH = 360;
-const OVERVIEW_HEIGHT = 248;
+const OVERVIEW_HEIGHT = 340;
 const SCENE_PADDING = 28;
 const SCENE_HEADER = 116;
 const SHOT_WIDTH = 520;
@@ -73,7 +73,7 @@ const ORIGIN_Y = 40;
 const SCENE_X = ORIGIN_X + OVERVIEW_WIDTH + 80;
 const COMPACT_SCENE_MAX_WIDTH = SCENE_PADDING * 2 + SHOT_WIDTH + 24;
 const FINAL_OUTPUT_WIDTH = 440;
-const FINAL_OUTPUT_HEIGHT = 320;
+const FINAL_OUTPUT_HEIGHT = 376;
 
 export function overviewNodeId() {
   return "agent-workbench-overview";

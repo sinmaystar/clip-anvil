@@ -11,6 +11,7 @@ export function AgentProjectOverviewNode({
   const workbench = data.workbench;
   const brief = workbench.overview.brief;
   const memory = workbench.overview.memory;
+  const audioPlan = workbench.overview.audio_plan;
   const selection = useAgentWorkbenchSelection();
 
   return (
@@ -33,7 +34,28 @@ export function AgentProjectOverviewNode({
           <dt>Issues</dt>
           <dd>{workbench.counts.open_issues}</dd>
         </div>
+        <div>
+          <dt>Audio</dt>
+          <dd>
+            {workbench.counts.audio_ready}/{workbench.counts.audio_ready + workbench.counts.audio_missing}
+          </dd>
+        </div>
       </dl>
+      {audioPlan ? (
+        <div className="agent-workbench-overview-audio">
+          <div>
+            <strong>{audioPlan.title || "AudioPlan"}</strong>
+            <span>{audioPlan.status}</span>
+          </div>
+          <div>
+            <span>VO {audioPlan.voiceover_status || "missing"}</span>
+            <span>BGM {audioPlan.bgm_status || "missing"}</span>
+          </div>
+          {audioPlan.voiceover_script ? (
+            <p>{audioPlan.voiceover_script}</p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="agent-workbench-overview-elements">
         {workbench.overview.key_elements.slice(0, 5).map((element) => (
           <button

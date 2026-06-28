@@ -1,5 +1,12 @@
 import { apiFetch, type MediaAsset, type MediaNode } from "./api";
-import type { AgentWorkbenchProjection } from "./agentWorkbench";
+import type {
+  AgentWorkbenchAudioPlan,
+  AgentWorkbenchAudioSummary,
+  AgentWorkbenchAudioTrack,
+  AgentWorkbenchIssueSummary,
+  AgentWorkbenchProjection,
+  AgentWorkbenchReviewSummary,
+} from "./agentWorkbench";
 import type { AgentWorkbenchSelection } from "./agentWorkbenchSelection";
 
 export type AgentJsonValue =
@@ -211,6 +218,7 @@ export interface AgentCanvasOverviewDetail {
   workspace_id: string;
   brief?: AgentCanvasCreativeBriefDetail;
   memory?: AgentCanvasProjectMemoryDetail;
+  audio_plan?: AgentWorkbenchAudioPlan | null;
   key_elements: AgentCanvasKeyElementSummary[];
   key_element_states: AgentCanvasKeyElementStateSummary[];
   source_materials: AgentCanvasSourceMaterialSummary[];
@@ -225,6 +233,10 @@ export interface AgentCanvasFinalOutputDetail {
   sandbox_job_id?: string;
   status: string;
   template_key: string;
+  audio_summary?: AgentWorkbenchAudioSummary | null;
+  audio_tracks?: AgentWorkbenchAudioTrack[];
+  final_reviews: AgentWorkbenchReviewSummary[];
+  issues: AgentWorkbenchIssueSummary[];
   plan?: AgentJsonValue;
   result?: AgentJsonValue;
   error_message?: string;
@@ -626,6 +638,28 @@ export interface AgentProductionCounts {
   running_tasks: number;
   failed_tasks: number;
   waiting_decisions: number;
+  audio_ready: number;
+  audio_missing: number;
+  final_reviews: number;
+}
+
+export interface AgentProductionAudioPlan {
+  id: string;
+  status: string;
+  title: string;
+  plan_kind?: string;
+  language?: string;
+  target_duration_sec?: number;
+  voiceover_script?: string;
+  voice_profile?: Record<string, unknown>;
+  bgm_plan?: Record<string, unknown>;
+  voiceover_node_id?: string;
+  voiceover_status: AgentProductionStatus;
+  bgm_node_id?: string;
+  bgm_status: AgentProductionStatus;
+  timeline_plan_id?: string;
+  voiceover_render_plan_id?: string;
+  bgm_render_plan_id?: string;
 }
 
 export interface AgentProductionShot {
@@ -669,6 +703,7 @@ export interface AgentProductionOverview {
   workspace_id: string;
   phase: AgentProductionPhase | string;
   counts: AgentProductionCounts;
+  audio_plan?: AgentProductionAudioPlan | null;
   shots: AgentProductionShot[];
   timeline: AgentProductionTimelineItem[];
   final_outputs: AgentProductionFinalOutput[];

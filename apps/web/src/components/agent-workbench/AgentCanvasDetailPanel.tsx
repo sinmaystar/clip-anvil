@@ -3,6 +3,7 @@ import type {
   AgentCanvasArtifactDetail,
   AgentCanvasArtifactSlot,
   AgentCanvasDetail,
+  AgentCanvasFinalOutputDetail,
   AgentCanvasIssueSummary,
   AgentCanvasReviewRecord,
   AgentCanvasShotDetail,
@@ -126,6 +127,34 @@ function DetailBody({
             value={detail.overview.memory?.visual_anchors}
           />
         </DetailSection>
+        {detail.overview.audio_plan ? (
+          <DetailSection title="AudioPlan">
+            <FieldGrid
+              fields={[
+                ["状态", detail.overview.audio_plan.status],
+                ["旁白", detail.overview.audio_plan.voiceover_status],
+                ["BGM", detail.overview.audio_plan.bgm_status],
+                ["时长", detail.overview.audio_plan.target_duration_sec],
+                ["语言", detail.overview.audio_plan.language],
+                ["Timeline", detail.overview.audio_plan.timeline_plan_id],
+              ]}
+            />
+            <TextBlock text={detail.overview.audio_plan.voiceover_script} />
+            <JsonBlock
+              label="Voice profile"
+              value={detail.overview.audio_plan.voice_profile as AgentJsonValue}
+            />
+            <JsonBlock
+              label="BGM plan"
+              value={detail.overview.audio_plan.bgm_plan as AgentJsonValue}
+            />
+            <JsonBlock
+              label="Cue plan"
+              value={detail.overview.audio_plan.cue_plan as AgentJsonValue}
+              collapsed
+            />
+          </DetailSection>
+        ) : null}
         <DetailSection title="关键元素">
           <SummaryList
             items={detail.overview.key_elements.map((item) => ({
@@ -313,26 +342,7 @@ function DetailBody({
   }
 
   if (detail.final_output) {
-    return (
-      <>
-        <DetailSection title="Final Output">
-          <FieldGrid
-            fields={[
-              ["状态", detail.final_output.status],
-              ["模版", detail.final_output.template_key],
-              ["输出节点", detail.final_output.output_node?.title],
-              ["输出版本", detail.final_output.output_version?.version_no],
-              ["Sandbox Job", detail.final_output.sandbox_job_id],
-            ]}
-          />
-          <TextBlock text={detail.final_output.error_message} />
-        </DetailSection>
-        <DetailSection title="Timeline">
-          <JsonBlock label="Plan" value={detail.final_output.plan} />
-          <JsonBlock label="Result" value={detail.final_output.result} />
-        </DetailSection>
-      </>
-    );
+    return <FinalOutputDetail finalOutput={detail.final_output} />;
   }
 
   if (detail.review) {
@@ -382,6 +392,81 @@ function DetailBody({
     <DetailSection title="详情">
       <p>没有可展示的详情。</p>
     </DetailSection>
+  );
+}
+
+function FinalOutputDetail({
+  finalOutput,
+}: {
+  finalOutput: AgentCanvasFinalOutputDetail;
+}) {
+  return (
+    <>
+      <DetailSection title="Final Output">
+        <FieldGrid
+          fields={[
+            ["状态", finalOutput.status],
+            ["模版", finalOutput.template_key],
+            ["输出节点", finalOutput.output_node?.title],
+            ["输出版本", finalOutput.output_version?.version_no],
+            ["Sandbox Job", finalOutput.sandbox_job_id],
+          ]}
+        />
+        <TextBlock text={finalOutput.error_message} />
+      </DetailSection>
+      <DetailSection title="音频">
+        <FieldGrid
+          fields={[
+            ["音轨", finalOutput.audio_summary?.track_count],
+            ["Codec", finalOutput.audio_summary?.audio_codec],
+            [
+              "内容",
+              [
+                finalOutput.audio_summary?.has_voiceover ? "VO" : "",
+                finalOutput.audio_summary?.has_bgm ? "BGM" : "",
+                finalOutput.audio_summary?.ducking ? "ducking" : "",
+              ]
+                .filter(Boolean)
+                .join(" · "),
+            ],
+          ]}
+        />
+        <SummaryList
+          items={(finalOutput.audio_tracks || []).map((track, index) => ({
+            id: `${track.role}-${track.asset_id || index}`,
+            title: track.role || `track ${index + 1}`,
+            meta: [
+              track.duration_sec !== undefined
+                ? `${formatNumber(track.duration_sec)}s`
+                : "",
+              track.volume !== undefined ? `vol ${formatNumber(track.volume)}` : "",
+              track.ducking ? "ducking" : "",
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          }))}
+        />
+      </DetailSection>
+      <DetailSection title="Final Review">
+        <SummaryList
+          items={finalOutput.final_reviews.map((review) => ({
+            id: review.id,
+            title: review.review_task || review.target_phase,
+            meta: [
+              review.verdict || review.status,
+              review.score !== undefined ? `score ${formatNumber(review.score)}` : "",
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          }))}
+        />
+        <IssueList issues={finalOutput.issues} />
+      </DetailSection>
+      <DetailSection title="Timeline">
+        <JsonBlock label="Plan" value={finalOutput.plan} />
+        <JsonBlock label="Result" value={finalOutput.result} />
+      </DetailSection>
+    </>
   );
 }
 
@@ -715,6 +800,10 @@ function artifactPreviewUrl(artifact: AgentCanvasArtifactDetail) {
     artifact.asset?.storage_url ||
     ""
   );
+}
+
+function formatNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
 function ReviewRecordDetail({ review }: { review: AgentCanvasReviewRecord }) {
