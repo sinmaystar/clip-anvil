@@ -212,6 +212,27 @@ func TestServiceReadProjectContextIncludesRenderPlansForProducerDecisions(t *tes
 	}
 }
 
+func TestServiceReadProjectContextIncludesActiveAudioPlan(t *testing.T) {
+	workspaceID := testUUID(1)
+	store := newFakeStore(workspaceID, db.WorkspaceModeAgent)
+	store.audioPlan = &db.AudioPlan{
+		ID:              testUUID(9),
+		WorkspaceID:     workspaceID,
+		Status:          "waiting_for_user",
+		Title:           "营销短视频音频方案",
+		VoiceoverScript: "现在出发，让旅程更轻松。",
+	}
+	service := NewService(store)
+
+	packet, err := service.ReadProjectContext(context.Background(), ReadContextInput{WorkspaceID: workspaceID})
+	if err != nil {
+		t.Fatalf("read context: %v", err)
+	}
+	if packet.ActiveAudioPlan == nil || packet.ActiveAudioPlan.ID != testUUID(9) {
+		t.Fatalf("active audio plan = %#v", packet.ActiveAudioPlan)
+	}
+}
+
 func TestServiceReadProjectContextIncludesObjectIndex(t *testing.T) {
 	workspaceID := testUUID(1)
 	store := newFakeStore(workspaceID, db.WorkspaceModeAgent)
@@ -395,6 +416,7 @@ type fakeStore struct {
 	deps        []db.ShotDependency
 	renderPlans []db.RenderPlan
 	objectIndex []db.AgentObjectIndex
+	audioPlan   *db.AudioPlan
 }
 
 func newFakeStore(workspaceID pgtype.UUID, mode db.WorkspaceMode) *fakeStore {
@@ -824,6 +846,13 @@ func (s *fakeStore) ListShotDependenciesByWorkspace(context.Context, pgtype.UUID
 
 func (s *fakeStore) ListRenderPlansByWorkspace(context.Context, pgtype.UUID) ([]db.RenderPlan, error) {
 	return append([]db.RenderPlan(nil), s.renderPlans...), nil
+}
+
+func (s *fakeStore) GetActiveAudioPlanByWorkspace(context.Context, pgtype.UUID) (db.AudioPlan, error) {
+	if s.audioPlan == nil {
+		return db.AudioPlan{}, pgx.ErrNoRows
+	}
+	return *s.audioPlan, nil
 }
 
 func (s *fakeStore) ListRenderPlansByScope(_ context.Context, arg db.ListRenderPlansByScopeParams) ([]db.RenderPlan, error) {

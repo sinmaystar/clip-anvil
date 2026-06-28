@@ -466,6 +466,11 @@ func TestProducerPromptMessagesKeepsSystemPromptStable(t *testing.T) {
 	if !strings.Contains(messages[0].Content, "upsert_storyboard") {
 		t.Fatalf("system prompt missing tool guidance = %q", messages[0].Content)
 	}
+	for _, want := range []string{"AudioPlan", "upsert_audio_plan", "seed-audio-1.0", "request_user_decision"} {
+		if !strings.Contains(messages[0].Content, want) {
+			t.Fatalf("system prompt missing audio guidance %q", want)
+		}
+	}
 }
 
 func TestProducerPromptMessagesAppendsPendingRemindersToUserMessage(t *testing.T) {

@@ -208,6 +208,7 @@ type ContextPacket struct {
 	Shots           []db.Shot
 	ShotKeyElements []db.ShotKeyElement
 	Dependencies    []db.ShotDependency
+	ActiveAudioPlan *db.AudioPlan
 	RenderPlans     []db.RenderPlan
 	ObjectIndex     []db.AgentObjectIndex
 }

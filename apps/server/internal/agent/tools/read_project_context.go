@@ -27,7 +27,7 @@ type ReadProjectContextNativeTool struct {
 type ReadProjectContextToolInput struct {
 	Brief       string        `json:"brief" jsonschema:"required" jsonschema_description:"本次读取上下文的目的，例如判断是否需要创建 brief、memory、关键元素或 storyboard。不要超过 160 个中文字符。"`
 	ScopeRef    ToolObjectRef `json:"scope_ref" jsonschema_description:"可选读取范围。为空表示整个 workspace；局部读取时填写 read_project_context 返回的 semantic_key，例如 type=shot,key=shot_03。不要填写 UUID、shot_id、node_id 或 artifact_version_id。"`
-	Include     []string      `json:"include" jsonschema_description:"要返回的对象类型。可选值包括 brief、memory、elements、scenes、shots、dependencies、render_plans、object_index、canvas_projection、production_state。production_state 会返回生产状态总览，包括媒体节点、生成任务、artifact、review、issue、pending decision 和 running task；只在需要生产视图时请求，避免无谓撑大上下文。为空时返回 Producer 默认上下文。"`
+	Include     []string      `json:"include" jsonschema_description:"要返回的对象类型。可选值包括 brief、memory、elements、scenes、shots、dependencies、audio_plan、render_plans、object_index、canvas_projection、production_state。production_state 会返回生产状态总览，包括媒体节点、生成任务、artifact、review、issue、pending decision 和 running task；只在需要生产视图时请求，避免无谓撑大上下文。为空时返回 Producer 默认上下文。"`
 	DetailLevel string        `json:"detail_level" jsonschema:"enum=summary,enum=full" jsonschema_description:"summary 返回摘要和可操作语义索引，适合普通规划；full 返回更完整事实，适合写入前决策。默认 summary。"`
 }
 
@@ -101,11 +101,16 @@ func (t *ReadProjectContextNativeTool) InvokableRun(ctx context.Context, argumen
 		memoryStatus = fmt.Sprintf("v%d / %s", packet.Memory.Version, packet.Memory.Status)
 	}
 	renderPlanStatus := summarizeRenderPlans(packet.RenderPlans)
+	audioPlanStatus := "没有 active AudioPlan"
+	if packet.ActiveAudioPlan != nil {
+		audioPlanStatus = packet.ActiveAudioPlan.Title + " / " + packet.ActiveAudioPlan.Status
+	}
 	items := []NaturalResultItem{
 		{Label: "CreativeBrief", Value: briefStatus},
 		{Label: "ProjectMemory", Value: memoryStatus},
 		{Label: "关键元素", Value: fmt.Sprintf("%d 个，缺少参考 %d 个", len(packet.Elements), missingReferences)},
 		{Label: "Storyboard", Value: fmt.Sprintf("%d 个场景，%d 个分镜，%d 个依赖", len(packet.Scenes), len(packet.Shots), len(packet.Dependencies))},
+		{Label: "AudioPlan", Value: audioPlanStatus},
 		{Label: "RenderPlan", Value: renderPlanStatus},
 		{Label: "ObjectIndex", Value: agentidentity.RenderObjectIndex(packet.ObjectIndex)},
 	}
