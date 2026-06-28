@@ -432,7 +432,7 @@ Result: PASS.
 - Modify: `docs/milestones/m7-agent-audio-plan-composer.md`
 - Modify this plan as steps complete.
 
-- [ ] **Step 1: Run full verification**
+- [x] **Step 1: Run full verification**
 
 Run:
 
@@ -443,20 +443,31 @@ pnpm --filter @clip-anvil/web lint
 git diff --check
 ```
 
-- [ ] **Step 2: Update milestone acceptance**
+- [x] **Step 2: Update milestone acceptance**
 
 Update M7.4 in `docs/milestones/m7-agent-audio-plan-composer.md` with:
 - implementation status;
 - exact verification commands and results;
 - any skipped live/paid checks.
 
-- [ ] **Step 3: Commit M7.4**
+- [x] **Step 3: Commit M7.4**
 
 Suggested commit message:
 
 ```bash
 git commit -m "feat: show agent audio status and final review"
 ```
+
+Actual verification:
+
+```bash
+GOCACHE=/private/tmp/clipanvil-go-build make server-test
+pnpm --filter @clip-anvil/web... build
+pnpm --filter @clip-anvil/web lint
+git diff --check
+```
+
+Result: PASS. The two `pnpm` commands reported the existing Node engine warning because this shell is on Node v24.14.0 while the repo expects Node >=26 <27.
 
 ## Acceptance Criteria
 
