@@ -91,7 +91,7 @@ Rules:
 - Modify tests: `apps/server/internal/agent/composer/types_test.go`
 - Modify tests: `apps/server/internal/agent/composer/timeline_plan_contract_test.go`
 
-- [ ] **Step 1: Write failing timeline JSON tests**
+- [x] **Step 1: Write failing timeline JSON tests**
 
 Add tests proving:
 - `TimelinePlan` marshals/unmarshals `audio_tracks`.
@@ -106,7 +106,7 @@ Run:
 
 Expected: FAIL because the typed structs do not include audio fields.
 
-- [ ] **Step 2: Implement typed structs**
+- [x] **Step 2: Implement typed structs**
 
 Add:
 - `TimelinePlan.AudioTracks []AudioTrack`
@@ -116,7 +116,7 @@ Add:
 
 Keep JSON fields optional where possible so existing timeline plans remain readable.
 
-- [ ] **Step 3: Verify Task 1**
+- [x] **Step 3: Verify Task 1**
 
 Run:
 
