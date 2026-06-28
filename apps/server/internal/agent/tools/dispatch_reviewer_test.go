@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
@@ -73,11 +74,148 @@ func TestDispatchReviewerCreatesReviewerTask(t *testing.T) {
 	}
 }
 
+func TestDispatchReviewerAcceptsSemanticTargetRefs(t *testing.T) {
+	workspaceID := uuidWithByte(1)
+	shotID := uuidWithByte(4)
+	nodeID := uuidWithByte(5)
+	versionID := uuidWithByte(6)
+	store := fakeDispatchReviewerStore{
+		workspace: db.Workspace{ID: workspaceID, Mode: db.WorkspaceModeAgent},
+		node:      db.MediaNode{ID: nodeID, WorkspaceID: workspaceID, ShotID: shotID, NodeType: db.NodeTypeImage, SemanticKey: "shot_02.preview_image.r1.node"},
+		version:   db.ArtifactVersion{ID: versionID, WorkspaceID: workspaceID, NodeID: nodeID, Status: db.JobStatusSucceeded, SemanticKey: "shot_02.preview_image.r1.output.v1"},
+		objects: map[string]db.AgentObjectIndex{
+			"shot/shot_02": {
+				WorkspaceID: workspaceID,
+				ObjectType:  "shot",
+				ObjectID:    shotID,
+				SemanticKey: "shot_02",
+			},
+			"media_node/shot_02.preview_image.r1.node": {
+				WorkspaceID: workspaceID,
+				ObjectType:  "media_node",
+				ObjectID:    nodeID,
+				SemanticKey: "shot_02.preview_image.r1.node",
+			},
+			"artifact_version/shot_02.preview_image.r1.output.v1": {
+				WorkspaceID: workspaceID,
+				ObjectType:  "artifact_version",
+				ObjectID:    versionID,
+				SemanticKey: "shot_02.preview_image.r1.output.v1",
+			},
+		},
+	}
+	runtime := &fakeDispatchReviewerRuntime{}
+	tool := NewDispatchReviewerNativeTool(store, runtime, nil)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{WorkspaceID: workspaceID, ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3), ToolCallID: "call_1"})
+	out, err := tool.InvokableRun(ctx, `{
+		"brief":"评审 shot_02 预览图",
+		"review_task":"preview_image_review",
+		"target":{
+			"workspace_scope":"shot",
+			"shot_id":"shot_02",
+			"node_id":"shot_02.preview_image.r1.node",
+			"artifact_version_id":"shot_02.preview_image.r1.output.v1"
+		},
+		"reason":"预览图已生成，需要检查商品一致性"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "scope_ref：shot/shot_02") || strings.Contains(out, "scope：shot=") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+	if strings.Contains(out, "reviewer_task_id") ||
+		strings.Contains(out, uuidString(runtime.createdTask.ID)) {
+		t.Fatalf("output leaked reviewer task id: %s", out)
+	}
+	var taskInput dispatchReviewerTaskInput
+	if err := json.Unmarshal(runtime.createdTask.Input, &taskInput); err != nil {
+		t.Fatal(err)
+	}
+	if taskInput.Target.ShotID != uuidString(shotID) ||
+		taskInput.Target.ShotRef.Key != "shot_02" ||
+		taskInput.Target.NodeRef.Key != "shot_02.preview_image.r1.node" ||
+		taskInput.Target.ArtifactVersionRef.Key != "shot_02.preview_image.r1.output.v1" {
+		t.Fatalf("task target = %#v", taskInput.Target)
+	}
+	if len(runtime.appended) != 1 || !strings.Contains(string(runtime.appended[0].Content), "scope_ref: shot/shot_02") {
+		t.Fatalf("delegation message = %#v", runtime.appended)
+	}
+}
+
+func TestDispatchReviewerRejectsDuplicateFinalVideoReview(t *testing.T) {
+	workspaceID := uuidWithByte(1)
+	nodeID := uuidWithByte(5)
+	versionID := uuidWithByte(6)
+	store := fakeDispatchReviewerStore{
+		workspace: db.Workspace{ID: workspaceID, Mode: db.WorkspaceModeAgent},
+		node:      db.MediaNode{ID: nodeID, WorkspaceID: workspaceID, NodeType: db.NodeTypeVideo, SemanticKey: "final_video.abc.node", ArtifactKind: "final_video"},
+		version:   db.ArtifactVersion{ID: versionID, WorkspaceID: workspaceID, NodeID: nodeID, Status: db.JobStatusSucceeded, SemanticKey: "final_video.abc.compose.artifact.v1", ArtifactKind: "final_video"},
+		objects: map[string]db.AgentObjectIndex{
+			"media_node/final_video.abc.node": {
+				WorkspaceID: workspaceID,
+				ObjectType:  "media_node",
+				ObjectID:    nodeID,
+				SemanticKey: "final_video.abc.node",
+			},
+			"artifact_version/final_video.abc.compose.artifact.v1": {
+				WorkspaceID: workspaceID,
+				ObjectType:  "artifact_version",
+				ObjectID:    versionID,
+				SemanticKey: "final_video.abc.compose.artifact.v1",
+			},
+		},
+		reviewsByVersion: []db.ReviewRecord{
+			{
+				ID:                uuidWithByte(12),
+				WorkspaceID:       workspaceID,
+				NodeID:            nodeID,
+				ArtifactVersionID: versionID,
+				ReviewTask:        reviewTaskFinalVideo,
+				TargetPhase:       "final_video",
+				Status:            reviewVerdictAcceptedWithWarnings,
+				SemanticKey:       "final_video.abc.compose.review.v1",
+			},
+		},
+	}
+	runtime := &fakeDispatchReviewerRuntime{}
+	enqueuer := &fakeReviewerTaskEnqueuer{}
+	tool := NewDispatchReviewerNativeTool(store, runtime, enqueuer)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{WorkspaceID: workspaceID, ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3), ToolCallID: "call_1"})
+
+	out, err := tool.InvokableRun(ctx, `{
+		"brief":"复核最终成片",
+		"review_task":"final_video_review",
+		"target":{
+			"workspace_scope":"final_video",
+			"node_id":"final_video.abc.node",
+			"artifact_version_id":"final_video.abc.compose.artifact.v1"
+		},
+		"reason":"成片已经有评审结果后不应重复派发"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "工具调用失败") ||
+		!strings.Contains(out, "已有终态评审") ||
+		!strings.Contains(out, "review_record/final_video.abc.compose.review.v1") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+	if runtime.createdTask.ID.Valid {
+		t.Fatalf("unexpected task created: %#v", runtime.createdTask)
+	}
+	if len(enqueuer.tasks) != 0 {
+		t.Fatalf("enqueued tasks = %d", len(enqueuer.tasks))
+	}
+}
+
 type fakeDispatchReviewerStore struct {
-	workspace db.Workspace
-	node      db.MediaNode
-	version   db.ArtifactVersion
-	plan      db.RenderPlan
+	workspace        db.Workspace
+	node             db.MediaNode
+	version          db.ArtifactVersion
+	plan             db.RenderPlan
+	objects          map[string]db.AgentObjectIndex
+	reviewsByVersion []db.ReviewRecord
 }
 
 func (f fakeDispatchReviewerStore) GetWorkspaceByID(context.Context, pgtype.UUID) (db.Workspace, error) {
@@ -94,6 +232,21 @@ func (f fakeDispatchReviewerStore) GetArtifactVersionByID(context.Context, pgtyp
 
 func (f fakeDispatchReviewerStore) GetRenderPlanByID(context.Context, db.GetRenderPlanByIDParams) (db.RenderPlan, error) {
 	return f.plan, nil
+}
+
+func (f fakeDispatchReviewerStore) ListReviewRecordsByArtifactVersion(context.Context, pgtype.UUID) ([]db.ReviewRecord, error) {
+	return f.reviewsByVersion, nil
+}
+
+func (f fakeDispatchReviewerStore) GetAgentObjectBySemanticKey(_ context.Context, params db.GetAgentObjectBySemanticKeyParams) (db.AgentObjectIndex, error) {
+	if f.objects == nil {
+		return db.AgentObjectIndex{}, pgx.ErrNoRows
+	}
+	object, ok := f.objects[params.ObjectType+"/"+params.SemanticKey]
+	if !ok {
+		return db.AgentObjectIndex{}, pgx.ErrNoRows
+	}
+	return object, nil
 }
 
 type fakeDispatchReviewerRuntime struct {

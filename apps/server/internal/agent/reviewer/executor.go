@@ -119,9 +119,10 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		return e.fail(ctx, task.ID, "reviewer_message_persist_failed", err)
 	}
 	rawOutput := mustJSON(map[string]any{
-		"review_record_id": uuidString(out.Record.ID),
-		"status":           out.Decision.Status,
-		"should_retry":     out.Decision.ShouldRetry,
+		"review_record_id":  uuidString(out.Record.ID),
+		"review_record_key": out.Record.SemanticKey,
+		"status":            out.Decision.Status,
+		"should_retry":      out.Decision.ShouldRetry,
 	})
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, task.ID, rawOutput); err != nil {
 		return err
@@ -144,7 +145,8 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, task db.AgentTask, 
 		return nil
 	}
 	reviewRecordID := out.Record.ID
-	if !reviewRecordID.Valid {
+	reviewRecordKey := strings.TrimSpace(out.Record.SemanticKey)
+	if !reviewRecordID.Valid && reviewRecordKey == "" {
 		return nil
 	}
 	scopeType := strings.TrimSpace(task.ScopeType)
@@ -162,21 +164,34 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, task db.AgentTask, 
 	payload := mustJSON(map[string]any{
 		"trigger":              "review_completed",
 		"review_record_id":     uuidString(reviewRecordID),
+		"review_record_key":    reviewRecordKey,
+		"review_record_ref":    objectRef("review_record", reviewRecordKey),
 		"review_task":          input.ReviewTask,
 		"verdict":              out.Decision.Status,
 		"should_retry":         out.Decision.ShouldRetry,
 		"target_phase":         input.TargetPhase,
 		"scope_type":           scopeType,
 		"scope_id":             uuidString(scopeID),
+		"scope_key":            reviewScopeKey(scopeType, input),
+		"scope_ref":            objectRef(scopeType, reviewScopeKey(scopeType, input)),
 		"shot_id":              input.ShotID,
+		"shot_key":             input.Target.ShotRef.Key,
+		"shot_ref":             objectRef("shot", input.Target.ShotRef.Key),
 		"node_id":              input.NodeID,
+		"node_key":             input.Target.NodeRef.Key,
+		"node_ref":             objectRef("media_node", input.Target.NodeRef.Key),
 		"render_plan_id":       input.Target.RenderPlanID,
+		"render_plan_key":      input.Target.RenderPlanRef.Key,
+		"render_plan_ref":      objectRef("render_plan", input.Target.RenderPlanRef.Key),
 		"generation_job_id":    input.GenerationJobID,
 		"artifact_version_id":  input.ArtifactVersionID,
+		"artifact_version_key": input.Target.ArtifactVersionRef.Key,
+		"artifact_version_ref": objectRef("artifact_version", input.Target.ArtifactVersionRef.Key),
 		"reviewer_task_id":     uuidString(task.ID),
 		"reviewer_thread_id":   uuidString(task.ThreadID),
 		"producer_task_id":     input.ProducerTaskID,
 		"parent_review_record": input.ParentReviewRecordID,
+		"parent_review_key":    input.Target.ParentReviewRef.Key,
 	})
 	_, err := e.runtime.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
 		WorkspaceID:      task.WorkspaceID,
@@ -189,7 +204,7 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, task db.AgentTask, 
 		ScopeID:          scopeID,
 		RenderPlanID:     renderPlanID,
 		Priority:         80,
-		DedupeKey:        "review_completed:" + uuidString(reviewRecordID),
+		DedupeKey:        reviewerSignalDedupeKey(reviewRecordID, reviewRecordKey),
 		Payload:          payload,
 	})
 	if err != nil {
@@ -230,6 +245,33 @@ func (e *Executor) wakeProducerIfNeeded(ctx context.Context, task db.AgentTask, 
 	})
 	e.producerEnqueuer.EnqueueProducerTask(ctx, wakeTask)
 	return nil
+}
+
+func reviewScopeKey(scopeType string, input TaskInput) string {
+	switch strings.TrimSpace(scopeType) {
+	case "render_plan":
+		return strings.TrimSpace(input.Target.RenderPlanRef.Key)
+	case "final_output", "media_node":
+		return strings.TrimSpace(input.Target.NodeRef.Key)
+	default:
+		return strings.TrimSpace(input.Target.ShotRef.Key)
+	}
+}
+
+func objectRef(objectType string, key string) string {
+	objectType = strings.TrimSpace(objectType)
+	key = strings.TrimSpace(key)
+	if objectType == "" || key == "" {
+		return ""
+	}
+	return objectType + "/" + key
+}
+
+func reviewerSignalDedupeKey(id pgtype.UUID, key string) string {
+	if strings.TrimSpace(key) != "" {
+		return "review_completed:" + strings.TrimSpace(key)
+	}
+	return "review_completed:" + uuidString(id)
 }
 
 func reviewScopeID(input TaskInput) pgtype.UUID {

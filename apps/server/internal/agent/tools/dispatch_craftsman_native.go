@@ -28,7 +28,7 @@ type DispatchCraftsmanToolInput struct {
 
 type DispatchCraftsmanScope struct {
 	Type string `json:"type" jsonschema:"required,enum=shot,enum=key_element_state" jsonschema_description:"scope 类型。shot 用于分镜预览图或分镜视频；key_element_state 用于共享参考图。"`
-	ID   string `json:"id" jsonschema_description:"兼容旧字段。模型不要填写 UUID；请填写 read_project_context 返回的 semantic_key，或留空并用 shot_refs 批量派发 shot。"`
+	ID   string `json:"id" jsonschema_description:"兼容旧字段。模型不要填写内部 ID；请填写 read_project_context 返回的 semantic_key，或留空并用 shot_refs 批量派发 shot。"`
 }
 
 func NewDispatchCraftsmanNativeTool(store CraftsmanDispatcherStore, runtime CraftsmanRuntime, enqueuer CraftsmanTaskEnqueuer) DispatchCraftsmanNativeTool {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/cloudwego/eino-ext/components/model/ark"
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
@@ -125,6 +126,29 @@ func TestImageRuntimeSendsReferenceImagesToArk(t *testing.T) {
 	inputImages, ok := output.RequestSummary["input_images"].([]map[string]any)
 	if !ok || len(inputImages) != 1 || inputImages[0]["url"] != "https://assets.example/reference.png" {
 		t.Fatalf("request summary input images = %#v", output.RequestSummary["input_images"])
+	}
+}
+
+func TestImageRuntimeMapsRatioAndResolutionToArkSize(t *testing.T) {
+	model := &fakeArkImageGenerator{msg: imageMessageWithURL("https://provider.invalid/image.png")}
+	var configSize string
+	runtime := VolcengineImageRuntime{
+		cfg: VolcengineProviderConfig{APIKey: "test-key", ImageModel: "doubao-seedream-5-0-260128"},
+		factory: func(_ context.Context, config *ark.ImageGenerationConfig) (arkImageGenerator, error) {
+			configSize = config.Size
+			return model, nil
+		},
+	}
+	intent := imageIntent()
+	intent.Params = map[string]any{"ratio": "9:16", "resolution": "1080p", "response_format": "url"}
+
+	output := runImageRuntimeWithIntent(t, runtime, intent)
+
+	if output.RequestSummary["params"].(map[string]any)["size"] != "1440x2560" {
+		t.Fatalf("request params = %#v", output.RequestSummary["params"])
+	}
+	if configSize != "1440x2560" {
+		t.Fatalf("ark config size = %q, want 1440x2560", configSize)
 	}
 }
 

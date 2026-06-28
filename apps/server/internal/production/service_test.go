@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -78,6 +79,62 @@ func TestAgentSemanticKeysForRenderPlanIntent(t *testing.T) {
 	}
 	if got := artifactKindForIntent(intent); got != "preview_image" {
 		t.Fatalf("artifact kind = %q", got)
+	}
+}
+
+func TestComposerArtifactDefaultsToFinalVideoSemanticIdentity(t *testing.T) {
+	node := db.MediaNode{
+		ID:          pgtype.UUID{Bytes: [16]byte{0xab}, Valid: true},
+		SemanticKey: "final_video.c69041ee.node",
+	}
+	if got := composerArtifactRenderKey(node); got != "final_video.c69041ee.compose" {
+		t.Fatalf("composer render key = %q", got)
+	}
+	intent := GenerationIntent{
+		OutputType: "video",
+		Semantic: SemanticInfo{
+			RenderPlanKey: composerArtifactRenderKey(node),
+			ArtifactKind:  "final_video",
+		},
+	}
+	if got := artifactKindForIntent(intent); got != "final_video" {
+		t.Fatalf("artifact kind = %q", got)
+	}
+	if got := generationJobSemanticKey(intent, 1); got != "final_video.c69041ee.compose.job.a1" {
+		t.Fatalf("job semantic key = %q", got)
+	}
+	if got := artifactVersionSemanticKey(intent, 1); got != "final_video.c69041ee.compose.artifact.v1" {
+		t.Fatalf("artifact semantic key = %q", got)
+	}
+	defaulted := withComposerSemanticDefaults(node, GenerationIntent{
+		OutputType:    "video",
+		OperationType: "compose_final_video",
+	})
+	if defaulted.Semantic.ArtifactKind != "final_video" || defaulted.Semantic.RenderPlanKey != "final_video.c69041ee.compose" {
+		t.Fatalf("composer semantic defaults = %#v", defaulted.Semantic)
+	}
+}
+
+func TestComposerArtifactHelperUsesProductionPersistencePath(t *testing.T) {
+	var _ interface {
+		PersistComposerArtifact(context.Context, ComposerArtifactInput) (RunResult, error)
+	} = (*Service)(nil)
+
+	raw, err := os.ReadFile("service.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	for _, want := range []string{
+		"type ComposerArtifactInput struct",
+		"func (s *Service) PersistComposerArtifact(ctx context.Context, input ComposerArtifactInput) (RunResult, error)",
+		"createQueuedJobWithVersion",
+		"persistQueuedJobSuccess",
+		"input.SandboxJobID",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("service.go missing %q", want)
+		}
 	}
 }
 

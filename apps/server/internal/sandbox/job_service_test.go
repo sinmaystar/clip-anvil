@@ -183,6 +183,145 @@ func TestJobServiceComposeVideosExecutesFFmpegConcatAndUploadsOutput(t *testing.
 	}
 }
 
+func TestJobServiceStageMediaInputsDownloadsToWorkspaceInput(t *testing.T) {
+	repo := newFakeSandboxJobRepository()
+	client := &jobServiceFakeClient{result: ExecResult{ExitCode: 0, Stdout: "done", DurationMS: 12}}
+	manager := NewManager(client, testSandboxConfig(), newFakeBindingStore(Binding{
+		Status:     StatusRunning,
+		SandboxID:  "sandbox-1",
+		VolumeName: "sandbox-ws-aabbccdd-0000-0000-0000-000000000000",
+	}))
+	storage := &fakeSandboxJobStorage{}
+	service := NewJobService(manager, client, repo, storage)
+
+	result, err := service.StageMediaInputs(context.Background(), StageMediaInputsInput{
+		WorkspaceID:  testWorkspaceID(),
+		TargetNodeID: testNodeID(),
+		Assets: []StageMediaAssetInput{
+			{
+				AssetID:   pgtype.UUID{Bytes: [16]byte{0x10}, Valid: true},
+				SourceURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-1.mp4",
+				FileName:  "Hero Shot.mp4",
+				MimeType:  "video/mp4",
+				SizeBytes: 101,
+			},
+			{
+				AssetID:   pgtype.UUID{Bytes: [16]byte{0x20}, Valid: true},
+				SourceURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-2.mp4",
+				FileName:  "Hero Shot.mp4",
+				MimeType:  "video/mp4",
+				SizeBytes: 202,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("StageMediaInputs error = %v", err)
+	}
+	if len(result.Files) != 2 {
+		t.Fatalf("files = %#v", result.Files)
+	}
+	if result.Files[0].WorkspacePath != "/workspace/input/Hero-Shot.mp4" {
+		t.Fatalf("first path = %q", result.Files[0].WorkspacePath)
+	}
+	if result.Files[1].WorkspacePath == result.Files[0].WorkspacePath || !strings.HasPrefix(result.Files[1].WorkspacePath, "/workspace/input/Hero-Shot-") {
+		t.Fatalf("duplicate path = %q", result.Files[1].WorkspacePath)
+	}
+	if result.Files[1].MimeType != "video/mp4" || result.Files[1].SizeBytes != 202 {
+		t.Fatalf("second file metadata = %#v", result.Files[1])
+	}
+	joined := strings.Join(client.commands, "\n")
+	if !strings.Contains(joined, "mkdir -p /workspace/input") {
+		t.Fatalf("expected input directory creation, got %q", joined)
+	}
+	if strings.Count(joined, "curl -sS -f -L -o") != 2 {
+		t.Fatalf("expected two downloads, got %q", joined)
+	}
+}
+
+func TestBuildFFmpegCommandAllowsOnlyFFmpegInsideWorkspace(t *testing.T) {
+	if _, _, err := buildFFmpegCommand(RunFFmpegCommandInput{
+		Executable: "ffmpeg",
+		Cwd:        "/workspace",
+		Args:       []string{"-y", "-i", "input/clip.mp4", "-c:v", "libx264", "output/final.mp4"},
+	}); err != nil {
+		t.Fatalf("buildFFmpegCommand valid ffmpeg error = %v", err)
+	}
+	if _, _, err := buildFFmpegCommand(RunFFmpegCommandInput{
+		Executable: "ffprobe",
+		Cwd:        "/workspace",
+		Args:       []string{"-v", "error", "-print_format", "json", "/workspace/input/clip.mp4"},
+	}); err != nil {
+		t.Fatalf("buildFFmpegCommand valid ffprobe error = %v", err)
+	}
+	for _, tc := range []RunFFmpegCommandInput{
+		{Executable: "bash", Cwd: "/workspace", Args: []string{"-lc", "echo nope"}},
+		{Executable: "sh", Cwd: "/workspace", Args: []string{"-c", "echo nope"}},
+		{Executable: "ffmpeg", Cwd: "/tmp", Args: []string{"-version"}},
+		{Executable: "ffmpeg", Cwd: "/workspace", Args: []string{"-i", "/tmp/input.mp4", "/workspace/output/final.mp4"}},
+		{Executable: "ffmpeg", Cwd: "/workspace", Args: []string{"-i", "../secret.mp4", "output/final.mp4"}},
+	} {
+		if _, _, err := buildFFmpegCommand(tc); err == nil {
+			t.Fatalf("expected buildFFmpegCommand to reject %#v", tc)
+		}
+	}
+}
+
+func TestJobServiceRunFFmpegCommandPersistsSandboxJob(t *testing.T) {
+	repo := newFakeSandboxJobRepository()
+	client := &jobServiceFakeClient{result: ExecResult{ExitCode: 0, Stdout: "ffmpeg ok", DurationMS: 33}}
+	manager := NewManager(client, testSandboxConfig(), newFakeBindingStore(Binding{
+		Status:     StatusRunning,
+		SandboxID:  "sandbox-1",
+		VolumeName: "sandbox-ws-aabbccdd-0000-0000-0000-000000000000",
+	}))
+	service := NewJobService(manager, client, repo, nil)
+
+	result, err := service.RunFFmpegCommand(context.Background(), RunFFmpegCommandInput{
+		WorkspaceID:  testWorkspaceID(),
+		TargetNodeID: testNodeID(),
+		Executable:   "ffmpeg",
+		Cwd:          "/workspace",
+		Args:         []string{"-y", "-i", "input/clip.mp4", "-c:v", "libx264", "output/final.mp4"},
+		TimeoutSec:   300,
+	})
+	if err != nil {
+		t.Fatalf("RunFFmpegCommand error = %v", err)
+	}
+	if result.Job.Status != db.JobStatusSucceeded || result.Job.OperationType != "run_ffmpeg_command" {
+		t.Fatalf("job = %#v", result.Job)
+	}
+	joined := strings.Join(client.commands, "\n")
+	if !strings.Contains(joined, "ffmpeg") || !strings.Contains(joined, "input/clip.mp4") || !strings.Contains(joined, "output/final.mp4") {
+		t.Fatalf("expected ffmpeg command, got %q", joined)
+	}
+}
+
+func TestJobServiceProbeMediaParsesFFprobeJSON(t *testing.T) {
+	repo := newFakeSandboxJobRepository()
+	client := &jobServiceFakeClient{result: ExecResult{
+		ExitCode: 0,
+		Stdout:   `{"format":{"duration":"1.500"},"streams":[{"codec_type":"video","width":1280,"height":720}]}`,
+	}}
+	manager := NewManager(client, testSandboxConfig(), newFakeBindingStore(Binding{
+		Status:     StatusRunning,
+		SandboxID:  "sandbox-1",
+		VolumeName: "sandbox-ws-aabbccdd-0000-0000-0000-000000000000",
+	}))
+	service := NewJobService(manager, client, repo, nil)
+
+	result, err := service.ProbeMedia(context.Background(), ProbeMediaInput{
+		WorkspaceID:   testWorkspaceID(),
+		TargetNodeID:  testNodeID(),
+		WorkspacePath: "/workspace/input/clip.mp4",
+	})
+	if err != nil {
+		t.Fatalf("ProbeMedia error = %v", err)
+	}
+	if result.Format["duration"] != "1.500" || len(result.Streams) != 1 || result.Streams[0]["codec_type"] != "video" {
+		t.Fatalf("probe result = %#v", result)
+	}
+}
+
 func TestJobServiceImportRemoteAssetDownloadsInsideSandboxAndUploadsOutput(t *testing.T) {
 	repo := newFakeSandboxJobRepository()
 	client := &jobServiceFakeClient{

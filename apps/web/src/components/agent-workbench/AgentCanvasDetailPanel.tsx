@@ -312,6 +312,29 @@ function DetailBody({
     );
   }
 
+  if (detail.final_output) {
+    return (
+      <>
+        <DetailSection title="Final Output">
+          <FieldGrid
+            fields={[
+              ["状态", detail.final_output.status],
+              ["模版", detail.final_output.template_key],
+              ["输出节点", detail.final_output.output_node?.title],
+              ["输出版本", detail.final_output.output_version?.version_no],
+              ["Sandbox Job", detail.final_output.sandbox_job_id],
+            ]}
+          />
+          <TextBlock text={detail.final_output.error_message} />
+        </DetailSection>
+        <DetailSection title="Timeline">
+          <JsonBlock label="Plan" value={detail.final_output.plan} />
+          <JsonBlock label="Result" value={detail.final_output.result} />
+        </DetailSection>
+      </>
+    );
+  }
+
   if (detail.review) {
     return (
       <>

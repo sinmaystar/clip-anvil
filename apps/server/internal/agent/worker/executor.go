@@ -444,21 +444,33 @@ func (e *Executor) wakeProducerOnFailure(ctx context.Context, task db.AgentTask,
 		dedupeID = task.ID
 	}
 	payload := mustJSON(map[string]any{
-		"trigger":             "worker_generation_completed",
-		"target_phase":        targetPhase,
-		"render_plan_id":      uuidString(task.RenderPlanID),
-		"render_plan_status":  "failed",
-		"scope_type":          scopeType,
-		"scope_id":            uuidString(task.ScopeID),
-		"shot_id":             input.ShotID,
-		"node_id":             uuidString(result.Node.ID),
-		"generation_job_id":   uuidString(result.Job.ID),
-		"artifact_version_id": uuidString(result.Version.ID),
-		"artifact_kind":       artifactKind,
-		"worker_task_id":      uuidString(task.ID),
-		"worker_thread_id":    uuidString(task.ThreadID),
-		"error_code":          code,
-		"error":               message,
+		"trigger":              "worker_generation_completed",
+		"target_phase":         targetPhase,
+		"render_plan_id":       uuidString(task.RenderPlanID),
+		"render_plan_key":      strings.TrimSpace(input.RenderPlanKey),
+		"render_plan_ref":      workerObjectRef("render_plan", input.RenderPlanKey),
+		"render_plan_status":   "failed",
+		"scope_type":           scopeType,
+		"scope_id":             uuidString(task.ScopeID),
+		"scope_key":            strings.TrimSpace(input.ScopeKey),
+		"scope_ref":            workerObjectRef(scopeType, input.ScopeKey),
+		"shot_id":              input.ShotID,
+		"shot_key":             firstWorkerNonEmpty(input.ScopeKey, input.ShotClientKey),
+		"node_id":              uuidString(result.Node.ID),
+		"node_key":             strings.TrimSpace(result.Node.SemanticKey),
+		"node_ref":             workerObjectRef("media_node", result.Node.SemanticKey),
+		"generation_job_id":    uuidString(result.Job.ID),
+		"generation_job_key":   strings.TrimSpace(result.Job.SemanticKey),
+		"generation_job_ref":   workerObjectRef("generation_job", result.Job.SemanticKey),
+		"artifact_version_id":  uuidString(result.Version.ID),
+		"artifact_version_key": strings.TrimSpace(result.Version.SemanticKey),
+		"artifact_version_ref": workerObjectRef("artifact_version", result.Version.SemanticKey),
+		"artifact_kind":        artifactKind,
+		"worker_task_id":       uuidString(task.ID),
+		"worker_task_key":      strings.TrimSpace(task.SemanticKey),
+		"worker_thread_id":     uuidString(task.ThreadID),
+		"error_code":           code,
+		"error":                message,
 	})
 	if _, err := e.runtime.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
 		WorkspaceID:      task.WorkspaceID,
@@ -477,6 +489,24 @@ func (e *Executor) wakeProducerOnFailure(ctx context.Context, task db.AgentTask,
 		return
 	}
 	e.ensureProducerWakeTask(ctx, task.WorkspaceID, thread.ID, payload)
+}
+
+func firstWorkerNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func workerObjectRef(objectType string, key string) string {
+	objectType = strings.TrimSpace(objectType)
+	key = strings.TrimSpace(key)
+	if objectType == "" || key == "" {
+		return ""
+	}
+	return objectType + "/" + key
 }
 
 func (e *Executor) ensureProducerWakeTask(ctx context.Context, workspaceID pgtype.UUID, producerThreadID pgtype.UUID, input []byte) {

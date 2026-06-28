@@ -10,6 +10,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	agentidentity "github.com/sinmaystar/clip-anvil/internal/agent/identity"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -20,6 +21,8 @@ type DispatchReviewerStore interface {
 	GetMediaNodeByID(ctx context.Context, id pgtype.UUID) (db.MediaNode, error)
 	GetArtifactVersionByID(ctx context.Context, id pgtype.UUID) (db.ArtifactVersion, error)
 	GetRenderPlanByID(ctx context.Context, params db.GetRenderPlanByIDParams) (db.RenderPlan, error)
+	ListReviewRecordsByArtifactVersion(ctx context.Context, artifactVersionID pgtype.UUID) ([]db.ReviewRecord, error)
+	GetAgentObjectBySemanticKey(ctx context.Context, params db.GetAgentObjectBySemanticKeyParams) (db.AgentObjectIndex, error)
 }
 
 type DispatchReviewerRuntime interface {
@@ -81,9 +84,11 @@ func (t *DispatchReviewerNativeTool) InvokableRun(ctx context.Context, arguments
 	if !ok {
 		return msg, nil
 	}
-	if err := t.validateTargetState(ctx, runtime.WorkspaceID, input); err != nil {
+	resolvedTarget, targetSummary, err := t.validateTargetState(ctx, runtime.WorkspaceID, input)
+	if err != nil {
 		return NaturalToolError(toolDispatchReviewer, err.Error(), "请读取项目上下文，确认 review_task、target 和 artifact 状态后重试。"), nil
 	}
+	input.Target = resolvedTarget
 	scopeType, scopeID, err := dispatchReviewerScope(input)
 	if err != nil {
 		return NaturalToolError(toolDispatchReviewer, err.Error(), "请修正 target 后重试。"), nil
@@ -114,7 +119,7 @@ func (t *DispatchReviewerNativeTool) InvokableRun(ctx context.Context, arguments
 	if err != nil {
 		return NaturalToolError(toolDispatchReviewer, err.Error(), "请检查 reviewer task 参数后重试。"), nil
 	}
-	if err := t.appendDelegationMessage(ctx, runtime.WorkspaceID, thread.ID, task.ID, scopeType, scopeID, input); err != nil {
+	if err := t.appendDelegationMessage(ctx, runtime.WorkspaceID, thread.ID, task.ID, scopeType, scopeID, targetSummary, input); err != nil {
 		return NaturalToolError(toolDispatchReviewer, err.Error(), "Reviewer 任务已创建，但委派消息写入失败；请检查 agent_message 写入链路。"), nil
 	}
 	_, _ = t.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
@@ -134,8 +139,8 @@ func (t *DispatchReviewerNativeTool) InvokableRun(ctx context.Context, arguments
 		Title: "已派发 Reviewer 评审任务",
 		Items: []NaturalResultItem{
 			{Label: "review_task", Value: input.ReviewTask},
-			{Label: "reviewer_task_id", Value: uuidString(task.ID)},
-			{Label: "scope", Value: scopeType + "=" + uuidString(scopeID)},
+			{Label: "scope_ref", Value: targetSummary.scopeLabel(scopeType)},
+			{Label: "artifact_ref", Value: targetSummary.artifactLabel()},
 		},
 		Next: "派发成功只表示评审任务已入队。Producer 应读取 review_record 和 artifact_issue 后决定是否接受、修复或请求用户确认。",
 	}.String(), nil
@@ -147,8 +152,8 @@ type dispatchReviewerTaskInput struct {
 	ProducerTaskID   string `json:"producer_task_id,omitempty"`
 }
 
-func (t *DispatchReviewerNativeTool) appendDelegationMessage(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID, taskID pgtype.UUID, scopeType string, scopeID pgtype.UUID, input DispatchReviewerInput) error {
-	text := reviewerDelegationText(scopeType, scopeID, input)
+func (t *DispatchReviewerNativeTool) appendDelegationMessage(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID, taskID pgtype.UUID, scopeType string, scopeID pgtype.UUID, targetSummary reviewerTargetSummary, input DispatchReviewerInput) error {
+	text := reviewerDelegationText(scopeType, targetSummary, input)
 	content, err := uimessage.BuildUserMessageContent(uimessage.UserMessageInput{Text: text})
 	if err != nil {
 		return err
@@ -164,6 +169,7 @@ func (t *DispatchReviewerNativeTool) appendDelegationMessage(ctx context.Context
 			"target_role": "reviewer",
 			"scope_type":  scopeType,
 			"scope_id":    uuidString(scopeID),
+			"scope_ref":   targetSummary.scopeLabel(scopeType),
 			"review_task": input.ReviewTask,
 			"target":      input.Target,
 			"brief":       input.Brief,
@@ -174,11 +180,12 @@ func (t *DispatchReviewerNativeTool) appendDelegationMessage(ctx context.Context
 	return err
 }
 
-func reviewerDelegationText(scopeType string, scopeID pgtype.UUID, input DispatchReviewerInput) string {
+func reviewerDelegationText(scopeType string, targetSummary reviewerTargetSummary, input DispatchReviewerInput) string {
 	lines := []string{
 		"Producer 派发 Reviewer 评审任务。",
-		"- scope: " + scopeType + "=" + uuidString(scopeID),
+		"- scope_ref: " + targetSummary.scopeLabel(scopeType),
 		"- review_task: " + input.ReviewTask,
+		"- artifact_ref: " + targetSummary.artifactLabel(),
 		"- brief: " + input.Brief,
 		"- reason: " + input.Reason,
 	}
@@ -210,48 +217,201 @@ func validateDispatchReviewerInput(input DispatchReviewerInput) error {
 	return nil
 }
 
-func (t *DispatchReviewerNativeTool) validateTargetState(ctx context.Context, workspaceID pgtype.UUID, input DispatchReviewerInput) error {
+type reviewerTargetSummary struct {
+	shotKey       string
+	renderPlanKey string
+	nodeKey       string
+	versionKey    string
+}
+
+func (s reviewerTargetSummary) scopeLabel(scopeType string) string {
+	switch strings.TrimSpace(scopeType) {
+	case "render_plan":
+		return objectLabel(agentidentity.ObjectRenderPlan, s.renderPlanKey)
+	case "final_output":
+		return objectLabel(agentidentity.ObjectMediaNode, s.nodeKey)
+	default:
+		return objectLabel(agentidentity.ObjectShot, s.shotKey)
+	}
+}
+
+func (s reviewerTargetSummary) artifactLabel() string {
+	if strings.TrimSpace(s.versionKey) != "" {
+		return objectLabel(agentidentity.ObjectArtifactVersion, s.versionKey)
+	}
+	if strings.TrimSpace(s.nodeKey) != "" {
+		return objectLabel(agentidentity.ObjectMediaNode, s.nodeKey)
+	}
+	return "artifact_version.semantic_key_missing"
+}
+
+func objectLabel(objectType string, key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return objectType + ".semantic_key_missing"
+	}
+	return objectType + "/" + key
+}
+
+func (t *DispatchReviewerNativeTool) validateTargetState(ctx context.Context, workspaceID pgtype.UUID, input DispatchReviewerInput) (ReviewTargetInput, reviewerTargetSummary, error) {
 	workspace, err := t.store.GetWorkspaceByID(ctx, workspaceID)
 	if err != nil {
-		return err
+		return ReviewTargetInput{}, reviewerTargetSummary{}, err
 	}
 	if workspace.Mode != db.WorkspaceModeAgent {
-		return fmt.Errorf("dispatch_reviewer requires an Agent workspace")
+		return ReviewTargetInput{}, reviewerTargetSummary{}, fmt.Errorf("dispatch_reviewer requires an Agent workspace")
 	}
+	target := input.Target
+	summary := reviewerTargetSummary{}
 	if input.ReviewTask == reviewTaskPreRenderPlan {
-		renderPlanID, _ := pgUUIDFromString(input.Target.RenderPlanID)
+		renderPlanID, renderPlanKey, err := t.resolveReviewerObjectID(ctx, workspaceID, agentidentity.ObjectRenderPlan, target.RenderPlanRef, target.RenderPlanID, "target.render_plan_ref")
+		if err != nil {
+			return ReviewTargetInput{}, reviewerTargetSummary{}, err
+		}
+		target.RenderPlanID = uuidString(renderPlanID)
+		target.RenderPlanRef = ensureToolObjectRef(target.RenderPlanRef, agentidentity.ObjectRenderPlan, renderPlanKey)
+		summary.renderPlanKey = renderPlanKey
 		plan, err := t.store.GetRenderPlanByID(ctx, db.GetRenderPlanByIDParams{WorkspaceID: workspaceID, ID: renderPlanID})
 		if err != nil {
-			return err
+			return ReviewTargetInput{}, reviewerTargetSummary{}, err
 		}
 		if plan.WorkspaceID != workspaceID {
-			return fmt.Errorf("render_plan 不属于当前 workspace")
+			return ReviewTargetInput{}, reviewerTargetSummary{}, fmt.Errorf("render_plan 不属于当前 workspace")
 		}
-		return nil
+		if strings.TrimSpace(summary.renderPlanKey) == "" {
+			summary.renderPlanKey = plan.SemanticKey
+			target.RenderPlanRef = ensureToolObjectRef(target.RenderPlanRef, agentidentity.ObjectRenderPlan, plan.SemanticKey)
+		}
+		return target, summary, nil
 	}
-	nodeID, _ := pgUUIDFromString(input.Target.NodeID)
-	versionID, _ := pgUUIDFromString(input.Target.ArtifactVersionID)
+	nodeID, nodeKey, err := t.resolveReviewerObjectID(ctx, workspaceID, agentidentity.ObjectMediaNode, target.NodeRef, target.NodeID, "target.node_ref")
+	if err != nil {
+		return ReviewTargetInput{}, reviewerTargetSummary{}, err
+	}
+	versionID, versionKey, err := t.resolveReviewerObjectID(ctx, workspaceID, agentidentity.ObjectArtifactVersion, target.ArtifactVersionRef, target.ArtifactVersionID, "target.artifact_version_ref")
+	if err != nil {
+		return ReviewTargetInput{}, reviewerTargetSummary{}, err
+	}
+	target.NodeID = uuidString(nodeID)
+	target.ArtifactVersionID = uuidString(versionID)
+	target.NodeRef = ensureToolObjectRef(target.NodeRef, agentidentity.ObjectMediaNode, nodeKey)
+	target.ArtifactVersionRef = ensureToolObjectRef(target.ArtifactVersionRef, agentidentity.ObjectArtifactVersion, versionKey)
+	summary.nodeKey = nodeKey
+	summary.versionKey = versionKey
+	if input.ReviewTask == reviewTaskPreviewImage || input.ReviewTask == reviewTaskShotVideo {
+		shotID, shotKey, err := t.resolveReviewerObjectID(ctx, workspaceID, agentidentity.ObjectShot, target.ShotRef, target.ShotID, "target.shot_ref")
+		if err != nil {
+			return ReviewTargetInput{}, reviewerTargetSummary{}, err
+		}
+		target.ShotID = uuidString(shotID)
+		target.ShotRef = ensureToolObjectRef(target.ShotRef, agentidentity.ObjectShot, shotKey)
+		summary.shotKey = shotKey
+	}
+	if strings.TrimSpace(target.RenderPlanID) != "" || strings.TrimSpace(target.RenderPlanRef.Key) != "" {
+		if renderPlanID, renderPlanKey, err := t.resolveReviewerObjectID(ctx, workspaceID, agentidentity.ObjectRenderPlan, target.RenderPlanRef, target.RenderPlanID, "target.render_plan_ref"); err == nil {
+			target.RenderPlanID = uuidString(renderPlanID)
+			target.RenderPlanRef = ensureToolObjectRef(target.RenderPlanRef, agentidentity.ObjectRenderPlan, renderPlanKey)
+			summary.renderPlanKey = renderPlanKey
+		}
+	}
 	node, err := t.store.GetMediaNodeByID(ctx, nodeID)
 	if err != nil {
-		return err
+		return ReviewTargetInput{}, reviewerTargetSummary{}, err
 	}
 	version, err := t.store.GetArtifactVersionByID(ctx, versionID)
 	if err != nil {
-		return err
+		return ReviewTargetInput{}, reviewerTargetSummary{}, err
 	}
 	if node.WorkspaceID != workspaceID || version.WorkspaceID != workspaceID || version.NodeID != node.ID {
-		return fmt.Errorf("target node 或 artifact_version 不属于当前 workspace")
+		return ReviewTargetInput{}, reviewerTargetSummary{}, fmt.Errorf("target node 或 artifact_version 不属于当前 workspace")
 	}
 	if version.Status != db.JobStatusSucceeded {
-		return fmt.Errorf("artifact_version.status=%s，不可评审，必须是 succeeded", version.Status)
+		return ReviewTargetInput{}, reviewerTargetSummary{}, fmt.Errorf("artifact_version.status=%s，不可评审，必须是 succeeded", version.Status)
+	}
+	if input.ReviewTask == reviewTaskFinalVideo {
+		if err := t.ensureNoCompletedFinalVideoReview(ctx, version.ID); err != nil {
+			return ReviewTargetInput{}, reviewerTargetSummary{}, err
+		}
 	}
 	if input.ReviewTask == reviewTaskShotVideo && node.NodeType != db.NodeTypeVideo {
-		return fmt.Errorf("shot_video_review 的目标 node 必须是 video")
+		return ReviewTargetInput{}, reviewerTargetSummary{}, fmt.Errorf("shot_video_review 的目标 node 必须是 video")
 	}
 	if input.ReviewTask == reviewTaskPreviewImage && node.NodeType != db.NodeTypeImage {
-		return fmt.Errorf("preview_image_review 的目标 node 必须是 image")
+		return ReviewTargetInput{}, reviewerTargetSummary{}, fmt.Errorf("preview_image_review 的目标 node 必须是 image")
+	}
+	if strings.TrimSpace(summary.nodeKey) == "" {
+		summary.nodeKey = node.SemanticKey
+		target.NodeRef = ensureToolObjectRef(target.NodeRef, agentidentity.ObjectMediaNode, node.SemanticKey)
+	}
+	if strings.TrimSpace(summary.versionKey) == "" {
+		summary.versionKey = version.SemanticKey
+		target.ArtifactVersionRef = ensureToolObjectRef(target.ArtifactVersionRef, agentidentity.ObjectArtifactVersion, version.SemanticKey)
+	}
+	return target, summary, nil
+}
+
+func (t *DispatchReviewerNativeTool) ensureNoCompletedFinalVideoReview(ctx context.Context, artifactVersionID pgtype.UUID) error {
+	records, err := t.store.ListReviewRecordsByArtifactVersion(ctx, artifactVersionID)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.ReviewTask != reviewTaskFinalVideo && record.TargetPhase != "final_video" {
+			continue
+		}
+		switch record.Status {
+		case reviewVerdictAccepted, reviewVerdictAcceptedWithWarnings, reviewVerdictRejected, reviewVerdictBlocked:
+			recordRef := strings.TrimSpace(record.SemanticKey)
+			if recordRef == "" {
+				recordRef = uuidString(record.ID)
+			}
+			return fmt.Errorf("final_video artifact_version 已有终态评审 %s：review_record/%s；请读取项目上下文并处理该评审结果，不要重复派发 Reviewer", record.Status, recordRef)
+		}
 	}
 	return nil
+}
+
+func (t *DispatchReviewerNativeTool) resolveReviewerObjectID(ctx context.Context, workspaceID pgtype.UUID, objectType string, ref ToolObjectRef, legacyValue string, field string) (pgtype.UUID, string, error) {
+	key := strings.TrimSpace(ref.Key)
+	legacyValue = strings.TrimSpace(legacyValue)
+	if key != "" {
+		if strings.TrimSpace(ref.Type) == "" {
+			ref.Type = objectType
+		}
+		if strings.TrimSpace(ref.Type) != objectType {
+			return pgtype.UUID{}, "", fmt.Errorf("%s.type 必须是 %s", field, objectType)
+		}
+		return t.resolveReviewerSemanticKey(ctx, workspaceID, objectType, key, field)
+	}
+	if id, ok := pgUUIDFromString(legacyValue); ok {
+		return id, "", nil
+	}
+	if legacyValue != "" {
+		return t.resolveReviewerSemanticKey(ctx, workspaceID, objectType, legacyValue, field)
+	}
+	return pgtype.UUID{}, "", fmt.Errorf("%s 必填，请使用 read_project_context 返回的 %s semantic_key，不要填写或编造内部 ID", field, objectType)
+}
+
+func (t *DispatchReviewerNativeTool) resolveReviewerSemanticKey(ctx context.Context, workspaceID pgtype.UUID, objectType string, key string, field string) (pgtype.UUID, string, error) {
+	object, err := t.store.GetAgentObjectBySemanticKey(ctx, db.GetAgentObjectBySemanticKeyParams{
+		WorkspaceID: workspaceID,
+		ObjectType:  objectType,
+		SemanticKey: strings.TrimSpace(key),
+	})
+	if err != nil {
+		return pgtype.UUID{}, "", fmt.Errorf("%s 找不到 %s/%s，请先读取项目上下文确认真实 semantic_key", field, objectType, key)
+	}
+	return object.ObjectID, object.SemanticKey, nil
+}
+
+func ensureToolObjectRef(ref ToolObjectRef, objectType string, key string) ToolObjectRef {
+	if strings.TrimSpace(ref.Type) == "" {
+		ref.Type = objectType
+	}
+	if strings.TrimSpace(ref.Key) == "" {
+		ref.Key = strings.TrimSpace(key)
+	}
+	return ref
 }
 
 func dispatchReviewerScope(input DispatchReviewerInput) (string, pgtype.UUID, error) {

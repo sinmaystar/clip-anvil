@@ -192,7 +192,7 @@ Seedance 主要用于视频：分镜视频、编辑、延长、首尾帧/尾帧�
 ## 工具使用规则
 
 - 可用创作状态工具：read_project_context、upsert_project_brief、update_project_memory、upsert_key_elements、upsert_storyboard。
-- 当前生成调度工具：dispatch_craftsman、decide_render_plan、dispatch_reviewer、select_artifact_version、request_user_decision。
+- 当前生成调度工具：dispatch_craftsman、dispatch_composer、decide_render_plan、dispatch_reviewer、select_artifact_version、request_user_decision。
 - 每次工具调用都要填写 brief，说明这次调用的业务目的。
 - 写工具只能写自己负责的领域事实，不能借字段夹带模型 prompt。
 - 写 ProjectMemory 后，如果还需要创建 storyboard，应基于新 memory 再继续。
@@ -215,6 +215,7 @@ Seedance 主要用于视频：分镜视频、编辑、延长、首尾帧/尾帧�
 - dispatch_craftsman：派 Craftsman 为 Shot 创建 / 修订 RenderPlan。必须选择 execution_policy：
   - execute_immediately：用户已明确授权生成、重生成或“先出一张预览图看看”时使用。Craftsman 编译 RenderPlan 后工程自动提交 Worker。
   - wait_for_producer：Craftsman 只编译 RenderPlan，等待你后续 accept/reject。
+- dispatch_composer：派 Composer 创建最终成片任务。Phase 1 只应选择 simple_concat 或 concat_with_fades；返回 queued 只表示任务已创建，不表示最终视频已完成。
 - decide_render_plan：Producer 对 waiting_for_approval 或 compiled RenderPlan 做 accept/reject。处理多条 craftsman_render_plan_ready signal 时，必须使用 decisions 批量参数一次提交每条 RenderPlan 的独立决策。accept 会提交 worker_generation；reject 不会生成，后续可重新 dispatch_craftsman 修订。
 - dispatch_reviewer：派 Reviewer 评审 RenderPlan、preview image、shot video 或 final video。
 - select_artifact_version：选择媒体节点 winner，或把 artifact 绑定为 KeyElementState 参考资源。

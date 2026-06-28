@@ -62,6 +62,7 @@ func (r VolcengineImageRuntime) Start(ctx context.Context, job ProductionJob, in
 	if modelID == "" {
 		return nil, fmt.Errorf("%w: CLIPANVIL_PRODUCTION_VOLCENGINE_IMAGE_MODEL is required", ErrProviderConfig)
 	}
+	intent.Params = normalizeImageGenerationParams(intent.Params)
 	model, err := r.factory(ctx, &ark.ImageGenerationConfig{
 		APIKey:           r.cfg.APIKey,
 		BaseURL:          strings.TrimSpace(r.cfg.BaseURL),
@@ -78,6 +79,64 @@ func (r VolcengineImageRuntime) Start(ctx context.Context, job ProductionJob, in
 	events := make(chan ProductionEvent, 8)
 	go r.generate(ctx, model, job, intent, events)
 	return events, nil
+}
+
+func normalizeImageGenerationParams(params map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range params {
+		out[key] = value
+	}
+	if strings.TrimSpace(stringParam(out, "size", "")) == "" {
+		if size := imageSizeFromRatioResolution(stringParam(out, "ratio", ""), stringParam(out, "resolution", "")); size != "" {
+			out["size"] = size
+		}
+	}
+	return out
+}
+
+func imageSizeFromRatioResolution(ratio string, resolution string) string {
+	ratio = strings.TrimSpace(ratio)
+	resolution = strings.TrimSpace(strings.ToLower(resolution))
+	if ratio == "" {
+		return ""
+	}
+	longEdge := 0
+	switch resolution {
+	case "", "1080p":
+		longEdge = 1920
+	case "720p":
+		longEdge = 1280
+	case "2k", "1440p":
+		longEdge = 2560
+	case "4k", "2160p":
+		longEdge = 3840
+	default:
+		if strings.HasSuffix(resolution, "x") {
+			return ""
+		}
+	}
+	if longEdge == 0 {
+		return ""
+	}
+	switch ratio {
+	case "9:16":
+		if longEdge < 2560 {
+			longEdge = 2560
+		}
+		return fmt.Sprintf("%dx%d", longEdge*9/16, longEdge)
+	case "16:9":
+		if longEdge < 2560 {
+			longEdge = 2560
+		}
+		return fmt.Sprintf("%dx%d", longEdge, longEdge*9/16)
+	case "1:1":
+		if longEdge < 1920 {
+			longEdge = 1920
+		}
+		return fmt.Sprintf("%dx%d", longEdge, longEdge)
+	default:
+		return ""
+	}
 }
 
 func (r VolcengineImageRuntime) generate(ctx context.Context, model arkImageGenerator, job ProductionJob, intent GenerationIntent, events chan<- ProductionEvent) {

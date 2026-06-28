@@ -69,6 +69,39 @@ func TestProducerGraphRequiresNativeToolLoop(t *testing.T) {
 	}
 }
 
+func TestFormatProducerSignalReminderUsesSemanticRefs(t *testing.T) {
+	signal := db.ProducerPendingSignal{
+		SemanticKey:  "signal.shot_01.preview_image.r1.worker_generation_completed.abc123",
+		SignalType:   "worker_generation_completed",
+		ScopeType:    "shot",
+		RenderPlanID: uuidWithByte(80),
+		Payload: []byte(`{
+			"target_phase":"preview_image",
+			"render_plan_status":"succeeded",
+			"scope_key":"shot_01",
+			"render_plan_key":"shot_01.preview_image.r1",
+			"generation_job_key":"job.shot_01.preview_image.r1",
+			"artifact_version_key":"shot_01.preview_image.r1.artifact.v1",
+			"worker_task_id":"28000000-0000-0000-0000-000000000000"
+		}`),
+	}
+
+	text := formatProducerSignalReminder([]db.ProducerPendingSignal{signal})
+
+	if strings.Contains(text, "semantic_key_missing") {
+		t.Fatalf("reminder should not contain semantic_key_missing:\n%s", text)
+	}
+	if strings.Contains(text, "28000000-0000-0000-0000-000000000000") {
+		t.Fatalf("reminder leaked worker task UUID:\n%s", text)
+	}
+	if !strings.Contains(text, "scope_ref=shot/shot_01") ||
+		!strings.Contains(text, "render_plan_ref=render_plan/shot_01.preview_image.r1") ||
+		!strings.Contains(text, "generation_job_ref=generation_job/job.shot_01.preview_image.r1") ||
+		!strings.Contains(text, "artifact_ref=artifact_version/shot_01.preview_image.r1.artifact.v1") {
+		t.Fatalf("reminder missing semantic refs:\n%s", text)
+	}
+}
+
 func TestProducerGraphCompileCapturesGraphInfo(t *testing.T) {
 	registry := agenteino.NewGraphInfoRegistry()
 	_, err := NewGraph(GraphConfig{
@@ -85,7 +118,7 @@ func TestProducerGraphCompileCapturesGraphInfo(t *testing.T) {
 	if !ok {
 		t.Fatal("producer graph info was not captured")
 	}
-	for _, node := range []string{"load_context", "prepare_turn_state", "before_model", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "check_signals_before_finalize", "finalize_response"} {
+	for _, node := range []string{"load_context", "prepare_turn_state", "before_model", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "finalize_response"} {
 		if _, ok := info.Nodes[node]; !ok {
 			t.Fatalf("node %q missing from graph info", node)
 		}
@@ -108,7 +141,7 @@ func TestProducerGraphExplicitToolLoopCapturesGraphInfo(t *testing.T) {
 	if !ok {
 		t.Fatal("producer graph info was not captured")
 	}
-	for _, node := range []string{"load_context", "prepare_turn_state", "before_model", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "check_signals_before_finalize", "finalize_response"} {
+	for _, node := range []string{"load_context", "prepare_turn_state", "before_model", "call_model", "prepare_tool_message", "execute_tools", "append_tool_results", "finalize_response"} {
 		if _, ok := info.Nodes[node]; !ok {
 			t.Fatalf("node %q missing from graph info", node)
 		}
@@ -117,6 +150,9 @@ func TestProducerGraphExplicitToolLoopCapturesGraphInfo(t *testing.T) {
 		if _, ok := info.Nodes[node]; ok {
 			t.Fatalf("legacy node %q must not exist in producer graph info", node)
 		}
+	}
+	if _, ok := info.Nodes["check_signals_before_finalize"]; ok {
+		t.Fatal("check_signals_before_finalize must not exist in producer graph info")
 	}
 	if !graphInfoHasBranchTarget(info.Branches, "call_model", "prepare_tool_message") {
 		t.Fatalf("branch call_model -> prepare_tool_message missing from graph info: %#v", info.Branches)
@@ -133,15 +169,18 @@ func TestProducerGraphExplicitToolLoopCapturesGraphInfo(t *testing.T) {
 	if !graphInfoHasBranchTarget(info.Branches, "append_tool_results", "before_model") {
 		t.Fatalf("branch append_tool_results -> before_model missing from graph info: %#v", info.Branches)
 	}
-	if !graphInfoHasBranchTarget(info.Branches, "append_tool_results", "check_signals_before_finalize") {
-		t.Fatalf("branch append_tool_results -> check_signals_before_finalize missing from graph info: %#v", info.Branches)
+	if graphInfoHasBranchTarget(info.Branches, "append_tool_results", "check_signals_before_finalize") {
+		t.Fatalf("branch append_tool_results -> check_signals_before_finalize must not exist: %#v", info.Branches)
+	}
+	if !graphInfoHasBranchTarget(info.Branches, "append_tool_results", "finalize_response") {
+		t.Fatalf("branch append_tool_results -> finalize_response missing from graph info: %#v", info.Branches)
 	}
 	if !graphInfoHasEdge(info.Edges, "before_model", "call_model") {
 		t.Fatalf("edge before_model -> call_model missing from graph info: %#v", info.Edges)
 	}
 }
 
-func TestProducerGraphDrainsSignalsOnceAfterModelRoundBeforeFinalize(t *testing.T) {
+func TestProducerGraphLeavesSignalsForExecutorWakeAfterModelRound(t *testing.T) {
 	signals := make([]db.ProducerPendingSignal, 0, 5)
 	for i := byte(0); i < 5; i++ {
 		signals = append(signals, db.ProducerPendingSignal{
@@ -160,7 +199,6 @@ func TestProducerGraphDrainsSignalsOnceAfterModelRoundBeforeFinalize(t *testing.
 	signalRuntime := &fakeProducerSignalRuntime{pending: signals}
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
 		{AssistantText: "本轮准备结束。"},
-		{AssistantText: "收到 signal。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
@@ -180,36 +218,27 @@ func TestProducerGraphDrainsSignalsOnceAfterModelRoundBeforeFinalize(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signalRuntime.claimCalls != 1 {
-		t.Fatalf("claim calls = %d, want 1", signalRuntime.claimCalls)
+	if out.AssistantText != "本轮准备结束。" {
+		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
-	if len(signalRuntime.claimed) != 5 {
-		t.Fatalf("claimed signals = %d, want 5", len(signalRuntime.claimed))
+	if signalRuntime.claimCalls != 0 {
+		t.Fatalf("claim calls = %d, want 0", signalRuntime.claimCalls)
 	}
-	if len(responder.contexts) != 2 {
-		t.Fatalf("model calls = %d, want 2", len(responder.contexts))
+	if len(signalRuntime.claimed) != 0 {
+		t.Fatalf("claimed signals = %d, want 0", len(signalRuntime.claimed))
+	}
+	if len(responder.contexts) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(responder.contexts))
 	}
 	if len(responder.contexts[0].PendingReminders) != 0 {
 		t.Fatalf("first model reminders = %#v", responder.contexts[0].PendingReminders)
 	}
-	if len(responder.contexts[1].PendingReminders) != 1 {
-		t.Fatalf("second model reminders = %#v", responder.contexts[1].PendingReminders)
-	}
-	reminder := responder.contexts[1].PendingReminders[0]
-	if !strings.Contains(reminder, "<system-reminder>") ||
-		!strings.Contains(reminder, "craftsman_render_plan_ready") ||
-		!strings.Contains(reminder, "你有 5 个待处理 Producer signal") ||
-		!strings.Contains(reminder, "render_plan_id=32000000-0000-0000-0000-000000000000") ||
-		!strings.Contains(reminder, "render_plan_id=36000000-0000-0000-0000-000000000000") ||
-		!strings.Contains(reminder, "target_phase=preview_image") {
-		t.Fatalf("signal reminder = %q", reminder)
-	}
-	if len(out.PersistentTriggerMessages) != 1 || out.PersistentTriggerMessages[0].Text != reminder {
-		t.Fatalf("persistent trigger messages = %#v, want reminder %q", out.PersistentTriggerMessages, reminder)
+	if len(out.PersistentTriggerMessages) != 0 {
+		t.Fatalf("persistent trigger messages = %#v", out.PersistentTriggerMessages)
 	}
 }
 
-func TestProducerGraphDrainsNewSignalsBeforeFinalize(t *testing.T) {
+func TestProducerGraphDoesNotDrainNewSignalsBeforeFinalize(t *testing.T) {
 	signalRuntime := &fakeProducerSignalRuntime{
 		pendingByClaimCall: [][]db.ProducerPendingSignal{
 			{
@@ -230,7 +259,6 @@ func TestProducerGraphDrainsNewSignalsBeforeFinalize(t *testing.T) {
 	}
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
 		{AssistantText: "本轮准备结束。"},
-		{AssistantText: "已处理新 signal。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
@@ -250,28 +278,24 @@ func TestProducerGraphDrainsNewSignalsBeforeFinalize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.AssistantText != "已处理新 signal。" {
+	if out.AssistantText != "本轮准备结束。" {
 		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
-	if len(responder.contexts) != 2 {
-		t.Fatalf("model calls = %d, want 2", len(responder.contexts))
+	if len(responder.contexts) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(responder.contexts))
 	}
 	if len(responder.contexts[0].PendingReminders) != 0 {
 		t.Fatalf("first model reminders = %#v", responder.contexts[0].PendingReminders)
 	}
-	if len(responder.contexts[1].PendingReminders) != 1 || !strings.Contains(responder.contexts[1].PendingReminders[0], "craftsman_render_plan_ready") {
-		t.Fatalf("second model reminders = %#v", responder.contexts[1].PendingReminders)
-	}
-	if len(out.PersistentTriggerMessages) != 1 ||
-		!strings.Contains(out.PersistentTriggerMessages[0].Text, "craftsman_render_plan_ready") {
+	if len(out.PersistentTriggerMessages) != 0 {
 		t.Fatalf("persistent trigger messages = %#v", out.PersistentTriggerMessages)
 	}
-	if len(signalRuntime.claimed) != 1 || signalRuntime.claimCalls != 1 {
+	if len(signalRuntime.claimed) != 0 || signalRuntime.claimCalls != 0 {
 		t.Fatalf("claimCalls=%d claimed=%#v", signalRuntime.claimCalls, signalRuntime.claimed)
 	}
 }
 
-func TestProducerGraphDoesNotDrainSignalsBeforeFirstModelCall(t *testing.T) {
+func TestProducerGraphDoesNotDrainSignalsInsideCurrentTurn(t *testing.T) {
 	signals := []db.ProducerPendingSignal{
 		{
 			ID:               uuidWithByte(81),
@@ -306,7 +330,6 @@ func TestProducerGraphDoesNotDrainSignalsBeforeFirstModelCall(t *testing.T) {
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
 		nativeToolCallOutput("call-read", "read_project_context", `{"brief":"先读取项目","scope":{"type":"workspace","id":""}}`),
 		{AssistantText: "读取完成。"},
-		{AssistantText: "已处理 signal。"},
 	}}
 	graph, err := NewGraph(GraphConfig{
 		Loader:             fakeContextLoader{context: ProducerContext{LatestUserText: "继续"}},
@@ -326,22 +349,20 @@ func TestProducerGraphDoesNotDrainSignalsBeforeFirstModelCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.AssistantText != "已处理 signal。" {
+	if out.AssistantText != "读取完成。" {
 		t.Fatalf("assistant text = %q", out.AssistantText)
 	}
-	if len(responder.contexts) != 3 {
-		t.Fatalf("model calls = %d, want 3", len(responder.contexts))
+	if len(responder.contexts) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(responder.contexts))
 	}
 	if len(responder.contexts[0].PendingReminders) != 0 || len(responder.contexts[1].PendingReminders) != 0 {
-		t.Fatalf("signal reminder must wait until model/tool round ends: %#v", responder.contexts)
+		t.Fatalf("signal reminder must not be injected into current turn: %#v", responder.contexts)
 	}
-	if len(responder.contexts[2].PendingReminders) != 1 ||
-		!strings.Contains(responder.contexts[2].PendingReminders[0], "你有 2 个待处理 Producer signal") {
-		t.Fatalf("third reminders = %#v", responder.contexts[2].PendingReminders)
-	}
-	if len(out.PersistentTriggerMessages) != 1 ||
-		!strings.Contains(out.PersistentTriggerMessages[0].Text, "你有 2 个待处理 Producer signal") {
+	if len(out.PersistentTriggerMessages) != 0 {
 		t.Fatalf("persistent trigger messages = %#v", out.PersistentTriggerMessages)
+	}
+	if signalRuntime.claimCalls != 0 || len(signalRuntime.claimed) != 0 {
+		t.Fatalf("current turn must not claim pending signals: calls=%d claimed=%#v", signalRuntime.claimCalls, signalRuntime.claimed)
 	}
 }
 
@@ -559,11 +580,10 @@ func TestProducerGraphDoesNotPersistSignalReminderAcrossToolLoop(t *testing.T) {
 	}
 }
 
-func TestProducerGraphDrainsGrowingSignalReminderOnceBeforeFinalize(t *testing.T) {
+func TestProducerGraphDoesNotDrainGrowingSignalReminderBeforeFinalize(t *testing.T) {
 	responder := &recordingResponder{outputs: []ProducerTurnOutput{
 		nativeToolCallOutput("call-read", "read_project_context", `{"brief":"读取项目","scope":{"type":"workspace","id":""}}`),
 		{AssistantText: "已处理最新 signal。"},
-		{AssistantText: "已吸收后续 signal。"},
 	}}
 	firstSignal := db.ProducerPendingSignal{
 		ID:               uuidWithByte(88),
@@ -612,21 +632,20 @@ func TestProducerGraphDrainsGrowingSignalReminderOnceBeforeFinalize(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	if out.AssistantText != "已处理最新 signal。" {
+		t.Fatalf("assistant text = %q", out.AssistantText)
+	}
 
 	for _, message := range out.SameTurnMessages {
 		if message.MessageType == "system_reminder" && strings.Contains(message.Content, "待处理 Producer signal") {
 			t.Fatalf("same-turn messages must not persist signal reminder: %#v", out.SameTurnMessages)
 		}
 	}
-	if signalRuntime.claimCalls != 1 ||
-		len(signalRuntime.claimed) != 1 ||
-		signalRuntime.claimed[0].RenderPlanID != firstSignal.RenderPlanID {
-		t.Fatalf("current turn should claim exactly one signal batch: calls=%d claimed=%#v", signalRuntime.claimCalls, signalRuntime.claimed)
-	}
-	if len(out.PersistentTriggerMessages) != 1 ||
-		!strings.Contains(out.PersistentTriggerMessages[0].Text, "render_plan_id=33000000-0000-0000-0000-000000000000") ||
-		strings.Contains(out.PersistentTriggerMessages[0].Text, "render_plan_id=34000000-0000-0000-0000-000000000000") {
+	if len(out.PersistentTriggerMessages) != 0 {
 		t.Fatalf("persistent trigger messages = %#v", out.PersistentTriggerMessages)
+	}
+	if signalRuntime.claimCalls != 0 || len(signalRuntime.claimed) != 0 {
+		t.Fatalf("current turn must not claim pending signals: calls=%d claimed=%#v", signalRuntime.claimCalls, signalRuntime.claimed)
 	}
 }
 

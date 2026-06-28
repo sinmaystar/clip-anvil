@@ -9,6 +9,7 @@ import (
 
 const (
 	AssetsDir  = "/workspace/assets"
+	InputDir   = "/workspace/input"
 	ScriptsDir = "/workspace/scripts"
 	TmpDir     = "/workspace/tmp"
 	OutputDir  = "/workspace/output"

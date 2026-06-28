@@ -221,7 +221,7 @@ func main() {
 		Graph:          composerGraph,
 		TraceCallbacks: agentTracing.Callbacks,
 	})
-	_ = composerExecutor
+	composerEnqueuer := agentComposerTaskEnqueuer{executor: composerExecutor}
 	craftsmanGraph, err := agentcraftsman.NewGraph(agentcraftsman.GraphConfig{
 		Loader: agentcraftsman.ContextLoader{
 			Store:   queries,
@@ -287,6 +287,7 @@ func main() {
 		agenttools.NewUpsertKeyElementsNativeTool(creativeStateService),
 		agenttools.NewUpsertStoryboardNativeTool(creativeStateService),
 		agenttools.NewDispatchCraftsmanNativeTool(queries, agentRuntime, craftsmanEnqueuer),
+		agenttools.NewDispatchComposerNativeTool(agentRuntime, composerEnqueuer, queries),
 		agenttools.NewDecideRenderPlanNativeTool(queries, agentRuntime, workerEnqueuer),
 		agenttools.NewDispatchReviewerNativeTool(queries, agentRuntime, reviewerEnqueuer),
 		agenttools.NewRequestUserDecisionNativeTool(agenthitl.NewToolDecisionRequester(hitlService)),
@@ -313,12 +314,13 @@ func main() {
 		os.Exit(1)
 	}
 	producerExecutor := agentproducer.NewExecutor(agentproducer.ExecutorConfig{
-		Runtime:        agentRuntime,
-		Graph:          producerGraph,
-		Broadcaster:    agentBroadcaster,
-		MaxToolCalls:   cfg.Agent.ProducerMaxToolCalls,
-		ToolTimeout:    time.Duration(cfg.Agent.ToolTimeoutSeconds) * time.Second,
-		TraceCallbacks: agentTracing.Callbacks,
+		Runtime:          agentRuntime,
+		Graph:            producerGraph,
+		Broadcaster:      agentBroadcaster,
+		MaxToolCalls:     cfg.Agent.ProducerMaxToolCalls,
+		ToolTimeout:      time.Duration(cfg.Agent.ToolTimeoutSeconds) * time.Second,
+		TraceCallbacks:   agentTracing.Callbacks,
+		ProducerEnqueuer: producerEnqueuer,
 	})
 	producerEnqueuer.executor = producerExecutor
 	agentHandler := api.NewAgentHandler(queries, agentRuntime, agentHub, producerExecutor)
@@ -539,6 +541,10 @@ type agentCraftsmanTaskEnqueuer struct {
 	executor *agentcraftsman.Executor
 }
 
+type agentComposerTaskEnqueuer struct {
+	executor *agentcomposer.Executor
+}
+
 type agentProducerTaskEnqueuer struct {
 	executor *agentproducer.Executor
 }
@@ -575,6 +581,18 @@ func (e agentCraftsmanTaskEnqueuer) EnqueueCraftsmanTask(ctx context.Context, ta
 			Input:       task.Input,
 		}); err != nil {
 			slog.Warn("failed to run craftsman task", "task_id", task.ID, "error", err)
+		}
+	}()
+}
+
+func (e agentComposerTaskEnqueuer) EnqueueComposerTask(ctx context.Context, task db.AgentTask) {
+	if e.executor == nil {
+		return
+	}
+	runCtx := context.WithoutCancel(ctx)
+	go func() {
+		if err := e.executor.RunTask(runCtx, agentcomposer.RunTaskInput{Task: task}); err != nil {
+			slog.Warn("failed to run composer task", "task_id", task.ID, "error", err)
 		}
 	}()
 }

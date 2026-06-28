@@ -70,7 +70,7 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 					},
 					"id": map[string]any{
 						"type":        "string",
-						"description": "兼容旧字段。模型不要填写 UUID；请填写 read_project_context 返回的 semantic_key，或留空并用 shot_refs 批量派发 shot。",
+						"description": "兼容旧字段。模型不要填写内部 ID；请填写 read_project_context 返回的 semantic_key，或留空并用 shot_refs 批量派发 shot。",
 					},
 				},
 			},
@@ -162,17 +162,20 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 	}
 	for _, scope := range scopes {
 		if active, ok := activeCraftsmanTaskForScopePhase(activeTasks, scope.ScopeType, scope.ScopeID, args.TargetPhase); ok {
-			skipped = append(skipped, map[string]any{
+			item := map[string]any{
 				"scope_type":                scope.ScopeType,
-				"scope_id":                  uuidString(scope.ScopeID),
 				"scope_key":                 scope.ScopeKey,
+				"scope_ref":                 objectLabel(scope.ScopeType, scope.ScopeKey),
 				"client_key":                scope.ClientKey,
 				"target_phase":              args.TargetPhase,
 				"reason":                    "active_craftsman_task_exists",
 				"active_craftsman_task_key": active.SemanticKey,
-				"active_craftsman_task_id":  uuidString(active.ID),
 				"active_status":             active.Status,
-			})
+			}
+			if strings.TrimSpace(active.SemanticKey) != "" {
+				item["active_craftsman_task_ref"] = objectLabel("agent_task", active.SemanticKey)
+			}
+			skipped = append(skipped, item)
 			continue
 		}
 		thread, err := t.runtime.GetOrCreateCraftsmanThreadForScope(ctx, input.WorkspaceID, scope.ScopeType, scope.ScopeID)
@@ -261,15 +264,18 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		if t.enqueuer != nil {
 			t.enqueuer.EnqueueCraftsmanTask(ctx, task)
 		}
-		dispatched = append(dispatched, map[string]any{
-			"scope_type":          scope.ScopeType,
-			"scope_id":            uuidString(scope.ScopeID),
-			"scope_key":           scope.ScopeKey,
-			"client_key":          scope.ClientKey,
-			"craftsman_thread_id": uuidString(thread.ID),
-			"craftsman_task_id":   uuidString(task.ID),
-			"status":              task.Status,
-		})
+		item := map[string]any{
+			"scope_type":         scope.ScopeType,
+			"scope_key":          scope.ScopeKey,
+			"scope_ref":          objectLabel(scope.ScopeType, scope.ScopeKey),
+			"client_key":         scope.ClientKey,
+			"craftsman_task_key": task.SemanticKey,
+			"status":             task.Status,
+		}
+		if strings.TrimSpace(task.SemanticKey) != "" {
+			item["craftsman_task_ref"] = objectLabel("agent_task", task.SemanticKey)
+		}
+		dispatched = append(dispatched, item)
 	}
 	summary := dispatchCraftsmanSummary(len(dispatched), len(skipped), args.ScopeType, args.TargetPhase, args.ExecutionPolicy)
 	return ExecuteOutput{Summary: summary, Result: map[string]any{
@@ -520,7 +526,7 @@ func (t DispatchCraftsmanTool) resolveKeyElementStateRef(ctx context.Context, wo
 		return t.store.GetKeyElementStateByID(ctx, db.GetKeyElementStateByIDParams{ID: args.ScopeID, WorkspaceID: workspaceID})
 	}
 	if strings.TrimSpace(args.ScopeRef) == "" {
-		return db.KeyElementState{}, fmt.Errorf("key_element_state scope.id 必须填写 UUID 或 state_client_key")
+		return db.KeyElementState{}, fmt.Errorf("key_element_state scope.id 需要 read_project_context 返回的 semantic_key 或 state_client_key")
 	}
 	states, err := t.store.ListActiveKeyElementStatesByWorkspace(ctx, workspaceID)
 	if err != nil {
@@ -533,7 +539,7 @@ func (t DispatchCraftsmanTool) resolveKeyElementStateRef(ctx context.Context, wo
 		}
 		current := state
 		if matched != nil {
-			return db.KeyElementState{}, fmt.Errorf("state_client_key=%s 不唯一，请改用 key_element_state UUID", args.ScopeRef)
+			return db.KeyElementState{}, fmt.Errorf("state_client_key=%s 不唯一，请改用 key_element_state semantic_key", args.ScopeRef)
 		}
 		matched = &current
 	}

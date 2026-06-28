@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/callbacks"
@@ -109,7 +110,64 @@ func TestComposerExecutorPassesTraceCallbacksToGraph(t *testing.T) {
 	}
 }
 
+func TestComposerExecutorAcceptsDispatchComposerInput(t *testing.T) {
+	runtime := &fakeComposerRuntime{}
+	graph := &fakeComposerRunner{output: GraphOutput{Output: CompositionOutput{Status: "blocked"}}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+	task := composerTaskWithRawInput(t, map[string]any{
+		"source_storyboard_node_id": "21000000-0000-0000-0000-000000000000",
+		"instructions":              "把已完成分镜拼成 20 秒营销视频。",
+		"template_key":              "simple_concat",
+	})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if graph.input.Input.SourceStoryboardNodeID != "21000000-0000-0000-0000-000000000000" {
+		t.Fatalf("graph input = %#v", graph.input.Input)
+	}
+	if graph.input.Input.Instructions != "把已完成分镜拼成 20 秒营销视频。" || graph.input.Input.TemplateKey != "simple_concat" {
+		t.Fatalf("graph input = %#v", graph.input.Input)
+	}
+}
+
+func TestComposerExecutorSignalsProducerWhenCompositionCompletes(t *testing.T) {
+	runtime := &fakeComposerRuntime{producerThread: db.AgentThread{ID: uuidWithByte(90), WorkspaceID: uuidWithByte(1), Role: "producer"}}
+	graph := &fakeComposerRunner{output: GraphOutput{Output: CompositionOutput{
+		Status:            "completed",
+		NodeID:            "32000000-0000-0000-0000-000000000000",
+		GenerationJobID:   "33000000-0000-0000-0000-000000000000",
+		ArtifactVersionID: "34000000-0000-0000-0000-000000000000",
+		SandboxJobID:      "35000000-0000-0000-0000-000000000000",
+		TimelinePlanID:    "36000000-0000-0000-0000-000000000000",
+	}}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+	task := composerTaskWithInput(t, CompositionInput{VideoNodeRefs: []string{"shot-01 shot video"}})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.signals) != 1 {
+		t.Fatalf("signals = %#v", runtime.signals)
+	}
+	signal := runtime.signals[0]
+	if signal.SignalType != "composition_completed" || signal.ScopeType != "final_output" {
+		t.Fatalf("signal = %#v", signal)
+	}
+	if signal.ProducerThreadID != runtime.producerThread.ID {
+		t.Fatalf("producer thread id = %s", uuidString(signal.ProducerThreadID))
+	}
+	if !strings.Contains(string(signal.Payload), "artifact_version_id") || signal.DedupeKey == "" {
+		t.Fatalf("signal payload/dedupe = %q %q", string(signal.Payload), signal.DedupeKey)
+	}
+}
+
 func composerTaskWithInput(t *testing.T, input CompositionInput) db.AgentTask {
+	t.Helper()
+	return composerTaskWithRawInput(t, input)
+}
+
+func composerTaskWithRawInput(t *testing.T, input any) db.AgentTask {
 	t.Helper()
 	raw, err := json.Marshal(input)
 	if err != nil {
@@ -124,6 +182,8 @@ type fakeComposerRuntime struct {
 	checkpointValue  []byte
 	threadCheckpoint string
 	eventsByType     map[string][]agentruntime.CreateEventParams
+	producerThread   db.AgentThread
+	signals          []agentruntime.CreateProducerPendingSignalParams
 }
 
 type fakeComposerRunner struct {
@@ -193,9 +253,23 @@ func (f *fakeComposerRuntime) SetThreadCheckpoint(_ context.Context, _ pgtype.UU
 	return db.AgentThread{CurrentCheckpointKey: pgtype.Text{String: checkpointKey, Valid: checkpointKey != ""}}, nil
 }
 
+func (f *fakeComposerRuntime) GetOrCreateProducerThread(_ context.Context, workspaceID pgtype.UUID) (db.AgentThread, error) {
+	if !f.producerThread.ID.Valid {
+		f.producerThread = db.AgentThread{ID: uuidWithByte(90), WorkspaceID: workspaceID, Role: "producer"}
+	}
+	return f.producerThread, nil
+}
+
+func (f *fakeComposerRuntime) CreateProducerPendingSignal(_ context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error) {
+	f.signals = append(f.signals, params)
+	return db.ProducerPendingSignal{ID: uuidWithByte(byte(100 + len(f.signals))), WorkspaceID: params.WorkspaceID, SignalType: params.SignalType}, nil
+}
+
 type fakeComposerStore struct {
 	createdNode   db.CreateAgentGenerationNodeParams
 	nodes         []db.MediaNode
+	shots         []db.Shot
+	nodesByShot   map[pgtype.UUID][]db.MediaNode
 	versions      map[pgtype.UUID]db.ArtifactVersion
 	assets        map[pgtype.UUID]db.MediaAsset
 	createdEdges  []db.CreateMediaEdgeParams
@@ -204,13 +278,36 @@ type fakeComposerStore struct {
 
 func (f *fakeComposerStore) CreateAgentGenerationNode(_ context.Context, params db.CreateAgentGenerationNodeParams) (db.MediaNode, error) {
 	f.createdNode = params
-	return db.MediaNode{ID: uuidWithByte(50), WorkspaceID: params.WorkspaceID, NodeType: params.NodeType, Title: params.Title, OperationType: params.OperationType, Status: db.NodeStatusQueued, Source: "agent", Metadata: params.Metadata}, nil
+	return db.MediaNode{ID: uuidWithByte(50), WorkspaceID: params.WorkspaceID, NodeType: params.NodeType, Title: params.Title, OperationType: params.OperationType, Status: db.NodeStatusQueued, Source: "agent", Metadata: params.Metadata, SemanticKey: params.SemanticKey, DisplayName: params.DisplayName, ArtifactKind: params.ArtifactKind}, nil
 }
 
 func (f *fakeComposerStore) ListMediaNodesByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error) {
 	out := []db.MediaNode{}
 	for _, node := range f.nodes {
 		if node.WorkspaceID == workspaceID {
+			out = append(out, node)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeComposerStore) ListActiveShotsByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.Shot, error) {
+	out := []db.Shot{}
+	for _, shot := range f.shots {
+		if shot.WorkspaceID == workspaceID {
+			out = append(out, shot)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeComposerStore) ListMediaNodesByShot(_ context.Context, params db.ListMediaNodesByShotParams) ([]db.MediaNode, error) {
+	if f.nodesByShot != nil {
+		return append([]db.MediaNode(nil), f.nodesByShot[params.ShotID]...), nil
+	}
+	out := []db.MediaNode{}
+	for _, node := range f.nodes {
+		if node.WorkspaceID == params.WorkspaceID && node.ShotID == params.ShotID {
 			out = append(out, node)
 		}
 	}

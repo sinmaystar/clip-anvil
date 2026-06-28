@@ -30,17 +30,17 @@ type RenderPlanDecisionSignalRuntime interface {
 type DecideRenderPlanInput struct {
 	Brief                string                    `json:"brief" jsonschema:"required" jsonschema_description:"一句话描述调用该工具的意图，例如批量接受本轮 Craftsman 提交的预览图 RenderPlan 并提交 Worker。不要超过 160 个中文字符。"`
 	RenderPlanRef        ToolObjectRef             `json:"render_plan_ref" jsonschema_description:"单条决策模式使用：Producer 要决策的 RenderPlan 语义引用。必须使用 read_project_context 返回的 type=render_plan,key=...；批量处理时请使用 decisions 数组。"`
-	RenderPlanID         string                    `json:"render_plan_id" jsonschema_description:"兼容旧字段：RenderPlan UUID。模型不要填写；请优先使用 render_plan_ref。"`
+	RenderPlanID         string                    `json:"render_plan_id" jsonschema_description:"兼容旧字段：内部 ID。模型不要填写；请优先使用 render_plan_ref。"`
 	Decision             string                    `json:"decision" jsonschema:"enum=accept,enum=reject" jsonschema_description:"单条决策模式使用：accept 表示接受该 RenderPlan；reject 表示拒绝该 RenderPlan。批量处理时请使用 decisions 数组。"`
 	Reason               string                    `json:"reason" jsonschema_description:"单条决策模式使用：接受或拒绝的原因，面向用户和审计可读。批量处理时每个 decisions 项都要填写 reason。"`
 	NextAction           string                    `json:"next_action" jsonschema:"enum=submit_worker,enum=revise_with_craftsman,enum=no_action" jsonschema_description:"单条决策模式使用：accept 只能配 submit_worker；reject 可配 revise_with_craftsman 或 no_action。请求用户确认请另行调用 request_user_decision。"`
 	RevisionInstructions string                    `json:"revision_instructions" jsonschema_description:"单条决策模式使用：reject 且 next_action=revise_with_craftsman 时，给后续 Craftsman 修订 RenderPlan 的具体要求。"`
-	Decisions            []RenderPlanDecisionInput `json:"decisions" jsonschema_description:"批量决策列表。处理 system-reminder 中多条 craftsman_render_plan_ready signal 时优先使用该字段；每一项独立指定 render_plan_id、decision、reason、next_action 和可选 revision_instructions。"`
+	Decisions            []RenderPlanDecisionInput `json:"decisions" jsonschema_description:"批量决策列表。处理 system-reminder 中多条 craftsman_render_plan_ready signal 时优先使用该字段；每一项独立指定 render_plan_ref、decision、reason、next_action 和可选 revision_instructions。"`
 }
 
 type RenderPlanDecisionInput struct {
 	RenderPlanRef        ToolObjectRef `json:"render_plan_ref" jsonschema_description:"本项要决策的 RenderPlan 语义引用。必须使用 read_project_context 返回的 type=render_plan,key=...。"`
-	RenderPlanID         string        `json:"render_plan_id" jsonschema_description:"兼容旧字段：RenderPlan UUID。模型不要填写；请优先使用 render_plan_ref。"`
+	RenderPlanID         string        `json:"render_plan_id" jsonschema_description:"兼容旧字段：内部 ID。模型不要填写；请优先使用 render_plan_ref。"`
 	Decision             string        `json:"decision" jsonschema:"required,enum=accept,enum=reject" jsonschema_description:"本项决策。accept 表示接受该 RenderPlan；reject 表示拒绝该 RenderPlan。"`
 	Reason               string        `json:"reason" jsonschema:"required" jsonschema_description:"本项接受或拒绝的原因，面向用户和审计可读。"`
 	NextAction           string        `json:"next_action" jsonschema:"required,enum=submit_worker,enum=revise_with_craftsman,enum=no_action" jsonschema_description:"本项下一步动作。accept 只能配 submit_worker；reject 可配 revise_with_craftsman 或 no_action。"`
@@ -214,7 +214,7 @@ func (t *DecideRenderPlanNativeTool) resolveDecisionRenderPlan(ctx context.Conte
 	}
 	renderPlanID, ok := pgUUIDFromString(input.RenderPlanID)
 	if !ok {
-		return db.RenderPlan{}, "必须填写 render_plan_ref；兼容字段 render_plan_id 只接受真实 UUID"
+		return db.RenderPlan{}, "必须填写 render_plan_ref；兼容字段 render_plan_id 只接受系统内部 ID，模型不要填写"
 	}
 	plan, err := t.store.GetRenderPlanByID(ctx, db.GetRenderPlanByIDParams{ID: renderPlanID, WorkspaceID: runtime.WorkspaceID})
 	if err != nil {
@@ -320,7 +320,7 @@ func validateRenderPlanDecisionInput(input RenderPlanDecisionInput, fieldPrefix 
 			return fmt.Errorf("%s.render_plan_ref.type 必须是 render_plan", fieldPrefix)
 		}
 	} else if _, ok := pgUUIDFromString(input.RenderPlanID); !ok {
-		return fmt.Errorf("%s.render_plan_ref 必填，请使用 read_project_context 返回的 render_plan semantic_key，不要填写或编造 UUID", fieldPrefix)
+		return fmt.Errorf("%s.render_plan_ref 必填，请使用 read_project_context 返回的 render_plan semantic_key，不要填写或编造内部 ID", fieldPrefix)
 	}
 	if err := requireMode(input.Decision, "accept", "reject"); err != nil {
 		return fmt.Errorf("%s.decision %w", fieldPrefix, err)

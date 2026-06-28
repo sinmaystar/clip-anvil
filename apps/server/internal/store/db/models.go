@@ -832,6 +832,26 @@ type ShotKeyElement struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
+type TimelinePlan struct {
+	ID                     pgtype.UUID        `json:"id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	SourceStoryboardNodeID pgtype.UUID        `json:"source_storyboard_node_id"`
+	OutputNodeID           pgtype.UUID        `json:"output_node_id"`
+	ProductionJobID        pgtype.UUID        `json:"production_job_id"`
+	ArtifactVersionID      pgtype.UUID        `json:"artifact_version_id"`
+	SandboxJobID           pgtype.UUID        `json:"sandbox_job_id"`
+	Status                 string             `json:"status"`
+	TemplateKey            string             `json:"template_key"`
+	PlanJson               []byte             `json:"plan_json"`
+	RenderSettings         []byte             `json:"render_settings"`
+	Result                 []byte             `json:"result"`
+	ErrorMessage           pgtype.Text        `json:"error_message"`
+	CreatedByRole          string             `json:"created_by_role"`
+	CreatedByTaskID        pgtype.UUID        `json:"created_by_task_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Workspace struct {
 	ID        pgtype.UUID        `json:"id"`
 	Name      string             `json:"name"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/google/uuid"
@@ -26,9 +27,16 @@ type Runtime interface {
 	SetThreadCheckpoint(ctx context.Context, threadID pgtype.UUID, checkpointKey string) (db.AgentThread, error)
 }
 
+type producerSignalRuntime interface {
+	GetOrCreateProducerThread(ctx context.Context, workspaceID pgtype.UUID) (db.AgentThread, error)
+	CreateProducerPendingSignal(ctx context.Context, params agentruntime.CreateProducerPendingSignalParams) (db.ProducerPendingSignal, error)
+}
+
 type Store interface {
 	CreateAgentGenerationNode(ctx context.Context, params db.CreateAgentGenerationNodeParams) (db.MediaNode, error)
 	ListMediaNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error)
+	ListActiveShotsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.Shot, error)
+	ListMediaNodesByShot(ctx context.Context, params db.ListMediaNodesByShotParams) ([]db.MediaNode, error)
 	GetArtifactVersionByID(ctx context.Context, id pgtype.UUID) (db.ArtifactVersion, error)
 	GetMediaAssetByID(ctx context.Context, id pgtype.UUID) (db.MediaAsset, error)
 	GetDependencyEdgeByEndpoints(ctx context.Context, params db.GetDependencyEdgeByEndpointsParams) (db.MediaEdge, error)
@@ -109,10 +117,65 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, task.ID, rawOutput); err != nil {
 		return err
 	}
+	if err := e.signalProducer(ctx, task, out.Output); err != nil {
+		return e.fail(ctx, task, "composer_signal_failed", err)
+	}
 	if _, err := e.runtime.SetThreadCheckpoint(ctx, task.ThreadID, checkpointKey); err != nil {
 		return e.fail(ctx, task, "composer_checkpoint_update_failed", err)
 	}
 	return nil
+}
+
+func (e *Executor) signalProducer(ctx context.Context, task db.AgentTask, output CompositionOutput) error {
+	signalType := composerSignalType(output.Status)
+	if signalType == "" {
+		return nil
+	}
+	runtime, ok := e.runtime.(producerSignalRuntime)
+	if !ok {
+		return nil
+	}
+	producerThread, err := runtime.GetOrCreateProducerThread(ctx, task.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	scopeID, _ := pgUUIDFromString(output.NodeID)
+	payload := mustJSON(map[string]any{
+		"status":              output.Status,
+		"timeline_plan_id":    output.TimelinePlanID,
+		"output_node_id":      output.NodeID,
+		"generation_job_id":   output.GenerationJobID,
+		"artifact_version_id": output.ArtifactVersionID,
+		"sandbox_job_id":      output.SandboxJobID,
+		"operation_type":      output.OperationType,
+	})
+	_, err = runtime.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
+		WorkspaceID:      task.WorkspaceID,
+		ProducerThreadID: producerThread.ID,
+		SourceRole:       "composer",
+		SourceTaskID:     task.ID,
+		SourceThreadID:   task.ThreadID,
+		SignalType:       signalType,
+		ScopeType:        "final_output",
+		ScopeID:          scopeID,
+		Priority:         80,
+		DedupeKey:        "composer:" + uuidString(task.ID) + ":" + output.Status,
+		Payload:          payload,
+	})
+	return err
+}
+
+func composerSignalType(status string) string {
+	switch status {
+	case "completed":
+		return "composition_completed"
+	case "blocked":
+		return "composition_blocked"
+	case "failed":
+		return "composition_failed"
+	default:
+		return ""
+	}
 }
 
 func parseCompositionInput(raw []byte) (CompositionInput, error) {
@@ -120,8 +183,14 @@ func parseCompositionInput(raw []byte) (CompositionInput, error) {
 	if err := json.Unmarshal(defaultJSON(raw), &input); err != nil {
 		return CompositionInput{}, err
 	}
-	if len(input.VideoNodeRefs) == 0 {
+	if len(input.VideoNodeRefs) == 0 && strings.TrimSpace(input.SourceStoryboardNodeID) == "" {
 		return CompositionInput{}, ErrInvalidInput
+	}
+	if input.Strategy == "" {
+		input.Strategy = input.Instructions
+	}
+	if input.TemplateKey == "" {
+		input.TemplateKey = "simple_concat"
 	}
 	return input, nil
 }
@@ -157,6 +226,14 @@ func defaultJSON(raw []byte) []byte {
 	return raw
 }
 
+func pgUUIDFromString(value string) (pgtype.UUID, bool) {
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	return pgtype.UUID{Bytes: parsed, Valid: true}, true
+}
+
 func mustJSON(value any) []byte {
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -170,4 +247,12 @@ func uuidString(id pgtype.UUID) string {
 		return ""
 	}
 	return uuid.UUID(id.Bytes).String()
+}
+
+func shortUUID(id pgtype.UUID) string {
+	value := uuidString(id)
+	if len(value) >= 8 {
+		return value[:8]
+	}
+	return "unknown"
 }

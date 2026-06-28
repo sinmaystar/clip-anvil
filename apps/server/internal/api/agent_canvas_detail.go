@@ -22,6 +22,7 @@ const (
 	agentCanvasObjectRenderPlan      = "render_plan"
 	agentCanvasObjectReview          = "review"
 	agentCanvasObjectIssue           = "issue"
+	agentCanvasObjectFinalOutput     = "final_output"
 )
 
 type agentCanvasDetailError struct {
@@ -53,6 +54,7 @@ type agentCanvasDetailResponse struct {
 	RenderPlan      *agentCanvasRenderPlanDetailResponse      `json:"render_plan,omitempty"`
 	Review          *agentCanvasReviewDetailResponse          `json:"review,omitempty"`
 	Issue           *agentCanvasIssueDetailResponse           `json:"issue,omitempty"`
+	FinalOutput     *agentCanvasFinalOutputDetailResponse     `json:"final_output,omitempty"`
 }
 
 type agentCanvasOverviewDetailResponse struct {
@@ -299,6 +301,22 @@ type agentCanvasIssueDetailResponse struct {
 	UpdatedAt                string                `json:"updated_at,omitempty"`
 }
 
+type agentCanvasFinalOutputDetailResponse struct {
+	TimelinePlanID    string                              `json:"timeline_plan_id"`
+	OutputNode        *agentCanvasMediaNodeDetailResponse `json:"output_node,omitempty"`
+	OutputVersion     *artifactVersionResponse            `json:"output_version,omitempty"`
+	ProductionJobID   string                              `json:"production_job_id,omitempty"`
+	ArtifactVersionID string                              `json:"artifact_version_id,omitempty"`
+	SandboxJobID      string                              `json:"sandbox_job_id,omitempty"`
+	Status            string                              `json:"status"`
+	TemplateKey       string                              `json:"template_key"`
+	Plan              map[string]any                      `json:"plan,omitempty"`
+	Result            map[string]any                      `json:"result,omitempty"`
+	ErrorMessage      string                              `json:"error_message,omitempty"`
+	CreatedAt         string                              `json:"created_at,omitempty"`
+	UpdatedAt         string                              `json:"updated_at,omitempty"`
+}
+
 func buildAgentCanvasDetail(ctx context.Context, queries *db.Queries, signer assetURLSigner, workspaceID pgtype.UUID, objectType string, objectID string) (agentCanvasDetailResponse, error) {
 	if queries == nil || !workspaceID.Valid {
 		return agentCanvasDetailResponse{}, newAgentCanvasDetailError(http.StatusNotFound, "workspace not found")
@@ -335,6 +353,8 @@ func buildAgentCanvasDetail(ctx context.Context, queries *db.Queries, signer ass
 		return buildAgentCanvasReviewDetail(ctx, queries, workspaceID, id)
 	case agentCanvasObjectIssue:
 		return buildAgentCanvasIssueDetail(ctx, queries, workspaceID, id)
+	case agentCanvasObjectFinalOutput:
+		return buildAgentCanvasFinalOutputDetail(ctx, queries, signer, workspaceID, id)
 	default:
 		return agentCanvasDetailResponse{}, newAgentCanvasDetailError(http.StatusBadRequest, "unsupported object_type")
 	}
@@ -415,6 +435,90 @@ func buildAgentCanvasOverviewDetail(ctx context.Context, queries *db.Queries, wo
 		Title:      title,
 		Status:     status,
 		Overview:   &detail,
+	}, nil
+}
+
+func buildAgentCanvasFinalOutputDetail(ctx context.Context, queries *db.Queries, signer assetURLSigner, workspaceID pgtype.UUID, id pgtype.UUID) (agentCanvasDetailResponse, error) {
+	plan, err := queries.GetTimelinePlan(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return buildAgentCanvasFinalOutputNodeDetail(ctx, queries, signer, workspaceID, id)
+		}
+		return agentCanvasDetailResponse{}, detailNotFound(err)
+	}
+	if plan.WorkspaceID != workspaceID {
+		return agentCanvasDetailResponse{}, newAgentCanvasDetailError(http.StatusNotFound, "object not found")
+	}
+	out := agentCanvasFinalOutputDetailResponse{
+		TimelinePlanID:    uuidToString(plan.ID),
+		ProductionJobID:   uuidString(plan.ProductionJobID),
+		ArtifactVersionID: uuidString(plan.ArtifactVersionID),
+		SandboxJobID:      uuidString(plan.SandboxJobID),
+		Status:            plan.Status,
+		TemplateKey:       plan.TemplateKey,
+		Plan:              jsonObjectValue(plan.PlanJson),
+		Result:            jsonObjectValue(plan.Result),
+		ErrorMessage:      textString(plan.ErrorMessage),
+		CreatedAt:         timeString(plan.CreatedAt),
+		UpdatedAt:         timeString(plan.UpdatedAt),
+	}
+	title := "Final Output"
+	if plan.OutputNodeID.Valid {
+		if node, err := queries.GetMediaNodeByID(ctx, plan.OutputNodeID); err == nil && node.WorkspaceID == workspaceID {
+			nodeDetail := mediaNodeDetail(node)
+			out.OutputNode = &nodeDetail
+			title = node.Title
+			if !plan.ArtifactVersionID.Valid {
+				plan.ArtifactVersionID = node.CurrentVersionID
+			}
+		}
+	}
+	if plan.ArtifactVersionID.Valid {
+		if version, err := artifactVersionWithAsset(ctx, queries, signer, plan.ArtifactVersionID); err == nil && version.ID != "" {
+			out.OutputVersion = &version
+			out.ArtifactVersionID = version.ID
+		}
+	}
+	return agentCanvasDetailResponse{
+		ObjectType:  agentCanvasObjectFinalOutput,
+		ObjectID:    uuidToString(plan.ID),
+		Title:       title,
+		Status:      plan.Status,
+		UpdatedAt:   timeString(plan.UpdatedAt),
+		FinalOutput: &out,
+	}, nil
+}
+
+func buildAgentCanvasFinalOutputNodeDetail(ctx context.Context, queries *db.Queries, signer assetURLSigner, workspaceID pgtype.UUID, id pgtype.UUID) (agentCanvasDetailResponse, error) {
+	node, err := queries.GetMediaNodeByID(ctx, id)
+	if err != nil {
+		return agentCanvasDetailResponse{}, detailNotFound(err)
+	}
+	if node.WorkspaceID != workspaceID || !isWorkbenchFinalVideoNode(node) {
+		return agentCanvasDetailResponse{}, newAgentCanvasDetailError(http.StatusNotFound, "object not found")
+	}
+	nodeDetail := mediaNodeDetail(node)
+	out := agentCanvasFinalOutputDetailResponse{
+		OutputNode:  &nodeDetail,
+		Status:      agentSlotStatus(node),
+		TemplateKey: finalVideoTemplateKey(node),
+		Result:      jsonObjectValue(node.Metadata),
+		CreatedAt:   timeString(node.CreatedAt),
+		UpdatedAt:   timeString(node.UpdatedAt),
+	}
+	if node.CurrentVersionID.Valid {
+		if version, err := artifactVersionWithAsset(ctx, queries, signer, node.CurrentVersionID); err == nil && version.ID != "" {
+			out.OutputVersion = &version
+			out.ArtifactVersionID = version.ID
+		}
+	}
+	return agentCanvasDetailResponse{
+		ObjectType:  agentCanvasObjectFinalOutput,
+		ObjectID:    uuidToString(node.ID),
+		Title:       node.Title,
+		Status:      out.Status,
+		UpdatedAt:   timeString(node.UpdatedAt),
+		FinalOutput: &out,
 	}, nil
 }
 

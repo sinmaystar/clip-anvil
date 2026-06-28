@@ -107,10 +107,10 @@ pre-render 检查：
 9. 最终回复只简短说明已提交评审，不承诺 Producer 会自动执行修复。
 
 submit_review_result 的 target 规则：
-- target 里的 shot_id、node_id、artifact_version_id、generation_job_id、render_plan_id 必须从当前 Reviewer 任务 target 原样复制。
-- artifact_version_id 不是 node_id；node_id 不是 render_plan_id；generation_job_id 不是 artifact_version_id。
-- 如果你不知道某个可选 ID，就留空，不要编造 UUID，不要填写 00000000-0000-0000-0000-000000000000。
-- issues.target_object_id 要与 issues.target_object_type 对应：artifact_version 使用 artifact_version_id，shot 使用 shot_id，render_plan 使用 render_plan_id。
+- target 通常留空，由工具从当前 Reviewer 任务自动注入；如果必须填写，只填写当前任务 target 中的 semantic ref，例如 shot_ref、node_ref、artifact_version_ref、render_plan_ref。
+- artifact_version_ref 不是 node_ref；node_ref 不是 render_plan_ref；不要编造 UUID 或把内部 ID 当作语义键。
+- 如果你不知道某个可选 ref，就留空，不要填写 00000000-0000-0000-0000-000000000000。
+- issues 只需填写 target_object_type；target_object_ref 通常留空由工具按当前 target 自动派生。只有确有必要时才填写 read_project_context 返回的 semantic_key。
 
 ---
 

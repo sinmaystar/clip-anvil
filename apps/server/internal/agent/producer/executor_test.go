@@ -200,6 +200,24 @@ func TestExecutorTranslatesReviewCompletedWakeTaskInputToRuntimeTriggerText(t *t
 	}
 }
 
+func TestProducerRuntimeTriggerTextSupportsCompositionSignals(t *testing.T) {
+	payload := producerTaskTriggerPayload{
+		Trigger:            "composition_completed",
+		NodeKey:            "final_video.0c59850d.node",
+		GenerationJobKey:   "final_video.0c59850d.compose.job.a1",
+		ArtifactVersionKey: "final_video.0c59850d.compose.artifact.v1",
+	}
+	text := producerRuntimeTriggerText(payload)
+	if !strings.Contains(text, "触发原因：composition_completed") ||
+		!strings.Contains(text, "FinalVideo：media_node/final_video.0c59850d.node") ||
+		!strings.Contains(text, "ArtifactVersion：artifact_version/final_video.0c59850d.compose.artifact.v1") {
+		t.Fatalf("composition trigger text = %q", text)
+	}
+	if !isInformationalProducerSignal("composition_completed") {
+		t.Fatal("composition_completed should be informational")
+	}
+}
+
 func TestExecutorPersistsNativeToolTraceBeforeFinalAssistantMessage(t *testing.T) {
 	runtime := &fakeRuntime{}
 	executor := NewExecutor(ExecutorConfig{
@@ -327,7 +345,7 @@ func TestExecutorPersistsAgentTriggerMessageBeforeFinalAssistantMessage(t *testi
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("message types = %#v, want %#v", got, want)
 	}
-	if runtime.appended[0].Role != "system" || runtime.appended[1].Role != "assistant" {
+	if runtime.appended[0].Role != "user" || runtime.appended[1].Role != "assistant" {
 		t.Fatalf("persisted roles = %#v", runtime.appended)
 	}
 	if !bytes.Contains(runtime.appended[0].Content, []byte(`"type":"system_reminder"`)) ||
@@ -368,7 +386,7 @@ func TestExecutorPersistsWakeTaskInputAsAgentTriggerMessage(t *testing.T) {
 		t.Fatalf("appended = %#v, want trigger and final assistant", runtime.appended)
 	}
 	trigger := runtime.appended[0]
-	if trigger.Role != "system" || trigger.MessageType != "text" {
+	if trigger.Role != "user" || trigger.MessageType != "text" {
 		t.Fatalf("trigger message = %#v", trigger)
 	}
 	if !bytes.Contains(trigger.Content, []byte(`"type":"system_reminder"`)) ||
@@ -416,6 +434,101 @@ func TestExecutorUsesExistingTriggerMessageWithoutDuplicatePersistence(t *testin
 		t.Fatalf("graph trigger = id %v seq %d", graph.input.TriggerMessageID, graph.input.TriggerMessageSeq)
 	}
 	if !strings.Contains(graph.input.RuntimeTriggerText, "Worker 已完成一次媒体生成") {
+		t.Fatalf("graph runtime trigger text = %q", graph.input.RuntimeTriggerText)
+	}
+}
+
+func TestExecutorEnqueuesPendingSignalWakeAfterFinalAssistantMessage(t *testing.T) {
+	runtime := &fakeRuntime{
+		pendingSignals: []db.ProducerPendingSignal{
+			{
+				ID:               uuidWithByte(81),
+				WorkspaceID:      uuidWithByte(1),
+				ProducerThreadID: uuidWithByte(2),
+				SignalType:       "craftsman_render_plan_ready",
+				ScopeType:        "shot",
+				ScopeID:          uuidWithByte(41),
+				RenderPlanID:     uuidWithByte(51),
+				Status:           "pending",
+			},
+		},
+	}
+	enqueuer := &fakeProducerEnqueuer{}
+	graph := &fakeGraph{output: ProducerTurnOutput{AssistantText: "当前轮已经正常收尾。"}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph, ProducerEnqueuer: enqueuer})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runtime.createdTasks) != 1 {
+		t.Fatalf("created wake tasks = %#v, want one", runtime.createdTasks)
+	}
+	task := runtime.createdTasks[0]
+	if task.Role != "producer" || task.TaskType != "producer_turn" || task.ThreadID != uuidWithByte(2) {
+		t.Fatalf("wake task = %#v", task)
+	}
+	if !bytes.Contains(task.Input, []byte(`"trigger":"producer_pending_signal"`)) {
+		t.Fatalf("wake task input = %s", task.Input)
+	}
+	if len(enqueuer.tasks) != 1 || enqueuer.tasks[0].ID != task.ID {
+		t.Fatalf("enqueued tasks = %#v, want %#v", enqueuer.tasks, task.ID)
+	}
+	if len(runtime.appended) == 0 || runtime.appended[len(runtime.appended)-1].Role != "assistant" {
+		t.Fatalf("current turn messages = %#v", runtime.appended)
+	}
+}
+
+func TestExecutorPersistsPendingSignalWakeAsUserMessageWithClaimedSignals(t *testing.T) {
+	runtime := &fakeRuntime{
+		runningTaskInput: []byte(`{"trigger":"producer_pending_signal"}`),
+		pendingSignals: []db.ProducerPendingSignal{
+			{
+				ID:               uuidWithByte(81),
+				WorkspaceID:      uuidWithByte(1),
+				ProducerThreadID: uuidWithByte(2),
+				SignalType:       "craftsman_render_plan_ready",
+				ScopeType:        "shot",
+				ScopeID:          uuidWithByte(41),
+				RenderPlanID:     uuidWithByte(51),
+				Status:           "pending",
+				Payload:          []byte(`{"target_phase":"preview_image","render_plan_status":"waiting_for_approval"}`),
+			},
+		},
+	}
+	graph := &fakeGraph{output: ProducerTurnOutput{AssistantText: "已处理唤醒 signal。"}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runtime.claimedSignals) != 1 || runtime.claimedSignals[0].ClaimedByTaskID != uuidWithByte(3) {
+		t.Fatalf("claimed signals = %#v", runtime.claimedSignals)
+	}
+	if len(runtime.appended) != 2 {
+		t.Fatalf("appended = %#v, want wake user message and final assistant", runtime.appended)
+	}
+	trigger := runtime.appended[0]
+	if trigger.Role != "user" || trigger.MessageType != "text" {
+		t.Fatalf("trigger message = %#v", trigger)
+	}
+	if !bytes.Contains(trigger.Content, []byte(`待处理 Producer signal`)) ||
+		!bytes.Contains(trigger.Content, []byte(`craftsman_render_plan_ready`)) {
+		t.Fatalf("trigger content = %s", trigger.Content)
+	}
+	if !strings.Contains(graph.input.RuntimeTriggerText, "producer_pending_signal") ||
+		!strings.Contains(graph.input.RuntimeTriggerText, "craftsman_render_plan_ready") {
 		t.Fatalf("graph runtime trigger text = %q", graph.input.RuntimeTriggerText)
 	}
 }
@@ -855,7 +968,10 @@ type fakeRuntime struct {
 	runningTaskInput     []byte
 	releasedSignals      []releasedSignal
 	claimedSignals       []db.ProducerPendingSignal
+	pendingSignals       []db.ProducerPendingSignal
 	processedSignals     []pgtype.UUID
+	createdTasks         []db.AgentTask
+	activeTasks          []db.AgentTask
 }
 
 type releasedSignal struct {
@@ -958,6 +1074,43 @@ func (f *fakeRuntime) CreateEvent(_ context.Context, params agentruntime.CreateE
 	}, nil
 }
 
+func (f *fakeRuntime) CreateTask(_ context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error) {
+	task := db.AgentTask{
+		ID:           uuidWithByte(byte(70 + len(f.createdTasks))),
+		WorkspaceID:  params.WorkspaceID,
+		ThreadID:     params.ThreadID,
+		Role:         params.Role,
+		ScopeType:    params.ScopeType,
+		ScopeID:      params.ScopeID,
+		TaskType:     params.TaskType,
+		Status:       "queued",
+		MaxAttempts:  params.MaxAttempts,
+		Input:        params.Input,
+		RenderPlanID: params.RenderPlanID,
+	}
+	f.createdTasks = append(f.createdTasks, task)
+	return task, nil
+}
+
+func (f *fakeRuntime) ListPendingProducerSignals(context.Context, pgtype.UUID, int32) ([]db.ProducerPendingSignal, error) {
+	return f.pendingSignals, nil
+}
+
+func (f *fakeRuntime) ClaimProducerPendingSignals(_ context.Context, params agentruntime.ClaimProducerPendingSignalsParams) ([]db.ProducerPendingSignal, error) {
+	claimed := make([]db.ProducerPendingSignal, 0, len(f.pendingSignals))
+	for _, signal := range f.pendingSignals {
+		signal.Status = "claimed"
+		signal.ClaimedByTaskID = params.ClaimedByTaskID
+		claimed = append(claimed, signal)
+	}
+	f.claimedSignals = append(f.claimedSignals, claimed...)
+	return claimed, nil
+}
+
+func (f *fakeRuntime) ListActiveAgentTasksByWorkspace(context.Context, pgtype.UUID) ([]db.AgentTask, error) {
+	return f.activeTasks, nil
+}
+
 func (f *fakeRuntime) ReleaseProducerPendingSignalsForTask(_ context.Context, workspaceID, taskID pgtype.UUID, reason string) ([]db.ProducerPendingSignal, error) {
 	f.releasedSignals = append(f.releasedSignals, releasedSignal{workspaceID: workspaceID, taskID: taskID, reason: reason})
 	return []db.ProducerPendingSignal{{WorkspaceID: workspaceID, ClaimedByTaskID: taskID, Status: "pending"}}, nil
@@ -970,6 +1123,14 @@ func (f *fakeRuntime) ListClaimedProducerSignalsByTask(context.Context, pgtype.U
 func (f *fakeRuntime) MarkProducerPendingSignalProcessed(_ context.Context, signalID, _ pgtype.UUID, _ pgtype.UUID) (db.ProducerPendingSignal, error) {
 	f.processedSignals = append(f.processedSignals, signalID)
 	return db.ProducerPendingSignal{ID: signalID, Status: "processed"}, nil
+}
+
+type fakeProducerEnqueuer struct {
+	tasks []db.AgentTask
+}
+
+func (f *fakeProducerEnqueuer) EnqueueProducerTask(_ context.Context, task db.AgentTask) {
+	f.tasks = append(f.tasks, task)
 }
 
 type fakeEinoCheckpointStore struct{}

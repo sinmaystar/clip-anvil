@@ -7,7 +7,8 @@ export type AgentWorkbenchObjectType =
   | "artifact"
   | "render_plan"
   | "review"
-  | "issue";
+  | "issue"
+  | "final_output";
 
 export interface AgentWorkbenchSelection {
   objectType: AgentWorkbenchObjectType;

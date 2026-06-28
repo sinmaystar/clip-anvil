@@ -92,6 +92,12 @@ func TestSubmitReviewResultUsesReviewerTaskRuntimeTarget(t *testing.T) {
 	if !strings.Contains(out, "已提交 Reviewer 评审结果") {
 		t.Fatalf("unexpected output: %s", out)
 	}
+	if strings.Contains(out, uuidString(uuidWithByte(20))) {
+		t.Fatalf("output leaked review record UUID: %s", out)
+	}
+	if !strings.Contains(out, "review_record/shot_01.preview_image.r1.review.v1") {
+		t.Fatalf("output missing review semantic ref: %s", out)
+	}
 	if store.create.ArtifactVersionID != versionID {
 		t.Fatalf("artifact_version_id = %s, want %s", uuidString(store.create.ArtifactVersionID), uuidString(versionID))
 	}
@@ -113,7 +119,7 @@ func (f *fakeSubmitReviewResultStore) CreateReviewRecord(_ context.Context, para
 
 func (f *fakeSubmitReviewResultStore) CompleteReviewRecord(_ context.Context, params db.CompleteReviewRecordParams) (db.ReviewRecord, error) {
 	f.complete = params
-	return db.ReviewRecord{ID: params.ID}, nil
+	return db.ReviewRecord{ID: params.ID, SemanticKey: "shot_01.preview_image.r1.review.v1"}, nil
 }
 
 func (f *fakeSubmitReviewResultStore) CreateArtifactIssue(_ context.Context, params db.CreateArtifactIssueParams) (db.ArtifactIssue, error) {
