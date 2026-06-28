@@ -10,6 +10,7 @@ import (
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/production"
@@ -58,6 +59,7 @@ type CompositionArtifactStore interface {
 	CreateAgentGenerationNode(ctx context.Context, params db.CreateAgentGenerationNodeParams) (db.MediaNode, error)
 	GetTimelinePlan(ctx context.Context, id pgtype.UUID) (db.TimelinePlan, error)
 	UpdateTimelinePlanStatus(ctx context.Context, arg db.UpdateTimelinePlanStatusParams) (db.TimelinePlan, error)
+	UpdateAudioPlanTimelinePlan(ctx context.Context, arg db.UpdateAudioPlanTimelinePlanParams) (db.AudioPlan, error)
 }
 
 type CompositionOutputUploader interface {
@@ -612,7 +614,17 @@ func (t SubmitCompositionArtifactNativeTool) updateTimelineAfterSubmit(ctx conte
 		SandboxJobID:      sandboxJobID,
 		Result:            defaultComposerJSON(resultJSON),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	_, err = t.store.UpdateAudioPlanTimelinePlan(ctx, db.UpdateAudioPlanTimelinePlanParams{
+		WorkspaceID:    result.Node.WorkspaceID,
+		TimelinePlanID: timelinePlanID,
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return nil
 }
 
 type timelineSegmentInput struct {

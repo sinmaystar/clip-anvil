@@ -190,6 +190,9 @@ func TestSubmitCompositionArtifactCreatesNodeUploadsAndPersists(t *testing.T) {
 	if store.updatedTimeline.OutputNodeID != store.createdNode.ID || store.updatedTimeline.ArtifactVersionID != persister.result.Version.ID {
 		t.Fatalf("timeline was not linked to output node/artifact: %#v", store.updatedTimeline)
 	}
+	if store.updatedAudioPlanTimeline.TimelinePlanID != uuidWithByte(4) || store.updatedAudioPlanTimeline.WorkspaceID != uuidWithByte(1) {
+		t.Fatalf("audio plan timeline was not linked: %#v", store.updatedAudioPlanTimeline)
+	}
 }
 
 func TestUpdateTimelinePlanStatusMergesExistingResult(t *testing.T) {
@@ -239,8 +242,9 @@ func (f *fakeCompositionSandbox) RunFFmpegCommand(_ context.Context, input sandb
 }
 
 type fakeCompositionArtifactStore struct {
-	createdNode     db.MediaNode
-	updatedTimeline db.UpdateTimelinePlanStatusParams
+	createdNode              db.MediaNode
+	updatedTimeline          db.UpdateTimelinePlanStatusParams
+	updatedAudioPlanTimeline db.UpdateAudioPlanTimelinePlanParams
 }
 
 func (f *fakeCompositionArtifactStore) CreateTimelinePlan(context.Context, db.CreateTimelinePlanParams) (db.TimelinePlan, error) {
@@ -276,6 +280,11 @@ func (f *fakeCompositionArtifactStore) UpdateTimelinePlanStatus(_ context.Contex
 		SandboxJobID:      params.SandboxJobID,
 		Result:            params.Result,
 	}, nil
+}
+
+func (f *fakeCompositionArtifactStore) UpdateAudioPlanTimelinePlan(_ context.Context, params db.UpdateAudioPlanTimelinePlanParams) (db.AudioPlan, error) {
+	f.updatedAudioPlanTimeline = params
+	return db.AudioPlan{WorkspaceID: params.WorkspaceID, TimelinePlanID: params.TimelinePlanID}, nil
 }
 
 type fakeCompositionOutputUploader struct {

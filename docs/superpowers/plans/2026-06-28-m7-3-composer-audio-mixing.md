@@ -327,7 +327,7 @@ Expected: PASS.
 - Modify: `apps/server/internal/agent/tools/composer_native.go`
 - Modify tests: `apps/server/internal/agent/tools/composer_tools_test.go`
 
-- [ ] **Step 1: Write failing linkage test**
+- [x] **Step 1: Write failing linkage test**
 
 Add a submit artifact test proving:
 - when a completed timeline plan belongs to the same workspace as the active `AudioPlan`, submitting the final artifact sets `audio_plan.timeline_plan_id`;
@@ -341,7 +341,7 @@ Run:
 
 Expected: FAIL because the query/store method does not exist.
 
-- [ ] **Step 2: Add sqlc query**
+- [x] **Step 2: Add sqlc query**
 
 Add:
 
@@ -360,13 +360,13 @@ RETURNING *;
 
 Run `make sqlc-generate`.
 
-- [ ] **Step 3: Wire submit-composition update**
+- [x] **Step 3: Wire submit-composition update**
 
 Extend the composition artifact store interface with `UpdateAudioPlanTimelinePlan`.
 
 After `timeline_plan` is marked completed, attempt to update the active AudioPlan timeline link. Treat `pgx.ErrNoRows` as non-fatal because legacy/video-only compositions may not have an AudioPlan.
 
-- [ ] **Step 4: Verify Task 5**
+- [x] **Step 4: Verify Task 5**
 
 Run:
 

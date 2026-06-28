@@ -123,6 +123,17 @@ WHERE id = sqlc.arg(id)
   AND archived_at IS NULL
 RETURNING *;
 
+-- name: UpdateAudioPlanTimelinePlan :one
+UPDATE audio_plan
+SET
+    timeline_plan_id = sqlc.arg(timeline_plan_id),
+    status = 'composing',
+    updated_at = now()
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND archived_at IS NULL
+  AND status IN ('approved', 'generating', 'voiceover_ready', 'composing')
+RETURNING *;
+
 -- name: ArchiveActiveAudioPlansByWorkspace :exec
 UPDATE audio_plan
 SET

@@ -594,3 +594,52 @@ func (q *Queries) UpdateAudioPlanStatus(ctx context.Context, arg UpdateAudioPlan
 	)
 	return i, err
 }
+
+const updateAudioPlanTimelinePlan = `-- name: UpdateAudioPlanTimelinePlan :one
+UPDATE audio_plan
+SET
+    timeline_plan_id = $1,
+    status = 'composing',
+    updated_at = now()
+WHERE workspace_id = $2
+  AND archived_at IS NULL
+  AND status IN ('approved', 'generating', 'voiceover_ready', 'composing')
+RETURNING id, workspace_id, status, title, plan_kind, language, target_duration_sec, voiceover_script, voice_profile, bgm_plan, cue_plan, generation_params, voiceover_render_plan_id, bgm_render_plan_id, voiceover_node_id, bgm_node_id, timeline_plan_id, created_by_role, created_by_task_id, semantic_key, display_name, archived_at, created_at, updated_at
+`
+
+type UpdateAudioPlanTimelinePlanParams struct {
+	TimelinePlanID pgtype.UUID `json:"timeline_plan_id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateAudioPlanTimelinePlan(ctx context.Context, arg UpdateAudioPlanTimelinePlanParams) (AudioPlan, error) {
+	row := q.db.QueryRow(ctx, updateAudioPlanTimelinePlan, arg.TimelinePlanID, arg.WorkspaceID)
+	var i AudioPlan
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Status,
+		&i.Title,
+		&i.PlanKind,
+		&i.Language,
+		&i.TargetDurationSec,
+		&i.VoiceoverScript,
+		&i.VoiceProfile,
+		&i.BgmPlan,
+		&i.CuePlan,
+		&i.GenerationParams,
+		&i.VoiceoverRenderPlanID,
+		&i.BgmRenderPlanID,
+		&i.VoiceoverNodeID,
+		&i.BgmNodeID,
+		&i.TimelinePlanID,
+		&i.CreatedByRole,
+		&i.CreatedByTaskID,
+		&i.SemanticKey,
+		&i.DisplayName,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
