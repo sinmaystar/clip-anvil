@@ -376,7 +376,7 @@ Result: PASS.
 - Modify: `apps/server/internal/agent/reviewer/system_prompt.go`
 - Modify tests: `apps/server/internal/agent/reviewer/system_prompt_test.go`
 
-- [ ] **Step 1: Write failing reviewer context tests**
+- [x] **Step 1: Write failing reviewer context tests**
 
 Add tests proving final video review context includes:
 - active AudioPlan status/script/BGM direction from Producer PSS or direct loader fields;
@@ -391,14 +391,14 @@ Run:
 
 Expected: FAIL until context/prompt mentions audio review facts explicitly.
 
-- [ ] **Step 2: Enrich final review context**
+- [x] **Step 2: Enrich final review context**
 
 Keep direct DB dependencies minimal:
 - rely on Producer PSS text for active AudioPlan when available;
 - add generation job/provider metadata and node metadata/result JSON snippets only when compact;
 - explicitly add a `Final Audio Review Focus` section for final video phase.
 
-- [ ] **Step 3: Update Reviewer prompt**
+- [x] **Step 3: Update Reviewer prompt**
 
 Ensure prompt says final video review must judge:
 - voiceover/BGM presence and relative volume;
@@ -406,7 +406,7 @@ Ensure prompt says final video review must judge:
 - audio/visual timing and continuity;
 - whether audio supports the marketing objective without overpowering product clarity.
 
-- [ ] **Step 4: Verify Task 5**
+- [x] **Step 4: Verify Task 5**
 
 Run:
 
@@ -416,6 +416,15 @@ git diff --check
 ```
 
 Expected: PASS.
+
+Actual:
+
+```bash
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/reviewer -run 'FinalVideo.*Audio|FinalVideoReviewContext|SystemPrompt' -count=1)
+(cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/reviewer -count=1)
+```
+
+Result: PASS.
 
 ## Task 6: Full M7.4 Verification and Milestone Update
 

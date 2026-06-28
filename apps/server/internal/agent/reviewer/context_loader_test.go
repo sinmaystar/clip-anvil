@@ -100,6 +100,7 @@ func TestContextLoaderBuildsFinalVideoReviewContext(t *testing.T) {
 			CurrentVersionID: uuidWithByte(4),
 			SemanticKey:      "final_video.abc.node",
 			ArtifactKind:     "final_video",
+			Metadata:         []byte(`{"audio_tracks":[{"role":"voiceover","duration_sec":12},{"role":"bgm","duration_sec":12,"ducking":{"sidechain_role":"voiceover"}}],"audio_codec":"aac"}`),
 		},
 		version: db.ArtifactVersion{
 			ID:           uuidWithByte(4),
@@ -110,6 +111,7 @@ func TestContextLoaderBuildsFinalVideoReviewContext(t *testing.T) {
 			Status:       db.JobStatusSucceeded,
 			SemanticKey:  "final_video.abc.compose.artifact.v1",
 			ArtifactKind: "final_video",
+			Output:       []byte(`{"audio_tracks":[{"role":"voiceover"},{"role":"bgm","ducking":true}],"audio_codec":"aac"}`),
 		},
 		job: db.GenerationJob{
 			ID:             uuidWithByte(6),
@@ -132,7 +134,7 @@ func TestContextLoaderBuildsFinalVideoReviewContext(t *testing.T) {
 			data: []byte("video-bytes-that-must-not-be-inlined"),
 			ref:  storage.ObjectRef{MIME: "video/mp4"},
 		},
-		PSSBuilder: fakeReviewPSSBuilder{text: "当前项目\n- Final: ready"},
+		PSSBuilder: fakeReviewPSSBuilder{text: "当前项目\n- Final: ready\n- AudioPlan: composing voiceover_script=新品上线 BGM mood=bright"},
 	}
 
 	out, err := loader.Load(context.Background(), GraphInput{
@@ -163,6 +165,12 @@ func TestContextLoaderBuildsFinalVideoReviewContext(t *testing.T) {
 		"media_node/final_video.abc.node",
 		"artifact_version/final_video.abc.compose.artifact.v1",
 		"final concat",
+		"Final Audio Review Focus",
+		"AudioPlan",
+		"voiceover_script=新品上线",
+		"audio_tracks",
+		"ducking",
+		"aac",
 	} {
 		if !strings.Contains(out.Text, want) {
 			t.Fatalf("context text missing %q: %s", want, out.Text)

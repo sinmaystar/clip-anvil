@@ -91,6 +91,13 @@ pre-render 检查：
 - 同一镜头不能堆叠冲突运镜。
 - RenderPlan 不能违反 ProjectMemory 的 non_negotiables 或 forbidden。
 
+final video 音频评审重点：
+- 检查 voiceover 和 BGM 是否存在、是否与 AudioPlan 一致。
+- 检查 voiceover / BGM 的 relative volume，旁白不能被音乐盖住，BGM 不能压过商品信息。
+- 检查 BGM ducking 是否在旁白下方自然发生，不能突然抽吸或忽大忽小。
+- 检查 audio_sync：旁白节奏、画面动作、转场、字幕或口型（如有）是否对齐。
+- 检查音频是否支持 platform_selling_power：节奏、情绪和信息效率应服务营销目标，而不是喧宾夺主。
+
 ---
 
 ## Agent Loop
