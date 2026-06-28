@@ -419,7 +419,7 @@ Expected: PASS.
 **Files:**
 - Modify: `docs/milestones/m7-agent-audio-plan-composer.md`
 
-- [ ] **Step 1: Run full verification**
+- [x] **Step 1: Run full verification**
 
 Run:
 
@@ -437,7 +437,7 @@ If a live local stack is available, also run:
 ./scripts/smoke-m7-3-audio-composer.sh
 ```
 
-- [ ] **Step 2: Update milestone acceptance**
+- [x] **Step 2: Update milestone acceptance**
 
 Update M7.3 in `docs/milestones/m7-agent-audio-plan-composer.md` with:
 - implementation status;
@@ -445,7 +445,7 @@ Update M7.3 in `docs/milestones/m7-agent-audio-plan-composer.md` with:
 - whether the live smoke ran or was skipped;
 - whether real Volcengine paid smoke ran or was skipped.
 
-- [ ] **Step 3: Commit M7.3 implementation**
+- [x] **Step 3: Commit M7.3 implementation**
 
 Commit after all required checks pass.
 

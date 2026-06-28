@@ -1,6 +1,6 @@
 # M7 Agent AudioPlan 与 Composer 音频成片 — 里程碑
 
-**状态**：M7.1、M7.2 已完成，M7.3 待启动（2026-06-28）
+**状态**：M7.1、M7.2、M7.3 已完成，M7.4 待启动（2026-06-28）
 **目标**：为 Agent 第一版短视频生产链路补齐音频能力：Producer 生成全片级 AudioPlan，Craftsman 产出旁白 / BGM 音频 RenderPlan，Worker 调用 `seed-audio-1.0` 生成音频 artifact，Composer 将分镜视频、旁白和 BGM 混成最终视频，并由 Producer 决定是否进入最终 review。
 
 参考文档：
@@ -33,7 +33,7 @@
 |---|---|---|
 | M7.1 AudioPlan 事实源与 Producer 确认 | 新增全片级 AudioPlan 数据模型、服务、工具和 Producer 决策流。 | ✅ 已完成；数据库存在 `audio_plan`，有 workspace active unique index；Producer 已获得 `upsert_audio_plan`，可写入待确认方案并在用户确认后 approve；`read_project_context` / Producer PSS / prompt 已能读取和约束 AudioPlan。验证：`make sqlc-generate`、`GOCACHE=/private/tmp/clipanvil-go-build make server-build`、`GOCACHE=/private/tmp/clipanvil-go-build make server-test`、`git diff --check`。 |
 | M7.2 音频 RenderPlan 与 `seed-audio-1.0` 生成 | Craftsman 支持 `voiceover_audio` / `bgm_audio`，shared production 接入 Volcengine audio generation。 | ✅ 已完成；`model_capability` 新增 enabled `seed-audio-1.0`；`.env.example` 和本地 ignored `.env` 已写入音频模型配置；Craftsman 可为 approved AudioPlan 派发并生成 `voiceover_audio` / `bgm_audio` RenderPlan；Worker 可提交 audio generation intent 并回填 AudioPlan render plan / node；Volcengine runtime 支持 base64 audio 与临时 URL 返回，MockProvider 可生成 audio artifact。验证：`make sqlc-generate`、`GOCACHE=/private/tmp/clipanvil-go-build make server-build`、`GOCACHE=/private/tmp/clipanvil-go-build make server-test`、`git diff --check`、`git check-ignore -v .env`。真实 Volcengine 付费 smoke 未执行。 |
-| M7.3 Composer 混音成片 | Composer 能读取视频 winners、voiceover artifact、BGM artifact 和 AudioPlan，产出带音频的 final video。 | TimelinePlan 支持 voiceover / BGM tracks、音量、fade、ducking；ffmpeg sandbox job 可完成 2-3 个分镜视频 + generated voiceover + generated BGM 的端到端合成；最终 artifact 含 AAC 音轨并可播放。 |
+| M7.3 Composer 混音成片 | Composer 能读取视频 winners、voiceover artifact、BGM artifact 和 AudioPlan，产出带音频的 final video。 | ✅ 已完成；TimelinePlan 支持 voiceover / BGM tracks、音量、fade、ducking 和 AAC 输出；Composer context 可读取 approved AudioPlan、视频 winners、voiceover artifact 和 BGM artifact；`render_timeline_template`、`internal_ffmpeg` provider、sandbox `ComposeVideos` 均支持音频混合；final artifact 提交后可回填 `audio_plan.timeline_plan_id`。验证：`make sqlc-generate`、`GOCACHE=/private/tmp/clipanvil-go-build make server-build`、`GOCACHE=/private/tmp/clipanvil-go-build make server-test`、`bash -n scripts/smoke-m7-3-audio-composer.sh`、`./scripts/smoke-m7-3-audio-composer.sh`、`git diff --check`。真实 Volcengine 付费 smoke 未执行。 |
 | M7.4 Workbench 投影与最终 Review | Workbench / overview 显示 AudioPlan、音频 cue、生成状态和最终音轨摘要；Producer 决定是否派发 final review。 | 用户能看到当前音频方案、旁白文本、BGM 方向、生成状态和 Composer 结果；Reviewer final video review 使用 `audio_sync` 评估旁白节奏、BGM 音量和音画匹配；Producer 可选择 review、请求用户确认或回修。 |
 
 ## 阶段验收建议
@@ -60,16 +60,16 @@
 
 ### M7.3
 
-- 先写阶段实施计划，明确 TimelinePlan 音轨结构、Composer staging、ffmpeg filter graph、sandbox job 记录和 final artifact 回填。
-- 自动化 smoke 使用 `scripts/smoke-m7-3-audio-composer.sh` 生成本地 2 段测试视频、voiceover 和 BGM fixture，跑真实 ffmpeg 混音，并用 ffprobe 断言最终 MP4 含 AAC 音轨。
-- 真实 `seed-audio-1.0` 付费 smoke 仍需单独执行；第一版自动验收不依赖付费外部调用。
+- ✅ 已完成（2026-06-28）。实施计划、TimelinePlan 音轨结构、Composer audio context、ffmpeg filter graph、sandbox `ComposeVideos` 音轨合同、`internal_ffmpeg` provider 传参、final artifact 回填和 `audio_plan.timeline_plan_id` 链接均已落地。
+- 自动化 smoke 使用 `scripts/smoke-m7-3-audio-composer.sh` 生成本地 2 段测试视频、voiceover 和 BGM fixture，跑真实 ffmpeg 混音，并用 ffprobe 断言最终 MP4 含 AAC 音轨；本次输出验证为 `audio_codec=aac`、`video_codec=h264`。
+- 真实 `seed-audio-1.0` 付费 smoke 未执行；第一版自动验收不依赖付费外部调用。
 - 验证命令：
-  - `make server-build`
-  - `make server-test`
+  - `make sqlc-generate`
+  - `GOCACHE=/private/tmp/clipanvil-go-build make server-build`
+  - `GOCACHE=/private/tmp/clipanvil-go-build make server-test`
   - `bash -n scripts/smoke-m7-3-audio-composer.sh`
   - `./scripts/smoke-m7-3-audio-composer.sh`
   - `git diff --check`
-- 必须补一个最小端到端 smoke：2-3 个分镜视频 + generated voiceover + generated BGM -> final video。
 
 ### M7.4
 
