@@ -12,6 +12,7 @@ type VolcengineProductionRuntime struct {
 	text   EinoProductionRuntime
 	image  EinoProductionRuntime
 	video  EinoProductionRuntime
+	audio  EinoProductionRuntime
 	legacy EinoProductionRuntime
 }
 
@@ -24,6 +25,7 @@ func NewVolcengineProductionRuntime(cfg VolcengineProviderConfig, httpClient *ht
 		text:   NewVolcengineTextRuntime(cfg),
 		image:  image,
 		video:  video,
+		audio:  NewVolcengineAudioRuntime(cfg, httpClient),
 		legacy: legacy,
 	}
 }
@@ -43,7 +45,7 @@ func (r VolcengineProductionRuntime) Start(ctx context.Context, job ProductionJo
 	case "video":
 		return r.video.Start(ctx, job, intent)
 	case "audio":
-		return nil, fmt.Errorf("%w: volcengine audio generation is on hold because no production audio model is configured", ErrCapabilityMismatch)
+		return r.audio.Start(ctx, job, intent)
 	default:
 		return nil, fmt.Errorf("%w: unsupported volcengine output type %s", ErrCapabilityMismatch, intent.OutputType)
 	}

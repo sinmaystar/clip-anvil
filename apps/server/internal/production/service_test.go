@@ -173,6 +173,40 @@ func TestProviderRegistrySelectsMockProvider(t *testing.T) {
 	}
 }
 
+func TestProviderRegistryDefaultsVolcengineAudioModel(t *testing.T) {
+	registry := NewProviderRegistry(ProviderConfig{
+		ProviderMode:    "real",
+		DefaultProvider: "volcengine",
+		Volcengine: VolcengineProviderConfig{
+			TextModel:  "doubao-text",
+			AudioModel: "seed-audio-1.0",
+		},
+	})
+
+	intent := registry.ApplyDefaults(GenerationIntent{
+		OutputType:    "audio",
+		OperationType: "text_to_audio",
+	})
+	if intent.Model.Provider != "volcengine" || intent.Model.ModelID != "seed-audio-1.0" {
+		t.Fatalf("intent model = %#v", intent.Model)
+	}
+}
+
+func TestMockProviderReturnsAudioArtifact(t *testing.T) {
+	result, err := (MockProvider{}).Run(context.Background(), GenerationIntent{
+		OutputType:     "audio",
+		OperationType:  "text_to_audio",
+		PromptTemplate: "生成一段旁白。",
+		Model:          ModelSpec{Provider: "mock", ModelID: "mock-audio"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AssetMIME != "audio/wav" || len(result.AssetContent) == 0 {
+		t.Fatalf("audio artifact = %s/%d", result.AssetMIME, len(result.AssetContent))
+	}
+}
+
 func TestMockProviderUsesRenderedPrompt(t *testing.T) {
 	result, err := (MockProvider{}).Run(context.Background(), GenerationIntent{
 		PromptTemplate: "use @视频脚本",

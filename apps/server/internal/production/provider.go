@@ -95,6 +95,8 @@ func defaultModelForOutput(outputType string, cfg ProviderConfig) string {
 			return cfg.Volcengine.ImageModel
 		case "video":
 			return cfg.Volcengine.VideoModel
+		case "audio":
+			return cfg.Volcengine.AudioModel
 		default:
 			return cfg.Volcengine.TextModel
 		}

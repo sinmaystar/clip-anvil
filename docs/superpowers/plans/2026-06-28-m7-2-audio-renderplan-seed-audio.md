@@ -236,7 +236,7 @@ Expected: PASS.
 - Modify tests: `apps/server/internal/production/service_test.go`
 - Modify: `apps/server/internal/production/mock_provider.go`
 
-- [ ] **Step 1: Write failing runtime tests**
+- [x] **Step 1: Write failing runtime tests**
 
 Add tests proving:
 - Volcengine runtime no longer rejects `OutputType="audio"` when `AudioModel=seed-audio-1.0`.
@@ -246,7 +246,7 @@ Add tests proving:
 - response with base64 audio returns `ProviderResult.AssetContent`, `AssetMIME`, provider request/response metadata.
 - response with temporary URL returns `AssetSourceURL`, so production service uploads it into ClipAnvil object storage.
 
-- [ ] **Step 2: Implement audio runtime**
+- [x] **Step 2: Implement audio runtime**
 
 Create `VolcengineAudioRuntime` with an injectable HTTP client/test client. It should:
 - use `intent.EffectivePrompt()` as `text_prompt`.
@@ -260,7 +260,7 @@ Create `VolcengineAudioRuntime` with an injectable HTTP client/test client. It s
 - preserve provider response in `ProviderResponse`.
 - avoid depending on 2-hour provider URLs by returning content when base64 is present and `AssetSourceURL` only as a fallback for production upload.
 
-- [ ] **Step 3: Route audio in runtime and mock provider**
+- [x] **Step 3: Route audio in runtime and mock provider**
 
 Modify `VolcengineProductionRuntime.Start`:
 - `OutputType="audio"` routes to audio runtime.
@@ -271,7 +271,7 @@ Modify `MockProvider.Run`:
 Modify default model selection:
 - `defaultModelForOutput("audio")` returns `cfg.Volcengine.AudioModel` in real Volcengine mode.
 
-- [ ] **Step 4: Verify Task 4**
+- [x] **Step 4: Verify Task 4**
 
 Run:
 
