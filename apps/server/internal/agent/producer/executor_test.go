@@ -213,6 +213,11 @@ func TestProducerRuntimeTriggerTextSupportsCompositionSignals(t *testing.T) {
 		!strings.Contains(text, "ArtifactVersion：artifact_version/final_video.0c59850d.compose.artifact.v1") {
 		t.Fatalf("composition trigger text = %q", text)
 	}
+	for _, want := range []string{"AudioPlan", "final audio", "audio_sync", "dispatch_reviewer(final_video_review)", "避免重复 final_video_review", "request_user_decision"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("composition trigger text missing %q: %q", want, text)
+		}
+	}
 	if !isInformationalProducerSignal("composition_completed") {
 		t.Fatal("composition_completed should be informational")
 	}

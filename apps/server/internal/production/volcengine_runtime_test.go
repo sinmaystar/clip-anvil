@@ -2,7 +2,6 @@ package production
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 )
@@ -36,14 +35,20 @@ func TestVolcengineProductionRuntimeDelegatesNonVolcengineProvider(t *testing.T)
 	}
 }
 
-func TestVolcengineProductionRuntimeRejectsAudioWhileHeld(t *testing.T) {
-	runtime := VolcengineProductionRuntime{}
-	_, err := runtime.Start(context.Background(), ProductionJob{}, GenerationIntent{
+func TestVolcengineProductionRuntimeRoutesAudioRuntime(t *testing.T) {
+	audio := &fakeProductionRuntime{}
+	runtime := VolcengineProductionRuntime{audio: audio}
+	stream, err := runtime.Start(context.Background(), ProductionJob{}, GenerationIntent{
 		OutputType: "audio",
-		Model:      ModelSpec{Provider: "volcengine", ModelID: "volcengine-audio-hold"},
+		Model:      ModelSpec{Provider: "volcengine", ModelID: "seed-audio-1.0"},
 	})
-	if !errors.Is(err, ErrCapabilityMismatch) {
-		t.Fatalf("err = %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream {
+	}
+	if !audio.started {
+		t.Fatal("expected audio runtime to start")
 	}
 }
 

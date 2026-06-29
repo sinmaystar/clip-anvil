@@ -10,6 +10,7 @@ import (
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/production"
@@ -58,6 +59,7 @@ type CompositionArtifactStore interface {
 	CreateAgentGenerationNode(ctx context.Context, params db.CreateAgentGenerationNodeParams) (db.MediaNode, error)
 	GetTimelinePlan(ctx context.Context, id pgtype.UUID) (db.TimelinePlan, error)
 	UpdateTimelinePlanStatus(ctx context.Context, arg db.UpdateTimelinePlanStatusParams) (db.TimelinePlan, error)
+	UpdateAudioPlanTimelinePlan(ctx context.Context, arg db.UpdateAudioPlanTimelinePlanParams) (db.AudioPlan, error)
 }
 
 type CompositionOutputUploader interface {
@@ -518,12 +520,19 @@ func (r SandboxTimelineTemplateRenderer) RenderTimelineTemplate(ctx context.Cont
 	if r.sandbox == nil {
 		return RenderTimelineTemplateResult{}, errors.New("composition sandbox 未配置")
 	}
-	segments, err := timelineWorkspacePaths(input.Plan)
+	segments, err := timelineSegments(input.Plan)
 	if err != nil {
 		return RenderTimelineTemplateResult{}, err
 	}
-	outputPath := "/workspace/output/final-" + shortToolID(input.TimelinePlanID) + ".mp4"
-	args := concatFFmpegArgs(segments, outputPath)
+	fallbackOutputPath := "/workspace/output/final-" + shortToolID(input.TimelinePlanID) + ".mp4"
+	outputPath, err := timelineOutputPath(input.Plan, fallbackOutputPath)
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	args, err := timelineFFmpegArgs(input.Plan, outputPath)
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
 	result, err := r.sandbox.RunFFmpegCommand(ctx, sandbox.RunFFmpegCommandInput{
 		WorkspaceID:  runtime.WorkspaceID,
 		TargetNodeID: runtime.ScopeID,
@@ -605,15 +614,49 @@ func (t SubmitCompositionArtifactNativeTool) updateTimelineAfterSubmit(ctx conte
 		SandboxJobID:      sandboxJobID,
 		Result:            defaultComposerJSON(resultJSON),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	_, err = t.store.UpdateAudioPlanTimelinePlan(ctx, db.UpdateAudioPlanTimelinePlanParams{
+		WorkspaceID:    result.Node.WorkspaceID,
+		TimelinePlanID: timelinePlanID,
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return nil
 }
 
-func timelineWorkspacePaths(plan map[string]any) ([]string, error) {
+type timelineSegmentInput struct {
+	WorkspacePath string
+	DurationSec   float64
+}
+
+type timelineAudioInput struct {
+	Role          string
+	WorkspacePath string
+	StartSec      float64
+	DurationSec   float64
+	Volume        float64
+	FadeInSec     float64
+	FadeOutSec    float64
+	Ducking       timelineDuckingInput
+}
+
+type timelineDuckingInput struct {
+	SidechainRole string
+	Threshold     float64
+	Ratio         float64
+	AttackMS      int
+	ReleaseMS     int
+}
+
+func timelineSegments(plan map[string]any) ([]timelineSegmentInput, error) {
 	rawSegments, ok := plan["segments"].([]any)
 	if !ok || len(rawSegments) == 0 {
 		return nil, errors.New("plan.segments 至少需要 1 个 segment")
 	}
-	paths := make([]string, 0, len(rawSegments))
+	segments := make([]timelineSegmentInput, 0, len(rawSegments))
 	for index, raw := range rawSegments {
 		segment, ok := raw.(map[string]any)
 		if !ok {
@@ -626,9 +669,208 @@ func timelineWorkspacePaths(plan map[string]any) ([]string, error) {
 		if !strings.HasPrefix(path.Clean(workspacePath), "/workspace/") {
 			return nil, fmt.Errorf("plan.segments[%d].workspace_path 必须位于 /workspace", index)
 		}
-		paths = append(paths, workspacePath)
+		segments = append(segments, timelineSegmentInput{
+			WorkspacePath: workspacePath,
+			DurationSec:   compositionFloatValue(segment["duration_sec"], 0),
+		})
 	}
-	return paths, nil
+	return segments, nil
+}
+
+func timelineAudioTracks(plan map[string]any) ([]timelineAudioInput, error) {
+	rawTracks, ok := plan["audio_tracks"].([]any)
+	if !ok || len(rawTracks) == 0 {
+		return nil, nil
+	}
+	tracks := make([]timelineAudioInput, 0, len(rawTracks))
+	for index, raw := range rawTracks {
+		track, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("plan.audio_tracks[%d] 必须是对象", index)
+		}
+		role := strings.TrimSpace(compositionStringValue(track["role"]))
+		if role != "voiceover" && role != "bgm" {
+			return nil, fmt.Errorf("plan.audio_tracks[%d].role 只支持 voiceover 或 bgm", index)
+		}
+		workspacePath := strings.TrimSpace(compositionStringValue(track["workspace_path"]))
+		if workspacePath == "" {
+			return nil, fmt.Errorf("plan.audio_tracks[%d].workspace_path 必填", index)
+		}
+		if !strings.HasPrefix(path.Clean(workspacePath), "/workspace/") {
+			return nil, fmt.Errorf("plan.audio_tracks[%d].workspace_path 必须位于 /workspace", index)
+		}
+		audio := timelineAudioInput{
+			Role:          role,
+			WorkspacePath: workspacePath,
+			StartSec:      compositionFloatValue(track["start_sec"], 0),
+			DurationSec:   compositionFloatValue(track["duration_sec"], 0),
+			Volume:        compositionFloatValue(track["volume"], 1),
+			FadeInSec:     compositionFloatValue(track["fade_in_sec"], 0),
+			FadeOutSec:    compositionFloatValue(track["fade_out_sec"], 0),
+		}
+		if ducking, ok := track["ducking"].(map[string]any); ok {
+			audio.Ducking = timelineDuckingInput{
+				SidechainRole: strings.TrimSpace(compositionStringValue(ducking["sidechain_role"])),
+				Threshold:     compositionFloatValue(ducking["threshold"], 0.08),
+				Ratio:         compositionFloatValue(ducking["ratio"], 8),
+				AttackMS:      int(compositionFloatValue(ducking["attack_ms"], 20)),
+				ReleaseMS:     int(compositionFloatValue(ducking["release_ms"], 250)),
+			}
+		}
+		if audio.Volume <= 0 {
+			audio.Volume = 1
+		}
+		tracks = append(tracks, audio)
+	}
+	return tracks, nil
+}
+
+func timelineOutputPath(plan map[string]any, fallback string) (string, error) {
+	rawOutput, ok := plan["output"].(map[string]any)
+	if !ok {
+		return fallback, nil
+	}
+	workspacePath := strings.TrimSpace(compositionStringValue(rawOutput["workspace_path"]))
+	if workspacePath == "" {
+		return fallback, nil
+	}
+	if !strings.HasPrefix(path.Clean(workspacePath), "/workspace/") {
+		return "", errors.New("plan.output.workspace_path 必须位于 /workspace")
+	}
+	return workspacePath, nil
+}
+
+func timelineFFmpegArgs(plan map[string]any, outputPath string) ([]string, error) {
+	segments, err := timelineSegments(plan)
+	if err != nil {
+		return nil, err
+	}
+	audioTracks, err := timelineAudioTracks(plan)
+	if err != nil {
+		return nil, err
+	}
+	if len(audioTracks) == 0 {
+		paths := make([]string, 0, len(segments))
+		for _, segment := range segments {
+			paths = append(paths, segment.WorkspacePath)
+		}
+		return concatFFmpegArgs(paths, outputPath), nil
+	}
+	args := []string{"-y"}
+	for _, segment := range segments {
+		args = append(args, "-i", segment.WorkspacePath)
+	}
+	for _, track := range audioTracks {
+		if track.Role == "bgm" {
+			args = append(args, "-stream_loop", "-1")
+		}
+		args = append(args, "-i", track.WorkspacePath)
+	}
+	filter := timelineFilterGraph(segments, audioTracks)
+	args = append(args,
+		"-filter_complex", filter,
+		"-map", "[vout]",
+		"-map", "[aout]",
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-crf", "23",
+		"-c:a", "aac",
+		"-b:a", "128k",
+		"-shortest",
+		outputPath,
+	)
+	return args, nil
+}
+
+func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timelineAudioInput) string {
+	parts := []string{}
+	if len(segments) == 1 {
+		parts = append(parts, "[0:v]setpts=PTS-STARTPTS,format=yuv420p,setsar=1[vout]")
+	} else {
+		videoInputs := make([]string, 0, len(segments))
+		for index := range segments {
+			videoInputs = append(videoInputs, fmt.Sprintf("[%d:v]", index))
+		}
+		parts = append(parts, strings.Join(videoInputs, "")+fmt.Sprintf("concat=n=%d:v=1:a=0[vcat]", len(segments)))
+		parts = append(parts, "[vcat]format=yuv420p,setsar=1[vout]")
+	}
+
+	audioLabels := make([]string, 0, len(audioTracks))
+	voiceoverLabel := ""
+	bgmLabelsNeedingDucking := map[string]timelineDuckingInput{}
+	needsVoiceoverSidechain := timelineNeedsVoiceoverSidechain(audioTracks)
+	audioInputOffset := len(segments)
+	for index, track := range audioTracks {
+		label := fmt.Sprintf("a%d", index)
+		outputLabel := label
+		inputIndex := audioInputOffset + index
+		chain := []string{fmt.Sprintf("[%d:a]", inputIndex), "atrim=start=0"}
+		if track.DurationSec > 0 {
+			chain = append(chain, fmt.Sprintf(":duration=%.3f", track.DurationSec))
+		}
+		filter := strings.Join(chain, "") + ",asetpts=PTS-STARTPTS"
+		if track.StartSec > 0 {
+			delayMS := int(track.StartSec * 1000)
+			filter += fmt.Sprintf(",adelay=%d|%d", delayMS, delayMS)
+		}
+		filter += fmt.Sprintf(",volume=%.3f", track.Volume)
+		if track.FadeInSec > 0 {
+			filter += fmt.Sprintf(",afade=t=in:st=0:d=%.3f", track.FadeInSec)
+		}
+		if track.FadeOutSec > 0 && track.DurationSec > 0 {
+			start := track.DurationSec - track.FadeOutSec
+			if start < 0 {
+				start = 0
+			}
+			filter += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", start, track.FadeOutSec)
+		}
+		if track.Role == "voiceover" && needsVoiceoverSidechain {
+			outputLabel = label + "raw"
+		}
+		filter += fmt.Sprintf("[%s]", outputLabel)
+		parts = append(parts, filter)
+		if track.Role == "voiceover" && needsVoiceoverSidechain {
+			sidechainLabel := label + "side"
+			parts = append(parts, fmt.Sprintf("[%s]asplit=2[%s][%s]", outputLabel, label, sidechainLabel))
+			voiceoverLabel = sidechainLabel
+		}
+		if track.Role == "voiceover" && voiceoverLabel == "" {
+			voiceoverLabel = label
+		}
+		if track.Role == "bgm" && track.Ducking.SidechainRole == "voiceover" {
+			bgmLabelsNeedingDucking[label] = track.Ducking
+			continue
+		}
+		audioLabels = append(audioLabels, label)
+	}
+	for label, ducking := range bgmLabelsNeedingDucking {
+		if voiceoverLabel == "" {
+			audioLabels = append(audioLabels, label)
+			continue
+		}
+		out := label + "duck"
+		parts = append(parts, fmt.Sprintf("[%s][%s]sidechaincompress=threshold=%.3f:ratio=%.3f:attack=%d:release=%d[%s]", label, voiceoverLabel, ducking.Threshold, ducking.Ratio, ducking.AttackMS, ducking.ReleaseMS, out))
+		audioLabels = append(audioLabels, out)
+	}
+	if len(audioLabels) == 1 {
+		parts = append(parts, fmt.Sprintf("[%s]anull[aout]", audioLabels[0]))
+	} else {
+		inputs := make([]string, 0, len(audioLabels))
+		for _, label := range audioLabels {
+			inputs = append(inputs, fmt.Sprintf("[%s]", label))
+		}
+		parts = append(parts, strings.Join(inputs, "")+fmt.Sprintf("amix=inputs=%d:duration=shortest:dropout_transition=0[aout]", len(audioLabels)))
+	}
+	return strings.Join(parts, ";")
+}
+
+func timelineNeedsVoiceoverSidechain(audioTracks []timelineAudioInput) bool {
+	for _, track := range audioTracks {
+		if track.Role == "bgm" && track.Ducking.SidechainRole == "voiceover" {
+			return true
+		}
+	}
+	return false
 }
 
 func concatFFmpegArgs(segments []string, outputPath string) []string {
@@ -671,6 +913,23 @@ func compositionStringValue(value any) string {
 		return typed
 	default:
 		return ""
+	}
+}
+
+func compositionFloatValue(value any, defaultValue float64) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return defaultValue
 	}
 }
 

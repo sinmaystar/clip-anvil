@@ -3,6 +3,7 @@ package reviewer
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -195,6 +196,16 @@ func buildReviewContextText(reviewContext Context) string {
 	if strings.TrimSpace(reviewContext.GenerationJob.RenderedPrompt) != "" {
 		fmt.Fprintf(&b, "- prompt: %s\n", strings.TrimSpace(reviewContext.GenerationJob.RenderedPrompt))
 	}
+	if reviewContext.Input.Task.TargetPhase == TargetPhaseFinalVideo {
+		fmt.Fprintf(&b, "\nFinal Audio Review Focus\n")
+		fmt.Fprintf(&b, "- required_focus: audio_sync, platform_selling_power, voiceover/BGM presence, relative volume, BGM ducking, timing continuity, marketing objective support\n")
+		if audio := audioJSONSummary(reviewContext.Node.Metadata); audio != "" {
+			fmt.Fprintf(&b, "- node_audio: %s\n", audio)
+		}
+		if audio := audioJSONSummary(reviewContext.Version.Output); audio != "" {
+			fmt.Fprintf(&b, "- artifact_audio: %s\n", audio)
+		}
+	}
 	if len(reviewContext.PriorReviews) > 0 {
 		fmt.Fprintf(&b, "\nPrior Reviews\n")
 		for _, record := range reviewContext.PriorReviews {
@@ -205,6 +216,33 @@ func buildReviewContextText(reviewContext Context) string {
 		fmt.Fprintf(&b, "\nProduction State\n%s\n", strings.TrimSpace(reviewContext.ProductionText))
 	}
 	return b.String()
+}
+
+func audioJSONSummary(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	summary := map[string]any{}
+	for _, key := range []string{"audio_tracks", "audio_codec", "duration_sec", "mix"} {
+		if value, ok := payload[key]; ok {
+			summary[key] = value
+		}
+	}
+	if len(summary) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		return ""
+	}
+	if len(encoded) > 1200 {
+		return string(encoded[:1200]) + "...truncated"
+	}
+	return string(encoded)
 }
 
 func semanticOrFallback(value string, fallback string) string {

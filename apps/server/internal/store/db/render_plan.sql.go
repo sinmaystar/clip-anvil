@@ -740,7 +740,7 @@ SET status = 'submitted',
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
-  AND status IN ('compiled', 'waiting_for_approval')
+  AND status IN ('compiled', 'waiting_for_approval', 'submitted')
   AND archived_at IS NULL
 RETURNING id, workspace_id, scope_type, scope_id, target_phase, task_type, model_prompt_profile, operation, status, revision, forked_from_render_plan_id, render_plan_key, reference_bindings, subject_bindings, prompt_parts, params, audit_hints, blocker, compiled_prompt, compiled_request, prompt_audit, cost_estimate, rationale, created_by_thread_id, created_by_task_id, submitted_worker_task_id, output_node_id, output_version_id, archived_at, created_at, updated_at, compiled_at, submitted_at, completed_at, semantic_key, display_name
 `
@@ -866,6 +866,10 @@ UPDATE render_plan
 SET status = $3,
     output_version_id = $4,
     output_node_id = $5,
+    blocker = CASE
+      WHEN $3 = 'failed' AND $6::jsonb IS NOT NULL THEN $6::jsonb
+      ELSE blocker
+    END,
     completed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1
@@ -881,6 +885,7 @@ type MarkSubmittedRenderPlanCompletedByWorkerTaskParams struct {
 	Status                string      `json:"status"`
 	OutputVersionID       pgtype.UUID `json:"output_version_id"`
 	OutputNodeID          pgtype.UUID `json:"output_node_id"`
+	FailureBlocker        []byte      `json:"failure_blocker"`
 }
 
 func (q *Queries) MarkSubmittedRenderPlanCompletedByWorkerTask(ctx context.Context, arg MarkSubmittedRenderPlanCompletedByWorkerTaskParams) (RenderPlan, error) {
@@ -890,6 +895,7 @@ func (q *Queries) MarkSubmittedRenderPlanCompletedByWorkerTask(ctx context.Conte
 		arg.Status,
 		arg.OutputVersionID,
 		arg.OutputNodeID,
+		arg.FailureBlocker,
 	)
 	var i RenderPlan
 	err := row.Scan(

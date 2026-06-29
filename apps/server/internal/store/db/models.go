@@ -380,6 +380,33 @@ type ArtifactVersion struct {
 	SourceRenderPlanID pgtype.UUID        `json:"source_render_plan_id"`
 }
 
+type AudioPlan struct {
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	Status                string             `json:"status"`
+	Title                 string             `json:"title"`
+	PlanKind              string             `json:"plan_kind"`
+	Language              string             `json:"language"`
+	TargetDurationSec     pgtype.Float8      `json:"target_duration_sec"`
+	VoiceoverScript       string             `json:"voiceover_script"`
+	VoiceProfile          []byte             `json:"voice_profile"`
+	BgmPlan               []byte             `json:"bgm_plan"`
+	CuePlan               []byte             `json:"cue_plan"`
+	GenerationParams      []byte             `json:"generation_params"`
+	VoiceoverRenderPlanID pgtype.UUID        `json:"voiceover_render_plan_id"`
+	BgmRenderPlanID       pgtype.UUID        `json:"bgm_render_plan_id"`
+	VoiceoverNodeID       pgtype.UUID        `json:"voiceover_node_id"`
+	BgmNodeID             pgtype.UUID        `json:"bgm_node_id"`
+	TimelinePlanID        pgtype.UUID        `json:"timeline_plan_id"`
+	CreatedByRole         string             `json:"created_by_role"`
+	CreatedByTaskID       pgtype.UUID        `json:"created_by_task_id"`
+	SemanticKey           string             `json:"semantic_key"`
+	DisplayName           string             `json:"display_name"`
+	ArchivedAt            pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
 type CanvasDocument struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

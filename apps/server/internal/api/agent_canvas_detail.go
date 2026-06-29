@@ -61,6 +61,7 @@ type agentCanvasOverviewDetailResponse struct {
 	WorkspaceID      string                                  `json:"workspace_id"`
 	Brief            *agentCanvasCreativeBriefDetailResponse `json:"brief,omitempty"`
 	Memory           *agentCanvasProjectMemoryDetailResponse `json:"memory,omitempty"`
+	AudioPlan        *agentWorkbenchAudioPlanResponse        `json:"audio_plan,omitempty"`
 	KeyElements      []agentCanvasKeyElementSummaryResponse  `json:"key_elements"`
 	KeyElementStates []agentCanvasKeyElementStateSummary     `json:"key_element_states"`
 	SourceMaterials  []agentWorkbenchSourceMaterialResponse  `json:"source_materials"`
@@ -302,19 +303,23 @@ type agentCanvasIssueDetailResponse struct {
 }
 
 type agentCanvasFinalOutputDetailResponse struct {
-	TimelinePlanID    string                              `json:"timeline_plan_id"`
-	OutputNode        *agentCanvasMediaNodeDetailResponse `json:"output_node,omitempty"`
-	OutputVersion     *artifactVersionResponse            `json:"output_version,omitempty"`
-	ProductionJobID   string                              `json:"production_job_id,omitempty"`
-	ArtifactVersionID string                              `json:"artifact_version_id,omitempty"`
-	SandboxJobID      string                              `json:"sandbox_job_id,omitempty"`
-	Status            string                              `json:"status"`
-	TemplateKey       string                              `json:"template_key"`
-	Plan              map[string]any                      `json:"plan,omitempty"`
-	Result            map[string]any                      `json:"result,omitempty"`
-	ErrorMessage      string                              `json:"error_message,omitempty"`
-	CreatedAt         string                              `json:"created_at,omitempty"`
-	UpdatedAt         string                              `json:"updated_at,omitempty"`
+	TimelinePlanID    string                                `json:"timeline_plan_id"`
+	OutputNode        *agentCanvasMediaNodeDetailResponse   `json:"output_node,omitempty"`
+	OutputVersion     *artifactVersionResponse              `json:"output_version,omitempty"`
+	ProductionJobID   string                                `json:"production_job_id,omitempty"`
+	ArtifactVersionID string                                `json:"artifact_version_id,omitempty"`
+	SandboxJobID      string                                `json:"sandbox_job_id,omitempty"`
+	Status            string                                `json:"status"`
+	TemplateKey       string                                `json:"template_key"`
+	AudioSummary      *agentWorkbenchAudioSummaryResponse   `json:"audio_summary,omitempty"`
+	AudioTracks       []agentWorkbenchAudioTrackResponse    `json:"audio_tracks,omitempty"`
+	FinalReviews      []agentWorkbenchReviewSummaryResponse `json:"final_reviews"`
+	Issues            []agentWorkbenchIssueSummaryResponse  `json:"issues"`
+	Plan              map[string]any                        `json:"plan,omitempty"`
+	Result            map[string]any                        `json:"result,omitempty"`
+	ErrorMessage      string                                `json:"error_message,omitempty"`
+	CreatedAt         string                                `json:"created_at,omitempty"`
+	UpdatedAt         string                                `json:"updated_at,omitempty"`
 }
 
 func buildAgentCanvasDetail(ctx context.Context, queries *db.Queries, signer assetURLSigner, workspaceID pgtype.UUID, objectType string, objectID string) (agentCanvasDetailResponse, error) {
@@ -429,6 +434,15 @@ func buildAgentCanvasOverviewDetail(ctx context.Context, queries *db.Queries, wo
 		return agentCanvasDetailResponse{}, err
 	}
 	detail.SourceMaterials = agentWorkbenchSourceMaterials(nodes)
+	nodesByID := make(map[pgtype.UUID]db.MediaNode, len(nodes))
+	for _, node := range nodes {
+		nodesByID[node.ID] = node
+	}
+	if audioPlan, ok, err := activeWorkbenchAudioPlan(ctx, queries, workspaceID); err != nil {
+		return agentCanvasDetailResponse{}, err
+	} else if ok {
+		detail.AudioPlan = agentWorkbenchAudioPlanSummary(audioPlan, nodesByID)
+	}
 	return agentCanvasDetailResponse{
 		ObjectType: agentCanvasObjectOverview,
 		ObjectID:   uuidToString(workspaceID),
@@ -462,6 +476,10 @@ func buildAgentCanvasFinalOutputDetail(ctx context.Context, queries *db.Queries,
 		CreatedAt:         timeString(plan.CreatedAt),
 		UpdatedAt:         timeString(plan.UpdatedAt),
 	}
+	out.AudioTracks = agentWorkbenchAudioTracks(plan.PlanJson)
+	if audioSummary, ok := agentWorkbenchAudioSummary(plan.PlanJson, plan.Result); ok {
+		out.AudioSummary = audioSummary
+	}
 	title := "Final Output"
 	if plan.OutputNodeID.Valid {
 		if node, err := queries.GetMediaNodeByID(ctx, plan.OutputNodeID); err == nil && node.WorkspaceID == workspaceID {
@@ -479,6 +497,16 @@ func buildAgentCanvasFinalOutputDetail(ctx context.Context, queries *db.Queries,
 			out.ArtifactVersionID = version.ID
 		}
 	}
+	reviews, err := queries.ListReviewRecordsByWorkspace(ctx, db.ListReviewRecordsByWorkspaceParams{WorkspaceID: workspaceID, Limit: 100})
+	if err != nil {
+		return agentCanvasDetailResponse{}, err
+	}
+	out.FinalReviews = agentCanvasFinalReviewSummaries(reviews, plan.ID, plan.OutputNodeID, plan.ArtifactVersionID)
+	issues, err := queries.ListOpenArtifactIssuesByWorkspace(ctx, db.ListOpenArtifactIssuesByWorkspaceParams{WorkspaceID: workspaceID, Limit: 100})
+	if err != nil {
+		return agentCanvasDetailResponse{}, err
+	}
+	out.Issues = agentCanvasFinalOutputIssueSummaries(issues, plan.ID, plan.OutputNodeID, plan.ArtifactVersionID)
 	return agentCanvasDetailResponse{
 		ObjectType:  agentCanvasObjectFinalOutput,
 		ObjectID:    uuidToString(plan.ID),
@@ -512,6 +540,16 @@ func buildAgentCanvasFinalOutputNodeDetail(ctx context.Context, queries *db.Quer
 			out.ArtifactVersionID = version.ID
 		}
 	}
+	reviews, err := queries.ListReviewRecordsByWorkspace(ctx, db.ListReviewRecordsByWorkspaceParams{WorkspaceID: workspaceID, Limit: 100})
+	if err != nil {
+		return agentCanvasDetailResponse{}, err
+	}
+	out.FinalReviews = agentCanvasFinalReviewSummaries(reviews, pgtype.UUID{}, node.ID, node.CurrentVersionID)
+	issues, err := queries.ListOpenArtifactIssuesByWorkspace(ctx, db.ListOpenArtifactIssuesByWorkspaceParams{WorkspaceID: workspaceID, Limit: 100})
+	if err != nil {
+		return agentCanvasDetailResponse{}, err
+	}
+	out.Issues = agentCanvasFinalOutputIssueSummaries(issues, pgtype.UUID{}, node.ID, node.CurrentVersionID)
 	return agentCanvasDetailResponse{
 		ObjectType:  agentCanvasObjectFinalOutput,
 		ObjectID:    uuidToString(node.ID),
@@ -1151,6 +1189,63 @@ func assetReadWithAccess(ctx context.Context, queries *db.Queries, signer assetU
 		SizeBytes:   asset.SizeBytes.Int64,
 		Metadata:    jsonObject(asset.Metadata),
 	}, nil
+}
+
+func agentCanvasFinalReviewSummaries(reviews []db.ReviewRecord, timelinePlanID pgtype.UUID, outputNodeID pgtype.UUID, versionID pgtype.UUID) []agentWorkbenchReviewSummaryResponse {
+	out := make([]agentWorkbenchReviewSummaryResponse, 0)
+	for _, review := range reviews {
+		if review.ReviewTask != "final_video_review" && review.TargetPhase != "final_video" {
+			continue
+		}
+		if !agentCanvasReviewMatchesFinalOutput(review, timelinePlanID, outputNodeID, versionID) {
+			continue
+		}
+		if summary := agentWorkbenchReviewSummary(review); summary != nil {
+			out = append(out, *summary)
+		}
+	}
+	return out
+}
+
+func agentCanvasReviewMatchesFinalOutput(review db.ReviewRecord, timelinePlanID pgtype.UUID, outputNodeID pgtype.UUID, versionID pgtype.UUID) bool {
+	if review.NodeID.Valid {
+		return uuidEquals(review.NodeID, outputNodeID)
+	}
+	if review.ArtifactVersionID.Valid {
+		return uuidEquals(review.ArtifactVersionID, versionID)
+	}
+	if review.TargetObjectID.Valid {
+		return uuidEquals(review.TargetObjectID, timelinePlanID) || uuidEquals(review.TargetObjectID, outputNodeID) || uuidEquals(review.TargetObjectID, versionID)
+	}
+	return true
+}
+
+func agentCanvasFinalOutputIssueSummaries(issues []db.ArtifactIssue, timelinePlanID pgtype.UUID, outputNodeID pgtype.UUID, versionID pgtype.UUID) []agentWorkbenchIssueSummaryResponse {
+	matched := make([]db.ArtifactIssue, 0)
+	for _, issue := range issues {
+		if !agentCanvasIssueMatchesFinalOutput(issue, timelinePlanID, outputNodeID, versionID) {
+			continue
+		}
+		matched = append(matched, issue)
+	}
+	return agentWorkbenchIssueSummaries(matched)
+}
+
+func agentCanvasIssueMatchesFinalOutput(issue db.ArtifactIssue, timelinePlanID pgtype.UUID, outputNodeID pgtype.UUID, versionID pgtype.UUID) bool {
+	switch issue.TargetObjectType {
+	case "final_video", "final_output":
+		return uuidEquals(issue.TargetObjectID, timelinePlanID) || uuidEquals(issue.TargetObjectID, outputNodeID) || uuidEquals(issue.TargetObjectID, versionID)
+	case "artifact_version":
+		return uuidEquals(issue.TargetObjectID, versionID)
+	case "media_node":
+		return uuidEquals(issue.TargetObjectID, outputNodeID)
+	default:
+		return false
+	}
+}
+
+func uuidEquals(left pgtype.UUID, right pgtype.UUID) bool {
+	return left.Valid && right.Valid && left.Bytes == right.Bytes
 }
 
 func filterIssuesByWorkspace(issues []db.ArtifactIssue, workspaceID pgtype.UUID) []db.ArtifactIssue {

@@ -21,7 +21,9 @@ type ProviderConfig struct {
 
 type VolcengineProviderConfig struct {
 	APIKey                  string
+	AudioAPIKey             string
 	BaseURL                 string
+	AudioBaseURL            string
 	Region                  string
 	TextModel               string
 	ImageModel              string
@@ -95,6 +97,8 @@ func defaultModelForOutput(outputType string, cfg ProviderConfig) string {
 			return cfg.Volcengine.ImageModel
 		case "video":
 			return cfg.Volcengine.VideoModel
+		case "audio":
+			return cfg.Volcengine.AudioModel
 		default:
 			return cfg.Volcengine.TextModel
 		}

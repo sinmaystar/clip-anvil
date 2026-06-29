@@ -183,6 +183,53 @@ func TestJobServiceComposeVideosExecutesFFmpegConcatAndUploadsOutput(t *testing.
 	}
 }
 
+func TestJobServiceComposeVideosMixesAudioTracks(t *testing.T) {
+	repo := newFakeSandboxJobRepository()
+	client := &jobServiceFakeClient{
+		result: ExecResult{ExitCode: 0, Stdout: "done", DurationMS: 88},
+		inspect: FileInfo{
+			Path:      "/workspace/output/final-node-1.mp4",
+			SizeBytes: 456,
+			Mime:      "video/mp4",
+		},
+	}
+	manager := NewManager(client, testSandboxConfig(), newFakeBindingStore(Binding{
+		Status:     StatusRunning,
+		SandboxID:  "sandbox-1",
+		VolumeName: "sandbox-ws-aabbccdd-0000-0000-0000-000000000000",
+	}))
+	storage := &fakeSandboxJobStorage{}
+	service := NewJobService(manager, client, repo, storage)
+
+	result, err := service.ComposeVideos(context.Background(), ComposeVideosInput{
+		WorkspaceID:  testWorkspaceID(),
+		TargetNodeID: testNodeID(),
+		Sources: []SandboxAssetInput{
+			{AssetID: "shot-1", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-1.mp4", Mime: "video/mp4"},
+			{AssetID: "shot-2", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/shot-2.mp4", Mime: "video/mp4"},
+		},
+		AudioTracks: []ComposeAudioTrackInput{
+			{Role: "voiceover", Source: SandboxAssetInput{AssetID: "voiceover", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/voiceover.mp3", Mime: "audio/mpeg"}, Volume: 1, DurationSec: 8.2, FadeInSec: 0.05, FadeOutSec: 0.1},
+			{Role: "bgm", Source: SandboxAssetInput{AssetID: "bgm", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/production/bgm.mp3", Mime: "audio/mpeg"}, Volume: 0.28, DurationSec: 8.2, FadeInSec: 0.5, FadeOutSec: 1.2, Ducking: ComposeAudioDuckingInput{SidechainRole: "voiceover", Threshold: 0.08, Ratio: 8, AttackMS: 20, ReleaseMS: 250}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ComposeVideos error = %v", err)
+	}
+	if result.Job.Status != db.JobStatusSucceeded || result.MIME != "video/mp4" {
+		t.Fatalf("result = %#v", result)
+	}
+	joined := strings.Join(client.commands, "\n")
+	if strings.Count(joined, "curl -sS -f -L -o") < 4 {
+		t.Fatalf("expected video and audio downloads, got %q", joined)
+	}
+	for _, want := range []string{"voiceover.mp3", "bgm.mp3", "concat=n=2:v=1:a=0", "asplit=2", "sidechaincompress", "[aout]", "-c:a aac", "-shortest"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected compose audio command containing %q, got %q", want, joined)
+		}
+	}
+}
+
 func TestJobServiceStageMediaInputsDownloadsToWorkspaceInput(t *testing.T) {
 	repo := newFakeSandboxJobRepository()
 	client := &jobServiceFakeClient{result: ExecResult{ExitCode: 0, Stdout: "done", DurationMS: 12}}

@@ -42,6 +42,39 @@ func TestAgentCanvasDetailDefinesFinalOutputDetailShape(t *testing.T) {
 	}
 }
 
+func TestAgentCanvasDetailDefinesAudioFields(t *testing.T) {
+	overview := agentCanvasOverviewDetailResponse{
+		AudioPlan: &agentWorkbenchAudioPlanResponse{
+			Status:          "composing",
+			VoiceoverStatus: "succeeded",
+			BGMStatus:       "running",
+		},
+	}
+	if overview.AudioPlan == nil || overview.AudioPlan.BGMStatus != "running" {
+		t.Fatalf("overview audio plan = %#v", overview.AudioPlan)
+	}
+
+	finalOutput := agentCanvasFinalOutputDetailResponse{
+		AudioSummary: &agentWorkbenchAudioSummaryResponse{
+			HasVoiceover: true,
+			HasBGM:       true,
+			AudioCodec:   "aac",
+			TrackCount:   2,
+			Ducking:      true,
+		},
+		AudioTracks: []agentWorkbenchAudioTrackResponse{{Role: "voiceover"}, {Role: "bgm", Ducking: true}},
+		FinalReviews: []agentWorkbenchReviewSummaryResponse{{
+			ReviewTask:  "final_video_review",
+			TargetPhase: "final_video",
+			Status:      "accepted_with_warnings",
+		}},
+		Issues: []agentWorkbenchIssueSummaryResponse{{Dimension: "audio_sync", Severity: "medium"}},
+	}
+	if finalOutput.AudioSummary == nil || finalOutput.AudioSummary.AudioCodec != "aac" || len(finalOutput.AudioTracks) != 2 || len(finalOutput.FinalReviews) != 1 || len(finalOutput.Issues) != 1 {
+		t.Fatalf("final output audio fields = %#v", finalOutput)
+	}
+}
+
 func TestBuildAgentCanvasDetailRejectsInvalidObjectID(t *testing.T) {
 	_, err := buildAgentCanvasDetail(
 		context.Background(),

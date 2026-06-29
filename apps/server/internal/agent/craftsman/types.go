@@ -54,7 +54,10 @@ type Context struct {
 	Input            GraphInput
 	Shot             db.Shot
 	KeyElementState  db.KeyElementState
+	AudioPlan        db.AudioPlan
 	Messages         []db.AgentMessage
+	Shots            []db.Shot
+	RenderPlans      []db.RenderPlan
 	Nodes            []NodeState
 	Dependencies     []db.ShotDependency
 	SourceMaterials  []NodeState

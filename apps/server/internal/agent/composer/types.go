@@ -49,6 +49,7 @@ type TimelinePlan struct {
 	TemplateKey string         `json:"template_key"`
 	Segments    []Segment      `json:"segments"`
 	Transitions []Transition   `json:"transitions,omitempty"`
+	AudioTracks []AudioTrack   `json:"audio_tracks,omitempty"`
 	Output      OutputSettings `json:"output"`
 }
 
@@ -67,12 +68,34 @@ type Transition struct {
 	DurationSec   float64 `json:"duration_sec"`
 }
 
+type AudioTrack struct {
+	ID            string        `json:"id"`
+	Role          string        `json:"role"`
+	AssetID       string        `json:"asset_id"`
+	WorkspacePath string        `json:"workspace_path,omitempty"`
+	StartSec      float64       `json:"start_sec,omitempty"`
+	DurationSec   float64       `json:"duration_sec,omitempty"`
+	Volume        float64       `json:"volume,omitempty"`
+	FadeInSec     float64       `json:"fade_in_sec,omitempty"`
+	FadeOutSec    float64       `json:"fade_out_sec,omitempty"`
+	Ducking       *AudioDucking `json:"ducking,omitempty"`
+}
+
+type AudioDucking struct {
+	SidechainRole string  `json:"sidechain_role"`
+	Threshold     float64 `json:"threshold,omitempty"`
+	Ratio         float64 `json:"ratio,omitempty"`
+	AttackMS      int     `json:"attack_ms,omitempty"`
+	ReleaseMS     int     `json:"release_ms,omitempty"`
+}
+
 type OutputSettings struct {
 	WorkspacePath string `json:"workspace_path"`
 	Width         int    `json:"width,omitempty"`
 	Height        int    `json:"height,omitempty"`
 	FPS           int    `json:"fps,omitempty"`
 	Format        string `json:"format"`
+	AudioCodec    string `json:"audio_codec,omitempty"`
 }
 
 type GraphInput struct {

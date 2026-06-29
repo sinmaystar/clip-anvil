@@ -44,6 +44,18 @@ func ProfileByID(id string) (ModelPromptProfile, bool) {
 			DefaultParams:  Params{Ratio: "9:16", DurationSec: 5, Resolution: "1080p"},
 			MaxPromptChars: 5000,
 		}, true
+	case ProfileSeedAudio1:
+		return ModelPromptProfile{
+			ID:              ProfileSeedAudio1,
+			DefaultProvider: "volcengine",
+			DefaultModelID:  "seed-audio-1.0",
+			OutputType:      "audio",
+			AllowedOperations: map[string]bool{
+				"text_to_audio": true,
+			},
+			DefaultParams:  Params{Format: "mp3", SampleRate: 48000, Watermark: false},
+			MaxPromptChars: 2048,
+		}, true
 	default:
 		return ModelPromptProfile{}, false
 	}

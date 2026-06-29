@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	agentaudio "github.com/sinmaystar/clip-anvil/internal/agent/audio"
 	agentcomposer "github.com/sinmaystar/clip-anvil/internal/agent/composer"
 	agentcraftsman "github.com/sinmaystar/clip-anvil/internal/agent/craftsman"
 	agentcreative "github.com/sinmaystar/clip-anvil/internal/agent/creative"
@@ -111,6 +112,7 @@ func main() {
 	hitlService := agenthitl.NewService(agentRuntime, agentBroadcaster)
 	producerPSSBuilder := agentpss.NewBuilder(queries)
 	creativeStateService := agentcreative.NewService(queries)
+	audioPlanService := agentaudio.NewService(queries)
 	renderPlanService := agentrenderplan.NewService(queries, agentrenderplan.NewPromptCompiler())
 	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
 	canvasHandler := api.NewCanvasHandler(queries, storageService)
@@ -121,7 +123,9 @@ func main() {
 		DefaultTextModel: cfg.Production.DefaultTextModel,
 		Volcengine: production.VolcengineProviderConfig{
 			APIKey:                  cfg.Production.Volcengine.APIKey,
+			AudioAPIKey:             cfg.Production.Volcengine.AudioAPIKey,
 			BaseURL:                 cfg.Production.Volcengine.BaseURL,
+			AudioBaseURL:            cfg.Production.Volcengine.AudioBaseURL,
 			Region:                  cfg.Production.Volcengine.Region,
 			TextModel:               cfg.Production.Volcengine.TextModel,
 			ImageModel:              cfg.Production.Volcengine.ImageModel,
@@ -164,7 +168,9 @@ func main() {
 		productionRuntime = production.NewVolcengineProductionRuntime(
 			production.VolcengineProviderConfig{
 				APIKey:                  cfg.Production.Volcengine.APIKey,
+				AudioAPIKey:             cfg.Production.Volcengine.AudioAPIKey,
 				BaseURL:                 cfg.Production.Volcengine.BaseURL,
+				AudioBaseURL:            cfg.Production.Volcengine.AudioBaseURL,
 				Region:                  cfg.Production.Volcengine.Region,
 				TextModel:               cfg.Production.Volcengine.TextModel,
 				ImageModel:              cfg.Production.Volcengine.ImageModel,
@@ -301,6 +307,7 @@ func main() {
 		agenttools.NewUpdateProjectMemoryNativeTool(creativeStateService),
 		agenttools.NewUpsertKeyElementsNativeTool(creativeStateService),
 		agenttools.NewUpsertStoryboardNativeTool(creativeStateService),
+		agenttools.NewUpsertAudioPlanNativeTool(audioPlanService),
 		agenttools.NewDispatchCraftsmanNativeTool(queries, agentRuntime, craftsmanEnqueuer),
 		agenttools.NewDispatchComposerNativeTool(agentRuntime, composerEnqueuer, queries),
 		agenttools.NewDecideRenderPlanNativeTool(queries, agentRuntime, workerEnqueuer),

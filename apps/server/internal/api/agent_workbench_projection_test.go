@@ -160,7 +160,7 @@ func TestAgentWorkbenchFinalOutputFromTimelinePlan(t *testing.T) {
 		SandboxJobID:      uuidWithByteForWorkbenchTest(55),
 		Status:            "completed",
 		TemplateKey:       "concat_with_fades",
-		PlanJson:          []byte(`{"template_key":"concat_with_fades"}`),
+		PlanJson:          []byte(`{"template_key":"concat_with_fades","audio_tracks":[{"role":"voiceover","asset_id":"voice-asset","workspace_path":"/workspace/input/voiceover.mp3","duration_sec":12,"volume":1},{"role":"bgm","asset_id":"bgm-asset","workspace_path":"/workspace/input/bgm.mp3","duration_sec":12,"volume":0.28,"ducking":{"sidechain_role":"voiceover"}}],"output":{"audio_codec":"aac"}}`),
 		Result:            []byte(`{"summary":"rendered with fades"}`),
 		UpdatedAt:         pgtype.Timestamptz{Time: time.Unix(300, 0), Valid: true},
 	}
@@ -181,7 +181,19 @@ func TestAgentWorkbenchFinalOutputFromTimelinePlan(t *testing.T) {
 		StorageUrl:  pgtype.Text{String: "workspace/final.mp4", Valid: true},
 	}
 
-	out := agentWorkbenchFinalOutputFromTimelinePlan(context.Background(), nil, plan, map[pgtype.UUID]db.MediaNode{outputNodeID: node}, map[pgtype.UUID]db.ArtifactVersion{versionID: version}, map[pgtype.UUID]db.MediaAsset{assetID: asset})
+	review := db.ReviewRecord{
+		ID:                uuidWithByteForWorkbenchTest(56),
+		WorkspaceID:       workspaceID,
+		NodeID:            outputNodeID,
+		ArtifactVersionID: versionID,
+		ReviewTask:        "final_video_review",
+		TargetPhase:       "final_video",
+		Status:            "accepted_with_warnings",
+		OverallScore:      pgtype.Float4{Float32: 0.86, Valid: true},
+		CreatedAt:         pgtype.Timestamptz{Time: time.Unix(400, 0), Valid: true},
+	}
+
+	out := agentWorkbenchFinalOutputFromTimelinePlan(context.Background(), nil, plan, map[pgtype.UUID]db.MediaNode{outputNodeID: node}, map[pgtype.UUID]db.ArtifactVersion{versionID: version}, map[pgtype.UUID]db.MediaAsset{assetID: asset}, []db.ReviewRecord{review})
 
 	if out == nil || out.TimelinePlanID != uuidToString(plan.ID) || out.TemplateKey != "concat_with_fades" || out.Summary != "rendered with fades" {
 		t.Fatalf("final output = %#v", out)
@@ -191,6 +203,52 @@ func TestAgentWorkbenchFinalOutputFromTimelinePlan(t *testing.T) {
 	}
 	if out.Plan["template_key"] != "concat_with_fades" || out.Result["summary"] != "rendered with fades" {
 		t.Fatalf("final output plan/result = %#v %#v", out.Plan, out.Result)
+	}
+	if out.AudioSummary == nil || !out.AudioSummary.HasVoiceover || !out.AudioSummary.HasBGM || out.AudioSummary.TrackCount != 2 || out.AudioSummary.AudioCodec != "aac" || !out.AudioSummary.Ducking {
+		t.Fatalf("audio summary = %#v", out.AudioSummary)
+	}
+	if len(out.AudioTracks) != 2 || out.AudioTracks[0].Role != "voiceover" || out.AudioTracks[1].Role != "bgm" {
+		t.Fatalf("audio tracks = %#v", out.AudioTracks)
+	}
+	if out.FinalReview == nil || out.FinalReview.Status != "accepted_with_warnings" || out.FinalReview.Score != 0.86 {
+		t.Fatalf("final review = %#v", out.FinalReview)
+	}
+}
+
+func TestAgentWorkbenchAudioPlanSummaryTracksAudioNodeStatus(t *testing.T) {
+	voiceNodeID := uuidWithByteForWorkbenchTest(61)
+	bgmNodeID := uuidWithByteForWorkbenchTest(62)
+	timelinePlanID := uuidWithByteForWorkbenchTest(63)
+	audioPlan := db.AudioPlan{
+		ID:                uuidWithByteForWorkbenchTest(60),
+		Status:            "composing",
+		Title:             "Audio plan",
+		Language:          "zh",
+		TargetDurationSec: pgtype.Float8{Float64: 12, Valid: true},
+		VoiceoverScript:   "新品上线，轻松完成创意短片。",
+		VoiceProfile:      []byte(`{"speaker":"zh_female","tone":"warm"}`),
+		BgmPlan:           []byte(`{"mood":"bright"}`),
+		CuePlan:           []byte(`[{"shot_ref":"shot-01","start_sec":0}]`),
+		VoiceoverNodeID:   voiceNodeID,
+		BgmNodeID:         bgmNodeID,
+		TimelinePlanID:    timelinePlanID,
+		SemanticKey:       "audio_plan.active",
+		DisplayName:       "AudioPlan active",
+	}
+	nodes := map[pgtype.UUID]db.MediaNode{
+		voiceNodeID: {ID: voiceNodeID, Status: db.NodeStatusSucceeded},
+		bgmNodeID:   {ID: bgmNodeID, Status: db.NodeStatusRunning},
+	}
+
+	got := agentWorkbenchAudioPlanSummary(audioPlan, nodes)
+	if got == nil || got.Status != "composing" || got.VoiceoverStatus != "succeeded" || got.BGMStatus != "running" {
+		t.Fatalf("audio plan summary = %#v", got)
+	}
+	if got.TimelinePlanID != uuidToString(timelinePlanID) || got.TargetDurationSec == nil || *got.TargetDurationSec != 12 {
+		t.Fatalf("audio plan timeline/duration = %#v", got)
+	}
+	if got.VoiceProfile["speaker"] != "zh_female" || got.BGMPlan["mood"] != "bright" {
+		t.Fatalf("audio plan json summaries = %#v / %#v", got.VoiceProfile, got.BGMPlan)
 	}
 }
 

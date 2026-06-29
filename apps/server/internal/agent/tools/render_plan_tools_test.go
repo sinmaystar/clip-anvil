@@ -146,6 +146,48 @@ func TestUpsertRenderPlanRuntimeDefaultsInferVideoOperationFromFirstFrame(t *tes
 	}
 }
 
+func TestUpsertRenderPlanRuntimeDefaultsInferVoiceoverAudio(t *testing.T) {
+	input := UpsertRenderPlanToolInput{
+		Brief:          "为已确认 AudioPlan 创建旁白音频计划。",
+		Mode:           "create",
+		GenerationText: "使用清爽可信的年轻女声生成完整营销短视频旁白。",
+	}
+
+	got := applyUpsertRenderPlanRuntimeDefaults(input, NativeRuntimeContext{
+		ScopeType:   "audio_plan",
+		ScopeID:     uuidWithByte(9),
+		ScopeKey:    "audio_plan.active",
+		TargetPhase: "voiceover_audio",
+	})
+
+	if got.Scope.Type != "audio_plan" || got.TargetPhase != "voiceover_audio" {
+		t.Fatalf("audio defaults = %#v", got)
+	}
+	if got.TaskType != "generate" || got.ModelPromptProfile != "seed_audio_1" || got.Operation != "text_to_audio" {
+		t.Fatalf("inferred audio fields = target=%q task=%q profile=%q operation=%q", got.TargetPhase, got.TaskType, got.ModelPromptProfile, got.Operation)
+	}
+	if got.PromptParts.Objective != got.GenerationText {
+		t.Fatalf("prompt objective = %#v", got.PromptParts)
+	}
+}
+
+func TestUpsertRenderPlanToolValidatesAudioPlanScope(t *testing.T) {
+	input := UpsertRenderPlanToolInput{
+		Brief:              "为已确认 AudioPlan 创建 BGM 音频计划。",
+		Mode:               "create",
+		GenerationText:     "生成轻快电子流行 BGM。",
+		Scope:              RenderPlanScopeInput{Type: "audio_plan", ID: "09000000-0000-0000-0000-000000000000", Key: "audio_plan.active"},
+		TargetPhase:        "bgm_audio",
+		TaskType:           "generate",
+		ModelPromptProfile: "seed_audio_1",
+		Operation:          "text_to_audio",
+	}
+
+	if err := validateUpsertRenderPlanInput(input); err != nil {
+		t.Fatalf("validate audio input: %v", err)
+	}
+}
+
 func TestUpsertRenderPlanToolRejectsRuntimeTargetPhaseMismatch(t *testing.T) {
 	tool := NewUpsertRenderPlanNativeTool(nil)
 	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{

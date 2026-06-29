@@ -654,7 +654,7 @@ func (s *Service) markQueuedJobFailed(ctx context.Context, job db.GenerationJob,
 	}); err != nil {
 		return err
 	}
-	if err := markSubmittedRenderPlanTerminal(ctx, qtx, currentJob, "failed", failedVersion.ID, currentJob.TargetNodeID); err != nil {
+	if err := markSubmittedRenderPlanTerminal(ctx, qtx, currentJob, "failed", failedVersion.ID, currentJob.TargetNodeID, renderPlanFailureBlocker(runErr)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -742,7 +742,7 @@ func (s *Service) persistQueuedJobSuccess(ctx context.Context, jobID pgtype.UUID
 	if err != nil {
 		return RunResult{}, err
 	}
-	if err := markSubmittedRenderPlanTerminal(ctx, qtx, succeeded, "succeeded", version.ID, updated.ID); err != nil {
+	if err := markSubmittedRenderPlanTerminal(ctx, qtx, succeeded, "succeeded", version.ID, updated.ID, nil); err != nil {
 		return RunResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -755,7 +755,7 @@ type renderPlanTerminalSyncer interface {
 	MarkSubmittedRenderPlanCompletedByWorkerTask(ctx context.Context, arg db.MarkSubmittedRenderPlanCompletedByWorkerTaskParams) (db.RenderPlan, error)
 }
 
-func markSubmittedRenderPlanTerminal(ctx context.Context, q renderPlanTerminalSyncer, job db.GenerationJob, status string, versionID pgtype.UUID, nodeID pgtype.UUID) error {
+func markSubmittedRenderPlanTerminal(ctx context.Context, q renderPlanTerminalSyncer, job db.GenerationJob, status string, versionID pgtype.UUID, nodeID pgtype.UUID, failureBlocker []byte) error {
 	if q == nil || job.RequestedByType != "agent_worker" || !job.WorkspaceID.Valid || !job.RequestedByID.Valid {
 		return nil
 	}
@@ -769,11 +769,26 @@ func markSubmittedRenderPlanTerminal(ctx context.Context, q renderPlanTerminalSy
 		Status:                status,
 		OutputVersionID:       versionID,
 		OutputNodeID:          nodeID,
+		FailureBlocker:        failureBlocker,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	return err
+}
+
+func renderPlanFailureBlocker(runErr error) []byte {
+	if runErr == nil {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"blocker_type": errorCodeForRun(runErr),
+		"message":      runErr.Error(),
+	})
+	if err != nil {
+		return nil
+	}
+	return payload
 }
 
 func (s *Service) persistSuccessfulRun(

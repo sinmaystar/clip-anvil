@@ -361,6 +361,7 @@ func (f *fakeComposerProducerEnqueuer) EnqueueProducerTask(_ context.Context, ta
 
 type fakeComposerStore struct {
 	createdNode   db.CreateAgentGenerationNodeParams
+	audioPlan     *db.AudioPlan
 	nodes         []db.MediaNode
 	shots         []db.Shot
 	nodesByShot   map[pgtype.UUID][]db.MediaNode
@@ -373,6 +374,22 @@ type fakeComposerStore struct {
 func (f *fakeComposerStore) CreateAgentGenerationNode(_ context.Context, params db.CreateAgentGenerationNodeParams) (db.MediaNode, error) {
 	f.createdNode = params
 	return db.MediaNode{ID: uuidWithByte(50), WorkspaceID: params.WorkspaceID, NodeType: params.NodeType, Title: params.Title, OperationType: params.OperationType, Status: db.NodeStatusQueued, Source: "agent", Metadata: params.Metadata, SemanticKey: params.SemanticKey, DisplayName: params.DisplayName, ArtifactKind: params.ArtifactKind}, nil
+}
+
+func (f *fakeComposerStore) GetActiveAudioPlanByWorkspace(_ context.Context, workspaceID pgtype.UUID) (db.AudioPlan, error) {
+	if f.audioPlan == nil || f.audioPlan.WorkspaceID != workspaceID {
+		return db.AudioPlan{}, pgx.ErrNoRows
+	}
+	return *f.audioPlan, nil
+}
+
+func (f *fakeComposerStore) GetMediaNodeByID(_ context.Context, id pgtype.UUID) (db.MediaNode, error) {
+	for _, node := range f.nodes {
+		if node.ID == id {
+			return node, nil
+		}
+	}
+	return db.MediaNode{}, pgx.ErrNoRows
 }
 
 func (f *fakeComposerStore) ListMediaNodesByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error) {

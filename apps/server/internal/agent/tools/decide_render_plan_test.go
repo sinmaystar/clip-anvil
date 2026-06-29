@@ -138,6 +138,144 @@ func TestDecideRenderPlanAcceptKeepsShotOutputInputRefs(t *testing.T) {
 	}
 }
 
+func TestDecideRenderPlanAcceptSubmitsAudioPlanWorkerTask(t *testing.T) {
+	store := &fakeRenderPlanDecisionStore{
+		plan: db.RenderPlan{
+			ID:                 uuidWithByte(21),
+			WorkspaceID:        uuidWithByte(1),
+			ScopeType:          "audio_plan",
+			ScopeID:            uuidWithByte(11),
+			TargetPhase:        "voiceover_audio",
+			ModelPromptProfile: "seed_audio_1",
+			Operation:          "text_to_audio",
+			Status:             "waiting_for_approval",
+			CompiledPrompt:     "zh, 12 seconds, warm female voice, script: 现在出发，让旅程更轻松。",
+			Params:             []byte(`{"model":"seed-audio-1.0","speaker":"warm_female","format":"mp3"}`),
+			Rationale:          "基于已确认 AudioPlan 生成全片旁白。",
+			CreatedByThreadID:  uuidWithByte(12),
+			CreatedByTaskID:    uuidWithByte(13),
+			SemanticKey:        "audio_plan.active.voiceover_audio.r1",
+		},
+	}
+	runtime := &fakeRenderPlanDecisionRuntime{}
+	enqueuer := &fakeWorkerTaskEnqueuer{}
+	tool := NewDecideRenderPlanNativeTool(store, runtime, enqueuer)
+
+	args := fmt.Sprintf(`{
+		"brief":"接受旁白音频 RenderPlan 并提交 Worker。",
+		"render_plan_ref":{"type":"render_plan","key":%q},
+		"decision":"accept",
+		"reason":"用户已确认 AudioPlan",
+		"next_action":"submit_worker"
+	}`, store.plan.SemanticKey)
+	got, err := tool.InvokableRun(contextWithNativeRuntime(uuidWithByte(1), uuidWithByte(2), uuidWithByte(3)), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "已接受 RenderPlan") {
+		t.Fatalf("result = %s", got)
+	}
+	if len(runtime.createdTasks) != 1 || len(enqueuer.tasks) != 1 {
+		t.Fatalf("created tasks = %d, enqueued = %d", len(runtime.createdTasks), len(enqueuer.tasks))
+	}
+	task := runtime.createdTasks[0]
+	if task.ScopeType != "audio_plan" || task.ScopeID != uuidWithByte(11) || task.RenderPlanID != store.plan.ID {
+		t.Fatalf("task = %#v", task)
+	}
+	var input map[string]any
+	if err := json.Unmarshal(task.Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["mode"] != "voiceover_audio" || input["scope_type"] != "audio_plan" || input["scope_key"] != "audio_plan.active" {
+		t.Fatalf("worker input = %#v", input)
+	}
+	if input["output_type"] != "audio" || input["operation_type"] != "text_to_audio" {
+		t.Fatalf("worker input generation fields = %#v", input)
+	}
+	model, _ := input["model"].(map[string]any)
+	if model["provider"] != "volcengine" || model["model_id"] != "seed-audio-1.0" {
+		t.Fatalf("worker input model = %#v", model)
+	}
+	if input["shot_id"] != "" {
+		t.Fatalf("audio worker input must not require shot_id: %#v", input)
+	}
+}
+
+func TestDecideRenderPlanBatchAcceptsAudioPlanRenderPlans(t *testing.T) {
+	audioPlanID := uuidWithByte(11)
+	voiceoverPlan := db.RenderPlan{
+		ID:                 uuidWithByte(21),
+		WorkspaceID:        uuidWithByte(1),
+		ScopeType:          "audio_plan",
+		ScopeID:            audioPlanID,
+		TargetPhase:        "voiceover_audio",
+		ModelPromptProfile: "seed_audio_1",
+		Operation:          "text_to_audio",
+		Status:             "waiting_for_approval",
+		CompiledPrompt:     "生成全片中文旁白。",
+		Params:             []byte(`{"model":"seed-audio-1.0","speaker":"warm_female","format":"mp3"}`),
+		SemanticKey:        "audio_plan.active.voiceover_audio.r1",
+	}
+	bgmPlan := db.RenderPlan{
+		ID:                 uuidWithByte(22),
+		WorkspaceID:        uuidWithByte(1),
+		ScopeType:          "audio_plan",
+		ScopeID:            audioPlanID,
+		TargetPhase:        "bgm_audio",
+		ModelPromptProfile: "seed_audio_1",
+		Operation:          "text_to_audio",
+		Status:             "waiting_for_approval",
+		CompiledPrompt:     "生成 12 秒轻快电子流行 BGM。",
+		Params:             []byte(`{"model":"seed-audio-1.0","format":"mp3"}`),
+		SemanticKey:        "audio_plan.active.bgm_audio.r1",
+	}
+	store := &fakeRenderPlanDecisionStore{
+		plans: map[string]db.RenderPlan{
+			uuidString(voiceoverPlan.ID): voiceoverPlan,
+			uuidString(bgmPlan.ID):       bgmPlan,
+		},
+	}
+	runtime := &fakeRenderPlanDecisionRuntime{}
+	enqueuer := &fakeWorkerTaskEnqueuer{}
+	tool := NewDecideRenderPlanNativeTool(store, runtime, enqueuer)
+
+	args := fmt.Sprintf(`{
+		"brief":"接受已确认 AudioPlan 的旁白和 BGM 音频 RenderPlan。",
+		"decisions":[
+			{"render_plan_id":%q,"decision":"accept","reason":"旁白方案可执行","next_action":"submit_worker"},
+			{"render_plan_id":%q,"decision":"accept","reason":"BGM 方案可执行","next_action":"submit_worker"}
+		]
+	}`, uuidString(voiceoverPlan.ID), uuidString(bgmPlan.ID))
+	got, err := tool.InvokableRun(contextWithNativeRuntime(uuidWithByte(1), uuidWithByte(2), uuidWithByte(3)), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "批量 RenderPlan 决策完成") {
+		t.Fatalf("result = %s", got)
+	}
+	if len(runtime.createdTasks) != 2 || len(enqueuer.tasks) != 2 {
+		t.Fatalf("created tasks = %d, enqueued = %d", len(runtime.createdTasks), len(enqueuer.tasks))
+	}
+	if len(store.voiceoverLinks) != 1 || store.voiceoverLinks[0].VoiceoverRenderPlanID != voiceoverPlan.ID {
+		t.Fatalf("voiceover links = %#v", store.voiceoverLinks)
+	}
+	if len(store.bgmLinks) != 1 || store.bgmLinks[0].BgmRenderPlanID != bgmPlan.ID {
+		t.Fatalf("bgm links = %#v", store.bgmLinks)
+	}
+	for _, task := range runtime.createdTasks {
+		if task.ScopeType != "audio_plan" || task.ScopeID != audioPlanID {
+			t.Fatalf("task = %#v", task)
+		}
+		var input map[string]any
+		if err := json.Unmarshal(task.Input, &input); err != nil {
+			t.Fatal(err)
+		}
+		if input["output_type"] != "audio" || input["operation_type"] != "text_to_audio" {
+			t.Fatalf("worker input = %#v", input)
+		}
+	}
+}
+
 func TestDecideRenderPlanRejectDoesNotSubmitWorkerTask(t *testing.T) {
 	store := &fakeRenderPlanDecisionStore{
 		plan: db.RenderPlan{ID: uuidWithByte(21), WorkspaceID: uuidWithByte(1), ScopeType: "shot", ScopeID: uuidWithByte(11), TargetPhase: "preview_image", Status: "waiting_for_approval"},
@@ -263,6 +401,8 @@ type fakeRenderPlanDecisionStore struct {
 	keyElementState db.KeyElementState
 	submitted       bool
 	submittedPlans  []pgtype.UUID
+	voiceoverLinks  []db.SetAudioPlanVoiceoverRenderPlanParams
+	bgmLinks        []db.SetAudioPlanBGMRenderPlanParams
 	rejected        bool
 	rejectedPlans   []pgtype.UUID
 }
@@ -330,6 +470,16 @@ func (f *fakeRenderPlanDecisionStore) MarkRenderPlanSubmitted(_ context.Context,
 	f.plan.Status = "submitted"
 	f.plan.SubmittedWorkerTaskID = params.SubmittedWorkerTaskID
 	return f.plan, nil
+}
+
+func (f *fakeRenderPlanDecisionStore) SetAudioPlanVoiceoverRenderPlan(_ context.Context, params db.SetAudioPlanVoiceoverRenderPlanParams) (db.AudioPlan, error) {
+	f.voiceoverLinks = append(f.voiceoverLinks, params)
+	return db.AudioPlan{ID: params.ID, WorkspaceID: params.WorkspaceID, VoiceoverRenderPlanID: params.VoiceoverRenderPlanID}, nil
+}
+
+func (f *fakeRenderPlanDecisionStore) SetAudioPlanBGMRenderPlan(_ context.Context, params db.SetAudioPlanBGMRenderPlanParams) (db.AudioPlan, error) {
+	f.bgmLinks = append(f.bgmLinks, params)
+	return db.AudioPlan{ID: params.ID, WorkspaceID: params.WorkspaceID, BgmRenderPlanID: params.BgmRenderPlanID}, nil
 }
 
 func (f *fakeRenderPlanDecisionStore) MarkRenderPlanRejected(_ context.Context, params db.MarkRenderPlanRejectedParams) (db.RenderPlan, error) {

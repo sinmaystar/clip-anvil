@@ -5050,7 +5050,7 @@ a:focus-visible {
 
 .agent-workbench-overview-node {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
   gap: 12px;
   padding: 16px;
 }
@@ -5106,7 +5106,7 @@ a:focus-visible {
 
 .agent-workbench-overview-node dl {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
 }
@@ -5125,8 +5125,54 @@ a:focus-visible {
 
 .agent-workbench-overview-node dd {
   margin: 4px 0 0;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 760;
+}
+
+.agent-workbench-overview-audio,
+.agent-workbench-final-output-audio {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg-primary) 4%, transparent);
+  padding: 8px;
+}
+
+.agent-workbench-overview-audio div,
+.agent-workbench-final-output-audio {
+  min-width: 0;
+}
+
+.agent-workbench-overview-audio div:first-child,
+.agent-workbench-overview-audio div:nth-child(2),
+.agent-workbench-final-output-audio {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-workbench-overview-audio strong {
+  overflow: hidden;
+  color: var(--fg-primary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-workbench-overview-audio span,
+.agent-workbench-final-output-audio span {
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-workbench-overview-audio p {
+  -webkit-line-clamp: 2;
 }
 
 .agent-workbench-overview-elements,
@@ -5211,7 +5257,7 @@ a:focus-visible {
 
 .agent-workbench-final-output-node {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   gap: 12px;
   padding: 16px;
   pointer-events: all;

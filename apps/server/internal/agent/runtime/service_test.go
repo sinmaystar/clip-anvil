@@ -159,6 +159,18 @@ func TestCreateTaskAllowsComposerTurn(t *testing.T) {
 	}
 }
 
+func TestRuntimeScopesAllowAudioPlan(t *testing.T) {
+	if !validThreadScope("audio_plan") {
+		t.Fatal("audio_plan should be a valid agent thread scope")
+	}
+	if !validTaskScope("audio_plan") {
+		t.Fatal("audio_plan should be a valid agent task scope")
+	}
+	if !validProducerSignalScope("audio_plan") {
+		t.Fatal("audio_plan should be a valid producer signal scope")
+	}
+}
+
 func TestListQueuedProducerTasksRejectsMissingWorkspace(t *testing.T) {
 	svc, err := NewService(&fakeBeginner{}, db.New(fakeDBTX{}))
 	if err != nil {

@@ -14,9 +14,9 @@ type DispatchCraftsmanNativeTool struct {
 
 type DispatchCraftsmanToolInput struct {
 	Brief           string                 `json:"brief" jsonschema:"required" jsonschema_description:"一句话描述调用该工具的意图，例如生成机场晨光统一参考图或直接生成所有分镜预览图。不要超过 160 个中文字符。"`
-	Scope           DispatchCraftsmanScope `json:"scope" jsonschema:"required" jsonschema_description:"生产归属范围。shot 表示分镜图或分镜视频；key_element_state 表示共享参考图。scope.type=shot 且 key 为空时，可配合 shot_refs 批量派发；scope.type=key_element_state 时 key 填 read_project_context 返回的 semantic_key。"`
-	ShotRefs        []string               `json:"shot_refs" jsonschema_description:"scope.type=shot 时可填写分镜 semantic_key 或稳定 client_key。为空表示派发所有可生成的 active shots。scope.type=key_element_state 时必须留空。"`
-	TargetPhase     string                 `json:"target_phase" jsonschema:"required,enum=reference_image,enum=preview_image,enum=shot_video" jsonschema_description:"生成阶段。reference_image 生成 KeyElementState 统一参考图；preview_image 生成分镜预览图；shot_video 基于已确认预览图生成分镜视频。"`
+	Scope           DispatchCraftsmanScope `json:"scope" jsonschema:"required" jsonschema_description:"生产归属范围。shot 表示分镜图或分镜视频；key_element_state 表示共享参考图；audio_plan 表示全片旁白或 BGM 音频。scope.type=shot 且 key 为空时，可配合 shot_refs 批量派发；scope.type=key_element_state 时 key 填 read_project_context 返回的 semantic_key；scope.type=audio_plan 时 key 填 audio_plan.active。"`
+	ShotRefs        []string               `json:"shot_refs" jsonschema_description:"scope.type=shot 时可填写分镜 semantic_key 或稳定 client_key。为空表示派发所有可生成的 active shots。scope.type=key_element_state 或 audio_plan 时必须留空。"`
+	TargetPhase     string                 `json:"target_phase" jsonschema:"required,enum=reference_image,enum=preview_image,enum=shot_video,enum=voiceover_audio,enum=bgm_audio" jsonschema_description:"生成阶段。reference_image 生成 KeyElementState 统一参考图；preview_image 生成分镜预览图；shot_video 基于已确认预览图生成分镜视频；voiceover_audio / bgm_audio 基于已批准 AudioPlan 生成音频 RenderPlan。"`
 	Mode            string                 `json:"mode" jsonschema:"enum=preview_image,enum=shot_video" jsonschema_description:"兼容旧参数；新调用请使用 target_phase。"`
 	ExecutionPolicy string                 `json:"execution_policy" jsonschema:"required,enum=execute_immediately,enum=wait_for_producer" jsonschema_description:"执行策略。execute_immediately 表示 Craftsman 编译 RenderPlan 后工程自动提交 Worker；wait_for_producer 表示只编译并等待 Producer 后续 accept/reject。"`
 	Force           bool                   `json:"force" jsonschema_description:"为 true 时即使已有完成结果也创建新尝试；默认 false。不能用于绕过正在排队或运行中的同 scope/target_phase Craftsman 任务。"`
@@ -27,8 +27,8 @@ type DispatchCraftsmanToolInput struct {
 }
 
 type DispatchCraftsmanScope struct {
-	Type string `json:"type" jsonschema:"required,enum=shot,enum=key_element_state" jsonschema_description:"scope 类型。shot 用于分镜预览图或分镜视频；key_element_state 用于共享参考图。"`
-	ID   string `json:"id" jsonschema_description:"兼容旧字段。模型不要填写内部 ID；请填写 read_project_context 返回的 semantic_key，或留空并用 shot_refs 批量派发 shot。"`
+	Type string `json:"type" jsonschema:"required,enum=shot,enum=key_element_state,enum=audio_plan" jsonschema_description:"scope 类型。shot 用于分镜预览图或分镜视频；key_element_state 用于共享参考图；audio_plan 用于旁白或 BGM 音频。"`
+	ID   string `json:"id" jsonschema_description:"兼容旧字段。模型不要填写内部 ID；shot/key_element_state 请填写 read_project_context 返回的 semantic_key；audio_plan 请填写 audio_plan.active。"`
 }
 
 func NewDispatchCraftsmanNativeTool(store CraftsmanDispatcherStore, runtime CraftsmanRuntime, enqueuer CraftsmanTaskEnqueuer) DispatchCraftsmanNativeTool {
@@ -87,11 +87,11 @@ func validateDispatchCraftsmanInput(input DispatchCraftsmanToolInput) error {
 	if err := requireText(input.Brief, "brief"); err != nil {
 		return err
 	}
-	if err := requireMode(input.Scope.Type, "shot", "key_element_state"); err != nil {
+	if err := requireMode(input.Scope.Type, "shot", "key_element_state", "audio_plan"); err != nil {
 		return err
 	}
 	targetPhase := targetPhaseFromNativeInput(input)
-	if err := requireMode(targetPhase, "reference_image", "preview_image", "shot_video"); err != nil {
+	if err := requireMode(targetPhase, "reference_image", "preview_image", "shot_video", "voiceover_audio", "bgm_audio"); err != nil {
 		return err
 	}
 	if input.Scope.Type == "key_element_state" && input.Scope.ID == "" {
@@ -102,6 +102,15 @@ func validateDispatchCraftsmanInput(input DispatchCraftsmanToolInput) error {
 	}
 	if input.Scope.Type == "shot" && targetPhase == "reference_image" {
 		return fmt.Errorf("shot 不能派发 reference_image")
+	}
+	if input.Scope.Type == "shot" && (targetPhase == "voiceover_audio" || targetPhase == "bgm_audio") {
+		return fmt.Errorf("shot 不能派发音频阶段；请使用 scope.type=audio_plan")
+	}
+	if input.Scope.Type == "audio_plan" && targetPhase != "voiceover_audio" && targetPhase != "bgm_audio" {
+		return fmt.Errorf("audio_plan 只能派发 voiceover_audio 或 bgm_audio")
+	}
+	if input.Scope.Type == "audio_plan" && len(input.ShotRefs) > 0 {
+		return fmt.Errorf("audio_plan scope 不支持 shot_refs")
 	}
 	if err := requireMode(input.ExecutionPolicy, "execute_immediately", "wait_for_producer"); err != nil {
 		return err

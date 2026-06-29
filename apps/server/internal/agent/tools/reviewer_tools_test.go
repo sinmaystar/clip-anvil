@@ -106,6 +106,65 @@ func TestSubmitReviewResultUsesReviewerTaskRuntimeTarget(t *testing.T) {
 	}
 }
 
+func TestSubmitReviewResultDerivesFinalVideoIssueTarget(t *testing.T) {
+	workspaceID := uuidWithByte(1)
+	threadID := uuidWithByte(2)
+	taskID := uuidWithByte(3)
+	nodeID := uuidWithByte(5)
+	versionID := uuidWithByte(6)
+	store := &fakeSubmitReviewResultStore{}
+	tool := NewSubmitReviewResultNativeTool(store)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID:      workspaceID,
+		ThreadID:         threadID,
+		TaskID:           taskID,
+		ReviewTask:       reviewTaskFinalVideo,
+		ReviewNodeID:     uuidString(nodeID),
+		ReviewNodeKey:    "composer.final_output.f86a42ed.node",
+		ReviewVersionID:  uuidString(versionID),
+		ReviewVersionKey: "composer.final_output.f86a42ed.compose.artifact.v1",
+	})
+	out, err := tool.InvokableRun(ctx, `{
+		"brief":"提交 final video 评审",
+		"review_task":"final_video_review",
+		"target":{"workspace_scope":"final_video"},
+		"verdict":"accepted",
+		"overall_score":0.93,
+		"rubric":[
+			{"axis":"faithfulness","score":0.95,"pass":true,"severity":"info","reason":"符合 brief"},
+			{"axis":"brand_style_consistency","score":0.92,"pass":true,"severity":"info","reason":"风格一致"},
+			{"axis":"visual_quality","score":0.91,"pass":true,"severity":"info","reason":"画质可用"},
+			{"axis":"continuity","score":0.9,"pass":true,"severity":"info","reason":"叙事连贯"},
+			{"axis":"audio_sync","score":0.94,"pass":true,"severity":"info","reason":"旁白和画面同步"},
+			{"axis":"platform_selling_power","score":0.93,"pass":true,"severity":"info","reason":"带货表达清晰"}
+		],
+		"critique":"成片可用。",
+		"issues":[{
+			"dimension":"audio_sync",
+			"severity":"info",
+			"title":"可选混音优化",
+			"description":"当前可用，可后续优化 ducking。",
+			"target_object_type":"final_video",
+			"suggested_fix":"edit",
+			"fix_hint":"如需精修，可对 BGM 做轻量 ducking。"
+		}],
+		"retry_recommendation":{"should_repair":false,"suggested_fix":"none","target_object_type":"final_video"},
+		"reason":"required axes 均通过。"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "已提交 Reviewer 评审结果") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+	if len(store.issues) != 1 {
+		t.Fatalf("issues = %d, want 1", len(store.issues))
+	}
+	if store.issues[0].TargetObjectType != "final_video" || store.issues[0].TargetObjectID != nodeID {
+		t.Fatalf("final video issue target = %s/%s, want final_video/%s", store.issues[0].TargetObjectType, uuidString(store.issues[0].TargetObjectID), uuidString(nodeID))
+	}
+}
+
 type fakeSubmitReviewResultStore struct {
 	create   db.CreateReviewRecordParams
 	complete db.CompleteReviewRecordParams

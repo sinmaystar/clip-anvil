@@ -90,16 +90,16 @@ func validateInput(input UpsertInput) error {
 	if !input.WorkspaceID.Valid || !input.Scope.ID.Valid {
 		return fmt.Errorf("%w: workspace_id 和 scope.id 必须有效", ErrInvalidInput)
 	}
-	if err := requireValue(input.Scope.Type, "scope.type", ScopeKeyElementState, ScopeShot); err != nil {
+	if err := requireValue(input.Scope.Type, "scope.type", ScopeKeyElementState, ScopeShot, ScopeAudioPlan); err != nil {
 		return err
 	}
-	if err := requireValue(input.TargetPhase, "target_phase", PhaseReferenceImage, PhasePreviewImage, PhaseShotVideo); err != nil {
+	if err := requireValue(input.TargetPhase, "target_phase", PhaseReferenceImage, PhasePreviewImage, PhaseShotVideo, PhaseVoiceoverAudio, PhaseBGMAudio); err != nil {
 		return err
 	}
 	if err := requireValue(input.TaskType, "task_type", TaskGenerate, TaskEdit, TaskExtend, TaskBridge); err != nil {
 		return err
 	}
-	if err := requireValue(input.ModelPromptProfile, "model_prompt_profile", ProfileSeedream5Image, ProfileSeedance2Video); err != nil {
+	if err := requireValue(input.ModelPromptProfile, "model_prompt_profile", ProfileSeedream5Image, ProfileSeedance2Video, ProfileSeedAudio1); err != nil {
 		return err
 	}
 	if strings.TrimSpace(input.Operation) == "" {
@@ -107,6 +107,18 @@ func validateInput(input UpsertInput) error {
 	}
 	if input.Scope.Type == ScopeKeyElementState && input.TargetPhase != PhaseReferenceImage {
 		return fmt.Errorf("%w: key_element_state 只能用于 reference_image", ErrInvalidInput)
+	}
+	if input.Scope.Type == ScopeAudioPlan && input.TargetPhase != PhaseVoiceoverAudio && input.TargetPhase != PhaseBGMAudio {
+		return fmt.Errorf("%w: audio_plan 只能用于 voiceover_audio 或 bgm_audio", ErrInvalidInput)
+	}
+	if (input.TargetPhase == PhaseVoiceoverAudio || input.TargetPhase == PhaseBGMAudio) && input.ModelPromptProfile != ProfileSeedAudio1 {
+		return fmt.Errorf("%w: 音频阶段必须使用 seed_audio_1", ErrInvalidInput)
+	}
+	if input.ModelPromptProfile == ProfileSeedAudio1 && input.TargetPhase != PhaseVoiceoverAudio && input.TargetPhase != PhaseBGMAudio {
+		return fmt.Errorf("%w: seed_audio_1 只能用于 voiceover_audio 或 bgm_audio", ErrInvalidInput)
+	}
+	if (input.TargetPhase == PhaseVoiceoverAudio || input.TargetPhase == PhaseBGMAudio) && input.Operation != "text_to_audio" {
+		return fmt.Errorf("%w: 音频阶段 operation 必须是 text_to_audio", ErrInvalidInput)
 	}
 	if input.TargetPhase == PhaseShotVideo && input.ModelPromptProfile != ProfileSeedance2Video {
 		return fmt.Errorf("%w: shot_video 必须使用 seedance_2_video", ErrInvalidInput)

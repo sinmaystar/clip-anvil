@@ -24,6 +24,7 @@ type agentWorkbenchOverviewResponse struct {
 	WorkspaceID      string                                  `json:"workspace_id"`
 	Brief            *agentWorkbenchBriefResponse            `json:"brief,omitempty"`
 	Memory           *agentWorkbenchMemoryResponse           `json:"memory,omitempty"`
+	AudioPlan        *agentWorkbenchAudioPlanResponse        `json:"audio_plan,omitempty"`
 	KeyElements      []agentWorkbenchKeyElementResponse      `json:"key_elements"`
 	KeyElementStates []agentWorkbenchKeyElementStateResponse `json:"key_element_states"`
 	SourceMaterials  []agentWorkbenchSourceMaterialResponse  `json:"source_materials"`
@@ -64,6 +65,26 @@ type agentWorkbenchSourceMaterialResponse struct {
 	Title    string `json:"title"`
 	NodeType string `json:"node_type"`
 	Status   string `json:"status"`
+}
+
+type agentWorkbenchAudioPlanResponse struct {
+	ID                    string         `json:"id"`
+	Status                string         `json:"status"`
+	Title                 string         `json:"title"`
+	PlanKind              string         `json:"plan_kind,omitempty"`
+	Language              string         `json:"language,omitempty"`
+	TargetDurationSec     *float64       `json:"target_duration_sec,omitempty"`
+	VoiceoverScript       string         `json:"voiceover_script,omitempty"`
+	VoiceProfile          map[string]any `json:"voice_profile,omitempty"`
+	BGMPlan               map[string]any `json:"bgm_plan,omitempty"`
+	CuePlan               any            `json:"cue_plan,omitempty"`
+	VoiceoverNodeID       string         `json:"voiceover_node_id,omitempty"`
+	VoiceoverStatus       string         `json:"voiceover_status,omitempty"`
+	BGMNodeID             string         `json:"bgm_node_id,omitempty"`
+	BGMStatus             string         `json:"bgm_status,omitempty"`
+	TimelinePlanID        string         `json:"timeline_plan_id,omitempty"`
+	VoiceoverRenderPlanID string         `json:"voiceover_render_plan_id,omitempty"`
+	BGMRenderPlanID       string         `json:"bgm_render_plan_id,omitempty"`
 }
 
 type agentWorkbenchSceneResponse struct {
@@ -145,22 +166,43 @@ type agentWorkbenchIssueSummaryResponse struct {
 	SuggestedFix string `json:"suggested_fix"`
 }
 
+type agentWorkbenchAudioSummaryResponse struct {
+	HasVoiceover bool   `json:"has_voiceover"`
+	HasBGM       bool   `json:"has_bgm"`
+	AudioCodec   string `json:"audio_codec,omitempty"`
+	TrackCount   int    `json:"track_count"`
+	Ducking      bool   `json:"ducking"`
+}
+
+type agentWorkbenchAudioTrackResponse struct {
+	Role          string  `json:"role"`
+	AssetID       string  `json:"asset_id,omitempty"`
+	WorkspacePath string  `json:"workspace_path,omitempty"`
+	StartSec      float64 `json:"start_sec,omitempty"`
+	DurationSec   float64 `json:"duration_sec,omitempty"`
+	Volume        float64 `json:"volume,omitempty"`
+	Ducking       bool    `json:"ducking,omitempty"`
+}
+
 type agentWorkbenchFinalOutputResponse struct {
-	ID                string         `json:"id"`
-	TimelinePlanID    string         `json:"timeline_plan_id"`
-	OutputNodeID      string         `json:"output_node_id,omitempty"`
-	ArtifactVersionID string         `json:"artifact_version_id,omitempty"`
-	SandboxJobID      string         `json:"sandbox_job_id,omitempty"`
-	Status            string         `json:"status"`
-	TemplateKey       string         `json:"template_key"`
-	Summary           string         `json:"summary,omitempty"`
-	AssetURL          string         `json:"asset_url,omitempty"`
-	ThumbnailURL      string         `json:"thumbnail_url,omitempty"`
-	AssetID           string         `json:"asset_id,omitempty"`
-	Mime              string         `json:"mime,omitempty"`
-	Plan              map[string]any `json:"plan,omitempty"`
-	Result            map[string]any `json:"result,omitempty"`
-	UpdatedAt         time.Time      `json:"updated_at"`
+	ID                string                               `json:"id"`
+	TimelinePlanID    string                               `json:"timeline_plan_id"`
+	OutputNodeID      string                               `json:"output_node_id,omitempty"`
+	ArtifactVersionID string                               `json:"artifact_version_id,omitempty"`
+	SandboxJobID      string                               `json:"sandbox_job_id,omitempty"`
+	Status            string                               `json:"status"`
+	TemplateKey       string                               `json:"template_key"`
+	Summary           string                               `json:"summary,omitempty"`
+	AssetURL          string                               `json:"asset_url,omitempty"`
+	ThumbnailURL      string                               `json:"thumbnail_url,omitempty"`
+	AssetID           string                               `json:"asset_id,omitempty"`
+	Mime              string                               `json:"mime,omitempty"`
+	AudioSummary      *agentWorkbenchAudioSummaryResponse  `json:"audio_summary,omitempty"`
+	AudioTracks       []agentWorkbenchAudioTrackResponse   `json:"audio_tracks,omitempty"`
+	FinalReview       *agentWorkbenchReviewSummaryResponse `json:"final_review,omitempty"`
+	Plan              map[string]any                       `json:"plan,omitempty"`
+	Result            map[string]any                       `json:"result,omitempty"`
+	UpdatedAt         time.Time                            `json:"updated_at"`
 }
 
 type agentWorkbenchCountsResponse struct {
@@ -172,6 +214,9 @@ type agentWorkbenchCountsResponse struct {
 	VideoFailed      int `json:"video_failed"`
 	OpenIssues       int `json:"open_issues"`
 	NeedsReference   int `json:"needs_reference"`
+	AudioReady       int `json:"audio_ready"`
+	AudioMissing     int `json:"audio_missing"`
+	FinalReviews     int `json:"final_reviews"`
 }
 
 func buildAgentWorkbenchProjection(ctx context.Context, queries *db.Queries, signer assetURLSigner, workspaceID pgtype.UUID) (agentWorkbenchResponse, error) {
@@ -267,12 +312,25 @@ func buildAgentWorkbenchProjection(ctx context.Context, queries *db.Queries, sig
 	}
 	response.Overview.SourceMaterials = agentWorkbenchSourceMaterials(nodes)
 
+	if audioPlan, ok, err := activeWorkbenchAudioPlan(ctx, queries, workspaceID); err != nil {
+		return response, err
+	} else if ok {
+		response.Overview.AudioPlan = agentWorkbenchAudioPlanSummary(audioPlan, nodesByID)
+		countWorkbenchAudioPlan(*response.Overview.AudioPlan, &response.Counts)
+	}
+
+	reviews, err := queries.ListReviewRecordsByWorkspace(ctx, db.ListReviewRecordsByWorkspaceParams{WorkspaceID: workspaceID, Limit: 100})
+	if err != nil {
+		return response, err
+	}
+	response.Counts.FinalReviews = countFinalVideoReviews(reviews)
+
 	if timelinePlan, ok, err := latestWorkbenchTimelinePlan(ctx, queries, workspaceID); err != nil {
 		return response, err
 	} else if ok {
-		response.FinalOutput = agentWorkbenchFinalOutputFromTimelinePlan(ctx, signer, timelinePlan, nodesByID, versionsByID, assetsByID)
+		response.FinalOutput = agentWorkbenchFinalOutputFromTimelinePlan(ctx, signer, timelinePlan, nodesByID, versionsByID, assetsByID, reviews)
 	} else if finalNode, ok := latestWorkbenchFinalVideoNode(nodes); ok {
-		response.FinalOutput = agentWorkbenchFinalOutputFromNode(ctx, signer, finalNode, versionsByID, assetsByID)
+		response.FinalOutput = agentWorkbenchFinalOutputFromNode(ctx, signer, finalNode, versionsByID, assetsByID, reviews)
 	}
 
 	scenes, err := queries.ListActiveScenesByWorkspace(ctx, workspaceID)
@@ -295,10 +353,6 @@ func buildAgentWorkbenchProjection(ctx context.Context, queries *db.Queries, sig
 	if err != nil {
 		return response, err
 	}
-	reviews, err := queries.ListReviewRecordsByWorkspace(ctx, db.ListReviewRecordsByWorkspaceParams{WorkspaceID: workspaceID, Limit: 100})
-	if err != nil {
-		return response, err
-	}
 	issues, err := queries.ListOpenArtifactIssuesByWorkspace(ctx, db.ListOpenArtifactIssuesByWorkspaceParams{WorkspaceID: workspaceID, Limit: 100})
 	if err != nil {
 		return response, err
@@ -308,6 +362,17 @@ func buildAgentWorkbenchProjection(ctx context.Context, queries *db.Queries, sig
 	response.Counts.Scenes = len(response.Scenes)
 	response.Counts.Shots = len(shots)
 	return response, nil
+}
+
+func activeWorkbenchAudioPlan(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID) (db.AudioPlan, bool, error) {
+	plan, err := queries.GetActiveAudioPlanByWorkspace(ctx, workspaceID)
+	if err == nil {
+		return plan, true, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.AudioPlan{}, false, nil
+	}
+	return db.AudioPlan{}, false, err
 }
 
 func latestWorkbenchTimelinePlan(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID) (db.TimelinePlan, bool, error) {
@@ -335,6 +400,7 @@ func agentWorkbenchFinalOutputFromTimelinePlan(
 	nodes map[pgtype.UUID]db.MediaNode,
 	versions map[pgtype.UUID]db.ArtifactVersion,
 	assets map[pgtype.UUID]db.MediaAsset,
+	reviews []db.ReviewRecord,
 ) *agentWorkbenchFinalOutputResponse {
 	if !plan.ID.Valid {
 		return nil
@@ -349,6 +415,10 @@ func agentWorkbenchFinalOutputFromTimelinePlan(
 		Plan:           jsonObjectValue(plan.PlanJson),
 		Result:         jsonObjectValue(plan.Result),
 		UpdatedAt:      timestamptzTime(plan.UpdatedAt),
+	}
+	out.AudioTracks = agentWorkbenchAudioTracks(plan.PlanJson)
+	if audioSummary, ok := agentWorkbenchAudioSummary(plan.PlanJson, plan.Result); ok {
+		out.AudioSummary = audioSummary
 	}
 	if summary, ok := out.Result["summary"].(string); ok {
 		out.Summary = summary
@@ -370,6 +440,7 @@ func agentWorkbenchFinalOutputFromTimelinePlan(
 			}
 		}
 	}
+	out.FinalReview = latestFinalVideoReview(reviews, plan.OutputNodeID, versionID)
 	return out
 }
 
@@ -402,6 +473,7 @@ func agentWorkbenchFinalOutputFromNode(
 	node db.MediaNode,
 	versions map[pgtype.UUID]db.ArtifactVersion,
 	assets map[pgtype.UUID]db.MediaAsset,
+	reviews []db.ReviewRecord,
 ) *agentWorkbenchFinalOutputResponse {
 	if !node.ID.Valid {
 		return nil
@@ -426,6 +498,7 @@ func agentWorkbenchFinalOutputFromNode(
 			}
 		}
 	}
+	out.FinalReview = latestFinalVideoReview(reviews, node.ID, node.CurrentVersionID)
 	return out
 }
 
@@ -447,6 +520,177 @@ func jsonObjectValue(raw []byte) map[string]any {
 		return map[string]any{}
 	}
 	return out
+}
+
+func jsonAnyValue(raw []byte) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func agentWorkbenchAudioPlanSummary(audioPlan db.AudioPlan, nodes map[pgtype.UUID]db.MediaNode) *agentWorkbenchAudioPlanResponse {
+	if !audioPlan.ID.Valid {
+		return nil
+	}
+	out := &agentWorkbenchAudioPlanResponse{
+		ID:                    uuidToString(audioPlan.ID),
+		Status:                audioPlan.Status,
+		Title:                 audioPlan.Title,
+		PlanKind:              audioPlan.PlanKind,
+		Language:              audioPlan.Language,
+		VoiceoverScript:       audioPlan.VoiceoverScript,
+		VoiceProfile:          jsonObjectValue(audioPlan.VoiceProfile),
+		BGMPlan:               jsonObjectValue(audioPlan.BgmPlan),
+		CuePlan:               jsonAnyValue(audioPlan.CuePlan),
+		VoiceoverNodeID:       uuidStringForWorkbench(audioPlan.VoiceoverNodeID),
+		VoiceoverStatus:       agentWorkbenchLinkedNodeStatus(audioPlan.VoiceoverNodeID, nodes),
+		BGMNodeID:             uuidStringForWorkbench(audioPlan.BgmNodeID),
+		BGMStatus:             agentWorkbenchLinkedNodeStatus(audioPlan.BgmNodeID, nodes),
+		TimelinePlanID:        uuidStringForWorkbench(audioPlan.TimelinePlanID),
+		VoiceoverRenderPlanID: uuidStringForWorkbench(audioPlan.VoiceoverRenderPlanID),
+		BGMRenderPlanID:       uuidStringForWorkbench(audioPlan.BgmRenderPlanID),
+	}
+	if audioPlan.TargetDurationSec.Valid {
+		value := audioPlan.TargetDurationSec.Float64
+		out.TargetDurationSec = &value
+	}
+	return out
+}
+
+func agentWorkbenchLinkedNodeStatus(nodeID pgtype.UUID, nodes map[pgtype.UUID]db.MediaNode) string {
+	if !nodeID.Valid {
+		return "missing"
+	}
+	node, ok := nodes[nodeID]
+	if !ok {
+		return "missing"
+	}
+	return agentSlotStatus(node)
+}
+
+func countWorkbenchAudioPlan(audioPlan agentWorkbenchAudioPlanResponse, counts *agentWorkbenchCountsResponse) {
+	if counts == nil {
+		return
+	}
+	countWorkbenchAudioStatus(audioPlan.VoiceoverNodeID, audioPlan.VoiceoverStatus, counts)
+	countWorkbenchAudioStatus(audioPlan.BGMNodeID, audioPlan.BGMStatus, counts)
+}
+
+func countWorkbenchAudioStatus(nodeID string, status string, counts *agentWorkbenchCountsResponse) {
+	if nodeID == "" && status == "" {
+		return
+	}
+	if status == "succeeded" {
+		counts.AudioReady++
+		return
+	}
+	counts.AudioMissing++
+}
+
+func agentWorkbenchAudioTracks(planJSON []byte) []agentWorkbenchAudioTrackResponse {
+	plan := jsonObjectValue(planJSON)
+	values, ok := plan["audio_tracks"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]agentWorkbenchAudioTrackResponse, 0, len(values))
+	for _, value := range values {
+		track, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, agentWorkbenchAudioTrackResponse{
+			Role:          stringValue(track["role"]),
+			AssetID:       stringValue(track["asset_id"]),
+			WorkspacePath: stringValue(track["workspace_path"]),
+			StartSec:      numberValue(track["start_sec"]),
+			DurationSec:   numberValue(track["duration_sec"]),
+			Volume:        numberValue(track["volume"]),
+			Ducking:       track["ducking"] != nil,
+		})
+	}
+	return out
+}
+
+func agentWorkbenchAudioSummary(planJSON []byte, resultJSON []byte) (*agentWorkbenchAudioSummaryResponse, bool) {
+	tracks := agentWorkbenchAudioTracks(planJSON)
+	plan := jsonObjectValue(planJSON)
+	result := jsonObjectValue(resultJSON)
+	summary := &agentWorkbenchAudioSummaryResponse{TrackCount: len(tracks)}
+	for _, track := range tracks {
+		switch track.Role {
+		case "voiceover":
+			summary.HasVoiceover = true
+		case "bgm", "music":
+			summary.HasBGM = true
+		}
+		if track.Ducking {
+			summary.Ducking = true
+		}
+	}
+	if output, ok := plan["output"].(map[string]any); ok {
+		summary.AudioCodec = stringValue(output["audio_codec"])
+	}
+	if summary.AudioCodec == "" {
+		summary.AudioCodec = stringValue(result["audio_codec"])
+	}
+	return summary, summary.TrackCount > 0 || summary.AudioCodec != ""
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func numberValue(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return 0
+	}
+}
+
+func latestFinalVideoReview(reviews []db.ReviewRecord, outputNodeID pgtype.UUID, versionID pgtype.UUID) *agentWorkbenchReviewSummaryResponse {
+	var latest db.ReviewRecord
+	for _, review := range reviews {
+		if review.ReviewTask != "final_video_review" && review.TargetPhase != "final_video" {
+			continue
+		}
+		if review.NodeID.Valid && outputNodeID.Valid && review.NodeID != outputNodeID {
+			continue
+		}
+		if review.ArtifactVersionID.Valid && versionID.Valid && review.ArtifactVersionID != versionID {
+			continue
+		}
+		if !latest.ID.Valid || timestamptzTime(review.CreatedAt).After(timestamptzTime(latest.CreatedAt)) {
+			latest = review
+		}
+	}
+	return agentWorkbenchReviewSummary(latest)
+}
+
+func countFinalVideoReviews(reviews []db.ReviewRecord) int {
+	count := 0
+	for _, review := range reviews {
+		if review.ReviewTask == "final_video_review" || review.TargetPhase == "final_video" {
+			count++
+		}
+	}
+	return count
 }
 
 func agentWorkbenchSourceMaterials(nodes []db.MediaNode) []agentWorkbenchSourceMaterialResponse {

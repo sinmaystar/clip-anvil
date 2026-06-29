@@ -58,6 +58,40 @@ func TestProducerPSSListsM1CreativeState(t *testing.T) {
 	}
 }
 
+func TestProducerPSSListsAudioPlan(t *testing.T) {
+	audioPlan := db.AudioPlan{
+		ID:                uuidWithByte(30),
+		WorkspaceID:       uuidWithByte(1),
+		Status:            "waiting_for_user",
+		Title:             "营销短视频音频方案",
+		Language:          "zh",
+		TargetDurationSec: pgtype.Float8{Float64: 12, Valid: true},
+		VoiceoverScript:   "现在出发，让旅程更轻松。",
+		VoiceProfile:      []byte(`{"speaker":"marketing_female_clear"}`),
+		BgmPlan:           []byte(`{"source":"generated","model":"seed-audio-1.0"}`),
+		CuePlan:           []byte(`[{"shot_ref":"shot_01","text":"现在出发，让旅程更轻松。"}]`),
+		SemanticKey:       "audio_plan.active",
+	}
+	builder := NewBuilder(fakeStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Name: "agent-ws", Mode: db.WorkspaceModeAgent},
+		audioPlan: &audioPlan,
+	})
+
+	pss, err := builder.BuildProducerPSS(context.Background(), uuidWithByte(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"AudioPlan", "waiting_for_user", "seed-audio-1.0", "cue_count=1"} {
+		if !strings.Contains(pss.Text, want) {
+			t.Fatalf("PSS missing %q:\n%s", want, pss.Text)
+		}
+	}
+	structured := pss.Structured["audio_plan"].(map[string]any)
+	if structured["status"] != "waiting_for_user" || structured["cue_count"] != 1 {
+		t.Fatalf("audio_plan structured = %#v", structured)
+	}
+}
+
 func TestProducerPSSListsShotsAndDependencies(t *testing.T) {
 	shot1 := db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SortOrder: 1, Title: "开场", Status: "planned", NarrativePurpose: "attention"}
 	shot2 := db.Shot{ID: uuidWithByte(3), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SortOrder: 2, Title: "产品", Status: "planned"}
@@ -416,6 +450,7 @@ type fakeStore struct {
 	versions      map[pgtype.UUID][]db.ArtifactVersion
 	reviews       []db.ReviewRecord
 	issues        []db.ArtifactIssue
+	audioPlan     *db.AudioPlan
 }
 
 func (f fakeStore) GetWorkspaceByID(context.Context, pgtype.UUID) (db.Workspace, error) {
@@ -438,6 +473,13 @@ func (f fakeStore) GetActiveProjectMemoryByWorkspace(context.Context, pgtype.UUI
 		return db.ProjectMemory{}, pgx.ErrNoRows
 	}
 	return *f.projectMemory, nil
+}
+
+func (f fakeStore) GetActiveAudioPlanByWorkspace(context.Context, pgtype.UUID) (db.AudioPlan, error) {
+	if f.audioPlan == nil {
+		return db.AudioPlan{}, pgx.ErrNoRows
+	}
+	return *f.audioPlan, nil
 }
 
 func (f fakeStore) ListActiveKeyElementsByWorkspace(context.Context, pgtype.UUID) ([]db.KeyElement, error) {

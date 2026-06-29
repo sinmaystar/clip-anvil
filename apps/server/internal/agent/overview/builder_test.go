@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -118,6 +119,58 @@ func TestBuilderMarksFailedFinalOutputAsNeedsAttention(t *testing.T) {
 	}
 }
 
+func TestBuilderProjectsAudioPlanAndFinalReviewCounts(t *testing.T) {
+	workspaceID := uuidWithByte(1)
+	voiceNodeID := uuidWithByte(2)
+	bgmNodeID := uuidWithByte(3)
+	timelinePlanID := uuidWithByte(4)
+	finalNodeID := uuidWithByte(5)
+	builder := NewBuilder(fakeStore{
+		workspace: db.Workspace{ID: workspaceID, Name: "agent", Mode: db.WorkspaceModeAgent},
+		audioPlan: db.AudioPlan{
+			ID:                uuidWithByte(6),
+			WorkspaceID:       workspaceID,
+			Status:            "composing",
+			Title:             "Audio plan",
+			Language:          "zh",
+			VoiceoverScript:   "新品上线，轻松完成创意短片。",
+			VoiceProfile:      []byte(`{"speaker":"zh_female"}`),
+			BgmPlan:           []byte(`{"mood":"bright"}`),
+			VoiceoverNodeID:   voiceNodeID,
+			BgmNodeID:         bgmNodeID,
+			TimelinePlanID:    timelinePlanID,
+			TargetDurationSec: pgtype.Float8{Float64: 12, Valid: true},
+		},
+		nodes: []db.MediaNode{
+			{ID: voiceNodeID, WorkspaceID: workspaceID, NodeType: db.NodeTypeAudio, Status: db.NodeStatusSucceeded},
+			{ID: bgmNodeID, WorkspaceID: workspaceID, NodeType: db.NodeTypeAudio, Status: db.NodeStatusRunning},
+			{ID: finalNodeID, WorkspaceID: workspaceID, NodeType: db.NodeTypeVideo, OperationType: "compose_final_video", Status: db.NodeStatusSucceeded},
+		},
+		reviews: []db.ReviewRecord{{
+			ID:          uuidWithByte(7),
+			WorkspaceID: workspaceID,
+			NodeID:      finalNodeID,
+			ReviewTask:  "final_video_review",
+			TargetPhase: "final_video",
+			Status:      "accepted_with_warnings",
+		}},
+	})
+
+	got, err := builder.Build(context.Background(), workspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AudioPlan == nil || got.AudioPlan.Status != "composing" || got.AudioPlan.VoiceoverStatus != StatusReady || got.AudioPlan.BGMStatus != StatusRunning {
+		t.Fatalf("audio plan = %#v", got.AudioPlan)
+	}
+	if got.AudioPlan.TimelinePlanID != uuidString(timelinePlanID) || got.AudioPlan.TargetDurationSec == nil || *got.AudioPlan.TargetDurationSec != 12 {
+		t.Fatalf("audio plan timeline/duration = %#v", got.AudioPlan)
+	}
+	if got.Counts.AudioReady != 1 || got.Counts.AudioMissing != 1 || got.Counts.FinalReviews != 1 {
+		t.Fatalf("audio/final review counts = %#v", got.Counts)
+	}
+}
+
 type fakeStore struct {
 	workspace db.Workspace
 	shots     []db.Shot
@@ -126,6 +179,7 @@ type fakeStore struct {
 	events    []db.AgentEvent
 	reviews   []db.ReviewRecord
 	sandboxes []db.SandboxJob
+	audioPlan db.AudioPlan
 	jobs      map[pgtype.UUID][]db.GenerationJob
 	versions  map[pgtype.UUID][]db.ArtifactVersion
 }
@@ -156,6 +210,13 @@ func (s fakeStore) ListReviewRecordsByWorkspace(context.Context, db.ListReviewRe
 
 func (s fakeStore) ListSandboxJobsByWorkspace(context.Context, pgtype.UUID) ([]db.SandboxJob, error) {
 	return s.sandboxes, nil
+}
+
+func (s fakeStore) GetActiveAudioPlanByWorkspace(context.Context, pgtype.UUID) (db.AudioPlan, error) {
+	if !s.audioPlan.ID.Valid {
+		return db.AudioPlan{}, pgx.ErrNoRows
+	}
+	return s.audioPlan, nil
 }
 
 func (s fakeStore) ListGenerationJobsByNode(_ context.Context, nodeID pgtype.UUID) ([]db.GenerationJob, error) {

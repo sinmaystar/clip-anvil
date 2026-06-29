@@ -22,7 +22,7 @@ func TestDispatchCraftsmanDefinition(t *testing.T) {
 		t.Fatalf("target_phase schema missing: %#v", def.Parameters)
 	}
 	enum, ok := targetPhase["enum"].([]string)
-	if !ok || len(enum) != 3 || enum[0] != "reference_image" || enum[1] != "preview_image" || enum[2] != "shot_video" {
+	if !ok || len(enum) != 5 || enum[0] != "reference_image" || enum[1] != "preview_image" || enum[2] != "shot_video" || enum[3] != "voiceover_audio" || enum[4] != "bgm_audio" {
 		t.Fatalf("target_phase enum = %#v", targetPhase["enum"])
 	}
 	scope, ok := def.Parameters["properties"].(map[string]any)["scope"].(map[string]any)
@@ -372,6 +372,92 @@ func TestDispatchCraftsmanResolvesKeyElementStateByClientKey(t *testing.T) {
 	}
 }
 
+func TestDispatchCraftsmanNativeDispatchesVoiceoverAudioPlan(t *testing.T) {
+	audioPlanID := uuidWithByte(41)
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		audioPlan: &db.AudioPlan{
+			ID:          audioPlanID,
+			WorkspaceID: uuidWithByte(1),
+			Status:      "approved",
+			Title:       "营销短视频音频方案",
+			SemanticKey: "audio_plan.active",
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanNativeTool(store, runtime, &fakeCraftsmanEnqueuer{})
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		ToolCallID:  "producer-dispatch-audio",
+	})
+
+	got, err := tool.InvokableRun(ctx, `{
+		"brief":"为已确认 AudioPlan 生成旁白音频 RenderPlan。",
+		"scope":{"type":"audio_plan","id":"audio_plan.active"},
+		"target_phase":"voiceover_audio",
+		"execution_policy":"wait_for_producer"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "voiceover_audio") {
+		t.Fatalf("result = %s", got)
+	}
+	if len(runtime.createdTasks) != 1 {
+		t.Fatalf("created tasks = %d", len(runtime.createdTasks))
+	}
+	task := runtime.createdTasks[0]
+	if task.ScopeType != "audio_plan" || task.ScopeID != audioPlanID {
+		t.Fatalf("task scope = %s/%s", task.ScopeType, uuidString(task.ScopeID))
+	}
+	var input map[string]any
+	if err := json.Unmarshal(task.Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["target_phase"] != "voiceover_audio" || input["scope_key"] != "audio_plan.active" {
+		t.Fatalf("task input = %#v", input)
+	}
+}
+
+func TestDispatchCraftsmanNativeDispatchesBGMAudioPlan(t *testing.T) {
+	audioPlanID := uuidWithByte(42)
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		audioPlan: &db.AudioPlan{
+			ID:          audioPlanID,
+			WorkspaceID: uuidWithByte(1),
+			Status:      "approved",
+			Title:       "营销短视频音频方案",
+			SemanticKey: "audio_plan.active",
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanNativeTool(store, runtime, &fakeCraftsmanEnqueuer{})
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+	})
+
+	got, err := tool.InvokableRun(ctx, `{
+		"brief":"为已确认 AudioPlan 生成 BGM 音频 RenderPlan。",
+		"scope":{"type":"audio_plan","id":"audio_plan.active"},
+		"target_phase":"bgm_audio",
+		"execution_policy":"wait_for_producer"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "bgm_audio") {
+		t.Fatalf("result = %s", got)
+	}
+	if len(runtime.createdTasks) != 1 || runtime.createdTasks[0].ScopeID != audioPlanID {
+		t.Fatalf("created tasks = %#v", runtime.createdTasks)
+	}
+}
+
 func TestDispatchCraftsmanResolvesShotRefsAndCapsAttempts(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
@@ -431,6 +517,7 @@ type fakeCraftsmanDispatchStore struct {
 	workspace        db.Workspace
 	shots            []db.Shot
 	keyElementStates []db.KeyElementState
+	audioPlan        *db.AudioPlan
 	linked           []db.SetShotCraftsmanThreadParams
 	statusUpdates    []db.UpdateShotStatusParams
 }
@@ -472,6 +559,20 @@ func (f *fakeCraftsmanDispatchStore) GetKeyElementStateByID(_ context.Context, p
 
 func (f *fakeCraftsmanDispatchStore) ListActiveKeyElementStatesByWorkspace(context.Context, pgtype.UUID) ([]db.KeyElementState, error) {
 	return f.keyElementStates, nil
+}
+
+func (f *fakeCraftsmanDispatchStore) GetActiveAudioPlanByWorkspace(context.Context, pgtype.UUID) (db.AudioPlan, error) {
+	if f.audioPlan == nil {
+		return db.AudioPlan{}, errScopeNotFound
+	}
+	return *f.audioPlan, nil
+}
+
+func (f *fakeCraftsmanDispatchStore) GetAudioPlan(_ context.Context, params db.GetAudioPlanParams) (db.AudioPlan, error) {
+	if f.audioPlan == nil || f.audioPlan.ID != params.ID || f.audioPlan.WorkspaceID != params.WorkspaceID {
+		return db.AudioPlan{}, errScopeNotFound
+	}
+	return *f.audioPlan, nil
 }
 
 func (f *fakeCraftsmanDispatchStore) SetShotCraftsmanThread(_ context.Context, params db.SetShotCraftsmanThreadParams) (db.Shot, error) {

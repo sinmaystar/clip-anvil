@@ -30,10 +30,10 @@ type UpsertRenderPlanToolInput struct {
 	RenderPlanID         string                    `json:"render_plan_id" jsonschema_description:"兼容旧字段：update_draft 或 mark_blocked 时的目标 RenderPlan 内部 ID。模型通常不要填写；create 时为空。"`
 	ForkFromRenderPlanID string                    `json:"fork_from_render_plan_id" jsonschema_description:"兼容旧字段：mode=fork_from 时的来源 RenderPlan 内部 ID。通常由当前任务上下文提供，不能和 render_plan_id 同时作为写入目标。"`
 	Scope                RenderPlanScopeInput      `json:"scope" jsonschema_description:"RenderPlan 归属对象。通常可以省略，工具会继承当前 Craftsman task scope；只有确有必要时才填写，且必须与当前 task scope 一致。"`
-	TargetPhase          string                    `json:"target_phase" jsonschema:"enum=reference_image,enum=preview_image,enum=shot_video" jsonschema_description:"目标阶段。通常可以省略，工具会继承当前 Craftsman task target_phase。reference_image 为关键元素参考图；preview_image 为分镜预览图；shot_video 为分镜视频。"`
+	TargetPhase          string                    `json:"target_phase" jsonschema:"enum=reference_image,enum=preview_image,enum=shot_video,enum=voiceover_audio,enum=bgm_audio" jsonschema_description:"目标阶段。通常可以省略，工具会继承当前 Craftsman task target_phase。reference_image 为关键元素参考图；preview_image 为分镜预览图；shot_video 为分镜视频；voiceover_audio 和 bgm_audio 为全片 AudioPlan 音频计划。"`
 	TaskType             string                    `json:"task_type" jsonschema:"enum=generate,enum=edit,enum=extend,enum=bridge" jsonschema_description:"生成任务类型。通常省略，默认 generate；只有明确做编辑、延长、桥接时填写 edit/extend/bridge。"`
-	ModelPromptProfile   string                    `json:"model_prompt_profile" jsonschema:"enum=seedream_5_image,enum=seedance_2_video" jsonschema_description:"通常省略，由 target_phase 自动推导：reference_image/preview_image 使用 seedream_5_image，shot_video 使用 seedance_2_video。"`
-	Operation            string                    `json:"operation" jsonschema:"enum=text_to_image,enum=image_to_image,enum=multi_image_to_image,enum=text_to_video,enum=image_to_video_first_frame,enum=image_to_video_first_last_frame,enum=multi_modal_reference_video,enum=video_edit,enum=video_extend,enum=video_bridge" jsonschema_description:"通常省略，由 target_phase 和 reference_bindings 自动推导。只有你明确知道需要 edit/extend/bridge 或特殊首尾帧时才填写。不要填 provider API 私有枚举。"`
+	ModelPromptProfile   string                    `json:"model_prompt_profile" jsonschema:"enum=seedream_5_image,enum=seedance_2_video,enum=seed_audio_1" jsonschema_description:"通常省略，由 target_phase 自动推导：reference_image/preview_image 使用 seedream_5_image，shot_video 使用 seedance_2_video，voiceover_audio/bgm_audio 使用 seed_audio_1。"`
+	Operation            string                    `json:"operation" jsonschema:"enum=text_to_image,enum=image_to_image,enum=multi_image_to_image,enum=text_to_video,enum=image_to_video_first_frame,enum=image_to_video_first_last_frame,enum=multi_modal_reference_video,enum=video_edit,enum=video_extend,enum=video_bridge,enum=text_to_audio" jsonschema_description:"通常省略，由 target_phase 和 reference_bindings 自动推导。只有你明确知道需要 edit/extend/bridge 或特殊首尾帧时才填写。不要填 provider API 私有枚举。"`
 	ReferenceBindings    []ReferenceBindingInput   `json:"reference_bindings" jsonschema_description:"本计划使用的参考资源绑定。只填写真实需要的资源，通常 0 到 3 个；不要为了完整而编造引用。"`
 	SubjectBindings      []SubjectBindingInput     `json:"subject_bindings" jsonschema_description:"可选高级字段。只有需要显式声明主体句柄时才填写；一般把主体与一致性要求写进 generation_text 即可，避免长 JSON。"`
 	PromptParts          RenderPromptPartsInput    `json:"prompt_parts" jsonschema_description:"可选高级字段。一般留空，工具会把 generation_text 编译为 prompt_parts.objective；视频计划也会用 generation_text 兜底 action。只有确实需要结构化拆分时，才填写少量字段。"`
@@ -44,7 +44,7 @@ type UpsertRenderPlanToolInput struct {
 }
 
 type RenderPlanScopeInput struct {
-	Type string `json:"type" jsonschema:"enum=key_element_state,enum=shot" jsonschema_description:"RenderPlan 归属类型。通常省略并继承当前 Craftsman task。key_element_state 通常对应 reference_image；shot 对应 preview_image 或 shot_video。"`
+	Type string `json:"type" jsonschema:"enum=key_element_state,enum=shot,enum=audio_plan" jsonschema_description:"RenderPlan 归属类型。通常省略并继承当前 Craftsman task。key_element_state 通常对应 reference_image；shot 对应 preview_image 或 shot_video；audio_plan 对应 voiceover_audio 或 bgm_audio。"`
 	ID   string `json:"id" jsonschema_description:"兼容旧字段：归属对象内部 ID。通常省略并继承当前 Craftsman task。"`
 	Key  string `json:"key" jsonschema_description:"归属对象语义键，例如 scene_main.shot_01 或 element_airport.state_morning。通常省略并继承当前 Craftsman task；模型不要编造。"`
 }
@@ -96,6 +96,12 @@ type RenderPlanParamsInput struct {
 	DurationSec               float64 `json:"duration_sec" jsonschema_description:"视频时长，单位秒。Seedance 当前只支持 5 或 10 秒；图片计划为空或 0。不要填写 4、6、8、15 等非模型能力值。"`
 	Resolution                string  `json:"resolution" jsonschema_description:"分辨率档位，例如 1080p、2K、4K。必须符合模型能力。"`
 	Watermark                 bool    `json:"watermark" jsonschema_description:"是否添加水印。生产广告通常 false，除非配置要求。"`
+	Speaker                   string  `json:"speaker" jsonschema_description:"seed-audio-1.0 音色 ID。voiceover_audio 通常需要填写；bgm_audio 通常为空。"`
+	Format                    string  `json:"format" jsonschema_description:"音频输出格式，例如 mp3、wav、pcm、ogg_opus。"`
+	SampleRate                int     `json:"sample_rate" jsonschema_description:"音频采样率，例如 48000。"`
+	SpeechRate                float64 `json:"speech_rate" jsonschema_description:"语速调节参数。"`
+	PitchRate                 float64 `json:"pitch_rate" jsonschema_description:"音调调节参数。"`
+	LoudnessRate              float64 `json:"loudness_rate" jsonschema_description:"音量调节参数。"`
 	GenerateAudio             bool    `json:"generate_audio" jsonschema_description:"Seedance 是否生成音频。没有明确音频计划时默认 false。"`
 	ReturnLastFrame           bool    `json:"return_last_frame" jsonschema_description:"是否返回尾帧。last_frame_chain 的上游视频通常需要 true。"`
 	CameraFixed               bool    `json:"camera_fixed" jsonschema_description:"是否固定镜头。与 camera prompt 冲突时工具应返回错误。"`
@@ -261,7 +267,7 @@ func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {
 	if err := requireText(input.Scope.Type, "scope.type"); err != nil {
 		return err
 	}
-	if err := requireMode(input.Scope.Type, "key_element_state", "shot"); err != nil {
+	if err := requireMode(input.Scope.Type, "key_element_state", "shot", "audio_plan"); err != nil {
 		return err
 	}
 	if _, ok := pgUUIDFromString(input.Scope.ID); !ok {
@@ -277,16 +283,16 @@ func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {
 			return fmt.Errorf("fork_from_render_plan_id 必须是系统已有 RenderPlan 的内部 ID；模型通常不要填写")
 		}
 	}
-	if err := requireMode(input.TargetPhase, "reference_image", "preview_image", "shot_video"); err != nil {
+	if err := requireMode(input.TargetPhase, "reference_image", "preview_image", "shot_video", "voiceover_audio", "bgm_audio"); err != nil {
 		return err
 	}
 	if err := requireMode(input.TaskType, "generate", "edit", "extend", "bridge"); err != nil {
 		return err
 	}
-	if err := requireMode(input.ModelPromptProfile, "seedream_5_image", "seedance_2_video"); err != nil {
+	if err := requireMode(input.ModelPromptProfile, "seedream_5_image", "seedance_2_video", "seed_audio_1"); err != nil {
 		return err
 	}
-	if err := requireMode(input.Operation, "text_to_image", "image_to_image", "multi_image_to_image", "text_to_video", "image_to_video_first_frame", "image_to_video_first_last_frame", "multi_modal_reference_video", "video_edit", "video_extend", "video_bridge"); err != nil {
+	if err := requireMode(input.Operation, "text_to_image", "image_to_image", "multi_image_to_image", "text_to_video", "image_to_video_first_frame", "image_to_video_first_last_frame", "multi_modal_reference_video", "video_edit", "video_extend", "video_bridge", "text_to_audio"); err != nil {
 		return err
 	}
 	if err := validateReferenceBindingContent(input.ReferenceBindings, input.Operation); err != nil {
@@ -443,6 +449,8 @@ func applyUpsertRenderPlanRuntimeDefaults(input UpsertRenderPlanToolInput, runti
 
 func inferRenderPlanProfile(targetPhase string) string {
 	switch strings.TrimSpace(targetPhase) {
+	case renderplan.PhaseVoiceoverAudio, renderplan.PhaseBGMAudio:
+		return renderplan.ProfileSeedAudio1
 	case renderplan.PhaseShotVideo:
 		return renderplan.ProfileSeedance2Video
 	case renderplan.PhaseReferenceImage, renderplan.PhasePreviewImage:
@@ -454,6 +462,8 @@ func inferRenderPlanProfile(targetPhase string) string {
 
 func inferRenderPlanOperation(targetPhase string, bindings []ReferenceBindingInput) string {
 	switch strings.TrimSpace(targetPhase) {
+	case renderplan.PhaseVoiceoverAudio, renderplan.PhaseBGMAudio:
+		return "text_to_audio"
 	case renderplan.PhaseShotVideo:
 		hasFirstFrame := false
 		hasLastFrame := false
@@ -601,7 +611,24 @@ func toRenderPlanPromptParts(input RenderPromptPartsInput) renderplan.PromptPart
 }
 
 func toRenderPlanParams(input RenderPlanParamsInput) renderplan.Params {
-	return renderplan.Params{Ratio: input.Ratio, DurationSec: input.DurationSec, Resolution: input.Resolution, Watermark: input.Watermark, GenerateAudio: input.GenerateAudio, ReturnLastFrame: input.ReturnLastFrame, CameraFixed: input.CameraFixed, SequentialImageGeneration: input.SequentialImageGeneration, MaxImages: input.MaxImages, Seed: input.Seed}
+	return renderplan.Params{
+		Ratio:                     input.Ratio,
+		DurationSec:               input.DurationSec,
+		Resolution:                input.Resolution,
+		Watermark:                 input.Watermark,
+		Speaker:                   input.Speaker,
+		Format:                    input.Format,
+		SampleRate:                input.SampleRate,
+		SpeechRate:                input.SpeechRate,
+		PitchRate:                 input.PitchRate,
+		LoudnessRate:              input.LoudnessRate,
+		GenerateAudio:             input.GenerateAudio,
+		ReturnLastFrame:           input.ReturnLastFrame,
+		CameraFixed:               input.CameraFixed,
+		SequentialImageGeneration: input.SequentialImageGeneration,
+		MaxImages:                 input.MaxImages,
+		Seed:                      input.Seed,
+	}
 }
 
 func toRenderPlanAuditHints(input RenderPlanAuditHintsInput) renderplan.AuditHints {

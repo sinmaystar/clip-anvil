@@ -67,6 +67,7 @@ type Store interface {
 	CreateShotDependency(ctx context.Context, arg db.CreateShotDependencyParams) (db.ShotDependency, error)
 	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
 
+	GetActiveAudioPlanByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (db.AudioPlan, error)
 	ListRenderPlansByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.RenderPlan, error)
 	ListRenderPlansByScope(ctx context.Context, arg db.ListRenderPlansByScopeParams) ([]db.RenderPlan, error)
 	ListAgentObjectsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentObjectIndex, error)
@@ -385,6 +386,11 @@ func (s *Service) ReadProjectContext(ctx context.Context, input ReadContextInput
 		return ContextPacket{}, err
 	}
 	if packet.Dependencies, err = s.store.ListShotDependenciesByWorkspace(ctx, input.WorkspaceID); err != nil {
+		return ContextPacket{}, err
+	}
+	if audioPlan, err := s.store.GetActiveAudioPlanByWorkspace(ctx, input.WorkspaceID); err == nil {
+		packet.ActiveAudioPlan = &audioPlan
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return ContextPacket{}, err
 	}
 	if shouldReadScopedRenderPlans(input.ScopeType, input.ScopeID) {

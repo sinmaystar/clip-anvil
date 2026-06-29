@@ -175,6 +175,9 @@ production:
 	if cfg.Production.Volcengine.APIKey != "" {
 		t.Fatalf("Volcengine.APIKey must not be set by committed yaml")
 	}
+	if cfg.Production.Volcengine.AudioAPIKey != "" {
+		t.Fatalf("Volcengine.AudioAPIKey must not be set by committed yaml")
+	}
 	if cfg.Production.Volcengine.Region != "cn-beijing" {
 		t.Fatalf("Volcengine.Region = %q, want cn-beijing", cfg.Production.Volcengine.Region)
 	}
@@ -192,6 +195,9 @@ production:
 	}
 	if cfg.Production.Volcengine.AudioModel != "" {
 		t.Fatalf("Volcengine.AudioModel = %q, want empty", cfg.Production.Volcengine.AudioModel)
+	}
+	if cfg.Production.Volcengine.AudioBaseURL != "" {
+		t.Fatalf("Volcengine.AudioBaseURL = %q, want empty", cfg.Production.Volcengine.AudioBaseURL)
 	}
 }
 
@@ -231,10 +237,12 @@ production:
 	t.Setenv("CLIPANVIL_PRODUCTION_PROVIDER_MODE", "real")
 	t.Setenv("CLIPANVIL_PRODUCTION_DEFAULT_PROVIDER", "volcengine")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY", "local-key")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_API_KEY", "speech-key")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TEXT_MODEL", "doubao-cheap")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_VIDEO_RESOLUTION_OVERRIDE", "480p")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_REGION", "cn-beijing")
-	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_MODEL", "")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_MODEL", "seed-audio-1.0")
+	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_BASE_URL", "https://openspeech.bytedance.com/api/v3")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_ACCESS_KEY_ID", "tos-ak")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_SECRET_ACCESS_KEY", "tos-sk")
 	t.Setenv("CLIPANVIL_PRODUCTION_VOLCENGINE_TOS_BUCKET", "clip-anvil-temp-bucket")
@@ -260,6 +268,9 @@ production:
 	if cfg.Production.Volcengine.APIKey != "local-key" {
 		t.Fatalf("Volcengine.APIKey was not loaded from env")
 	}
+	if cfg.Production.Volcengine.AudioAPIKey != "speech-key" {
+		t.Fatalf("Volcengine.AudioAPIKey was not loaded from env")
+	}
 	if cfg.Production.Volcengine.TextModel != "doubao-cheap" {
 		t.Fatalf("Volcengine.TextModel = %q, want doubao-cheap", cfg.Production.Volcengine.TextModel)
 	}
@@ -269,8 +280,11 @@ production:
 	if cfg.Production.Volcengine.Region != "cn-beijing" {
 		t.Fatalf("Volcengine.Region = %q, want cn-beijing", cfg.Production.Volcengine.Region)
 	}
-	if cfg.Production.Volcengine.AudioModel != "" {
-		t.Fatalf("Volcengine.AudioModel = %q, want empty", cfg.Production.Volcengine.AudioModel)
+	if cfg.Production.Volcengine.AudioModel != "seed-audio-1.0" {
+		t.Fatalf("Volcengine.AudioModel = %q, want seed-audio-1.0", cfg.Production.Volcengine.AudioModel)
+	}
+	if cfg.Production.Volcengine.AudioBaseURL != "https://openspeech.bytedance.com/api/v3" {
+		t.Fatalf("Volcengine.AudioBaseURL = %q", cfg.Production.Volcengine.AudioBaseURL)
 	}
 	if cfg.Production.Volcengine.TOS.AccessKeyID != "tos-ak" {
 		t.Fatalf("Volcengine.TOS.AccessKeyID was not loaded from env")

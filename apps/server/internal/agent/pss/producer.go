@@ -25,6 +25,7 @@ type Store interface {
 	ListActiveScenesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.Scene, error)
 	ListActiveShotsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.Shot, error)
 	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
+	GetActiveAudioPlanByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (db.AudioPlan, error)
 	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
 	ListAgentEventsByWorkspaceStatus(ctx context.Context, params db.ListAgentEventsByWorkspaceStatusParams) ([]db.AgentEvent, error)
 	ListGenerationJobsByNode(ctx context.Context, nodeID pgtype.UUID) ([]db.GenerationJob, error)
@@ -86,6 +87,10 @@ func (b *Builder) BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID)
 	if err != nil {
 		return ProducerPSS{}, err
 	}
+	audioPlan, hasAudioPlan, err := b.activeAudioPlan(ctx, workspaceID)
+	if err != nil {
+		return ProducerPSS{}, err
+	}
 	tasks, err := b.store.ListActiveAgentTasksByWorkspace(ctx, workspaceID)
 	if err != nil {
 		return ProducerPSS{}, err
@@ -129,11 +134,12 @@ func (b *Builder) BuildProducerPSS(ctx context.Context, workspaceID pgtype.UUID)
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Title < nodes[j].Title })
 
 	dependencyStatus := dependencyStatusSummaries(events, shots)
-	text := renderPSS(workspace, nodes, briefPointer(brief, hasBrief), memoryPointer(memory, hasMemory), elements, elementStates, scenes, shots, deps, tasks, events, previewByShot, shotVideoByShot, finalOutputs, reviews, issues, dependencyStatus)
+	text := renderPSS(workspace, nodes, briefPointer(brief, hasBrief), memoryPointer(memory, hasMemory), elements, elementStates, scenes, shots, deps, audioPlanPointer(audioPlan, hasAudioPlan), tasks, events, previewByShot, shotVideoByShot, finalOutputs, reviews, issues, dependencyStatus)
 	structured := map[string]any{
 		"workspace":         workspaceSummary(workspace),
 		"creative_brief":    creativeBriefSummary(brief, hasBrief),
 		"project_memory":    projectMemorySummary(memory, hasMemory),
+		"audio_plan":        audioPlanSummary(audioPlan, hasAudioPlan),
 		"key_elements":      keyElementSummaries(elements, elementStates),
 		"scenes":            sceneSummaries(scenes),
 		"source_materials":  nodeSummaries(nodes),
@@ -168,6 +174,14 @@ func (b *Builder) activeMemory(ctx context.Context, workspaceID pgtype.UUID) (db
 		return db.ProjectMemory{}, false, nil
 	}
 	return memory, err == nil, err
+}
+
+func (b *Builder) activeAudioPlan(ctx context.Context, workspaceID pgtype.UUID) (db.AudioPlan, bool, error) {
+	audioPlan, err := b.store.GetActiveAudioPlanByWorkspace(ctx, workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.AudioPlan{}, false, nil
+	}
+	return audioPlan, err == nil, err
 }
 
 type previewNodeState struct {
@@ -246,7 +260,7 @@ func (b *Builder) finalOutputNodes(ctx context.Context, nodes []db.MediaNode) ([
 	return out, nil
 }
 
-func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeBrief, memory *db.ProjectMemory, elements []db.KeyElement, elementStates []db.KeyElementState, scenes []db.Scene, shots []db.Shot, deps []db.ShotDependency, tasks []db.AgentTask, events []db.AgentEvent, previewByShot map[pgtype.UUID][]previewNodeState, shotVideoByShot map[pgtype.UUID][]previewNodeState, finalOutputs []previewNodeState, reviews []db.ReviewRecord, issues []db.ArtifactIssue, dependencyStatus []map[string]any) string {
+func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeBrief, memory *db.ProjectMemory, elements []db.KeyElement, elementStates []db.KeyElementState, scenes []db.Scene, shots []db.Shot, deps []db.ShotDependency, audioPlan *db.AudioPlan, tasks []db.AgentTask, events []db.AgentEvent, previewByShot map[pgtype.UUID][]previewNodeState, shotVideoByShot map[pgtype.UUID][]previewNodeState, finalOutputs []previewNodeState, reviews []db.ReviewRecord, issues []db.ArtifactIssue, dependencyStatus []map[string]any) string {
 	var b strings.Builder
 	b.WriteString("当前项目\n")
 	b.WriteString("- Workspace: " + workspace.Name + "\n")
@@ -301,6 +315,24 @@ func renderPSS(workspace db.Workspace, nodes []db.MediaNode, brief *db.CreativeB
 	} else {
 		for _, scene := range scenes {
 			fmt.Fprintf(&b, "- [%s] %s, location=%s, mood=%s\n", scene.ClientKey, scene.Title, scene.Location, scene.Mood)
+		}
+	}
+	b.WriteString("\n")
+
+	b.WriteString("AudioPlan\n")
+	if audioPlan == nil {
+		b.WriteString("- 无 active AudioPlan\n")
+	} else {
+		duration := ""
+		if audioPlan.TargetDurationSec.Valid {
+			duration = fmt.Sprintf(", target=%.1fs", audioPlan.TargetDurationSec.Float64)
+		}
+		fmt.Fprintf(&b, "- %s, status=%s, language=%s%s, cue_count=%d\n", audioPlan.Title, audioPlan.Status, audioPlan.Language, duration, cueCount(audioPlan.CuePlan))
+		if strings.TrimSpace(audioPlan.VoiceoverScript) != "" {
+			b.WriteString("  Voiceover: " + trimExcerpt(audioPlan.VoiceoverScript, 120) + "\n")
+		}
+		if bgm := compactJSONText(audioPlan.BgmPlan); bgm != "" {
+			b.WriteString("  BGM: " + bgm + "\n")
 		}
 	}
 	b.WriteString("\n")
@@ -507,6 +539,13 @@ func memoryPointer(memory db.ProjectMemory, ok bool) *db.ProjectMemory {
 	return &memory
 }
 
+func audioPlanPointer(audioPlan db.AudioPlan, ok bool) *db.AudioPlan {
+	if !ok {
+		return nil
+	}
+	return &audioPlan
+}
+
 func creativeBriefSummary(brief db.CreativeBrief, ok bool) map[string]any {
 	if !ok {
 		return nil
@@ -536,6 +575,27 @@ func projectMemorySummary(memory db.ProjectMemory, ok bool) map[string]any {
 		"status":      memory.Status,
 		"core_intent": memory.CoreIntent,
 		"soul":        memory.Soul,
+	}
+}
+
+func audioPlanSummary(audioPlan db.AudioPlan, ok bool) map[string]any {
+	if !ok {
+		return nil
+	}
+	var targetDuration any
+	if audioPlan.TargetDurationSec.Valid {
+		targetDuration = audioPlan.TargetDurationSec.Float64
+	}
+	return map[string]any{
+		"ref":                 defaultString(audioPlan.SemanticKey, "audio_plan.active"),
+		"title":               audioPlan.Title,
+		"status":              audioPlan.Status,
+		"language":            audioPlan.Language,
+		"target_duration_sec": targetDuration,
+		"voiceover_excerpt":   trimExcerpt(audioPlan.VoiceoverScript, 160),
+		"voice_profile":       jsonMap(audioPlan.VoiceProfile),
+		"bgm_plan":            jsonMap(audioPlan.BgmPlan),
+		"cue_count":           cueCount(audioPlan.CuePlan),
 	}
 }
 
@@ -874,6 +934,56 @@ func briefSummary(raw []byte) string {
 		return ""
 	}
 	return text
+}
+
+func cueCount(raw []byte) int {
+	if len(raw) == 0 {
+		return 0
+	}
+	var items []any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return 0
+	}
+	return len(items)
+}
+
+func jsonMap(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+func compactJSONText(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	next, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	text := string(next)
+	if text == "{}" || text == "null" {
+		return ""
+	}
+	return trimExcerpt(text, 180)
+}
+
+func trimExcerpt(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 || len([]rune(text)) <= limit {
+		return text
+	}
+	runes := []rune(text)
+	return string(runes[:limit]) + "..."
 }
 
 func defaultJSON(raw []byte) []byte {

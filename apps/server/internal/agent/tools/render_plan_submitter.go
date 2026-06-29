@@ -18,6 +18,8 @@ type RenderPlanSubmitStore interface {
 	GetShotByID(ctx context.Context, id pgtype.UUID) (db.Shot, error)
 	GetKeyElementStateByID(ctx context.Context, params db.GetKeyElementStateByIDParams) (db.KeyElementState, error)
 	MarkRenderPlanSubmitted(ctx context.Context, params db.MarkRenderPlanSubmittedParams) (db.RenderPlan, error)
+	SetAudioPlanVoiceoverRenderPlan(ctx context.Context, params db.SetAudioPlanVoiceoverRenderPlanParams) (db.AudioPlan, error)
+	SetAudioPlanBGMRenderPlan(ctx context.Context, params db.SetAudioPlanBGMRenderPlanParams) (db.AudioPlan, error)
 }
 
 type RenderPlanSubmitRuntime interface {
@@ -82,6 +84,9 @@ func (s *RenderPlanSubmitter) SubmitRenderPlan(ctx context.Context, workspaceID 
 	if err != nil {
 		return db.AgentTask{}, db.RenderPlan{}, err
 	}
+	if err := s.linkAudioPlanRenderPlan(ctx, workspaceID, submitted); err != nil {
+		return db.AgentTask{}, db.RenderPlan{}, err
+	}
 	_, _ = s.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{
 		WorkspaceID: workspaceID,
 		ThreadID:    threadID,
@@ -121,6 +126,11 @@ func (s *RenderPlanSubmitter) workerInputForRenderPlan(ctx context.Context, work
 			return agentworker.GenerationInput{}, err
 		}
 		return workerInputForKeyElementStateRenderPlan(plan, state), nil
+	case "audio_plan":
+		if plan.TargetPhase != "voiceover_audio" && plan.TargetPhase != "bgm_audio" {
+			return agentworker.GenerationInput{}, fmt.Errorf("audio_plan 级 RenderPlan 只支持 voiceover_audio 或 bgm_audio")
+		}
+		return workerInputForAudioPlanRenderPlan(plan), nil
 	default:
 		return agentworker.GenerationInput{}, fmt.Errorf("不支持提交 %s 级 RenderPlan", plan.ScopeType)
 	}
@@ -176,15 +186,103 @@ func workerInputForKeyElementStateRenderPlan(plan db.RenderPlan, state db.KeyEle
 	}
 }
 
+func workerInputForAudioPlanRenderPlan(plan db.RenderPlan) agentworker.GenerationInput {
+	params := map[string]any{}
+	_ = json.Unmarshal(defaultJSON(plan.Params), &params)
+	return agentworker.GenerationInput{
+		Mode:              plan.TargetPhase,
+		TargetPhase:       plan.TargetPhase,
+		ScopeType:         plan.ScopeType,
+		ScopeID:           uuidString(plan.ScopeID),
+		ScopeKey:          audioPlanScopeKey(plan),
+		RenderPlanKey:     plan.SemanticKey,
+		CraftsmanThreadID: uuidString(plan.CreatedByThreadID),
+		CraftsmanTaskID:   uuidString(plan.CreatedByTaskID),
+		Strategy:          strings.TrimSpace(plan.Rationale),
+		Prompt:            strings.TrimSpace(plan.CompiledPrompt),
+		OutputType:        outputTypeForRenderPlan(plan),
+		OperationType:     plan.Operation,
+		Model:             modelForRenderPlan(plan),
+		Params:            params,
+		MaxAttempts:       3,
+	}
+}
+
 func outputTypeForRenderPlan(plan db.RenderPlan) string {
 	if plan.TargetPhase == "shot_video" {
 		return "video"
+	}
+	if plan.TargetPhase == "voiceover_audio" || plan.TargetPhase == "bgm_audio" {
+		return "audio"
 	}
 	return "image"
 }
 
 func modelForRenderPlan(plan db.RenderPlan) agentworker.ModelSpec {
-	return agentworker.ModelSpec{}
+	params := map[string]any{}
+	_ = json.Unmarshal(defaultJSON(plan.Params), &params)
+	provider := strings.TrimSpace(stringAnyValue(params["provider"]))
+	modelID := strings.TrimSpace(firstNonEmpty(stringAnyValue(params["model_id"]), stringAnyValue(params["model"])))
+	if plan.ModelPromptProfile == "seed_audio_1" || plan.TargetPhase == "voiceover_audio" || plan.TargetPhase == "bgm_audio" {
+		if provider == "" {
+			provider = "volcengine"
+		}
+		if modelID == "" {
+			modelID = "seed-audio-1.0"
+		}
+	}
+	return agentworker.ModelSpec{Provider: provider, ModelID: modelID}
+}
+
+func (s *RenderPlanSubmitter) linkAudioPlanRenderPlan(ctx context.Context, workspaceID pgtype.UUID, plan db.RenderPlan) error {
+	if plan.ScopeType != "audio_plan" {
+		return nil
+	}
+	switch plan.TargetPhase {
+	case "voiceover_audio":
+		_, err := s.store.SetAudioPlanVoiceoverRenderPlan(ctx, db.SetAudioPlanVoiceoverRenderPlanParams{
+			ID:                    plan.ScopeID,
+			WorkspaceID:           workspaceID,
+			VoiceoverRenderPlanID: plan.ID,
+		})
+		return err
+	case "bgm_audio":
+		_, err := s.store.SetAudioPlanBGMRenderPlan(ctx, db.SetAudioPlanBGMRenderPlanParams{
+			ID:              plan.ScopeID,
+			WorkspaceID:     workspaceID,
+			BgmRenderPlanID: plan.ID,
+		})
+		return err
+	default:
+		return nil
+	}
+}
+
+func audioPlanScopeKey(plan db.RenderPlan) string {
+	if strings.HasPrefix(strings.TrimSpace(plan.SemanticKey), "audio_plan.active.") {
+		return "audio_plan.active"
+	}
+	return "audio_plan.active"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func stringAnyValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return ""
+	}
 }
 
 type renderPlanReferenceBinding struct {

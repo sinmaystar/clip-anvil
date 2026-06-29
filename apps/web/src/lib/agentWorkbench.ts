@@ -9,6 +9,7 @@ export interface AgentWorkbenchOverview {
   workspace_id: string;
   brief?: AgentWorkbenchBrief;
   memory?: AgentWorkbenchMemory;
+  audio_plan?: AgentWorkbenchAudioPlan | null;
   key_elements: AgentWorkbenchKeyElement[];
   key_element_states: AgentWorkbenchKeyElementState[];
   source_materials: AgentWorkbenchSourceMaterial[];
@@ -49,6 +50,26 @@ export interface AgentWorkbenchSourceMaterial {
   title: string;
   node_type: string;
   status: string;
+}
+
+export interface AgentWorkbenchAudioPlan {
+  id: string;
+  status: string;
+  title: string;
+  plan_kind?: string;
+  language?: string;
+  target_duration_sec?: number;
+  voiceover_script?: string;
+  voice_profile?: Record<string, unknown>;
+  bgm_plan?: Record<string, unknown>;
+  cue_plan?: unknown;
+  voiceover_node_id?: string;
+  voiceover_status?: string;
+  bgm_node_id?: string;
+  bgm_status?: string;
+  timeline_plan_id?: string;
+  voiceover_render_plan_id?: string;
+  bgm_render_plan_id?: string;
 }
 
 export interface AgentWorkbenchScene {
@@ -150,9 +171,30 @@ export interface AgentWorkbenchFinalOutput {
   thumbnail_url?: string;
   asset_id?: string;
   mime?: string;
+  audio_summary?: AgentWorkbenchAudioSummary | null;
+  audio_tracks?: AgentWorkbenchAudioTrack[];
+  final_review?: AgentWorkbenchReviewSummary | null;
   plan?: Record<string, unknown>;
   result?: Record<string, unknown>;
   updated_at?: string;
+}
+
+export interface AgentWorkbenchAudioSummary {
+  has_voiceover: boolean;
+  has_bgm: boolean;
+  audio_codec?: string;
+  track_count: number;
+  ducking: boolean;
+}
+
+export interface AgentWorkbenchAudioTrack {
+  role: string;
+  asset_id?: string;
+  workspace_path?: string;
+  start_sec?: number;
+  duration_sec?: number;
+  volume?: number;
+  ducking?: boolean;
 }
 
 export interface AgentWorkbenchCounts {
@@ -164,6 +206,9 @@ export interface AgentWorkbenchCounts {
   video_failed: number;
   open_issues: number;
   needs_reference: number;
+  audio_ready: number;
+  audio_missing: number;
+  final_reviews: number;
 }
 
 export function agentWorkbenchVisibleNodeCount(

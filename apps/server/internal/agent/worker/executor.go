@@ -42,6 +42,9 @@ type Store interface {
 	CreateMediaEdge(ctx context.Context, params db.CreateMediaEdgeParams) (db.MediaEdge, error)
 	UpdateShotStatus(ctx context.Context, params db.UpdateShotStatusParams) (db.Shot, error)
 	UpdateKeyElementState(ctx context.Context, params db.UpdateKeyElementStateParams) (db.KeyElementState, error)
+	SetAudioPlanVoiceoverNode(ctx context.Context, params db.SetAudioPlanVoiceoverNodeParams) (db.AudioPlan, error)
+	SetAudioPlanBGMNode(ctx context.Context, params db.SetAudioPlanBGMNodeParams) (db.AudioPlan, error)
+	MarkRenderPlanSubmitted(ctx context.Context, params db.MarkRenderPlanSubmittedParams) (db.RenderPlan, error)
 	MarkRenderPlanCompleted(ctx context.Context, params db.MarkRenderPlanCompletedParams) (db.RenderPlan, error)
 }
 
@@ -169,6 +172,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr erro
 	}
 	rawOutput, _ := json.Marshal(output)
 	if err := e.markScopedKeyElementStateReady(ctx, task, result); err != nil {
+		return e.fail(ctx, task, "worker_generation_state_update_failed", err)
+	}
+	if err := e.markScopedAudioPlanSubmitted(ctx, task, workerInput, result); err != nil {
 		return e.fail(ctx, task, "worker_generation_state_update_failed", err)
 	}
 	if _, err := e.runtime.MarkTaskSucceeded(ctx, task.ID, rawOutput); err != nil {
@@ -331,7 +337,7 @@ func parseGenerationInput(raw []byte) (GenerationInput, error) {
 	if input.Mode == "" {
 		input.Mode = "preview_image"
 	}
-	if input.Mode != "reference_image" && input.Mode != "preview_image" && input.Mode != "shot_video" {
+	if input.Mode != "reference_image" && input.Mode != "preview_image" && input.Mode != "shot_video" && input.Mode != "voiceover_audio" && input.Mode != "bgm_audio" {
 		return GenerationInput{}, ErrInvalidInput
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
@@ -584,6 +590,44 @@ func (e *Executor) markScopedKeyElementStateReady(ctx context.Context, task db.A
 	return nil
 }
 
+func (e *Executor) markScopedAudioPlanSubmitted(ctx context.Context, task db.AgentTask, input GenerationInput, result production.RunResult) error {
+	if e == nil || e.store == nil || task.ScopeType != "audio_plan" || !task.ScopeID.Valid || !task.WorkspaceID.Valid {
+		return nil
+	}
+	switch input.Mode {
+	case "voiceover_audio":
+		if _, err := e.store.SetAudioPlanVoiceoverNode(ctx, db.SetAudioPlanVoiceoverNodeParams{
+			ID:              task.ScopeID,
+			WorkspaceID:     task.WorkspaceID,
+			VoiceoverNodeID: result.Node.ID,
+		}); err != nil {
+			return err
+		}
+	case "bgm_audio":
+		if _, err := e.store.SetAudioPlanBGMNode(ctx, db.SetAudioPlanBGMNodeParams{
+			ID:          task.ScopeID,
+			WorkspaceID: task.WorkspaceID,
+			BgmNodeID:   result.Node.ID,
+		}); err != nil {
+			return err
+		}
+	default:
+		return nil
+	}
+	if task.RenderPlanID.Valid {
+		_, err := e.store.MarkRenderPlanSubmitted(ctx, db.MarkRenderPlanSubmittedParams{
+			ID:                    task.RenderPlanID,
+			WorkspaceID:           task.WorkspaceID,
+			SubmittedWorkerTaskID: task.ID,
+			OutputNodeID:          result.Node.ID,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type generationSpecValue struct {
 	NodeType      db.NodeType
 	OutputType    string
@@ -595,6 +639,40 @@ type generationSpecValue struct {
 
 func generationSpec(input GenerationInput) generationSpecValue {
 	switch input.Mode {
+	case "voiceover_audio":
+		operationType := strings.TrimSpace(input.OperationType)
+		if operationType == "" {
+			operationType = "text_to_audio"
+		}
+		outputType := strings.TrimSpace(input.OutputType)
+		if outputType == "" {
+			outputType = "audio"
+		}
+		return generationSpecValue{
+			NodeType:      db.NodeTypeAudio,
+			OutputType:    outputType,
+			OperationType: operationType,
+			ArtifactKind:  "voiceover_audio",
+			SourcePhase:   "voiceover_audio",
+			CanvasW:       320,
+		}
+	case "bgm_audio":
+		operationType := strings.TrimSpace(input.OperationType)
+		if operationType == "" {
+			operationType = "text_to_audio"
+		}
+		outputType := strings.TrimSpace(input.OutputType)
+		if outputType == "" {
+			outputType = "audio"
+		}
+		return generationSpecValue{
+			NodeType:      db.NodeTypeAudio,
+			OutputType:    outputType,
+			OperationType: operationType,
+			ArtifactKind:  "bgm_audio",
+			SourcePhase:   "bgm_audio",
+			CanvasW:       320,
+		}
 	case "reference_image":
 		operationType := strings.TrimSpace(input.OperationType)
 		if operationType == "" {
@@ -649,6 +727,12 @@ func generationSpec(input GenerationInput) generationSpecValue {
 }
 
 func nodeTitle(input GenerationInput) string {
+	if input.Mode == "voiceover_audio" {
+		return "AudioPlan voiceover audio"
+	}
+	if input.Mode == "bgm_audio" {
+		return "AudioPlan BGM audio"
+	}
 	if input.Mode == "reference_image" {
 		if strings.TrimSpace(input.KeyElementStateClientKey) != "" {
 			return input.KeyElementStateClientKey + " reference image"
@@ -668,6 +752,12 @@ func nodeTitle(input GenerationInput) string {
 }
 
 func nodePosition(input GenerationInput) (float32, float32) {
+	if input.Mode == "voiceover_audio" {
+		return 140, 1940
+	}
+	if input.Mode == "bgm_audio" {
+		return 660, 1940
+	}
 	if input.Mode == "reference_image" {
 		return 140, 140
 	}
@@ -702,6 +792,8 @@ func submittedEventType(mode string) string {
 	switch mode {
 	case "shot_video":
 		return "shot_video_submitted"
+	case "voiceover_audio", "bgm_audio":
+		return "audio_generation_submitted"
 	default:
 		return ""
 	}

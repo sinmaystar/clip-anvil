@@ -101,9 +101,100 @@ func TestContextLoaderIncludesDependenciesAndSourceMaterials(t *testing.T) {
 	}
 }
 
+func TestContextLoaderBuildsAudioPlanScopedContext(t *testing.T) {
+	audioPlanID := uuidWithByte(6)
+	store := &fakeContextStore{
+		audioPlan: db.AudioPlan{
+			ID:                audioPlanID,
+			WorkspaceID:       uuidWithByte(1),
+			Status:            "approved",
+			Title:             "全片旁白与 BGM",
+			Language:          "zh",
+			TargetDurationSec: pgtype.Float8{Float64: 12, Valid: true},
+			VoiceoverScript:   "现在出发，让旅程更轻松。",
+			VoiceProfile:      []byte(`{"style":"warm female voice"}`),
+			BgmPlan:           []byte(`{"source":"generated","model":"seed-audio-1.0","style":"bright electronic pop"}`),
+			CuePlan:           []byte(`[{"shot_ref":"shot_01","start_sec":0,"end_sec":4,"text":"现在出发"},{"shot_ref":"shot_02","start_sec":4,"end_sec":8,"text":"让旅程更轻松"}]`),
+			SemanticKey:       "audio_plan.active",
+		},
+		shots: []db.Shot{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", Title: "开场", Status: "preview_ready", SortOrder: 1},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot_02", Title: "收尾", Status: "preview_ready", SortOrder: 2},
+		},
+		renderPlans: []db.RenderPlan{
+			{ID: uuidWithByte(21), WorkspaceID: uuidWithByte(1), ScopeType: "audio_plan", ScopeID: audioPlanID, TargetPhase: "voiceover_audio", Status: "waiting_for_producer", ModelPromptProfile: "seed_audio_1", Operation: "text_to_audio"},
+		},
+	}
+	runtime := &fakeMessageRuntime{messages: []db.AgentMessage{{ID: uuidWithByte(41), Role: "assistant", MessageType: "text", Content: []byte(`{"text":"old audio strategy"}`)}}}
+	loader := ContextLoader{Store: store, Runtime: runtime}
+
+	out, err := loader.Load(context.Background(), GraphInput{
+		WorkspaceID:     uuidWithByte(1),
+		ThreadID:        uuidWithByte(4),
+		TaskID:          uuidWithByte(5),
+		ScopeType:       "audio_plan",
+		ScopeID:         audioPlanID,
+		ScopeKey:        "audio_plan.active",
+		Mode:            "voiceover_audio",
+		ExecutionPolicy: "wait_for_producer",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.AudioPlan.ID != audioPlanID {
+		t.Fatalf("audio plan = %#v", out.AudioPlan)
+	}
+	if len(out.Shots) != 2 || out.Shots[0].ClientKey != "shot_01" {
+		t.Fatalf("shots = %#v", out.Shots)
+	}
+	if len(out.RenderPlans) != 1 || out.RenderPlans[0].TargetPhase != "voiceover_audio" {
+		t.Fatalf("render plans = %#v", out.RenderPlans)
+	}
+	audioStructured, ok := out.Structured["audio_plan"].(map[string]any)
+	if !ok || audioStructured["status"] != "approved" {
+		t.Fatalf("structured = %#v", out.Structured)
+	}
+	for _, want := range []string{"AudioPlan", "全片旁白与 BGM", "voiceover_audio", "shot_01", "现在出发", "seed-audio-1.0", "waiting_for_producer"} {
+		if !strings.Contains(out.Text, want) {
+			t.Fatalf("context text missing %q: %q", want, out.Text)
+		}
+	}
+	if len(out.Messages) != 1 {
+		t.Fatalf("messages = %#v", out.Messages)
+	}
+}
+
+func TestContextLoaderRejectsUnapprovedAudioPlan(t *testing.T) {
+	audioPlanID := uuidWithByte(6)
+	store := &fakeContextStore{
+		audioPlan: db.AudioPlan{
+			ID:          audioPlanID,
+			WorkspaceID: uuidWithByte(1),
+			Status:      "waiting_for_user",
+			Title:       "待确认音频方案",
+		},
+	}
+	loader := ContextLoader{Store: store}
+
+	_, err := loader.Load(context.Background(), GraphInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(4),
+		TaskID:      uuidWithByte(5),
+		ScopeType:   "audio_plan",
+		ScopeID:     audioPlanID,
+		Mode:        "bgm_audio",
+	})
+	if err == nil || !strings.Contains(err.Error(), "approved") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 type fakeContextStore struct {
 	shot            db.Shot
 	keyElementState db.KeyElementState
+	audioPlan       db.AudioPlan
+	shots           []db.Shot
+	renderPlans     []db.RenderPlan
 	nodes           []db.MediaNode
 	sourceNodes     []db.MediaNode
 	dependencies    []db.ShotDependency
@@ -117,6 +208,40 @@ func (f *fakeContextStore) GetShotByID(context.Context, pgtype.UUID) (db.Shot, e
 
 func (f *fakeContextStore) GetKeyElementStateByID(context.Context, db.GetKeyElementStateByIDParams) (db.KeyElementState, error) {
 	return f.keyElementState, nil
+}
+
+func (f *fakeContextStore) GetAudioPlan(_ context.Context, params db.GetAudioPlanParams) (db.AudioPlan, error) {
+	if f.audioPlan.ID != params.ID || f.audioPlan.WorkspaceID != params.WorkspaceID {
+		return db.AudioPlan{}, ErrInvalidInput
+	}
+	return f.audioPlan, nil
+}
+
+func (f *fakeContextStore) GetActiveAudioPlanByWorkspace(_ context.Context, workspaceID pgtype.UUID) (db.AudioPlan, error) {
+	if f.audioPlan.WorkspaceID != workspaceID || f.audioPlan.ArchivedAt.Valid {
+		return db.AudioPlan{}, ErrInvalidInput
+	}
+	return f.audioPlan, nil
+}
+
+func (f *fakeContextStore) ListActiveShotsByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.Shot, error) {
+	out := []db.Shot{}
+	for _, shot := range f.shots {
+		if shot.WorkspaceID == workspaceID {
+			out = append(out, shot)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeContextStore) ListRenderPlansByScope(_ context.Context, params db.ListRenderPlansByScopeParams) ([]db.RenderPlan, error) {
+	out := []db.RenderPlan{}
+	for _, plan := range f.renderPlans {
+		if plan.WorkspaceID == params.WorkspaceID && plan.ScopeType == params.ScopeType && plan.ScopeID == params.ScopeID {
+			out = append(out, plan)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeContextStore) ListMediaNodesByShot(_ context.Context, params db.ListMediaNodesByShotParams) ([]db.MediaNode, error) {
