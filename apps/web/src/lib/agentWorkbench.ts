@@ -65,8 +65,10 @@ export interface AgentWorkbenchAudioPlan {
   cue_plan?: unknown;
   voiceover_node_id?: string;
   voiceover_status?: string;
+  voiceover_artifact?: AgentWorkbenchArtifactSlot;
   bgm_node_id?: string;
   bgm_status?: string;
+  bgm_artifact?: AgentWorkbenchArtifactSlot;
   timeline_plan_id?: string;
   voiceover_render_plan_id?: string;
   bgm_render_plan_id?: string;

@@ -280,9 +280,24 @@ export function MediaFlowNode({
               )}
             </div>
           ) : node.node_type === "audio" ? (
-            <div className="media-node-placeholder">
-              <span className="media-node-waveform" />
-              <span>音频预览</span>
+            <div className="media-node-audio-preview">
+              <div className="media-node-audio-summary">
+                <span className="media-node-waveform" />
+                <span>{previewAssetUrl ? previewText : "音频预览"}</span>
+              </div>
+              {previewAssetUrl ? (
+                <audio
+                  aria-label={`播放 ${title}`}
+                  className="media-node-audio-player nodrag nopan"
+                  controls
+                  preload="metadata"
+                  src={previewAssetUrl}
+                />
+              ) : (
+                <div className="media-node-placeholder">
+                  <span>音频预览</span>
+                </div>
+              )}
             </div>
           ) : (
             <div className="media-node-placeholder">

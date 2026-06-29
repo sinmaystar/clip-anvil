@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   agentWorkbenchToFlow,
+  audioNodeId,
   finalOutputNodeId,
   sceneNodeId,
   shotNodeId,
@@ -134,6 +135,107 @@ describe("agent workbench view model", () => {
     assert.equal(finalNode.type, "agentFinalOutput");
     assert.equal(finalNode.data.finalOutput.status, "completed");
     assert.ok(finalNode.position.x > 0);
+  });
+
+  it("creates standalone audio nodes from the active audio plan", () => {
+    const audioWorkbench = {
+      ...workbench,
+      overview: {
+        ...workbench.overview,
+        audio_plan: {
+          id: "audio-plan-1",
+          status: "composing",
+          title: "音频方案",
+          voiceover_status: "succeeded",
+          bgm_status: "succeeded",
+          voiceover_artifact: {
+            kind: "voiceover_audio",
+            status: "succeeded",
+            node_id: "voice-node-1",
+            title: "Voiceover",
+            access_url: "voice.mp3",
+          },
+          bgm_artifact: {
+            kind: "bgm_audio",
+            status: "succeeded",
+            node_id: "bgm-node-1",
+            title: "BGM",
+            access_url: "bgm.mp3",
+          },
+        },
+      },
+    };
+    const flow = agentWorkbenchToFlow(audioWorkbench);
+    const voiceNode = flow.nodes.find((node) => node.id === audioNodeId("voice-node-1"));
+    const bgmNode = flow.nodes.find((node) => node.id === audioNodeId("bgm-node-1"));
+
+    assert.ok(voiceNode);
+    assert.ok(bgmNode);
+    assert.equal(voiceNode.type, "agentAudio");
+    assert.equal(bgmNode.type, "agentAudio");
+    assert.equal(voiceNode.parentId, undefined);
+    assert.equal(voiceNode.data.label, "VO");
+    assert.ok(voiceNode.position.y > 0);
+  });
+
+  it("reserves enough height for the project overview summary and tag rows", () => {
+    const denseOverviewWorkbench = {
+      ...workbench,
+      overview: {
+        ...workbench.overview,
+        brief: {
+          ...workbench.overview.brief,
+          concept:
+            "轻装出发，也能很有气场。银灰质感，利落高级，每一处细节都经得起近距离打量。",
+        },
+        audio_plan: {
+          id: "audio-plan-1",
+          status: "composing",
+          title: "轻奢行李箱抖音广告音频测试方案",
+          voiceover_status: "succeeded",
+          bgm_status: "succeeded",
+          voiceover_artifact: {
+            kind: "voiceover_audio",
+            status: "succeeded",
+            node_id: "dense-voice-node",
+            title: "Voiceover",
+            access_url: "voice.mp3",
+          },
+          bgm_artifact: {
+            kind: "bgm_audio",
+            status: "succeeded",
+            node_id: "dense-bgm-node",
+            title: "BGM",
+            access_url: "bgm.mp3",
+          },
+          voiceover_script:
+            "轻装出发，也能很有气场。银灰质感，利落高级，每一处细节都经得起近距离打量。",
+        },
+        key_elements: Array.from({ length: 5 }, (_, index) => ({
+          id: `element-${index + 1}`,
+          client_key: `element_${index + 1}`,
+          name: `关键元素 ${index + 1}`,
+          type: "prop",
+          status: "active",
+        })),
+        key_element_states: Array.from({ length: 6 }, (_, index) => ({
+          id: `state-${index + 1}`,
+          key_element_id: "element-1",
+          client_key: `state_${index + 1}`,
+          label: `状态标签 ${index + 1}`,
+          reference_status: index === 0 ? "needs_reference" : "ready",
+        })),
+      },
+    };
+    const flow = agentWorkbenchToFlow(denseOverviewWorkbench);
+    const overviewNode = flow.nodes.find((node) => node.id === "agent-workbench-overview");
+    const voiceNode = flow.nodes.find((node) => node.id === audioNodeId("dense-voice-node"));
+
+    assert.ok(overviewNode);
+    assert.ok(Number(overviewNode.height) >= 430);
+    assert.equal(overviewNode.style.height, overviewNode.height);
+    assert.ok(voiceNode);
+    assert.ok(voiceNode.position.y > Number(overviewNode.height));
   });
 
   it("sorts shots by sequence index and lays them inside the scene lane", () => {
