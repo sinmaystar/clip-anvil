@@ -471,6 +471,11 @@ func TestProducerPromptMessagesKeepsSystemPromptStable(t *testing.T) {
 			t.Fatalf("system prompt missing audio guidance %q", want)
 		}
 	}
+	for _, want := range []string{"scope.type=audio_plan", "target_phase=voiceover_audio", "target_phase=bgm_audio", "shot_refs=[]", "不要使用 mode=preview_image 或 mode=shot_video", "等 voiceover_audio 和 bgm_audio 媒体资产都成功"} {
+		if !strings.Contains(messages[0].Content, want) {
+			t.Fatalf("system prompt missing audio dispatch guidance %q", want)
+		}
+	}
 	for _, want := range []string{"final video", "audio_sync", "platform selling power", "final_video_review"} {
 		if !strings.Contains(messages[0].Content, want) {
 			t.Fatalf("system prompt missing final review guidance %q", want)

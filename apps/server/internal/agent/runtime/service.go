@@ -896,7 +896,7 @@ func validThreadRole(value string) bool {
 
 func validThreadScope(value string) bool {
 	switch value {
-	case "workspace", "shot", "final_output", "render_plan":
+	case "workspace", "shot", "final_output", "render_plan", "key_element_state", "audio_plan":
 		return true
 	default:
 		return false
@@ -941,7 +941,7 @@ func validTaskRole(value string) bool {
 
 func validTaskScope(value string) bool {
 	switch value {
-	case "workspace", "shot", "node", "job", "final_output", "render_plan":
+	case "workspace", "shot", "node", "job", "final_output", "render_plan", "key_element_state", "audio_plan":
 		return true
 	default:
 		return false
@@ -977,7 +977,7 @@ func validProducerSignalSourceRole(value string) bool {
 
 func validProducerSignalScope(value string) bool {
 	switch value {
-	case "workspace", "shot", "render_plan", "final_output", "key_element_state", "node", "job":
+	case "workspace", "shot", "render_plan", "final_output", "key_element_state", "audio_plan", "node", "job":
 		return true
 	default:
 		return false

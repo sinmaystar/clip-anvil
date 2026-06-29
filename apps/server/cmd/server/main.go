@@ -123,7 +123,9 @@ func main() {
 		DefaultTextModel: cfg.Production.DefaultTextModel,
 		Volcengine: production.VolcengineProviderConfig{
 			APIKey:                  cfg.Production.Volcengine.APIKey,
+			AudioAPIKey:             cfg.Production.Volcengine.AudioAPIKey,
 			BaseURL:                 cfg.Production.Volcengine.BaseURL,
+			AudioBaseURL:            cfg.Production.Volcengine.AudioBaseURL,
 			Region:                  cfg.Production.Volcengine.Region,
 			TextModel:               cfg.Production.Volcengine.TextModel,
 			ImageModel:              cfg.Production.Volcengine.ImageModel,
@@ -166,7 +168,9 @@ func main() {
 		productionRuntime = production.NewVolcengineProductionRuntime(
 			production.VolcengineProviderConfig{
 				APIKey:                  cfg.Production.Volcengine.APIKey,
+				AudioAPIKey:             cfg.Production.Volcengine.AudioAPIKey,
 				BaseURL:                 cfg.Production.Volcengine.BaseURL,
+				AudioBaseURL:            cfg.Production.Volcengine.AudioBaseURL,
 				Region:                  cfg.Production.Volcengine.Region,
 				TextModel:               cfg.Production.Volcengine.TextModel,
 				ImageModel:              cfg.Production.Volcengine.ImageModel,

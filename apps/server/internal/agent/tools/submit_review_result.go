@@ -243,6 +243,11 @@ func applySubmitReviewResultRuntimeTarget(input SubmitReviewResultInput, runtime
 				input.Issues[index].TargetObjectID = input.Target.ShotID
 			}
 			input.Issues[index].TargetObjectRef = ensureToolObjectRef(input.Issues[index].TargetObjectRef, "shot", input.Target.ShotRef.Key)
+		case "final_video":
+			if strings.TrimSpace(input.Target.NodeID) != "" {
+				input.Issues[index].TargetObjectID = input.Target.NodeID
+			}
+			input.Issues[index].TargetObjectRef = ensureToolObjectRef(input.Issues[index].TargetObjectRef, "media_node", input.Target.NodeRef.Key)
 		}
 	}
 	switch input.RetryRecommendation.TargetObjectType {
@@ -255,6 +260,10 @@ func applySubmitReviewResultRuntimeTarget(input SubmitReviewResultInput, runtime
 	case "shot":
 		if strings.TrimSpace(input.Target.ShotID) != "" {
 			input.RetryRecommendation.TargetObjectID = input.Target.ShotID
+		}
+	case "final_video":
+		if strings.TrimSpace(input.Target.NodeID) != "" {
+			input.RetryRecommendation.TargetObjectID = input.Target.NodeID
 		}
 	}
 	return input

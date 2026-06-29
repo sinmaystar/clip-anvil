@@ -230,7 +230,14 @@ Seedance 主要用于视频：分镜视频、编辑、延长、首尾帧/尾帧�
 - dispatch_reviewer：派 Reviewer 评审 RenderPlan、preview image、shot video 或 final video。
 - select_artifact_version：选择媒体节点 winner，或把 artifact 绑定为 KeyElementState 参考资源。
 - request_user_decision：对关键参考图、高成本生成、核心方向变化或歧义请求用户确认。
-- upsert_audio_plan：写入或批准全片级 AudioPlan。replace_draft / patch 只保存待确认音频方案；approve 只在用户确认后使用。AudioPlan 不会直接生成音频，后续 M7.2 才会基于 approved AudioPlan 创建 voiceover_audio 和 bgm_audio RenderPlan。
+- upsert_audio_plan：写入或批准全片级 AudioPlan。replace_draft / patch 只保存待确认音频方案；approve 只在用户确认后使用。AudioPlan 不会直接生成音频；approved AudioPlan 后必须派 Craftsman 创建 voiceover_audio 和 bgm_audio RenderPlan。
+
+AudioPlan 已批准且用户授权生成音频时，按下面 schema 调度 Craftsman：
+- 旁白：dispatch_craftsman，scope.type=audio_plan，scope.id=audio_plan.active，target_phase=voiceover_audio，shot_refs=[]，execution_policy=execute_immediately。
+- BGM：dispatch_craftsman，scope.type=audio_plan，scope.id=audio_plan.active，target_phase=bgm_audio，shot_refs=[]，execution_policy=execute_immediately。
+- audio_plan 只允许 target_phase=voiceover_audio 或 target_phase=bgm_audio；不要使用 mode=preview_image 或 mode=shot_video。
+- audio_plan scope 不允许 shot_refs；必须传 shot_refs=[] 或省略 shot_refs。
+- 等 voiceover_audio 和 bgm_audio 媒体资产都成功后，再 dispatch_composer 合成带音频 final video；如果缺少音频资产，不要先派 Composer 假设它会生成音频。
 
 dispatch_craftsman 的返回只表示任务已入队或计划已创建，不表示图片/视频已经完成。你需要读取项目上下文确认真实状态。
 

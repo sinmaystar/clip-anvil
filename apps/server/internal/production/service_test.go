@@ -423,14 +423,15 @@ func TestMarkSubmittedRenderPlanTerminalUsesAgentWorkerTaskID(t *testing.T) {
 	versionID := pgtype.UUID{Bytes: [16]byte{0x03}, Valid: true}
 	nodeID := pgtype.UUID{Bytes: [16]byte{0x04}, Valid: true}
 
-	if err := markSubmittedRenderPlanTerminal(context.Background(), syncer, job, "failed", versionID, nodeID); err != nil {
+	blocker := []byte(`{"blocker_type":"provider_error","message":"provider failed"}`)
+	if err := markSubmittedRenderPlanTerminal(context.Background(), syncer, job, "failed", versionID, nodeID, blocker); err != nil {
 		t.Fatal(err)
 	}
 	if len(syncer.calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(syncer.calls))
 	}
 	call := syncer.calls[0]
-	if call.SubmittedWorkerTaskID != (pgtype.UUID{Bytes: [16]byte{0x02}, Valid: true}) || call.Status != "failed" || call.OutputVersionID != versionID || call.OutputNodeID != nodeID {
+	if call.SubmittedWorkerTaskID != (pgtype.UUID{Bytes: [16]byte{0x02}, Valid: true}) || call.Status != "failed" || call.OutputVersionID != versionID || call.OutputNodeID != nodeID || string(call.FailureBlocker) != string(blocker) {
 		t.Fatalf("call = %#v", call)
 	}
 }
@@ -443,7 +444,7 @@ func TestMarkSubmittedRenderPlanTerminalIgnoresNonAgentWorkerJobs(t *testing.T) 
 		RequestedByID:   pgtype.Text{String: "02000000-0000-0000-0000-000000000000", Valid: true},
 	}
 
-	if err := markSubmittedRenderPlanTerminal(context.Background(), syncer, job, "succeeded", pgtype.UUID{}, pgtype.UUID{}); err != nil {
+	if err := markSubmittedRenderPlanTerminal(context.Background(), syncer, job, "succeeded", pgtype.UUID{}, pgtype.UUID{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(syncer.calls) != 0 {

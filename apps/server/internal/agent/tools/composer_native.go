@@ -677,18 +677,6 @@ func timelineSegments(plan map[string]any) ([]timelineSegmentInput, error) {
 	return segments, nil
 }
 
-func timelineWorkspacePaths(plan map[string]any) ([]string, error) {
-	segments, err := timelineSegments(plan)
-	if err != nil {
-		return nil, err
-	}
-	paths := make([]string, 0, len(segments))
-	for _, segment := range segments {
-		paths = append(paths, segment.WorkspacePath)
-	}
-	return paths, nil
-}
-
 func timelineAudioTracks(plan map[string]any) ([]timelineAudioInput, error) {
 	rawTracks, ok := plan["audio_tracks"].([]any)
 	if !ok || len(rawTracks) == 0 {

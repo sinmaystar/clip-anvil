@@ -866,6 +866,10 @@ UPDATE render_plan
 SET status = $3,
     output_version_id = $4,
     output_node_id = $5,
+    blocker = CASE
+      WHEN $3 = 'failed' AND $6::jsonb IS NOT NULL THEN $6::jsonb
+      ELSE blocker
+    END,
     completed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1
@@ -881,6 +885,7 @@ type MarkSubmittedRenderPlanCompletedByWorkerTaskParams struct {
 	Status                string      `json:"status"`
 	OutputVersionID       pgtype.UUID `json:"output_version_id"`
 	OutputNodeID          pgtype.UUID `json:"output_node_id"`
+	FailureBlocker        []byte      `json:"failure_blocker"`
 }
 
 func (q *Queries) MarkSubmittedRenderPlanCompletedByWorkerTask(ctx context.Context, arg MarkSubmittedRenderPlanCompletedByWorkerTaskParams) (RenderPlan, error) {
@@ -890,6 +895,7 @@ func (q *Queries) MarkSubmittedRenderPlanCompletedByWorkerTask(ctx context.Conte
 		arg.Status,
 		arg.OutputVersionID,
 		arg.OutputNodeID,
+		arg.FailureBlocker,
 	)
 	var i RenderPlan
 	err := row.Scan(

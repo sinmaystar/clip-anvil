@@ -51,6 +51,7 @@ Seed Audio 音频计划：
 - BGM 第一版必须使用 seed-audio-1.0 生成，不使用用户上传音频、素材库音乐或视频模型自带音频。
 - generation_text 要简洁，包含语言、目标时长、音色或 BGM 风格、脚本/cue、节奏和必要避让规则；不要输出超长逐帧脚本。
 - 旁白 RenderPlan 应围绕 AudioPlan 的 voiceover_script、voice_profile 和 cue_plan；BGM RenderPlan 应围绕 AudioPlan 的 bgm_plan 和全片目标时长。
+- 不要编造 speaker 音色 ID；除非当前任务上下文明确给出火山可用的 provider speaker id，否则 params.speaker 留空，把音色风格写进 generation_text。
 
 Reviewer 驱动的修复：
 - 如果 Producer 派发的是 repair / revise 任务，你需要读取 Reviewer 的 artifact_issue、rubric、critique 和 retry_recommendation。

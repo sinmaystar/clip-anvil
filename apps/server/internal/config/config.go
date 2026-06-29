@@ -75,7 +75,9 @@ type ProductionConfig struct {
 
 type VolcengineConfig struct {
 	APIKey                  string `mapstructure:"api_key"`
+	AudioAPIKey             string `mapstructure:"audio_api_key"`
 	BaseURL                 string `mapstructure:"base_url"`
+	AudioBaseURL            string `mapstructure:"audio_base_url"`
 	Region                  string `mapstructure:"region"`
 	TextModel               string `mapstructure:"text_model"`
 	ImageModel              string `mapstructure:"image_model"`
@@ -159,7 +161,9 @@ func bindEnv(v *viper.Viper) error {
 		"production.provider_poll_interval_seconds",
 		"production.provider_max_poll_seconds",
 		"production.volcengine.api_key",
+		"production.volcengine.audio_api_key",
 		"production.volcengine.base_url",
+		"production.volcengine.audio_base_url",
 		"production.volcengine.region",
 		"production.volcengine.text_model",
 		"production.volcengine.image_model",

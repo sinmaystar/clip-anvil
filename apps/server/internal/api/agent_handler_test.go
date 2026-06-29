@@ -217,6 +217,49 @@ func TestAgentProcessingReasonOnlyBlocksProducerExecution(t *testing.T) {
 	}
 }
 
+func TestProducerDecisionResumeRunInputStartsFreshTurnFromDecisionMessage(t *testing.T) {
+	workspaceID := testUUID(0x41)
+	threadID := testUUID(0x42)
+	taskID := testUUID(0x43)
+	triggerMessageID := testUUID(0x44)
+	originalTaskID := testUUID(0x45)
+	task := db.AgentTask{
+		ID:       taskID,
+		ThreadID: threadID,
+		Input: jsonBytes(map[string]any{
+			"decision_event_id":  "decision-1",
+			"resolved_event_id":  "resolved-1",
+			"original_task_id":   uuidToString(originalTaskID),
+			"checkpoint_key":     "agent:eino:producer_turn:workspace:thread:task",
+			"interrupt_ids":      []string{"interrupt-1"},
+			"selected_option_id": "",
+			"free_text":          "继续生成音频",
+		}),
+	}
+
+	got := producerDecisionResumeRunInput(workspaceID, task, triggerMessageID)
+
+	if got.WorkspaceID != workspaceID || got.ThreadID != threadID || got.TaskID != taskID {
+		t.Fatalf("run input ids = %#v", got)
+	}
+	if got.TriggerMessageID != triggerMessageID {
+		t.Fatalf("trigger message id = %v, want %v", got.TriggerMessageID, triggerMessageID)
+	}
+	if got.OriginalTaskID != originalTaskID {
+		t.Fatalf("original task id = %v, want %v", got.OriginalTaskID, originalTaskID)
+	}
+	if got.ResumeCheckpointID != "" {
+		t.Fatalf("decision resume should start a fresh producer turn, got checkpoint %q", got.ResumeCheckpointID)
+	}
+	if len(got.ResumeData) != 0 {
+		t.Fatalf("decision resume should not pass checkpoint resume data, got %#v", got.ResumeData)
+	}
+	if !strings.Contains(got.RuntimeTriggerText, "用户已回复决策") ||
+		!strings.Contains(got.RuntimeTriggerText, "继续生成音频") {
+		t.Fatalf("runtime trigger text = %q", got.RuntimeTriggerText)
+	}
+}
+
 func TestListMessagesUsesProducerThreadOnly(t *testing.T) {
 	source, err := os.ReadFile("agent_handler.go")
 	if err != nil {

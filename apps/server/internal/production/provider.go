@@ -21,7 +21,9 @@ type ProviderConfig struct {
 
 type VolcengineProviderConfig struct {
 	APIKey                  string
+	AudioAPIKey             string
 	BaseURL                 string
+	AudioBaseURL            string
 	Region                  string
 	TextModel               string
 	ImageModel              string

@@ -1132,27 +1132,29 @@ func producerDecisionResumeRunInput(workspaceID pgtype.UUID, task db.AgentTask, 
 	if err := json.Unmarshal(task.Input, &input); err != nil {
 		return out
 	}
-	out.ResumeCheckpointID = strings.TrimSpace(input.CheckpointKey)
 	if originalTaskID, ok := uuidFromString(input.OriginalTaskID); ok {
 		out.OriginalTaskID = originalTaskID
 	}
-	if len(input.InterruptIDs) > 0 {
-		data := map[string]any{
-			"decision_event_id":       input.DecisionEventID,
-			"resolved_event_id":       input.ResolvedEventID,
-			"selected_option_id":      input.SelectedOptionID,
-			"free_text":               strings.TrimSpace(input.FreeText),
-			"decision_resume_task_id": uuidToString(task.ID),
-		}
-		out.ResumeData = map[string]any{}
-		for _, interruptID := range input.InterruptIDs {
-			interruptID = strings.TrimSpace(interruptID)
-			if interruptID != "" {
-				out.ResumeData[interruptID] = data
-			}
-		}
-	}
+	out.RuntimeTriggerText = decisionResumeTriggerText(input.DecisionEventID, input.ResolvedEventID, input.SelectedOptionID, input.FreeText)
 	return out
+}
+
+func decisionResumeTriggerText(decisionEventID string, resolvedEventID string, selectedOptionID string, freeText string) string {
+	lines := []string{"系统事件：用户已回复决策。"}
+	if strings.TrimSpace(decisionEventID) != "" {
+		lines = append(lines, "decision_event_id: "+strings.TrimSpace(decisionEventID))
+	}
+	if strings.TrimSpace(resolvedEventID) != "" {
+		lines = append(lines, "resolved_event_id: "+strings.TrimSpace(resolvedEventID))
+	}
+	if strings.TrimSpace(selectedOptionID) != "" {
+		lines = append(lines, "selected_option_id: "+strings.TrimSpace(selectedOptionID))
+	}
+	if strings.TrimSpace(freeText) != "" {
+		lines = append(lines, "free_text: "+strings.TrimSpace(freeText))
+	}
+	lines = append(lines, "请读取当前项目上下文和最新用户回复，按该决策继续推进；不要重新请求同一个决策。")
+	return strings.Join(lines, "\n")
 }
 
 func producerTurnQueuedPayload(msg db.AgentMessage, task db.AgentTask) []byte {

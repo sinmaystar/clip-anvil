@@ -24,8 +24,8 @@ func NewVolcengineAudioRuntime(cfg VolcengineProviderConfig, httpClient *http.Cl
 }
 
 func (r VolcengineAudioRuntime) Start(ctx context.Context, job ProductionJob, intent GenerationIntent) (<-chan ProductionEvent, error) {
-	if strings.TrimSpace(r.cfg.APIKey) == "" {
-		return nil, fmt.Errorf("%w: CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY is required for provider volcengine", ErrProviderConfig)
+	if strings.TrimSpace(r.audioAPIKey()) == "" {
+		return nil, fmt.Errorf("%w: CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_API_KEY or CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY is required for provider volcengine audio", ErrProviderConfig)
 	}
 	modelID := strings.TrimSpace(intent.Model.ModelID)
 	if modelID == "" {
@@ -60,14 +60,14 @@ func (r VolcengineAudioRuntime) generate(ctx context.Context, modelID string, jo
 		events <- ProductionEvent{Type: ProductionEventJobFailed, Progress: 100, Err: err}
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(r.cfg.APIKey))
+	req.Header.Set("X-Api-Key", strings.TrimSpace(r.audioAPIKey()))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		events <- ProductionEvent{Type: ProductionEventJobFailed, Progress: 100, Err: fmt.Errorf("%w: generate volcengine audio: %v", ErrProviderExecution, err)}
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		events <- ProductionEvent{Type: ProductionEventJobFailed, Progress: 100, Err: err}
@@ -101,12 +101,19 @@ func (r VolcengineAudioRuntime) generate(ctx context.Context, modelID string, jo
 	}
 }
 
-func (r VolcengineAudioRuntime) audioEndpoint() string {
-	baseURL := strings.TrimSpace(r.cfg.BaseURL)
-	if baseURL == "" {
-		baseURL = "https://ark.cn-beijing.volces.com/api/v3"
+func (r VolcengineAudioRuntime) audioAPIKey() string {
+	if key := strings.TrimSpace(r.cfg.AudioAPIKey); key != "" {
+		return key
 	}
-	return strings.TrimRight(baseURL, "/") + "/audio/generations"
+	return strings.TrimSpace(r.cfg.APIKey)
+}
+
+func (r VolcengineAudioRuntime) audioEndpoint() string {
+	baseURL := strings.TrimSpace(r.cfg.AudioBaseURL)
+	if baseURL == "" {
+		baseURL = "https://openspeech.bytedance.com/api/v3"
+	}
+	return strings.TrimRight(baseURL, "/") + "/tts/create"
 }
 
 func audioGenerationRequest(modelID string, rendered string, params map[string]any) map[string]any {
@@ -114,16 +121,25 @@ func audioGenerationRequest(modelID string, rendered string, params map[string]a
 		"model":       modelID,
 		"text_prompt": rendered,
 	}
-	for _, key := range []string{"speaker", "format", "sample_rate", "speech_rate", "pitch_rate", "loudness_rate", "watermark"} {
-		if params == nil {
-			continue
-		}
+	if params == nil {
+		params = map[string]any{}
+	}
+	audioConfig := map[string]any{"format": "mp3"}
+	for _, key := range []string{"format", "sample_rate", "speech_rate", "pitch_rate", "loudness_rate"} {
 		if value, ok := params[key]; ok {
-			out[key] = value
+			audioConfig[key] = value
 		}
 	}
-	if _, ok := out["format"]; !ok {
-		out["format"] = "mp3"
+	out["audio_config"] = audioConfig
+	if value, ok := params["watermark"]; ok {
+		switch typed := value.(type) {
+		case map[string]any:
+			out["watermark"] = typed
+		case bool:
+			out["watermark"] = map[string]any{"aigc_watermark": typed}
+		default:
+			out["watermark"] = value
+		}
 	}
 	return out
 }

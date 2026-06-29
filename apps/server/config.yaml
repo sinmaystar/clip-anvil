@@ -42,6 +42,8 @@ production:
   provider_max_poll_seconds: 1800
   volcengine:
     base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    audio_api_key: ""
+    audio_base_url: "https://openspeech.bytedance.com/api/v3"
     region: "cn-beijing"
     text_model: "doubao-seed-2-0-mini-260428"
     image_model: "doubao-seedream-5-0-260128"

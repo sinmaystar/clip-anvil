@@ -139,6 +139,10 @@ UPDATE render_plan
 SET status = $3,
     output_version_id = $4,
     output_node_id = $5,
+    blocker = CASE
+      WHEN $3 = 'failed' AND sqlc.arg(failure_blocker)::jsonb IS NOT NULL THEN sqlc.arg(failure_blocker)::jsonb
+      ELSE blocker
+    END,
     completed_at = now(),
     updated_at = now()
 WHERE workspace_id = $1
