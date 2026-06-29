@@ -5036,6 +5036,7 @@ a:focus-visible {
 
 .agent-workbench-overview-node,
 .agent-workbench-scene-node,
+.agent-workbench-audio-node,
 .agent-workbench-shot-node,
 .agent-workbench-final-output-node {
   width: 100%;
@@ -5056,6 +5057,7 @@ a:focus-visible {
 }
 
 .agent-workbench-overview-node header,
+.agent-workbench-audio-node header,
 .agent-workbench-shot-node header,
 .agent-workbench-artifact-slot header,
 .agent-workbench-review-slot header {
@@ -5068,6 +5070,7 @@ a:focus-visible {
 
 .agent-workbench-overview-node header span,
 .agent-workbench-scene-header span,
+.agent-workbench-audio-node header span,
 .agent-workbench-shot-node header span,
 .agent-workbench-artifact-slot header span,
 .agent-workbench-review-slot header span {
@@ -5080,6 +5083,7 @@ a:focus-visible {
 
 .agent-workbench-overview-node header strong,
 .agent-workbench-scene-header strong,
+.agent-workbench-audio-node header strong,
 .agent-workbench-shot-node header strong {
   display: block;
   overflow: hidden;
@@ -5249,10 +5253,47 @@ a:focus-visible {
 
 .agent-workbench-shot-node[data-selected="true"],
 .agent-workbench-overview-node[data-selected="true"],
+.agent-workbench-audio-node[data-selected="true"],
 .agent-workbench-final-output-node[data-selected="true"] {
   box-shadow:
     var(--shadow-card),
     0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+.agent-workbench-audio-node {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px;
+  pointer-events: all;
+}
+
+.agent-workbench-audio-node header em {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg-primary) 7%, transparent);
+  color: var(--fg-secondary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  padding: 4px 8px;
+}
+
+.agent-workbench-audio-node audio {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.agent-workbench-audio-placeholder {
+  display: grid;
+  min-height: 42px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg-primary) 5%, transparent);
+  color: var(--fg-tertiary);
+  font-size: 12px;
 }
 
 .agent-workbench-final-output-node {
@@ -6279,6 +6320,43 @@ a:focus-visible {
 .media-node-content[data-type="audio"] .media-node-placeholder {
   background: #ccfbf1;
   color: #0f766e;
+}
+
+.media-node-audio-preview {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 14px;
+  background: #ccfbf1;
+  padding: 20px 18px 16px;
+  color: #0f766e;
+}
+
+.media-node-audio-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.media-node-audio-summary span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-node-audio-player {
+  width: 100%;
+  min-width: 0;
+  accent-color: #0f766e;
 }
 
 .media-node-waveform {

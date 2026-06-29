@@ -80,6 +80,15 @@ describe("React Flow canvas foundation", () => {
     assert.doesNotMatch(source, /mode === "agent"/);
   });
 
+  it("renders audio production previews with a browser audio player", async () => {
+    const source = await readCanvasFlowSource("MediaFlowNode.tsx");
+
+    assert.match(source, /node\.node_type === "audio"/);
+    assert.match(source, /<audio/);
+    assert.match(source, /controls/);
+    assert.match(source, /src=\{previewAssetUrl\}/);
+  });
+
   it("uses a shared inspector while honoring policy-gated actions", async () => {
     const source = await readCanvasFlowSource("NodeInspectorPopover.tsx");
 

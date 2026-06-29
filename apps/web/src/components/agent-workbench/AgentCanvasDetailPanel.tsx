@@ -471,26 +471,24 @@ function FinalOutputDetail({
 }
 
 function ArtifactDetail({ artifact }: { artifact: AgentCanvasArtifactDetail }) {
-  const previewUrl = artifactPreviewUrl(artifact);
+  const visualPreview = artifactVisualPreview(artifact);
   return (
     <>
-      <DetailSection title="媒体预览">
-        <div className="agent-canvas-artifact-preview">
-          {previewUrl ? (
-            artifact.node.node_type === "video" ? (
+      {visualPreview ? (
+        <DetailSection title="媒体预览">
+          <div className="agent-canvas-artifact-preview">
+            {visualPreview.kind === "video" ? (
               <video
                 controls
-                poster={artifact.current_version?.asset?.access_url}
-                src={previewUrl}
+                poster={visualPreview.posterUrl}
+                src={visualPreview.url}
               />
             ) : (
-              <img alt={artifact.node.title || "媒体预览"} src={previewUrl} />
-            )
-          ) : (
-            <div>暂无可预览媒体</div>
-          )}
-        </div>
-      </DetailSection>
+              <img alt={artifact.node.title || "媒体预览"} src={visualPreview.url} />
+            )}
+          </div>
+        </DetailSection>
+      ) : null}
       <DetailSection title="媒体节点">
         <FieldGrid
           fields={[
@@ -791,6 +789,28 @@ function artifactPlaceholderText(status: string) {
     return "生成失败";
   }
   return "暂无预览";
+}
+
+type ArtifactVisualPreview =
+  | { kind: "image"; url: string }
+  | { kind: "video"; url: string; posterUrl?: string };
+
+function artifactVisualPreview(
+  artifact: AgentCanvasArtifactDetail,
+): ArtifactVisualPreview | null {
+  const asset = artifact.current_version?.asset || artifact.asset;
+  const mime = asset?.mime || "";
+  const url = artifactPreviewUrl(artifact);
+  if (!url) {
+    return null;
+  }
+  if (artifact.node.node_type === "video" || mime.startsWith("video/")) {
+    return { kind: "video", url };
+  }
+  if (artifact.node.node_type === "image" || mime.startsWith("image/")) {
+    return { kind: "image", url };
+  }
+  return null;
 }
 
 function artifactPreviewUrl(artifact: AgentCanvasArtifactDetail) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   agentWorkbenchToFlow,
+  audioNodeId,
   finalOutputNodeId,
   sceneNodeId,
   shotNodeId,
@@ -134,6 +135,47 @@ describe("agent workbench view model", () => {
     assert.equal(finalNode.type, "agentFinalOutput");
     assert.equal(finalNode.data.finalOutput.status, "completed");
     assert.ok(finalNode.position.x > 0);
+  });
+
+  it("creates standalone audio nodes from the active audio plan", () => {
+    const audioWorkbench = {
+      ...workbench,
+      overview: {
+        ...workbench.overview,
+        audio_plan: {
+          id: "audio-plan-1",
+          status: "composing",
+          title: "音频方案",
+          voiceover_status: "succeeded",
+          bgm_status: "succeeded",
+          voiceover_artifact: {
+            kind: "voiceover_audio",
+            status: "succeeded",
+            node_id: "voice-node-1",
+            title: "Voiceover",
+            access_url: "voice.mp3",
+          },
+          bgm_artifact: {
+            kind: "bgm_audio",
+            status: "succeeded",
+            node_id: "bgm-node-1",
+            title: "BGM",
+            access_url: "bgm.mp3",
+          },
+        },
+      },
+    };
+    const flow = agentWorkbenchToFlow(audioWorkbench);
+    const voiceNode = flow.nodes.find((node) => node.id === audioNodeId("voice-node-1"));
+    const bgmNode = flow.nodes.find((node) => node.id === audioNodeId("bgm-node-1"));
+
+    assert.ok(voiceNode);
+    assert.ok(bgmNode);
+    assert.equal(voiceNode.type, "agentAudio");
+    assert.equal(bgmNode.type, "agentAudio");
+    assert.equal(voiceNode.parentId, undefined);
+    assert.equal(voiceNode.data.label, "VO");
+    assert.ok(voiceNode.position.y > 0);
   });
 
   it("sorts shots by sequence index and lays them inside the scene lane", () => {

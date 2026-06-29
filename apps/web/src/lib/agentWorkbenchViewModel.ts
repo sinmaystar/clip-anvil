@@ -14,6 +14,7 @@ import {
 
 export type AgentWorkbenchNode =
   | Node<AgentWorkbenchOverviewNodeData, "agentOverview">
+  | Node<AgentWorkbenchAudioNodeData, "agentAudio">
   | Node<AgentWorkbenchSceneNodeData, "agentScene">
   | Node<AgentWorkbenchShotNodeData, "agentShot">
   | Node<AgentWorkbenchFinalOutputNodeData, "agentFinalOutput">;
@@ -31,6 +32,13 @@ export interface AgentWorkbenchOverviewNodeData extends Record<
 export interface AgentWorkbenchSceneNodeData extends Record<string, unknown> {
   kind: "scene";
   scene: AgentWorkbenchScene;
+}
+
+export interface AgentWorkbenchAudioNodeData extends Record<string, unknown> {
+  kind: "audio";
+  artifact: AgentWorkbenchArtifactSlot;
+  label: "VO" | "BGM";
+  planTitle: string;
 }
 
 export interface AgentWorkbenchShotNodeData extends Record<string, unknown> {
@@ -55,6 +63,9 @@ export interface AgentWorkbenchEdgeData extends Record<string, unknown> {
 
 const OVERVIEW_WIDTH = 360;
 const OVERVIEW_HEIGHT = 340;
+const AUDIO_WIDTH = 360;
+const AUDIO_HEIGHT = 156;
+const AUDIO_GAP = 20;
 const SCENE_PADDING = 28;
 const SCENE_HEADER = 116;
 const SHOT_WIDTH = 520;
@@ -87,6 +98,10 @@ export function shotNodeId(shotId: string) {
   return `agent-shot-${shotId}`;
 }
 
+export function audioNodeId(nodeId: string) {
+  return `agent-audio-${nodeId}`;
+}
+
 export function finalOutputNodeId(finalOutputId: string) {
   return `agent-final-output-${finalOutputId}`;
 }
@@ -114,6 +129,25 @@ export function agentWorkbenchToFlow(
     },
   ];
   const edges: AgentWorkbenchEdge[] = [];
+  const audioNodes = workbenchAudioNodes(workbench);
+
+  audioNodes.forEach((audio, index) => {
+    nodes.push({
+      id: audioNodeId(audio.artifact.node_id || `${audio.label}-${index}`),
+      type: "agentAudio",
+      position: {
+        x: ORIGIN_X,
+        y: ORIGIN_Y + OVERVIEW_HEIGHT + 32 + index * (AUDIO_HEIGHT + AUDIO_GAP),
+      },
+      data: { kind: "audio", ...audio },
+      width: AUDIO_WIDTH,
+      height: AUDIO_HEIGHT,
+      measured: { width: AUDIO_WIDTH, height: AUDIO_HEIGHT },
+      style: { width: AUDIO_WIDTH, height: AUDIO_HEIGHT },
+      draggable: false,
+      selectable: true,
+    });
+  });
 
   const sceneLayouts = workbench.scenes.map((scene) =>
     buildSceneLayout(scene, mediaDimensions, measuredShotHeights),
@@ -222,6 +256,38 @@ export function agentWorkbenchToFlow(
   }
 
   return { nodes, edges };
+}
+
+function workbenchAudioNodes(workbench: AgentWorkbenchProjection) {
+  const audioPlan = workbench.overview.audio_plan;
+  if (!audioPlan) {
+    return [];
+  }
+  const planTitle = audioPlan.title || "AudioPlan";
+  return [
+    audioPlan.voiceover_artifact
+      ? {
+          artifact: audioPlan.voiceover_artifact,
+          label: "VO" as const,
+          planTitle,
+        }
+      : null,
+    audioPlan.bgm_artifact
+      ? {
+          artifact: audioPlan.bgm_artifact,
+          label: "BGM" as const,
+          planTitle,
+        }
+      : null,
+  ].filter(
+    (
+      audio,
+    ): audio is {
+      artifact: AgentWorkbenchArtifactSlot;
+      label: "VO" | "BGM";
+      planTitle: string;
+    } => Boolean(audio?.artifact.node_id),
+  );
 }
 
 function buildSceneLayout(

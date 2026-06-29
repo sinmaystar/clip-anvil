@@ -333,7 +333,7 @@ func buildAgentCanvasDetail(ctx context.Context, queries *db.Queries, signer ass
 		if objectID != "" && objectID != uuidToString(workspaceID) {
 			return agentCanvasDetailResponse{}, newAgentCanvasDetailError(http.StatusBadRequest, "overview object_id must be empty or workspace id")
 		}
-		return buildAgentCanvasOverviewDetail(ctx, queries, workspaceID)
+		return buildAgentCanvasOverviewDetail(ctx, queries, signer, workspaceID)
 	}
 
 	id, ok := uuidFromString(objectID)
@@ -365,7 +365,7 @@ func buildAgentCanvasDetail(ctx context.Context, queries *db.Queries, signer ass
 	}
 }
 
-func buildAgentCanvasOverviewDetail(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID) (agentCanvasDetailResponse, error) {
+func buildAgentCanvasOverviewDetail(ctx context.Context, queries *db.Queries, signer assetURLSigner, workspaceID pgtype.UUID) (agentCanvasDetailResponse, error) {
 	detail := agentCanvasOverviewDetailResponse{
 		WorkspaceID:      uuidToString(workspaceID),
 		KeyElements:      []agentCanvasKeyElementSummaryResponse{},
@@ -438,10 +438,33 @@ func buildAgentCanvasOverviewDetail(ctx context.Context, queries *db.Queries, wo
 	for _, node := range nodes {
 		nodesByID[node.ID] = node
 	}
+	assets, err := queries.ListMediaAssetsByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return agentCanvasDetailResponse{}, err
+	}
+	assetsByID := make(map[pgtype.UUID]db.MediaAsset, len(assets))
+	for _, asset := range assets {
+		assetsByID[asset.ID] = asset
+	}
+	versionsByID := make(map[pgtype.UUID]db.ArtifactVersion)
+	for _, node := range nodes {
+		if !node.CurrentVersionID.Valid {
+			continue
+		}
+		version, err := queries.GetArtifactVersionByID(ctx, node.CurrentVersionID)
+		if err != nil {
+			return agentCanvasDetailResponse{}, err
+		}
+		versionsByID[node.CurrentVersionID] = version
+	}
 	if audioPlan, ok, err := activeWorkbenchAudioPlan(ctx, queries, workspaceID); err != nil {
 		return agentCanvasDetailResponse{}, err
 	} else if ok {
-		detail.AudioPlan = agentWorkbenchAudioPlanSummary(audioPlan, nodesByID)
+		audioPlanSummary, err := agentWorkbenchAudioPlanSummary(ctx, signer, audioPlan, nodesByID, assetsByID, versionsByID)
+		if err != nil {
+			return agentCanvasDetailResponse{}, err
+		}
+		detail.AudioPlan = audioPlanSummary
 	}
 	return agentCanvasDetailResponse{
 		ObjectType: agentCanvasObjectOverview,

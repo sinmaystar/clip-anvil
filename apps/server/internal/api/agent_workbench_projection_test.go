@@ -219,6 +219,11 @@ func TestAgentWorkbenchAudioPlanSummaryTracksAudioNodeStatus(t *testing.T) {
 	voiceNodeID := uuidWithByteForWorkbenchTest(61)
 	bgmNodeID := uuidWithByteForWorkbenchTest(62)
 	timelinePlanID := uuidWithByteForWorkbenchTest(63)
+	voiceVersionID := uuidWithByteForWorkbenchTest(64)
+	bgmVersionID := uuidWithByteForWorkbenchTest(65)
+	voiceAssetID := uuidWithByteForWorkbenchTest(66)
+	bgmAssetID := uuidWithByteForWorkbenchTest(67)
+	workspaceID := uuidWithByteForWorkbenchTest(68)
 	audioPlan := db.AudioPlan{
 		ID:                uuidWithByteForWorkbenchTest(60),
 		Status:            "composing",
@@ -236,11 +241,48 @@ func TestAgentWorkbenchAudioPlanSummaryTracksAudioNodeStatus(t *testing.T) {
 		DisplayName:       "AudioPlan active",
 	}
 	nodes := map[pgtype.UUID]db.MediaNode{
-		voiceNodeID: {ID: voiceNodeID, Status: db.NodeStatusSucceeded},
-		bgmNodeID:   {ID: bgmNodeID, Status: db.NodeStatusRunning},
+		voiceNodeID: {
+			ID:               voiceNodeID,
+			WorkspaceID:      workspaceID,
+			Title:            "Voiceover",
+			Status:           db.NodeStatusSucceeded,
+			CurrentVersionID: voiceVersionID,
+			Metadata:         []byte(`{"agent_artifact_kind":"voiceover_audio"}`),
+		},
+		bgmNodeID: {
+			ID:               bgmNodeID,
+			WorkspaceID:      workspaceID,
+			Title:            "BGM",
+			Status:           db.NodeStatusRunning,
+			CurrentVersionID: bgmVersionID,
+			Metadata:         []byte(`{"agent_artifact_kind":"bgm_audio"}`),
+		},
+	}
+	versions := map[pgtype.UUID]db.ArtifactVersion{
+		voiceVersionID: {ID: voiceVersionID, AssetID: voiceAssetID},
+		bgmVersionID:   {ID: bgmVersionID, AssetID: bgmAssetID},
+	}
+	assets := map[pgtype.UUID]db.MediaAsset{
+		voiceAssetID: {
+			ID:          voiceAssetID,
+			WorkspaceID: workspaceID,
+			Type:        db.AssetTypeAudio,
+			Mime:        "audio/mpeg",
+			StorageUrl:  pgtype.Text{String: "workspace/voiceover.mp3", Valid: true},
+		},
+		bgmAssetID: {
+			ID:          bgmAssetID,
+			WorkspaceID: workspaceID,
+			Type:        db.AssetTypeAudio,
+			Mime:        "audio/mpeg",
+			StorageUrl:  pgtype.Text{String: "workspace/bgm.mp3", Valid: true},
+		},
 	}
 
-	got := agentWorkbenchAudioPlanSummary(audioPlan, nodes)
+	got, err := agentWorkbenchAudioPlanSummary(context.Background(), nil, audioPlan, nodes, assets, versions)
+	if err != nil {
+		t.Fatalf("agentWorkbenchAudioPlanSummary error = %v", err)
+	}
 	if got == nil || got.Status != "composing" || got.VoiceoverStatus != "succeeded" || got.BGMStatus != "running" {
 		t.Fatalf("audio plan summary = %#v", got)
 	}
@@ -249,6 +291,12 @@ func TestAgentWorkbenchAudioPlanSummaryTracksAudioNodeStatus(t *testing.T) {
 	}
 	if got.VoiceProfile["speaker"] != "zh_female" || got.BGMPlan["mood"] != "bright" {
 		t.Fatalf("audio plan json summaries = %#v / %#v", got.VoiceProfile, got.BGMPlan)
+	}
+	if got.VoiceoverArtifact == nil || got.VoiceoverArtifact.Kind != "voiceover_audio" || got.VoiceoverArtifact.AccessURL == "" {
+		t.Fatalf("voiceover artifact = %#v", got.VoiceoverArtifact)
+	}
+	if got.BGMArtifact == nil || got.BGMArtifact.Kind != "bgm_audio" || got.BGMArtifact.AccessURL == "" {
+		t.Fatalf("bgm artifact = %#v", got.BGMArtifact)
 	}
 }
 

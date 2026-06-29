@@ -232,6 +232,21 @@ describe("agent React Flow canvas", () => {
     );
   });
 
+  it("does not render a broken image preview for audio artifact details", async () => {
+    const detailSource = await readFile(agentCanvasDetailPanelUrl, "utf8");
+
+    assert.match(detailSource, /artifactVisualPreview/);
+    assert.match(detailSource, /const visualPreview = artifactVisualPreview\(artifact\)/);
+    assert.match(detailSource, /visualPreview \? \(/);
+    assert.doesNotMatch(
+      detailSource,
+      /artifact\.node\.node_type === "video" \? \([\s\S]*?\) : \(\s*<img/,
+    );
+    assert.match(detailSource, /mime\.startsWith\("image\/"\)/);
+    assert.match(detailSource, /mime\.startsWith\("video\/"\)/);
+    assert.match(detailSource, /return null/);
+  });
+
   it("renders Agent shots as modern media cards instead of dense artifact grids", async () => {
     const shotSource = await readFile(agentShotNodeUrl, "utf8");
     const canvasSource = await readFile(agentWorkbenchCanvasUrl, "utf8");

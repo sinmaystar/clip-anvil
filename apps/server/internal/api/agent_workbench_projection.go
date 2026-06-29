@@ -68,23 +68,25 @@ type agentWorkbenchSourceMaterialResponse struct {
 }
 
 type agentWorkbenchAudioPlanResponse struct {
-	ID                    string         `json:"id"`
-	Status                string         `json:"status"`
-	Title                 string         `json:"title"`
-	PlanKind              string         `json:"plan_kind,omitempty"`
-	Language              string         `json:"language,omitempty"`
-	TargetDurationSec     *float64       `json:"target_duration_sec,omitempty"`
-	VoiceoverScript       string         `json:"voiceover_script,omitempty"`
-	VoiceProfile          map[string]any `json:"voice_profile,omitempty"`
-	BGMPlan               map[string]any `json:"bgm_plan,omitempty"`
-	CuePlan               any            `json:"cue_plan,omitempty"`
-	VoiceoverNodeID       string         `json:"voiceover_node_id,omitempty"`
-	VoiceoverStatus       string         `json:"voiceover_status,omitempty"`
-	BGMNodeID             string         `json:"bgm_node_id,omitempty"`
-	BGMStatus             string         `json:"bgm_status,omitempty"`
-	TimelinePlanID        string         `json:"timeline_plan_id,omitempty"`
-	VoiceoverRenderPlanID string         `json:"voiceover_render_plan_id,omitempty"`
-	BGMRenderPlanID       string         `json:"bgm_render_plan_id,omitempty"`
+	ID                    string                              `json:"id"`
+	Status                string                              `json:"status"`
+	Title                 string                              `json:"title"`
+	PlanKind              string                              `json:"plan_kind,omitempty"`
+	Language              string                              `json:"language,omitempty"`
+	TargetDurationSec     *float64                            `json:"target_duration_sec,omitempty"`
+	VoiceoverScript       string                              `json:"voiceover_script,omitempty"`
+	VoiceProfile          map[string]any                      `json:"voice_profile,omitempty"`
+	BGMPlan               map[string]any                      `json:"bgm_plan,omitempty"`
+	CuePlan               any                                 `json:"cue_plan,omitempty"`
+	VoiceoverNodeID       string                              `json:"voiceover_node_id,omitempty"`
+	VoiceoverStatus       string                              `json:"voiceover_status,omitempty"`
+	VoiceoverArtifact     *agentWorkbenchArtifactSlotResponse `json:"voiceover_artifact,omitempty"`
+	BGMNodeID             string                              `json:"bgm_node_id,omitempty"`
+	BGMStatus             string                              `json:"bgm_status,omitempty"`
+	BGMArtifact           *agentWorkbenchArtifactSlotResponse `json:"bgm_artifact,omitempty"`
+	TimelinePlanID        string                              `json:"timeline_plan_id,omitempty"`
+	VoiceoverRenderPlanID string                              `json:"voiceover_render_plan_id,omitempty"`
+	BGMRenderPlanID       string                              `json:"bgm_render_plan_id,omitempty"`
 }
 
 type agentWorkbenchSceneResponse struct {
@@ -315,7 +317,11 @@ func buildAgentWorkbenchProjection(ctx context.Context, queries *db.Queries, sig
 	if audioPlan, ok, err := activeWorkbenchAudioPlan(ctx, queries, workspaceID); err != nil {
 		return response, err
 	} else if ok {
-		response.Overview.AudioPlan = agentWorkbenchAudioPlanSummary(audioPlan, nodesByID)
+		audioPlanSummary, err := agentWorkbenchAudioPlanSummary(ctx, signer, audioPlan, nodesByID, assetsByID, versionsByID)
+		if err != nil {
+			return response, err
+		}
+		response.Overview.AudioPlan = audioPlanSummary
 		countWorkbenchAudioPlan(*response.Overview.AudioPlan, &response.Counts)
 	}
 
@@ -533,9 +539,9 @@ func jsonAnyValue(raw []byte) any {
 	return out
 }
 
-func agentWorkbenchAudioPlanSummary(audioPlan db.AudioPlan, nodes map[pgtype.UUID]db.MediaNode) *agentWorkbenchAudioPlanResponse {
+func agentWorkbenchAudioPlanSummary(ctx context.Context, signer assetURLSigner, audioPlan db.AudioPlan, nodes map[pgtype.UUID]db.MediaNode, assets map[pgtype.UUID]db.MediaAsset, versions map[pgtype.UUID]db.ArtifactVersion) (*agentWorkbenchAudioPlanResponse, error) {
 	if !audioPlan.ID.Valid {
-		return nil
+		return nil, nil
 	}
 	out := &agentWorkbenchAudioPlanResponse{
 		ID:                    uuidToString(audioPlan.ID),
@@ -559,7 +565,32 @@ func agentWorkbenchAudioPlanSummary(audioPlan db.AudioPlan, nodes map[pgtype.UUI
 		value := audioPlan.TargetDurationSec.Float64
 		out.TargetDurationSec = &value
 	}
-	return out
+	voiceoverArtifact, err := agentWorkbenchAudioPlanArtifact(ctx, signer, audioPlan.VoiceoverNodeID, nodes, assets, versions)
+	if err != nil {
+		return nil, err
+	}
+	out.VoiceoverArtifact = voiceoverArtifact
+	bgmArtifact, err := agentWorkbenchAudioPlanArtifact(ctx, signer, audioPlan.BgmNodeID, nodes, assets, versions)
+	if err != nil {
+		return nil, err
+	}
+	out.BGMArtifact = bgmArtifact
+	return out, nil
+}
+
+func agentWorkbenchAudioPlanArtifact(ctx context.Context, signer assetURLSigner, nodeID pgtype.UUID, nodes map[pgtype.UUID]db.MediaNode, assets map[pgtype.UUID]db.MediaAsset, versions map[pgtype.UUID]db.ArtifactVersion) (*agentWorkbenchArtifactSlotResponse, error) {
+	if !nodeID.Valid {
+		return nil, nil
+	}
+	node, ok := nodes[nodeID]
+	if !ok {
+		return nil, nil
+	}
+	slot, err := agentWorkbenchArtifactSlotFromNode(ctx, signer, node, assets, versions)
+	if err != nil {
+		return nil, err
+	}
+	return &slot, nil
 }
 
 func agentWorkbenchLinkedNodeStatus(nodeID pgtype.UUID, nodes map[pgtype.UUID]db.MediaNode) string {
