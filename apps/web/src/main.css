@@ -5051,7 +5051,7 @@ a:focus-visible {
 
 .agent-workbench-overview-node {
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto auto auto;
   gap: 12px;
   padding: 16px;
 }
@@ -5188,13 +5188,18 @@ a:focus-visible {
 
 .agent-workbench-overview-elements button,
 .agent-workbench-overview-states button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
   border-radius: var(--radius-sm);
   border: 0;
   background: color-mix(in srgb, var(--fg-primary) 7%, transparent);
   color: var(--fg-secondary);
   cursor: pointer;
   font-size: 11px;
+  line-height: 1.2;
   padding: 4px 7px;
+  text-align: left;
 }
 
 .agent-workbench-overview-elements button[data-selected="true"],

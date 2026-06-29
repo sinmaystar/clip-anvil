@@ -62,7 +62,7 @@ export interface AgentWorkbenchEdgeData extends Record<string, unknown> {
 }
 
 const OVERVIEW_WIDTH = 360;
-const OVERVIEW_HEIGHT = 340;
+const OVERVIEW_HEIGHT = 440;
 const AUDIO_WIDTH = 360;
 const AUDIO_HEIGHT = 156;
 const AUDIO_GAP = 20;

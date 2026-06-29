@@ -26,4 +26,21 @@ describe("agent workbench audio nodes", () => {
     assert.match(audioNodeSource, /title=\{audioTitle\}/);
     assert.match(canvasSource, /agentAudio:\s*AgentAudioNode/);
   });
+
+  it("keeps the project overview rows from compressing tag content", () => {
+    const cssSource = readFileSync(
+      new URL("../main.css", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(
+      cssSource,
+      /\.agent-workbench-overview-node\s*\{[\s\S]*grid-template-rows:\s*auto auto auto auto auto auto;/,
+    );
+    assert.doesNotMatch(cssSource, /grid-template-rows:\s*auto auto auto auto minmax\(0,\s*1fr\) auto/);
+    assert.match(
+      cssSource,
+      /\.agent-workbench-overview-elements button,[\s\S]*line-height:\s*1\.2;/,
+    );
+  });
 });
