@@ -5378,6 +5378,47 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.agent-workbench-reference-analyses {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-workbench-reference-analyses button {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg-primary) 5%, transparent);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  padding: 7px;
+  text-align: left;
+}
+
+.agent-workbench-reference-analyses button[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.agent-workbench-reference-analyses strong,
+.agent-workbench-reference-analyses span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-workbench-reference-analyses strong {
+  color: var(--fg-primary);
+  font-size: 11px;
+}
+
+.agent-workbench-reference-analyses span {
+  color: var(--fg-tertiary);
+  font-size: 11px;
+}
+
 .agent-workbench-overview-elements button,
 .agent-workbench-overview-states button {
   display: inline-flex;

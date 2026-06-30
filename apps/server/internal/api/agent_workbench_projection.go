@@ -22,13 +22,14 @@ type agentWorkbenchResponse struct {
 }
 
 type agentWorkbenchOverviewResponse struct {
-	WorkspaceID      string                                  `json:"workspace_id"`
-	Brief            *agentWorkbenchBriefResponse            `json:"brief,omitempty"`
-	Memory           *agentWorkbenchMemoryResponse           `json:"memory,omitempty"`
-	AudioPlan        *agentWorkbenchAudioPlanResponse        `json:"audio_plan,omitempty"`
-	KeyElements      []agentWorkbenchKeyElementResponse      `json:"key_elements"`
-	KeyElementStates []agentWorkbenchKeyElementStateResponse `json:"key_element_states"`
-	SourceMaterials  []agentWorkbenchSourceMaterialResponse  `json:"source_materials"`
+	WorkspaceID            string                                         `json:"workspace_id"`
+	Brief                  *agentWorkbenchBriefResponse                   `json:"brief,omitempty"`
+	Memory                 *agentWorkbenchMemoryResponse                  `json:"memory,omitempty"`
+	AudioPlan              *agentWorkbenchAudioPlanResponse               `json:"audio_plan,omitempty"`
+	KeyElements            []agentWorkbenchKeyElementResponse             `json:"key_elements"`
+	KeyElementStates       []agentWorkbenchKeyElementStateResponse        `json:"key_element_states"`
+	SourceMaterials        []agentWorkbenchSourceMaterialResponse         `json:"source_materials"`
+	ReferenceVideoAnalyses []agentWorkbenchReferenceVideoAnalysisResponse `json:"reference_video_analyses"`
 }
 
 type agentWorkbenchBriefResponse struct {
@@ -70,6 +71,15 @@ type agentWorkbenchSourceMaterialResponse struct {
 	Mime         string `json:"mime,omitempty"`
 	AccessURL    string `json:"access_url,omitempty"`
 	ThumbnailURL string `json:"thumbnail_url,omitempty"`
+}
+
+type agentWorkbenchReferenceVideoAnalysisResponse struct {
+	ID           string   `json:"id"`
+	SourceNodeID string   `json:"source_node_id"`
+	Status       string   `json:"status"`
+	Brief        string   `json:"brief"`
+	Summary      string   `json:"summary"`
+	Warnings     []string `json:"warnings"`
 }
 
 type agentWorkbenchLayoutPositionResponse struct {
@@ -325,6 +335,14 @@ func buildAgentWorkbenchProjection(ctx context.Context, queries *db.Queries, sig
 		nodesByID[node.ID] = node
 	}
 	response.Overview.SourceMaterials = agentWorkbenchSourceMaterials(ctx, signer, nodes, assetsByID)
+	referenceVideoAnalyses, err := queries.ListReferenceVideoAnalysesByWorkspace(ctx, db.ListReferenceVideoAnalysesByWorkspaceParams{
+		WorkspaceID: workspaceID,
+		LimitCount:  20,
+	})
+	if err != nil {
+		return response, err
+	}
+	response.Overview.ReferenceVideoAnalyses = agentWorkbenchReferenceVideoAnalyses(referenceVideoAnalyses)
 	layouts, err := queries.ListAgentCanvasLayoutsByWorkspace(ctx, workspaceID)
 	if err != nil {
 		return response, err
@@ -543,6 +561,23 @@ func jsonObjectValue(raw []byte) map[string]any {
 		return map[string]any{}
 	}
 	return out
+}
+
+func stringSliceValue(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok && text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func jsonAnyValue(raw []byte) any {
@@ -765,6 +800,23 @@ func agentWorkbenchSourceMaterials(ctx context.Context, signer assetURLSigner, n
 			}
 		}
 		out = append(out, material)
+	}
+	return out
+}
+
+func agentWorkbenchReferenceVideoAnalyses(rows []db.ReferenceVideoAnalysis) []agentWorkbenchReferenceVideoAnalysisResponse {
+	out := make([]agentWorkbenchReferenceVideoAnalysisResponse, 0, len(rows))
+	for _, row := range rows {
+		result := jsonObjectValue(row.Result)
+		summary, _ := result["summary"].(string)
+		out = append(out, agentWorkbenchReferenceVideoAnalysisResponse{
+			ID:           uuidToString(row.ID),
+			SourceNodeID: uuidToString(row.SourceNodeID),
+			Status:       row.Status,
+			Brief:        row.Brief,
+			Summary:      summary,
+			Warnings:     stringSliceValue(result["warnings"]),
+		})
 	}
 	return out
 }

@@ -132,6 +132,17 @@ describe("agent React Flow canvas", () => {
     assert.match(pageSource, /preserveCanvasAssetUrls/);
   });
 
+  it("renders reference video analysis cards in the Agent overview", async () => {
+    const overviewSource = await readFile(agentOverviewNodeUrl, "utf8");
+    const detailPanelSource = await readFile(agentCanvasDetailPanelUrl, "utf8");
+    const apiSource = await readFile(agentApiUrl, "utf8");
+
+    assert.match(overviewSource, /reference_video_analyses/);
+    assert.match(overviewSource, /reference_video_analysis/);
+    assert.match(detailPanelSource, /reference_video_analysis/);
+    assert.match(apiSource, /AgentCanvasReferenceVideoAnalysisDetail/);
+  });
+
   it("keeps Agent layout interactive while blocking edit and execution capabilities", async () => {
     const policySource = await readFile(policyUrl, "utf8");
     const surfaceSource = await readFile(canvasSurfaceUrl, "utf8");

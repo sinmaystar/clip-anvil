@@ -143,6 +143,20 @@ func TestAgentWorkbenchSourceMaterialsIncludeImagePreviewURLs(t *testing.T) {
 	}
 }
 
+func TestAgentWorkbenchReferenceVideoAnalysisSummary(t *testing.T) {
+	row := db.ReferenceVideoAnalysis{
+		ID:           uuidWithByteForWorkbenchTest(60),
+		SourceNodeID: uuidWithByteForWorkbenchTest(61),
+		Status:       "succeeded",
+		Brief:        "借鉴脚本结构",
+		Result:       []byte(`{"summary":"前三秒痛点 hook。","warnings":["不要复制原字幕。"]}`),
+	}
+	out := agentWorkbenchReferenceVideoAnalyses([]db.ReferenceVideoAnalysis{row})
+	if len(out) != 1 || out[0].Summary != "前三秒痛点 hook。" || len(out[0].Warnings) != 1 {
+		t.Fatalf("out = %#v", out)
+	}
+}
+
 func TestAgentWorkbenchArtifactSlotIncludesAssetDimensions(t *testing.T) {
 	assetID := uuidWithByteForWorkbenchTest(41)
 	versionID := uuidWithByteForWorkbenchTest(42)

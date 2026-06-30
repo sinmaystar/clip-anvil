@@ -13,16 +13,17 @@ import (
 )
 
 const (
-	agentCanvasObjectOverview        = "overview"
-	agentCanvasObjectKeyElement      = "key_element"
-	agentCanvasObjectKeyElementState = "key_element_state"
-	agentCanvasObjectScene           = "scene"
-	agentCanvasObjectShot            = "shot"
-	agentCanvasObjectArtifact        = "artifact"
-	agentCanvasObjectRenderPlan      = "render_plan"
-	agentCanvasObjectReview          = "review"
-	agentCanvasObjectIssue           = "issue"
-	agentCanvasObjectFinalOutput     = "final_output"
+	agentCanvasObjectOverview               = "overview"
+	agentCanvasObjectKeyElement             = "key_element"
+	agentCanvasObjectKeyElementState        = "key_element_state"
+	agentCanvasObjectScene                  = "scene"
+	agentCanvasObjectShot                   = "shot"
+	agentCanvasObjectArtifact               = "artifact"
+	agentCanvasObjectRenderPlan             = "render_plan"
+	agentCanvasObjectReview                 = "review"
+	agentCanvasObjectIssue                  = "issue"
+	agentCanvasObjectFinalOutput            = "final_output"
+	agentCanvasObjectReferenceVideoAnalysis = "reference_video_analysis"
 )
 
 type agentCanvasDetailError struct {
@@ -45,26 +46,28 @@ type agentCanvasDetailResponse struct {
 	Status     string `json:"status,omitempty"`
 	UpdatedAt  string `json:"updated_at,omitempty"`
 
-	Overview        *agentCanvasOverviewDetailResponse        `json:"overview,omitempty"`
-	KeyElement      *agentCanvasKeyElementDetailResponse      `json:"key_element,omitempty"`
-	KeyElementState *agentCanvasKeyElementStateDetailResponse `json:"key_element_state,omitempty"`
-	Scene           *agentCanvasSceneDetailResponse           `json:"scene,omitempty"`
-	Shot            *agentCanvasShotDetailResponse            `json:"shot,omitempty"`
-	Artifact        *agentCanvasArtifactDetailResponse        `json:"artifact,omitempty"`
-	RenderPlan      *agentCanvasRenderPlanDetailResponse      `json:"render_plan,omitempty"`
-	Review          *agentCanvasReviewDetailResponse          `json:"review,omitempty"`
-	Issue           *agentCanvasIssueDetailResponse           `json:"issue,omitempty"`
-	FinalOutput     *agentCanvasFinalOutputDetailResponse     `json:"final_output,omitempty"`
+	Overview               *agentCanvasOverviewDetailResponse               `json:"overview,omitempty"`
+	KeyElement             *agentCanvasKeyElementDetailResponse             `json:"key_element,omitempty"`
+	KeyElementState        *agentCanvasKeyElementStateDetailResponse        `json:"key_element_state,omitempty"`
+	Scene                  *agentCanvasSceneDetailResponse                  `json:"scene,omitempty"`
+	Shot                   *agentCanvasShotDetailResponse                   `json:"shot,omitempty"`
+	Artifact               *agentCanvasArtifactDetailResponse               `json:"artifact,omitempty"`
+	RenderPlan             *agentCanvasRenderPlanDetailResponse             `json:"render_plan,omitempty"`
+	Review                 *agentCanvasReviewDetailResponse                 `json:"review,omitempty"`
+	Issue                  *agentCanvasIssueDetailResponse                  `json:"issue,omitempty"`
+	FinalOutput            *agentCanvasFinalOutputDetailResponse            `json:"final_output,omitempty"`
+	ReferenceVideoAnalysis *agentCanvasReferenceVideoAnalysisDetailResponse `json:"reference_video_analysis,omitempty"`
 }
 
 type agentCanvasOverviewDetailResponse struct {
-	WorkspaceID      string                                  `json:"workspace_id"`
-	Brief            *agentCanvasCreativeBriefDetailResponse `json:"brief,omitempty"`
-	Memory           *agentCanvasProjectMemoryDetailResponse `json:"memory,omitempty"`
-	AudioPlan        *agentWorkbenchAudioPlanResponse        `json:"audio_plan,omitempty"`
-	KeyElements      []agentCanvasKeyElementSummaryResponse  `json:"key_elements"`
-	KeyElementStates []agentCanvasKeyElementStateSummary     `json:"key_element_states"`
-	SourceMaterials  []agentWorkbenchSourceMaterialResponse  `json:"source_materials"`
+	WorkspaceID            string                                         `json:"workspace_id"`
+	Brief                  *agentCanvasCreativeBriefDetailResponse        `json:"brief,omitempty"`
+	Memory                 *agentCanvasProjectMemoryDetailResponse        `json:"memory,omitempty"`
+	AudioPlan              *agentWorkbenchAudioPlanResponse               `json:"audio_plan,omitempty"`
+	KeyElements            []agentCanvasKeyElementSummaryResponse         `json:"key_elements"`
+	KeyElementStates       []agentCanvasKeyElementStateSummary            `json:"key_element_states"`
+	SourceMaterials        []agentWorkbenchSourceMaterialResponse         `json:"source_materials"`
+	ReferenceVideoAnalyses []agentWorkbenchReferenceVideoAnalysisResponse `json:"reference_video_analyses"`
 }
 
 type agentCanvasCreativeBriefDetailResponse struct {
@@ -322,6 +325,21 @@ type agentCanvasFinalOutputDetailResponse struct {
 	UpdatedAt         string                                `json:"updated_at,omitempty"`
 }
 
+type agentCanvasReferenceVideoAnalysisDetailResponse struct {
+	ID             string         `json:"id"`
+	SourceNodeID   string         `json:"source_node_id"`
+	Status         string         `json:"status"`
+	Brief          string         `json:"brief"`
+	Focus          any            `json:"focus,omitempty"`
+	ModelProvider  string         `json:"model_provider,omitempty"`
+	ModelID        string         `json:"model_id,omitempty"`
+	RequestSummary any            `json:"request_summary,omitempty"`
+	Result         map[string]any `json:"result,omitempty"`
+	ErrorCode      string         `json:"error_code,omitempty"`
+	ErrorMessage   string         `json:"error_message,omitempty"`
+	UpdatedAt      string         `json:"updated_at,omitempty"`
+}
+
 func buildAgentCanvasDetail(ctx context.Context, queries *db.Queries, signer assetURLSigner, workspaceID pgtype.UUID, objectType string, objectID string) (agentCanvasDetailResponse, error) {
 	if queries == nil || !workspaceID.Valid {
 		return agentCanvasDetailResponse{}, newAgentCanvasDetailError(http.StatusNotFound, "workspace not found")
@@ -360,6 +378,8 @@ func buildAgentCanvasDetail(ctx context.Context, queries *db.Queries, signer ass
 		return buildAgentCanvasIssueDetail(ctx, queries, workspaceID, id)
 	case agentCanvasObjectFinalOutput:
 		return buildAgentCanvasFinalOutputDetail(ctx, queries, signer, workspaceID, id)
+	case agentCanvasObjectReferenceVideoAnalysis:
+		return buildAgentCanvasReferenceVideoAnalysisDetail(ctx, queries, workspaceID, id)
 	default:
 		return agentCanvasDetailResponse{}, newAgentCanvasDetailError(http.StatusBadRequest, "unsupported object_type")
 	}
@@ -446,6 +466,14 @@ func buildAgentCanvasOverviewDetail(ctx context.Context, queries *db.Queries, si
 		assetsByID[asset.ID] = asset
 	}
 	detail.SourceMaterials = agentWorkbenchSourceMaterials(ctx, signer, nodes, assetsByID)
+	referenceVideoAnalyses, err := queries.ListReferenceVideoAnalysesByWorkspace(ctx, db.ListReferenceVideoAnalysesByWorkspaceParams{
+		WorkspaceID: workspaceID,
+		LimitCount:  20,
+	})
+	if err != nil {
+		return agentCanvasDetailResponse{}, err
+	}
+	detail.ReferenceVideoAnalyses = agentWorkbenchReferenceVideoAnalyses(referenceVideoAnalyses)
 	versionsByID := make(map[pgtype.UUID]db.ArtifactVersion)
 	for _, node := range nodes {
 		if !node.CurrentVersionID.Valid {
@@ -472,6 +500,42 @@ func buildAgentCanvasOverviewDetail(ctx context.Context, queries *db.Queries, si
 		Title:      title,
 		Status:     status,
 		Overview:   &detail,
+	}, nil
+}
+
+func buildAgentCanvasReferenceVideoAnalysisDetail(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID, id pgtype.UUID) (agentCanvasDetailResponse, error) {
+	analysis, err := queries.GetReferenceVideoAnalysisByID(ctx, id)
+	if err != nil {
+		return agentCanvasDetailResponse{}, detailNotFound(err)
+	}
+	if analysis.WorkspaceID != workspaceID {
+		return agentCanvasDetailResponse{}, newAgentCanvasDetailError(http.StatusNotFound, "object not found")
+	}
+	out := agentCanvasReferenceVideoAnalysisDetailResponse{
+		ID:             uuidToString(analysis.ID),
+		SourceNodeID:   uuidToString(analysis.SourceNodeID),
+		Status:         analysis.Status,
+		Brief:          analysis.Brief,
+		Focus:          jsonValue(analysis.Focus),
+		ModelProvider:  analysis.ModelProvider,
+		ModelID:        analysis.ModelID,
+		RequestSummary: jsonValue(analysis.RequestSummary),
+		Result:         jsonObjectValue(analysis.Result),
+		ErrorCode:      analysis.ErrorCode,
+		ErrorMessage:   analysis.ErrorMessage,
+		UpdatedAt:      timeString(analysis.UpdatedAt),
+	}
+	title := "参考视频分析"
+	if out.Brief != "" {
+		title = out.Brief
+	}
+	return agentCanvasDetailResponse{
+		ObjectType:             agentCanvasObjectReferenceVideoAnalysis,
+		ObjectID:               uuidToString(analysis.ID),
+		Title:                  title,
+		Status:                 analysis.Status,
+		UpdatedAt:              timeString(analysis.UpdatedAt),
+		ReferenceVideoAnalysis: &out,
 	}, nil
 }
 

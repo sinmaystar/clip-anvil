@@ -12,6 +12,8 @@ export function AgentProjectOverviewNode({
   const brief = workbench.overview.brief;
   const memory = workbench.overview.memory;
   const audioPlan = workbench.overview.audio_plan;
+  const referenceVideoAnalyses =
+    workbench.overview.reference_video_analyses ?? [];
   const selection = useAgentWorkbenchSelection();
 
   return (
@@ -88,6 +90,31 @@ export function AgentProjectOverviewNode({
               </button>
             );
           })}
+        </div>
+      ) : null}
+      {referenceVideoAnalyses.length > 0 ? (
+        <div className="agent-workbench-reference-analyses">
+          {referenceVideoAnalyses.slice(0, 3).map((analysis) => (
+            <button
+              data-selected={selection.isSelected(
+                "reference_video_analysis",
+                analysis.id,
+              )}
+              key={analysis.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                selection.select({
+                  objectType: "reference_video_analysis",
+                  objectId: analysis.id,
+                  label: analysis.brief || "参考视频分析",
+                });
+              }}
+              type="button"
+            >
+              <strong>{analysis.brief || "参考视频分析"}</strong>
+              <span>{analysis.summary || analysis.status}</span>
+            </button>
+          ))}
         </div>
       ) : null}
       <div className="agent-workbench-overview-elements">

@@ -341,6 +341,41 @@ function DetailBody({
     );
   }
 
+  if (detail.reference_video_analysis) {
+    const analysis = detail.reference_video_analysis;
+    return (
+      <>
+        <DetailSection title="参考视频分析">
+          <FieldGrid
+            fields={[
+              ["状态", analysis.status],
+              [
+                "模型",
+                [analysis.model_provider, analysis.model_id]
+                  .filter(Boolean)
+                  .join(" / "),
+              ],
+              ["Source node", analysis.source_node_id],
+              ["错误", analysis.error_message],
+            ]}
+          />
+          <TextBlock text={analysis.brief} />
+        </DetailSection>
+        <DetailSection title="分析结果">
+          <JsonBlock label="Result" value={analysis.result} />
+        </DetailSection>
+        <DetailSection title="Request summary">
+          <JsonBlock
+            collapsed
+            label="Request"
+            value={analysis.request_summary}
+          />
+          <JsonBlock collapsed label="Focus" value={analysis.focus} />
+        </DetailSection>
+      </>
+    );
+  }
+
   if (detail.final_output) {
     return <FinalOutputDetail finalOutput={detail.final_output} />;
   }

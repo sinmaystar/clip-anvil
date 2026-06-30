@@ -8,7 +8,8 @@ export type AgentWorkbenchObjectType =
   | "render_plan"
   | "review"
   | "issue"
-  | "final_output";
+  | "final_output"
+  | "reference_video_analysis";
 
 export interface AgentWorkbenchSelection {
   objectType: AgentWorkbenchObjectType;
