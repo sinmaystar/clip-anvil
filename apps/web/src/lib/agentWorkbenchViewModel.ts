@@ -68,7 +68,12 @@ export type AgentWorkbenchLayoutOverrides = Record<
 >;
 
 const OVERVIEW_WIDTH = 360;
-const OVERVIEW_HEIGHT = 440;
+const OVERVIEW_MIN_HEIGHT = 440;
+const OVERVIEW_PADDING = 16;
+const OVERVIEW_SECTION_GAP = 12;
+const OVERVIEW_CHIP_GAP = 6;
+const OVERVIEW_CHIP_HEIGHT = 28;
+const OVERVIEW_INNER_WIDTH = OVERVIEW_WIDTH - OVERVIEW_PADDING * 2;
 const AUDIO_WIDTH = 360;
 const AUDIO_HEIGHT = 156;
 const AUDIO_GAP = 20;
@@ -123,6 +128,7 @@ export function agentWorkbenchToFlow(
   edges: AgentWorkbenchEdge[];
 } {
   const overviewId = overviewNodeId();
+  const overviewHeight = overviewNodeHeight(workbench);
   const nodes: AgentWorkbenchNode[] = [
     {
       id: overviewId,
@@ -130,9 +136,9 @@ export function agentWorkbenchToFlow(
       position: layoutOverrides[overviewId] ?? { x: ORIGIN_X, y: ORIGIN_Y },
       data: { kind: "overview", workbench },
       width: OVERVIEW_WIDTH,
-      height: OVERVIEW_HEIGHT,
-      measured: { width: OVERVIEW_WIDTH, height: OVERVIEW_HEIGHT },
-      style: { width: OVERVIEW_WIDTH, height: OVERVIEW_HEIGHT },
+      height: overviewHeight,
+      measured: { width: OVERVIEW_WIDTH, height: overviewHeight },
+      style: { width: OVERVIEW_WIDTH, height: overviewHeight },
       draggable: true,
       selectable: true,
     },
@@ -147,7 +153,7 @@ export function agentWorkbenchToFlow(
       type: "agentAudio",
       position: layoutOverrides[nodeId] ?? {
         x: ORIGIN_X,
-        y: ORIGIN_Y + OVERVIEW_HEIGHT + 32 + index * (AUDIO_HEIGHT + AUDIO_GAP),
+        y: ORIGIN_Y + overviewHeight + 32 + index * (AUDIO_HEIGHT + AUDIO_GAP),
       },
       data: { kind: "audio", ...audio },
       width: AUDIO_WIDTH,
@@ -268,6 +274,87 @@ export function agentWorkbenchToFlow(
   }
 
   return { nodes, edges };
+}
+
+function overviewNodeHeight(workbench: AgentWorkbenchProjection) {
+  const overview = workbench.overview;
+  const sections = [
+    28,
+    overviewTextHeight(overview.brief?.concept || overview.memory?.soul || ""),
+    68,
+  ];
+
+  if (overview.audio_plan) {
+    sections.push(overview.audio_plan.voiceover_script ? 104 : 72);
+  }
+  if (overview.source_materials.length > 0) {
+    sections.push(50);
+  }
+  const referenceVideoAnalyses = overview.reference_video_analyses ?? [];
+  if (referenceVideoAnalyses.length > 0) {
+    const visibleAnalysisCount = Math.min(referenceVideoAnalyses.length, 3);
+    sections.push(
+      visibleAnalysisCount * 42 +
+        Math.max(0, visibleAnalysisCount - 1) * OVERVIEW_CHIP_GAP,
+    );
+  }
+
+  sections.push(
+    overviewChipBlockHeight(
+      overview.key_elements.slice(0, 5).map((element) => element.name),
+    ),
+  );
+  sections.push(
+    overviewChipBlockHeight(
+      overview.key_element_states
+        .slice(0, 6)
+        .map((state) => state.label || state.client_key),
+    ),
+  );
+
+  const contentHeight =
+    OVERVIEW_PADDING * 2 +
+    sections.reduce((sum, height) => sum + height, 0) +
+    Math.max(0, sections.length - 1) * OVERVIEW_SECTION_GAP;
+
+  return Math.max(OVERVIEW_MIN_HEIGHT, Math.ceil(contentHeight));
+}
+
+function overviewTextHeight(text: string | undefined) {
+  if (!text) {
+    return 18;
+  }
+  const estimatedLines = Math.min(3, Math.max(1, Math.ceil(text.length / 32)));
+  return estimatedLines * 17.5;
+}
+
+function overviewChipBlockHeight(labels: string[]) {
+  if (labels.length === 0) {
+    return 0;
+  }
+  let rows = 1;
+  let rowWidth = 0;
+  for (const label of labels) {
+    const width = overviewChipWidth(label);
+    if (
+      rowWidth > 0 &&
+      rowWidth + OVERVIEW_CHIP_GAP + width > OVERVIEW_INNER_WIDTH
+    ) {
+      rows += 1;
+      rowWidth = width;
+      continue;
+    }
+    rowWidth = rowWidth > 0 ? rowWidth + OVERVIEW_CHIP_GAP + width : width;
+  }
+  return rows * OVERVIEW_CHIP_HEIGHT + (rows - 1) * OVERVIEW_CHIP_GAP;
+}
+
+function overviewChipWidth(label: string) {
+  let width = 14;
+  for (const character of label) {
+    width += character.charCodeAt(0) > 127 ? 12 : 7;
+  }
+  return Math.min(OVERVIEW_INNER_WIDTH, Math.max(48, width));
 }
 
 export function agentWorkbenchLayoutOverrides(
