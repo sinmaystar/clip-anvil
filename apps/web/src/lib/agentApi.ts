@@ -1,6 +1,7 @@
 import { apiFetch, type MediaAsset, type MediaNode } from "./api";
 import type {
   AgentWorkbenchAudioPlan,
+  AgentWorkbenchLayoutPosition,
   AgentWorkbenchAudioSummary,
   AgentWorkbenchAudioTrack,
   AgentWorkbenchIssueSummary,
@@ -791,6 +792,16 @@ export function fetchAgentCanvasDetail(
   return apiFetch<AgentCanvasDetail>(
     `/agent/workspaces/${workspaceId}/canvas/details?${params.toString()}`,
   );
+}
+
+export function putAgentCanvasLayout(
+  workspaceId: string,
+  input: { positions: AgentWorkbenchLayoutPosition[] },
+) {
+  return apiFetch<void>(`/agent/workspaces/${workspaceId}/canvas/layout`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
 }
 
 export function putAgentModelSelection(

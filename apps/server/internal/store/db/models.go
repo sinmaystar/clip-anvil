@@ -247,6 +247,18 @@ type Account struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AgentCanvasLayout struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ObjectType  string             `json:"object_type"`
+	ObjectID    pgtype.UUID        `json:"object_id"`
+	CanvasX     float32            `json:"canvas_x"`
+	CanvasY     float32            `json:"canvas_y"`
+	Metadata    []byte             `json:"metadata"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentContextCompaction struct {
 	ID                     pgtype.UUID        `json:"id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`

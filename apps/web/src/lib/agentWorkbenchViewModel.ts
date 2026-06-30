@@ -2,6 +2,7 @@ import type { Edge, Node } from "@xyflow/react";
 import type {
   AgentWorkbenchArtifactSlot,
   AgentWorkbenchFinalOutput,
+  AgentWorkbenchLayoutPosition,
   AgentWorkbenchProjection,
   AgentWorkbenchScene,
   AgentWorkbenchShot,
@@ -61,6 +62,11 @@ export interface AgentWorkbenchEdgeData extends Record<string, unknown> {
   label?: string;
 }
 
+export type AgentWorkbenchLayoutOverrides = Record<
+  string,
+  { x: number; y: number }
+>;
+
 const OVERVIEW_WIDTH = 360;
 const OVERVIEW_HEIGHT = 440;
 const AUDIO_WIDTH = 360;
@@ -110,21 +116,24 @@ export function agentWorkbenchToFlow(
   workbench: AgentWorkbenchProjection,
   mediaDimensions: AgentWorkbenchMediaDimensionsByKey = {},
   measuredShotHeights: Record<string, number | undefined> = {},
+  layoutOverrides: AgentWorkbenchLayoutOverrides =
+    agentWorkbenchLayoutOverrides(workbench),
 ): {
   nodes: AgentWorkbenchNode[];
   edges: AgentWorkbenchEdge[];
 } {
+  const overviewId = overviewNodeId();
   const nodes: AgentWorkbenchNode[] = [
     {
-      id: overviewNodeId(),
+      id: overviewId,
       type: "agentOverview",
-      position: { x: ORIGIN_X, y: ORIGIN_Y },
+      position: layoutOverrides[overviewId] ?? { x: ORIGIN_X, y: ORIGIN_Y },
       data: { kind: "overview", workbench },
       width: OVERVIEW_WIDTH,
       height: OVERVIEW_HEIGHT,
       measured: { width: OVERVIEW_WIDTH, height: OVERVIEW_HEIGHT },
       style: { width: OVERVIEW_WIDTH, height: OVERVIEW_HEIGHT },
-      draggable: false,
+      draggable: true,
       selectable: true,
     },
   ];
@@ -132,10 +141,11 @@ export function agentWorkbenchToFlow(
   const audioNodes = workbenchAudioNodes(workbench);
 
   audioNodes.forEach((audio, index) => {
+    const nodeId = audioNodeId(audio.artifact.node_id || `${audio.label}-${index}`);
     nodes.push({
-      id: audioNodeId(audio.artifact.node_id || `${audio.label}-${index}`),
+      id: nodeId,
       type: "agentAudio",
-      position: {
+      position: layoutOverrides[nodeId] ?? {
         x: ORIGIN_X,
         y: ORIGIN_Y + OVERVIEW_HEIGHT + 32 + index * (AUDIO_HEIGHT + AUDIO_GAP),
       },
@@ -144,7 +154,7 @@ export function agentWorkbenchToFlow(
       height: AUDIO_HEIGHT,
       measured: { width: AUDIO_WIDTH, height: AUDIO_HEIGHT },
       style: { width: AUDIO_WIDTH, height: AUDIO_HEIGHT },
-      draggable: false,
+      draggable: true,
       selectable: true,
     });
   });
@@ -174,13 +184,13 @@ export function agentWorkbenchToFlow(
     nodes.push({
       id: currentSceneNodeId,
       type: "agentScene",
-      position: scenePosition,
+      position: layoutOverrides[currentSceneNodeId] ?? scenePosition,
       data: { kind: "scene", scene },
       width: sceneLayout.width,
       height: sceneLayout.height,
       measured: { width: sceneLayout.width, height: sceneLayout.height },
       style: { width: sceneLayout.width, height: sceneLayout.height },
-      draggable: false,
+      draggable: true,
       selectable: true,
     });
     edges.push({
@@ -194,21 +204,22 @@ export function agentWorkbenchToFlow(
     shots.forEach((shot, index) => {
       const layout = shotLayouts[index];
       const currentShotNodeId = shotNodeId(shot.id);
+      const shotPosition = {
+        x: SCENE_PADDING + layout.x,
+        y: SCENE_HEADER + layout.y,
+      };
       nodes.push({
         id: currentShotNodeId,
         type: "agentShot",
         parentId: currentSceneNodeId,
         extent: "parent",
-        position: {
-          x: SCENE_PADDING + layout.x,
-          y: SCENE_HEADER + layout.y,
-        },
+        position: layoutOverrides[currentShotNodeId] ?? shotPosition,
         data: { kind: "shot", shot },
         width: SHOT_WIDTH,
         height: layout.height,
         measured: { width: SHOT_WIDTH, height: layout.height },
         style: { width: SHOT_WIDTH, height: layout.height },
-        draggable: false,
+        draggable: true,
         selectable: true,
       });
       if (index > 0) {
@@ -231,10 +242,11 @@ export function agentWorkbenchToFlow(
         ? sceneColumns * sceneColumnWidth + Math.max(0, sceneColumns - 1) * SCENE_GAP
         : 0;
     const sceneAreaHeight = Math.max(...sceneColumnHeights, 0);
+    const currentFinalOutputNodeId = finalOutputNodeId(workbench.final_output.id);
     nodes.push({
-      id: finalOutputNodeId(workbench.final_output.id),
+      id: currentFinalOutputNodeId,
       type: "agentFinalOutput",
-      position: {
+      position: layoutOverrides[currentFinalOutputNodeId] ?? {
         x: SCENE_X + sceneAreaWidth + 80,
         y: ORIGIN_Y + Math.max(0, Math.min(sceneAreaHeight, 360)),
       },
@@ -243,19 +255,63 @@ export function agentWorkbenchToFlow(
       height: FINAL_OUTPUT_HEIGHT,
       measured: { width: FINAL_OUTPUT_WIDTH, height: FINAL_OUTPUT_HEIGHT },
       style: { width: FINAL_OUTPUT_WIDTH, height: FINAL_OUTPUT_HEIGHT },
-      draggable: false,
+      draggable: true,
       selectable: true,
     });
     edges.push({
       id: `agent-edge-overview-final-${workbench.final_output.id}`,
       type: "agentWorkbench",
       source: overviewNodeId(),
-      target: finalOutputNodeId(workbench.final_output.id),
+      target: currentFinalOutputNodeId,
       data: { label: "final" },
     });
   }
 
   return { nodes, edges };
+}
+
+export function agentWorkbenchLayoutOverrides(
+  workbench: AgentWorkbenchProjection,
+): AgentWorkbenchLayoutOverrides {
+  const out: AgentWorkbenchLayoutOverrides = {};
+  for (const position of workbench.layout_positions ?? []) {
+    const nodeId = nodeIdForLayoutPosition(workbench, position);
+    if (!nodeId) {
+      continue;
+    }
+    out[nodeId] = { x: position.x, y: position.y };
+  }
+  return out;
+}
+
+function nodeIdForLayoutPosition(
+  workbench: AgentWorkbenchProjection,
+  position: AgentWorkbenchLayoutPosition,
+) {
+  if (position.object_type === "overview") {
+    return position.object_id === workbench.overview.workspace_id
+      ? overviewNodeId()
+      : "";
+  }
+  if (position.object_type === "scene") {
+    return sceneNodeId(position.object_id);
+  }
+  if (position.object_type === "shot") {
+    return shotNodeId(position.object_id);
+  }
+  if (position.object_type === "artifact") {
+    return audioNodeId(position.object_id);
+  }
+  if (position.object_type === "final_output") {
+    const finalOutput = workbench.final_output;
+    if (!finalOutput) {
+      return "";
+    }
+    const objectId =
+      finalOutput.timeline_plan_id || finalOutput.id || finalOutput.output_node_id;
+    return position.object_id === objectId ? finalOutputNodeId(finalOutput.id) : "";
+  }
+  return "";
 }
 
 function workbenchAudioNodes(workbench: AgentWorkbenchProjection) {

@@ -107,6 +107,42 @@ func TestAgentWorkbenchMissingArtifactSlot(t *testing.T) {
 	}
 }
 
+func TestAgentWorkbenchSourceMaterialsIncludeImagePreviewURLs(t *testing.T) {
+	workspaceID := uuidWithByteForWorkbenchTest(34)
+	assetID := uuidWithByteForWorkbenchTest(35)
+	node := db.MediaNode{
+		ID:            uuidWithByteForWorkbenchTest(36),
+		WorkspaceID:   workspaceID,
+		NodeType:      db.NodeTypeImage,
+		Title:         "product front",
+		Status:        db.NodeStatusSucceeded,
+		OperationType: "upload",
+		AssetID:       assetID,
+	}
+	asset := db.MediaAsset{
+		ID:          assetID,
+		WorkspaceID: workspaceID,
+		Type:        db.AssetTypeImage,
+		Mime:        "image/png",
+		StorageUrl:  pgtype.Text{String: "assets/product-front.png", Valid: true},
+	}
+
+	materials := agentWorkbenchSourceMaterials(
+		context.Background(),
+		&fakeCanvasAssetSigner{url: "http://signed.local/product-front.png"},
+		[]db.MediaNode{node},
+		map[pgtype.UUID]db.MediaAsset{assetID: asset},
+	)
+
+	if len(materials) != 1 {
+		t.Fatalf("source materials len = %d, want 1", len(materials))
+	}
+	if materials[0].AccessURL != "http://signed.local/product-front.png" ||
+		materials[0].ThumbnailURL != "http://signed.local/product-front.png" {
+		t.Fatalf("source material urls = %#v", materials[0])
+	}
+}
+
 func TestAgentWorkbenchArtifactSlotIncludesAssetDimensions(t *testing.T) {
 	assetID := uuidWithByteForWorkbenchTest(41)
 	versionID := uuidWithByteForWorkbenchTest(42)

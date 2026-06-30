@@ -433,7 +433,6 @@ func buildAgentCanvasOverviewDetail(ctx context.Context, queries *db.Queries, si
 	if err != nil {
 		return agentCanvasDetailResponse{}, err
 	}
-	detail.SourceMaterials = agentWorkbenchSourceMaterials(nodes)
 	nodesByID := make(map[pgtype.UUID]db.MediaNode, len(nodes))
 	for _, node := range nodes {
 		nodesByID[node.ID] = node
@@ -446,6 +445,7 @@ func buildAgentCanvasOverviewDetail(ctx context.Context, queries *db.Queries, si
 	for _, asset := range assets {
 		assetsByID[asset.ID] = asset
 	}
+	detail.SourceMaterials = agentWorkbenchSourceMaterials(ctx, signer, nodes, assetsByID)
 	versionsByID := make(map[pgtype.UUID]db.ArtifactVersion)
 	for _, node := range nodes {
 		if !node.CurrentVersionID.Valid {

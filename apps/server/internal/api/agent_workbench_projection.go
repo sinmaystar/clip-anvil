@@ -14,10 +14,11 @@ import (
 )
 
 type agentWorkbenchResponse struct {
-	Overview    agentWorkbenchOverviewResponse     `json:"overview"`
-	Scenes      []agentWorkbenchSceneResponse      `json:"scenes"`
-	Counts      agentWorkbenchCountsResponse       `json:"counts"`
-	FinalOutput *agentWorkbenchFinalOutputResponse `json:"final_output,omitempty"`
+	Overview        agentWorkbenchOverviewResponse         `json:"overview"`
+	Scenes          []agentWorkbenchSceneResponse          `json:"scenes"`
+	Counts          agentWorkbenchCountsResponse           `json:"counts"`
+	LayoutPositions []agentWorkbenchLayoutPositionResponse `json:"layout_positions"`
+	FinalOutput     *agentWorkbenchFinalOutputResponse     `json:"final_output,omitempty"`
 }
 
 type agentWorkbenchOverviewResponse struct {
@@ -61,10 +62,21 @@ type agentWorkbenchKeyElementStateResponse struct {
 }
 
 type agentWorkbenchSourceMaterialResponse struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	NodeType string `json:"node_type"`
-	Status   string `json:"status"`
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	NodeType     string `json:"node_type"`
+	Status       string `json:"status"`
+	AssetID      string `json:"asset_id,omitempty"`
+	Mime         string `json:"mime,omitempty"`
+	AccessURL    string `json:"access_url,omitempty"`
+	ThumbnailURL string `json:"thumbnail_url,omitempty"`
+}
+
+type agentWorkbenchLayoutPositionResponse struct {
+	ObjectType string  `json:"object_type"`
+	ObjectID   string  `json:"object_id"`
+	X          float32 `json:"x"`
+	Y          float32 `json:"y"`
 }
 
 type agentWorkbenchAudioPlanResponse struct {
@@ -312,7 +324,12 @@ func buildAgentWorkbenchProjection(ctx context.Context, queries *db.Queries, sig
 	for _, node := range nodes {
 		nodesByID[node.ID] = node
 	}
-	response.Overview.SourceMaterials = agentWorkbenchSourceMaterials(nodes)
+	response.Overview.SourceMaterials = agentWorkbenchSourceMaterials(ctx, signer, nodes, assetsByID)
+	layouts, err := queries.ListAgentCanvasLayoutsByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return response, err
+	}
+	response.LayoutPositions = agentWorkbenchLayoutPositions(layouts)
 
 	if audioPlan, ok, err := activeWorkbenchAudioPlan(ctx, queries, workspaceID); err != nil {
 		return response, err
@@ -724,7 +741,7 @@ func countFinalVideoReviews(reviews []db.ReviewRecord) int {
 	return count
 }
 
-func agentWorkbenchSourceMaterials(nodes []db.MediaNode) []agentWorkbenchSourceMaterialResponse {
+func agentWorkbenchSourceMaterials(ctx context.Context, signer assetURLSigner, nodes []db.MediaNode, assets map[pgtype.UUID]db.MediaAsset) []agentWorkbenchSourceMaterialResponse {
 	out := []agentWorkbenchSourceMaterialResponse{}
 	for _, node := range nodes {
 		if agentWorkbenchArtifactKind(node.Metadata) != "" {
@@ -733,11 +750,57 @@ func agentWorkbenchSourceMaterials(nodes []db.MediaNode) []agentWorkbenchSourceM
 		if node.OperationType != "upload" && node.OperationType != "manual" {
 			continue
 		}
-		out = append(out, agentWorkbenchSourceMaterialResponse{
+		material := agentWorkbenchSourceMaterialResponse{
 			ID:       uuidToString(node.ID),
 			Title:    node.Title,
 			NodeType: string(node.NodeType),
 			Status:   string(node.Status),
+		}
+		if node.AssetID.Valid {
+			if asset, ok := assets[node.AssetID]; ok {
+				material.AssetID = uuidToString(asset.ID)
+				material.Mime = asset.Mime
+				material.AccessURL = sourceMaterialAccessURL(ctx, signer, asset)
+				material.ThumbnailURL = sourceMaterialThumbnailURL(ctx, signer, asset, material.AccessURL)
+			}
+		}
+		out = append(out, material)
+	}
+	return out
+}
+
+func sourceMaterialAccessURL(ctx context.Context, signer assetURLSigner, asset db.MediaAsset) string {
+	accessURL, err := previewAssetAccessURL(ctx, signer, asset)
+	if err == nil && accessURL != "" {
+		return accessURL
+	}
+	if !asset.StorageUrl.Valid {
+		return ""
+	}
+	if signer != nil {
+		if signedURL, signErr := signer.PresignedGetURL(ctx, asset.WorkspaceID, asset.StorageUrl.String, 15*time.Minute); signErr == nil {
+			return signedURL
+		}
+	}
+	return asset.StorageUrl.String
+}
+
+func sourceMaterialThumbnailURL(ctx context.Context, signer assetURLSigner, asset db.MediaAsset, accessURL string) string {
+	thumbnailURL, err := previewAssetThumbnailURL(ctx, signer, asset)
+	if err == nil && thumbnailURL != "" {
+		return thumbnailURL
+	}
+	return accessURL
+}
+
+func agentWorkbenchLayoutPositions(layouts []db.AgentCanvasLayout) []agentWorkbenchLayoutPositionResponse {
+	out := make([]agentWorkbenchLayoutPositionResponse, 0, len(layouts))
+	for _, layout := range layouts {
+		out = append(out, agentWorkbenchLayoutPositionResponse{
+			ObjectType: layout.ObjectType,
+			ObjectID:   uuidToString(layout.ObjectID),
+			X:          layout.CanvasX,
+			Y:          layout.CanvasY,
 		})
 	}
 	return out

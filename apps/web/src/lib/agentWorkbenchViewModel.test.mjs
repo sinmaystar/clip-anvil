@@ -252,6 +252,24 @@ describe("agent workbench view model", () => {
     assert.ok(shot1.position.y >= 100);
   });
 
+  it("applies persisted layout positions to draggable workbench nodes", () => {
+    const flow = agentWorkbenchToFlow(workbench, {}, {}, {
+      [sceneNodeId("scene-1")]: { x: 900, y: 120 },
+      [shotNodeId("shot-1")]: { x: 44, y: 188 },
+      [audioNodeId("voice-node-1")]: { x: 24, y: 720 },
+      [finalOutputNodeId("timeline-1")]: { x: 1600, y: 240 },
+    });
+    const scene = flow.nodes.find((node) => node.id === sceneNodeId("scene-1"));
+    const shot = flow.nodes.find((node) => node.id === shotNodeId("shot-1"));
+
+    assert.ok(scene);
+    assert.deepEqual(scene.position, { x: 900, y: 120 });
+    assert.equal(scene.draggable, true);
+    assert.ok(shot);
+    assert.deepEqual(shot.position, { x: 44, y: 188 });
+    assert.equal(shot.draggable, true);
+  });
+
   it("wraps many shots into scene rows instead of one horizontal strip", () => {
     const manyShotWorkbench = {
       ...workbench,

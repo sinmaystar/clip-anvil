@@ -503,6 +503,7 @@ func main() {
 	h.GET("/api/agent/workspaces/:workspaceID/production-overview", authMiddleware, agentHandler.GetProductionOverview)
 	h.GET("/api/agent/workspaces/:workspaceID/canvas/workbench", authMiddleware, agentHandler.GetCanvasWorkbench)
 	h.GET("/api/agent/workspaces/:workspaceID/canvas/details", authMiddleware, agentHandler.GetCanvasDetail)
+	h.PUT("/api/agent/workspaces/:workspaceID/canvas/layout", authMiddleware, agentHandler.PutCanvasLayout)
 	h.GET("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.GetModelSelection)
 	h.PUT("/api/agent/workspaces/:workspaceID/model-selection", authMiddleware, agentHandler.PutModelSelection)
 	h.POST("/api/agent/workspaces/:workspaceID/attachments", authMiddleware, agentHandler.PostAttachment)

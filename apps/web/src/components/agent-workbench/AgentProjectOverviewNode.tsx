@@ -62,6 +62,34 @@ export function AgentProjectOverviewNode({
           ) : null}
         </div>
       ) : null}
+      {workbench.overview.source_materials.length > 0 ? (
+        <div className="agent-workbench-overview-materials">
+          {workbench.overview.source_materials.slice(0, 6).map((material) => {
+            const previewURL = material.thumbnail_url || material.access_url;
+            return (
+              <button
+                data-selected={selection.isSelected("artifact", material.id)}
+                key={material.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  selection.select({
+                    objectType: "artifact",
+                    objectId: material.id,
+                    label: material.title,
+                  });
+                }}
+                type="button"
+              >
+                {previewURL && material.node_type === "image" ? (
+                  <img alt="" src={previewURL} />
+                ) : (
+                  <span>{material.node_type}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       <div className="agent-workbench-overview-elements">
         {workbench.overview.key_elements.slice(0, 5).map((element) => (
           <button
