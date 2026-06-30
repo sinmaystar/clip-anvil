@@ -25,6 +25,6 @@
 - 真实 provider 已接入到 Studio 手动运行：mock provider 保留本地测试；Volcengine/Doubao 文本、图片、视频模型可通过后端异步执行；TOS 用于供应商输入暂存；生成图片/视频会通过 sandbox 下载并存入 MinIO。
 - 用户源素材节点已落地：手动文本素材和上传图片/视频/音频可作为普通依赖或参考包成员使用，但不展示模型运行入口。
 - OpenSandbox 工作区沙箱基础已落地：本地 compose 启动 OpenSandbox Server，后端有 DB-first `workspace_sandbox` 绑定、sandbox exec、MinIO 预签名传输、artifact submit 和 sandbox-backed media ingest/FFmpeg 任务记录。
-- Agent 三角色主链路已落地：`/ws/agent`、Agent 对话 API、消息/事件/任务持久化、Eino checkpoint/resume、Producer/Craftsman/Reviewer 原生 Eino tool loop、HITL 决策卡、创作事实源、RenderPlan、Worker 执行、Reviewer gate、Producer pending signal、语义键和 Agent Workbench 画布投影；MultiAgent 当前架构详见 [`engineering/agent-multiagent-architecture.md`](engineering/agent-multiagent-architecture.md)。
-- 仍需后续完善：Studio/Agent 复制导入、Agent 长期 Skill 配置化、生产级并发/成本控制、外部任务队列、Campaign/Strategist、完整音频/TimelinePlan/商业级 Composer、Seedance 首尾帧/视频/音频参考深度支持、工具 schema 继续收紧和更多真实端到端回归。
-- 数据库当前迁移到 `001_init_schema.sql` 到 `030_agent_semantic_identity.sql`，真实 schema 以 `apps/server/migrations/` 和 sqlc 生成代码为准。
+- Agent 三角色主链路已落地：`/ws/agent`、Agent 对话 API、消息/事件/任务持久化、Eino checkpoint/resume、Producer/Craftsman/Reviewer 原生 Eino tool loop、HITL 决策卡、创作事实源、Reference Video Analysis、RenderPlan、Worker 执行、Reviewer gate、Producer pending signal、语义键和 Agent Workbench 画布投影；Doubao 视频理解接入已具备服务接口和 mock/单测覆盖，真实环境需配置后验证；MultiAgent 当前架构详见 [`engineering/agent-multiagent-architecture.md`](engineering/agent-multiagent-architecture.md)。
+- 仍需后续完善：Studio/Agent 复制导入、Agent 长期 Skill 配置化、生产级并发/成本控制、外部任务队列、Campaign/Strategist、完整音频/TimelinePlan/商业级 Composer、Seedance 首尾帧/编辑/延长/桥接深度支持、工具 schema 继续收紧和更多真实端到端回归。
+- 数据库当前迁移到 `001_init_schema.sql` 到 `038_reference_video_analysis.sql`，真实 schema 以 `apps/server/migrations/` 和 sqlc 生成代码为准。

@@ -946,7 +946,7 @@ Seedream skill 则应该更短、更克制：
 
 这部分对当前代码有直接影响：
 
-- `volcengine_video.go` 当前只把 image refs 加入 Seedance content；需要支持 video/audio refs 和 role 字段，才能使用官方的视频参考、音频参考、编辑视频、延长视频、首尾帧能力。
+- `volcengine_video.go` 当前已把 image/video/audio refs 加入 Seedance content 并保留 role 字段，`video_url/reference_video` 路径已有单测覆盖；编辑视频、延长视频、桥接视频和更完整首尾帧链路仍需继续补齐。
 - 当前默认视频能力仍偏 `seedance-1-0-pro-fast` 的窄抽象；需要新增/更新 Seedance 2.0 / 2.0 Fast 的 `model_capability`，并把 4~15 秒、多比例、4K、有声视频、返回尾帧等能力写入 limits/defaults。
 - `GenerationIntent.InputRef` 只有 node type / asset / storage URL，缺少 provider input role、prompt alias、reference priority、semantic target；这些应由 `RenderPlan.reference_bindings` 或扩展后的 input refs 表达。
 - Craftsman 当前 system prompt 只要求 `strategy` 和 `preview_prompt`，不足以生成 Seedream/Seedance 级别的结构化 `RenderPlan`。
@@ -1477,7 +1477,7 @@ v1 明确删除或不暴露这些工具：
 | M1 创作事实源 | 已实现主干 | `creative_brief`、`project_memory`、`key_element`、`key_element_state`、`scene`、`shot`、`shot_key_element`、`shot_dependency` 已有迁移、sqlc、工具、ObjectIndex/PSS 和画布投影。 |
 | Producer native tools | 已实现主干 | `read_project_context`、`upsert_project_brief`、`update_project_memory`、`upsert_key_elements`、`upsert_storyboard`、`dispatch_craftsman`、`decide_render_plan`、`dispatch_reviewer`、`request_user_decision` 已注册。 |
 | M2 Craftsman RenderPlan | 已实现主干 | Craftsman 已是 bounded native tool loop，使用 `read_project_memory` / `upsert_render_plan` 写 RenderPlan，并触发工程内部编译和校验；执行提交由 Producer `decide_render_plan` accept 后触发。 |
-| PromptCompiler / Seedream / Seedance profile | 已实现基础版 | 已有 `seedream_5_image`、`seedance_2_video` profile、RenderPlan prompt parts / params / bindings 和相关单测；更完整的 video/audio refs、首尾帧链路仍需扩展。 |
+| PromptCompiler / Seedream / Seedance profile | 已实现基础版 | 已有 `seedream_5_image`、`seedance_2_video` profile、RenderPlan prompt parts / params / bindings 和相关单测；`video_url/reference_video` 已覆盖 provider request，编辑/延长/桥接和更完整首尾帧链路仍需扩展。 |
 | Worker production substrate | 已实现主干 | Worker 继续复用 `production.GenerationIntent`、`generation_job`、`artifact_version`、dependency edge 写入。 |
 | M3 Reviewer Gate | 已实现 preview/shot-video 主干 | Reviewer 已是 `reviewer_gate` bounded native tool loop，使用 `submit_review_result` 写 `review_record` / `artifact_issue`；E2E 已验证 preview image review + issue 投影。 |
 | 10 轴 rubric | 已实现基础版 | `preview_image_review`、`shot_video_review` 等必评轴校验已落地。 |
