@@ -729,6 +729,25 @@ type ReferencePackItem struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ReferenceVideoAnalysis struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	SourceNodeID      pgtype.UUID        `json:"source_node_id"`
+	Status            string             `json:"status"`
+	Brief             string             `json:"brief"`
+	Focus             []byte             `json:"focus"`
+	ModelProvider     string             `json:"model_provider"`
+	ModelID           string             `json:"model_id"`
+	RequestSummary    []byte             `json:"request_summary"`
+	Result            []byte             `json:"result"`
+	ErrorCode         string             `json:"error_code"`
+	ErrorMessage      string             `json:"error_message"`
+	CreatedByThreadID pgtype.UUID        `json:"created_by_thread_id"`
+	CreatedByTaskID   pgtype.UUID        `json:"created_by_task_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RenderPlan struct {
 	ID                     pgtype.UUID        `json:"id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
