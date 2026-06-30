@@ -1,10 +1,12 @@
 import { apiFetch, type MediaAsset, type MediaNode } from "./api";
 import type {
   AgentWorkbenchAudioPlan,
+  AgentWorkbenchLayoutPosition,
   AgentWorkbenchAudioSummary,
   AgentWorkbenchAudioTrack,
   AgentWorkbenchIssueSummary,
   AgentWorkbenchProjection,
+  AgentWorkbenchReferenceVideoAnalysis,
   AgentWorkbenchReviewSummary,
 } from "./agentWorkbench";
 import type { AgentWorkbenchSelection } from "./agentWorkbenchSelection";
@@ -212,6 +214,7 @@ export interface AgentCanvasDetail {
   review?: AgentCanvasReviewDetail;
   issue?: AgentCanvasIssueDetail;
   final_output?: AgentCanvasFinalOutputDetail;
+  reference_video_analysis?: AgentCanvasReferenceVideoAnalysisDetail;
 }
 
 export interface AgentCanvasOverviewDetail {
@@ -222,6 +225,22 @@ export interface AgentCanvasOverviewDetail {
   key_elements: AgentCanvasKeyElementSummary[];
   key_element_states: AgentCanvasKeyElementStateSummary[];
   source_materials: AgentCanvasSourceMaterialSummary[];
+  reference_video_analyses?: AgentWorkbenchReferenceVideoAnalysis[];
+}
+
+export interface AgentCanvasReferenceVideoAnalysisDetail {
+  id: string;
+  source_node_id: string;
+  status: string;
+  brief: string;
+  focus?: AgentJsonValue;
+  model_provider?: string;
+  model_id?: string;
+  request_summary?: AgentJsonValue;
+  result?: Record<string, AgentJsonValue>;
+  error_code?: string;
+  error_message?: string;
+  updated_at?: string;
 }
 
 export interface AgentCanvasFinalOutputDetail {
@@ -791,6 +810,16 @@ export function fetchAgentCanvasDetail(
   return apiFetch<AgentCanvasDetail>(
     `/agent/workspaces/${workspaceId}/canvas/details?${params.toString()}`,
   );
+}
+
+export function putAgentCanvasLayout(
+  workspaceId: string,
+  input: { positions: AgentWorkbenchLayoutPosition[] },
+) {
+  return apiFetch<void>(`/agent/workspaces/${workspaceId}/canvas/layout`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
 }
 
 export function putAgentModelSelection(

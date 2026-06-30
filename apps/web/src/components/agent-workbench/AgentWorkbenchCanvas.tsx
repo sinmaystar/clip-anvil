@@ -1,14 +1,21 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  applyNodeChanges,
   Background,
   Controls,
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
   type EdgeTypes,
+  type NodeChange,
   type NodeTypes,
 } from "@xyflow/react";
-import type { AgentWorkbenchProjection } from "../../lib/agentWorkbench";
+import {
+  type AgentWorkbenchLayoutPosition,
+  type AgentWorkbenchProjection,
+} from "../../lib/agentWorkbench";
+import { putAgentCanvasLayout } from "../../lib/agentApi";
 import type { AgentWorkbenchSelection } from "../../lib/agentWorkbenchSelection";
 import {
   agentWorkbenchToFlow,
@@ -58,6 +65,8 @@ function AgentWorkbenchCanvasContent({
   selected,
   onSelectObject,
 }: AgentWorkbenchCanvasProps) {
+  const queryClient = useQueryClient();
+  const workspaceId = workbench.overview.workspace_id;
   const [mediaDimensions, setMediaDimensions] =
     useState<AgentWorkbenchMediaDimensionsByKey>({});
   const [shotHeights, setShotHeights] = useState<
@@ -91,7 +100,7 @@ function AgentWorkbenchCanvasContent({
     () => agentWorkbenchToFlow(workbench, mediaDimensions, shotHeights),
     [mediaDimensions, shotHeights, workbench],
   );
-  const nodes = useMemo<AgentWorkbenchNode[]>(
+  const baseNodes = useMemo<AgentWorkbenchNode[]>(
     () =>
       flow.nodes.map((node) => {
         if (node.type === "agentShot") {
@@ -103,21 +112,56 @@ function AgentWorkbenchCanvasContent({
               onMediaDimensionsChange: handleMediaDimensionsChange,
               onShotHeightChange: handleShotHeightChange,
             },
-            selected: isFlowNodeSelected(node, selected),
           };
         }
-        return {
-          ...node,
-          selected: isFlowNodeSelected(node, selected),
-        };
+        return node;
       }),
     [
       flow.nodes,
       handleMediaDimensionsChange,
       handleShotHeightChange,
       mediaDimensions,
-      selected,
     ],
+  );
+  const [nodes, setNodes] = useState<AgentWorkbenchNode[]>(baseNodes);
+  useEffect(() => {
+    setNodes(baseNodes);
+  }, [baseNodes]);
+  const visibleNodes = useMemo(
+    () =>
+      nodes.map((node) => ({
+        ...node,
+        selected: isFlowNodeSelected(node, selected),
+      })),
+    [nodes, selected],
+  );
+  const layoutMutation = useMutation({
+    mutationFn: (positions: AgentWorkbenchLayoutPosition[]) =>
+      putAgentCanvasLayout(workspaceId, { positions }),
+    onMutate: (positions) => {
+      queryClient.setQueryData<AgentWorkbenchProjection>(
+        ["workspace", workspaceId, "agent-workbench"],
+        (current) => mergeWorkbenchLayoutPositions(current, positions),
+      );
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["workspace", workspaceId, "agent-workbench"],
+      });
+    },
+  });
+  const handleNodesChange = useCallback((changes: NodeChange<AgentWorkbenchNode>[]) => {
+    setNodes((current) => applyNodeChanges(changes, current));
+  }, []);
+  const handleNodeDragStop = useCallback(
+    (_: MouseEvent | TouchEvent, node: AgentWorkbenchNode) => {
+      const position = layoutPositionForNode(node);
+      if (!position) {
+        return;
+      }
+      layoutMutation.mutate([position]);
+    },
+    [layoutMutation],
   );
 
   return (
@@ -136,11 +180,13 @@ function AgentWorkbenchCanvasContent({
           maxZoom={1.4}
           minZoom={0.2}
           nodeTypes={nodeTypes}
-          nodes={nodes}
+          nodes={visibleNodes}
           nodesConnectable={false}
-          nodesDraggable={false}
+          nodesDraggable
           nodesFocusable
           onNodeClick={(_, node) => onSelectObject(selectionForNode(node))}
+          onNodeDragStop={handleNodeDragStop}
+          onNodesChange={handleNodesChange}
           onPaneClick={() => onSelectObject(null)}
           panOnDrag
           zoomOnDoubleClick
@@ -159,6 +205,45 @@ function AgentWorkbenchCanvasContent({
       </AgentWorkbenchSelectionProvider>
     </div>
   );
+}
+
+function mergeWorkbenchLayoutPositions(
+  workbench: AgentWorkbenchProjection | undefined,
+  positions: AgentWorkbenchLayoutPosition[],
+) {
+  if (!workbench) {
+    return workbench;
+  }
+  const byKey = new Map<string, AgentWorkbenchLayoutPosition>();
+  for (const position of workbench.layout_positions ?? []) {
+    byKey.set(layoutPositionKey(position), position);
+  }
+  for (const position of positions) {
+    byKey.set(layoutPositionKey(position), position);
+  }
+  return {
+    ...workbench,
+    layout_positions: Array.from(byKey.values()),
+  };
+}
+
+function layoutPositionKey(position: AgentWorkbenchLayoutPosition) {
+  return `${position.object_type}:${position.object_id}`;
+}
+
+function layoutPositionForNode(
+  node: AgentWorkbenchNode,
+): AgentWorkbenchLayoutPosition | null {
+  const selection = selectionForNode(node);
+  if (!selection.objectId) {
+    return null;
+  }
+  return {
+    object_type: selection.objectType,
+    object_id: selection.objectId,
+    x: node.position.x,
+    y: node.position.y,
+  };
 }
 
 function selectionForNode(node: AgentWorkbenchNode): AgentWorkbenchSelection {
@@ -186,7 +271,11 @@ function selectionForNode(node: AgentWorkbenchNode): AgentWorkbenchSelection {
   if (node.type === "agentFinalOutput") {
     return {
       objectType: "final_output",
-      objectId: node.data.finalOutput.timeline_plan_id,
+      objectId:
+        node.data.finalOutput.timeline_plan_id ||
+        node.data.finalOutput.id ||
+        node.data.finalOutput.output_node_id ||
+        node.id,
       label: "Final Output",
     };
   }

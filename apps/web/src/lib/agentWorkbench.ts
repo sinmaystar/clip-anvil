@@ -2,6 +2,7 @@ export interface AgentWorkbenchProjection {
   overview: AgentWorkbenchOverview;
   scenes: AgentWorkbenchScene[];
   counts: AgentWorkbenchCounts;
+  layout_positions?: AgentWorkbenchLayoutPosition[];
   final_output?: AgentWorkbenchFinalOutput | null;
 }
 
@@ -13,6 +14,7 @@ export interface AgentWorkbenchOverview {
   key_elements: AgentWorkbenchKeyElement[];
   key_element_states: AgentWorkbenchKeyElementState[];
   source_materials: AgentWorkbenchSourceMaterial[];
+  reference_video_analyses?: AgentWorkbenchReferenceVideoAnalysis[];
 }
 
 export interface AgentWorkbenchBrief {
@@ -50,6 +52,26 @@ export interface AgentWorkbenchSourceMaterial {
   title: string;
   node_type: string;
   status: string;
+  asset_id?: string;
+  mime?: string;
+  access_url?: string;
+  thumbnail_url?: string;
+}
+
+export interface AgentWorkbenchReferenceVideoAnalysis {
+  id: string;
+  source_node_id: string;
+  status: string;
+  brief: string;
+  summary: string;
+  warnings?: string[];
+}
+
+export interface AgentWorkbenchLayoutPosition {
+  object_type: "overview" | "scene" | "shot" | "artifact" | "final_output" | string;
+  object_id: string;
+  x: number;
+  y: number;
 }
 
 export interface AgentWorkbenchAudioPlan {

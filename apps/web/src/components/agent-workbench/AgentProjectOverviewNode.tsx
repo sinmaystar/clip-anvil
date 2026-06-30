@@ -12,6 +12,8 @@ export function AgentProjectOverviewNode({
   const brief = workbench.overview.brief;
   const memory = workbench.overview.memory;
   const audioPlan = workbench.overview.audio_plan;
+  const referenceVideoAnalyses =
+    workbench.overview.reference_video_analyses ?? [];
   const selection = useAgentWorkbenchSelection();
 
   return (
@@ -60,6 +62,59 @@ export function AgentProjectOverviewNode({
           {audioPlan.voiceover_script ? (
             <p>{audioPlan.voiceover_script}</p>
           ) : null}
+        </div>
+      ) : null}
+      {workbench.overview.source_materials.length > 0 ? (
+        <div className="agent-workbench-overview-materials">
+          {workbench.overview.source_materials.slice(0, 6).map((material) => {
+            const previewURL = material.thumbnail_url || material.access_url;
+            return (
+              <button
+                data-selected={selection.isSelected("artifact", material.id)}
+                key={material.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  selection.select({
+                    objectType: "artifact",
+                    objectId: material.id,
+                    label: material.title,
+                  });
+                }}
+                type="button"
+              >
+                {previewURL && material.node_type === "image" ? (
+                  <img alt="" src={previewURL} />
+                ) : (
+                  <span>{material.node_type}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {referenceVideoAnalyses.length > 0 ? (
+        <div className="agent-workbench-reference-analyses">
+          {referenceVideoAnalyses.slice(0, 3).map((analysis) => (
+            <button
+              data-selected={selection.isSelected(
+                "reference_video_analysis",
+                analysis.id,
+              )}
+              key={analysis.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                selection.select({
+                  objectType: "reference_video_analysis",
+                  objectId: analysis.id,
+                  label: analysis.brief || "参考视频分析",
+                });
+              }}
+              type="button"
+            >
+              <strong>{analysis.brief || "参考视频分析"}</strong>
+              <span>{analysis.summary || analysis.status}</span>
+            </button>
+          ))}
         </div>
       ) : null}
       <div className="agent-workbench-overview-elements">

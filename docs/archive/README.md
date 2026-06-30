@@ -13,5 +13,6 @@
 - `docs/design/canvas.md`
 - `docs/design/studio-mode.md`
 - `docs/milestones/`
+- `docs/superpowers/reports/`
 
-旧的 `docs/superpowers/specs/`、`docs/superpowers/plans/` 和 `docs/superpowers/graphs/` 已归档到 `docs/archive/superpowers/`。
+已完成或过期的 `docs/superpowers/specs/`、`docs/superpowers/plans/` 和 `docs/superpowers/graphs/` 已归档到 `docs/archive/superpowers/`。归档文档可能保留当时的命令、路径和阶段命名，只作为历史上下文。

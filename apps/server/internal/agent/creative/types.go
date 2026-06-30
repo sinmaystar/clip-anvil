@@ -198,19 +198,29 @@ type UpsertStoryboardOutput struct {
 	Dependencies        []db.ShotDependency
 }
 
+type ReferenceVideoAnalysisSummary struct {
+	ID           string
+	SourceNodeID string
+	Status       string
+	Brief        string
+	Summary      string
+	Warnings     []string
+}
+
 type ContextPacket struct {
-	Workspace       db.Workspace
-	Brief           *db.CreativeBrief
-	Memory          *db.ProjectMemory
-	Elements        []db.KeyElement
-	ElementStates   []db.KeyElementState
-	Scenes          []db.Scene
-	Shots           []db.Shot
-	ShotKeyElements []db.ShotKeyElement
-	Dependencies    []db.ShotDependency
-	ActiveAudioPlan *db.AudioPlan
-	RenderPlans     []db.RenderPlan
-	ObjectIndex     []db.AgentObjectIndex
+	Workspace              db.Workspace
+	Brief                  *db.CreativeBrief
+	Memory                 *db.ProjectMemory
+	Elements               []db.KeyElement
+	ElementStates          []db.KeyElementState
+	Scenes                 []db.Scene
+	Shots                  []db.Shot
+	ShotKeyElements        []db.ShotKeyElement
+	Dependencies           []db.ShotDependency
+	ActiveAudioPlan        *db.AudioPlan
+	RenderPlans            []db.RenderPlan
+	ReferenceVideoAnalyses []ReferenceVideoAnalysisSummary
+	ObjectIndex            []db.AgentObjectIndex
 }
 
 type ReadContextInput struct {

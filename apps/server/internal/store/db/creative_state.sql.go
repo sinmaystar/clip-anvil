@@ -959,6 +959,36 @@ func (q *Queries) GetSceneByClientKey(ctx context.Context, arg GetSceneByClientK
 	return i, err
 }
 
+const getSceneByID = `-- name: GetSceneByID :one
+SELECT id, workspace_id, client_key, sort_order, title, description, location, mood, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
+FROM scene
+WHERE id = $1
+`
+
+func (q *Queries) GetSceneByID(ctx context.Context, id pgtype.UUID) (Scene, error) {
+	row := q.db.QueryRow(ctx, getSceneByID, id)
+	var i Scene
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ClientKey,
+		&i.SortOrder,
+		&i.Title,
+		&i.Description,
+		&i.Location,
+		&i.Mood,
+		&i.Status,
+		&i.CreatedByThreadID,
+		&i.CreatedByTaskID,
+		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SemanticKey,
+		&i.DisplayName,
+	)
+	return i, err
+}
+
 const listActiveKeyElementStatesByWorkspace = `-- name: ListActiveKeyElementStatesByWorkspace :many
 SELECT id, workspace_id, key_element_id, client_key, label, visual_description, reference_status, reference_node_id, reference_version_id, is_default, state_facts, source_refs, status, created_by_thread_id, created_by_task_id, archived_at, created_at, updated_at, semantic_key, display_name
 FROM key_element_state

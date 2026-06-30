@@ -38,9 +38,9 @@ import {
   uploadAgentAttachment,
 } from "../lib/agentApi";
 import {
-  agentAttachmentKindForFile,
   attachmentAccept,
   formatAgentAttachmentLabel,
+  validAgentAttachmentFiles,
 } from "../lib/agentAttachments";
 import {
   decisionCardFromMessage,
@@ -843,15 +843,25 @@ export function AgentWorkspacePage() {
   const chooseAttachment = () => {
     fileInputRef.current?.click();
   };
-  const uploadSelectedAttachment = (file: File | undefined) => {
-    if (!file || !id) {
+  const uploadSelectedAttachments = (files: FileList | null | undefined) => {
+    if (!files || !id) {
       return;
     }
-    if (!agentAttachmentKindForFile(file)) {
+    const validFiles = validAgentAttachmentFiles(files);
+    if (validFiles.length === 0) {
       setAttachmentError("仅支持图片、视频或 txt 文本。");
       return;
     }
-    uploadAttachmentMutation.mutate(file);
+    const availableSlots = Math.max(0, 12 - attachments.length);
+    if (availableSlots === 0) {
+      setAttachmentError("最多可添加 12 个附件。");
+      return;
+    }
+    const uploadFiles = validFiles.slice(0, availableSlots);
+    if (uploadFiles.length < validFiles.length) {
+      setAttachmentError("最多可添加 12 个附件，已上传前面的文件。");
+    }
+    uploadFiles.forEach((file) => uploadAttachmentMutation.mutate(file));
   };
   const updateMessageScrollState = () => {
     const element = messageListRef.current;
@@ -1308,8 +1318,9 @@ export function AgentWorkspacePage() {
               <input
                 accept={attachmentAccept}
                 className="agent-file-input"
+                multiple
                 onChange={(event) => {
-                  uploadSelectedAttachment(event.target.files?.[0]);
+                  uploadSelectedAttachments(event.target.files);
                   event.currentTarget.value = "";
                 }}
                 ref={fileInputRef}

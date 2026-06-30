@@ -24,6 +24,12 @@ export function agentAttachmentKindForFile(
   return null;
 }
 
+export function validAgentAttachmentFiles<T extends Pick<File, "type" | "name">>(
+  files: Iterable<T> | ArrayLike<T>,
+) {
+  return Array.from(files).filter((file) => agentAttachmentKindForFile(file));
+}
+
 export function formatAgentAttachmentLabel(attachment: AgentAttachmentLike) {
   const prefix =
     attachment.kind === "image"

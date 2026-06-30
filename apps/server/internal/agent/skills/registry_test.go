@@ -146,6 +146,7 @@ func TestM82DefaultSkillsHaveRequiredSectionsAndAllowedTools(t *testing.T) {
 	allowedTools := map[Role]map[string]bool{
 		RoleProducer: boolSet(
 			"read_project_context",
+			"analyze_reference_video",
 			"upsert_project_brief",
 			"update_project_memory",
 			"upsert_key_elements",
@@ -290,6 +291,7 @@ func TestM84DefaultSkillToolReferencesMatchRoleRegistries(t *testing.T) {
 			"load_agent_skill",
 			"load_agent_skill_resource",
 			"read_project_context",
+			"analyze_reference_video",
 			"upsert_project_brief",
 			"update_project_memory",
 			"upsert_key_elements",

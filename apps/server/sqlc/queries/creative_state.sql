@@ -251,6 +251,11 @@ WHERE workspace_id = $1
   AND client_key = $2
   AND archived_at IS NULL;
 
+-- name: GetSceneByID :one
+SELECT *
+FROM scene
+WHERE id = $1;
+
 -- name: ListActiveScenesByWorkspace :many
 SELECT *
 FROM scene

@@ -238,6 +238,88 @@ describe("agent workbench view model", () => {
     assert.ok(voiceNode.position.y > Number(overviewNode.height));
   });
 
+  it("reserves enough height for source materials plus project tags", () => {
+    const sourceMaterialsWorkbench = {
+      ...workbench,
+      overview: {
+        ...workbench.overview,
+        brief: {
+          ...workbench.overview.brief,
+          title: "波尔盾行李箱开学/旅行电商短视频",
+          concept:
+            "开学、旅行前，总觉得东西多到乱？一个波尔盾，就够了。静音万向轮，宿舍、车站、机场，一路顺滑。",
+        },
+        source_materials: Array.from({ length: 6 }, (_, index) => ({
+          id: `material-${index + 1}`,
+          node_id: `material-node-${index + 1}`,
+          node_type: "image",
+          title: `商品图 ${index + 1}`,
+          thumbnail_url: `material-${index + 1}.png`,
+          access_url: `material-${index + 1}.png`,
+        })),
+        audio_plan: {
+          id: "audio-plan-1",
+          status: "composing",
+          title: "波尔盾行李箱 20 秒电商广告音频方案",
+          voiceover_status: "succeeded",
+          bgm_status: "succeeded",
+          voiceover_artifact: {
+            kind: "voiceover_audio",
+            status: "succeeded",
+            node_id: "source-voice-node",
+            title: "Voiceover",
+            access_url: "voice.mp3",
+          },
+          bgm_artifact: {
+            kind: "bgm_audio",
+            status: "succeeded",
+            node_id: "source-bgm-node",
+            title: "BGM",
+            access_url: "bgm.mp3",
+          },
+          voiceover_script:
+            "开学、旅行前，总觉得东西多到乱？一个波尔盾，就够了。静音万向轮，宿舍、车站、机场，一路顺滑。",
+        },
+        key_elements: [
+          "年轻出行者",
+          "波尔盾行李箱",
+          "宿舍/卧室整理台",
+          "走廊/车站/机场通道",
+          "抖音小红书干净快切风格",
+        ].map((name, index) => ({
+          id: `element-${index + 1}`,
+          client_key: `element_${index + 1}`,
+          name,
+          type: "prop",
+          status: "active",
+        })),
+        key_element_states: [
+          "白色主款闭合状态",
+          "浅绿款打开收纳状态",
+          "铝框锁具侧面状态",
+          "多颜色选择状态",
+          "年轻休闲使用状态",
+          "宿舍整理完成状态",
+        ].map((label, index) => ({
+          id: `state-${index + 1}`,
+          key_element_id: "element-1",
+          client_key: `state_${index + 1}`,
+          label,
+          reference_status: "ready",
+        })),
+      },
+    };
+    const flow = agentWorkbenchToFlow(sourceMaterialsWorkbench);
+    const overviewNode = flow.nodes.find((node) => node.id === "agent-workbench-overview");
+    const voiceNode = flow.nodes.find((node) => node.id === audioNodeId("source-voice-node"));
+
+    assert.ok(overviewNode);
+    assert.ok(Number(overviewNode.height) >= 520);
+    assert.equal(overviewNode.style.height, overviewNode.height);
+    assert.ok(voiceNode);
+    assert.ok(voiceNode.position.y > Number(overviewNode.height));
+  });
+
   it("sorts shots by sequence index and lays them inside the scene lane", () => {
     const flow = agentWorkbenchToFlow(workbench);
     const shot1 = flow.nodes.find((node) => node.id === shotNodeId("shot-1"));
@@ -250,6 +332,24 @@ describe("agent workbench view model", () => {
     assert.ok(shot1.position.x < shot2.position.x);
     assert.equal(shot1.position.y, shot2.position.y);
     assert.ok(shot1.position.y >= 100);
+  });
+
+  it("applies persisted layout positions to draggable workbench nodes", () => {
+    const flow = agentWorkbenchToFlow(workbench, {}, {}, {
+      [sceneNodeId("scene-1")]: { x: 900, y: 120 },
+      [shotNodeId("shot-1")]: { x: 44, y: 188 },
+      [audioNodeId("voice-node-1")]: { x: 24, y: 720 },
+      [finalOutputNodeId("timeline-1")]: { x: 1600, y: 240 },
+    });
+    const scene = flow.nodes.find((node) => node.id === sceneNodeId("scene-1"));
+    const shot = flow.nodes.find((node) => node.id === shotNodeId("shot-1"));
+
+    assert.ok(scene);
+    assert.deepEqual(scene.position, { x: 900, y: 120 });
+    assert.equal(scene.draggable, true);
+    assert.ok(shot);
+    assert.deepEqual(shot.position, { x: 44, y: 188 });
+    assert.equal(shot.draggable, true);
   });
 
   it("wraps many shots into scene rows instead of one horizontal strip", () => {

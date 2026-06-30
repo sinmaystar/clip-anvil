@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -233,6 +232,34 @@ func TestServiceReadProjectContextIncludesActiveAudioPlan(t *testing.T) {
 	}
 }
 
+func TestServiceReadProjectContextIncludesReferenceVideoAnalysisRefs(t *testing.T) {
+	workspaceID := testUUID(1)
+	store := newFakeStore(workspaceID, db.WorkspaceModeAgent)
+	store.referenceVideoAnalyses = []db.ReferenceVideoAnalysis{{
+		ID:           testUUID(2),
+		WorkspaceID:  workspaceID,
+		SourceNodeID: testUUID(3),
+		Status:       "succeeded",
+		Brief:        "借鉴脚本结构",
+		Result:       []byte(`{"summary":"前三秒痛点 hook。","warnings":["不要复制原字幕。"]}`),
+	}}
+	service := NewService(store)
+
+	packet, err := service.ReadProjectContext(context.Background(), ReadContextInput{
+		WorkspaceID: workspaceID,
+		Include:     []string{"reference_video_analyses"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packet.ReferenceVideoAnalyses) != 1 {
+		t.Fatalf("analyses = %#v", packet.ReferenceVideoAnalyses)
+	}
+	if packet.ReferenceVideoAnalyses[0].Summary != "前三秒痛点 hook。" {
+		t.Fatalf("summary = %q", packet.ReferenceVideoAnalyses[0].Summary)
+	}
+}
+
 func TestServiceReadProjectContextIncludesObjectIndex(t *testing.T) {
 	workspaceID := testUUID(1)
 	store := newFakeStore(workspaceID, db.WorkspaceModeAgent)
@@ -405,18 +432,19 @@ func TestServiceUpsertStoryboardSkipsDuplicateShotKeyElementsAndDependencies(t *
 }
 
 type fakeStore struct {
-	workspace   db.Workspace
-	briefs      map[string]db.CreativeBrief
-	memories    []db.ProjectMemory
-	elements    map[string]db.KeyElement
-	states      map[string]db.KeyElementState
-	scenes      map[string]db.Scene
-	shots       map[string]db.Shot
-	links       []db.ShotKeyElement
-	deps        []db.ShotDependency
-	renderPlans []db.RenderPlan
-	objectIndex []db.AgentObjectIndex
-	audioPlan   *db.AudioPlan
+	workspace              db.Workspace
+	briefs                 map[string]db.CreativeBrief
+	memories               []db.ProjectMemory
+	elements               map[string]db.KeyElement
+	states                 map[string]db.KeyElementState
+	scenes                 map[string]db.Scene
+	shots                  map[string]db.Shot
+	links                  []db.ShotKeyElement
+	deps                   []db.ShotDependency
+	renderPlans            []db.RenderPlan
+	referenceVideoAnalyses []db.ReferenceVideoAnalysis
+	objectIndex            []db.AgentObjectIndex
+	audioPlan              *db.AudioPlan
 }
 
 func newFakeStore(workspaceID pgtype.UUID, mode db.WorkspaceMode) *fakeStore {
@@ -865,6 +893,10 @@ func (s *fakeStore) ListRenderPlansByScope(_ context.Context, arg db.ListRenderP
 	return out, nil
 }
 
+func (s *fakeStore) ListReferenceVideoAnalysesByWorkspace(context.Context, db.ListReferenceVideoAnalysesByWorkspaceParams) ([]db.ReferenceVideoAnalysis, error) {
+	return append([]db.ReferenceVideoAnalysis(nil), s.referenceVideoAnalyses...), nil
+}
+
 func (s *fakeStore) ListAgentObjectsByWorkspace(context.Context, pgtype.UUID) ([]db.AgentObjectIndex, error) {
 	return append([]db.AgentObjectIndex(nil), s.objectIndex...), nil
 }
@@ -873,11 +905,4 @@ func testUUID(seed byte) pgtype.UUID {
 	var bytes [16]byte
 	bytes[15] = seed
 	return pgtype.UUID{Bytes: bytes, Valid: true}
-}
-
-func uuidString(id pgtype.UUID) string {
-	if !id.Valid {
-		return ""
-	}
-	return uuid.UUID(id.Bytes).String()
 }

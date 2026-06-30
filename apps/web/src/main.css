@@ -5335,6 +5335,90 @@ a:focus-visible {
   gap: 6px;
 }
 
+.agent-workbench-overview-materials {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-workbench-overview-materials button {
+  display: grid;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg-primary) 5%, transparent);
+  color: var(--fg-tertiary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.agent-workbench-overview-materials button[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.agent-workbench-overview-materials img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.agent-workbench-overview-materials span {
+  overflow: hidden;
+  max-width: 100%;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.agent-workbench-reference-analyses {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-workbench-reference-analyses button {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--fg-primary) 5%, transparent);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  padding: 7px;
+  text-align: left;
+}
+
+.agent-workbench-reference-analyses button[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.agent-workbench-reference-analyses strong,
+.agent-workbench-reference-analyses span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-workbench-reference-analyses strong {
+  color: var(--fg-primary);
+  font-size: 11px;
+}
+
+.agent-workbench-reference-analyses span {
+  color: var(--fg-tertiary);
+  font-size: 11px;
+}
+
 .agent-workbench-overview-elements button,
 .agent-workbench-overview-states button {
   display: inline-flex;

@@ -75,6 +75,16 @@ func TestAgentCanvasDetailDefinesAudioFields(t *testing.T) {
 	}
 }
 
+func TestAgentCanvasDetailDefinesReferenceVideoAnalysisShape(t *testing.T) {
+	if agentCanvasObjectReferenceVideoAnalysis != "reference_video_analysis" {
+		t.Fatalf("reference video analysis object type = %q", agentCanvasObjectReferenceVideoAnalysis)
+	}
+	var detail agentCanvasDetailResponse
+	if detail.ReferenceVideoAnalysis != nil {
+		t.Fatalf("zero detail reference video analysis = %#v", detail.ReferenceVideoAnalysis)
+	}
+}
+
 func TestBuildAgentCanvasDetailRejectsInvalidObjectID(t *testing.T) {
 	_, err := buildAgentCanvasDetail(
 		context.Background(),

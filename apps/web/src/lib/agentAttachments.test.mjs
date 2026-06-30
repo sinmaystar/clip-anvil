@@ -6,6 +6,7 @@ import {
   agentAttachmentKindForFile,
   attachmentAccept,
   formatAgentAttachmentLabel,
+  validAgentAttachmentFiles,
 } from "../../dist-test/lib/agentAttachments.js";
 
 describe("agent attachments", () => {
@@ -42,6 +43,20 @@ describe("agent attachments", () => {
     assert.equal(
       formatAgentAttachmentLabel({ kind: "text", name: "creative-brief.txt" }),
       "TXT creative-brief.txt",
+    );
+  });
+
+  it("keeps all supported files from a multi-file attachment selection", () => {
+    const files = [
+      { type: "image/png", name: "front.png" },
+      { type: "image/jpeg", name: "side.jpg" },
+      { type: "application/pdf", name: "manual.pdf" },
+      { type: "text/plain", name: "brief.txt" },
+    ];
+
+    assert.deepEqual(
+      validAgentAttachmentFiles(files).map((file) => file.name),
+      ["front.png", "side.jpg", "brief.txt"],
     );
   });
 

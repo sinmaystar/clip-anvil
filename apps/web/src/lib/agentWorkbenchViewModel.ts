@@ -2,6 +2,7 @@ import type { Edge, Node } from "@xyflow/react";
 import type {
   AgentWorkbenchArtifactSlot,
   AgentWorkbenchFinalOutput,
+  AgentWorkbenchLayoutPosition,
   AgentWorkbenchProjection,
   AgentWorkbenchScene,
   AgentWorkbenchShot,
@@ -61,8 +62,18 @@ export interface AgentWorkbenchEdgeData extends Record<string, unknown> {
   label?: string;
 }
 
+export type AgentWorkbenchLayoutOverrides = Record<
+  string,
+  { x: number; y: number }
+>;
+
 const OVERVIEW_WIDTH = 360;
-const OVERVIEW_HEIGHT = 440;
+const OVERVIEW_MIN_HEIGHT = 440;
+const OVERVIEW_PADDING = 16;
+const OVERVIEW_SECTION_GAP = 12;
+const OVERVIEW_CHIP_GAP = 6;
+const OVERVIEW_CHIP_HEIGHT = 28;
+const OVERVIEW_INNER_WIDTH = OVERVIEW_WIDTH - OVERVIEW_PADDING * 2;
 const AUDIO_WIDTH = 360;
 const AUDIO_HEIGHT = 156;
 const AUDIO_GAP = 20;
@@ -110,21 +121,25 @@ export function agentWorkbenchToFlow(
   workbench: AgentWorkbenchProjection,
   mediaDimensions: AgentWorkbenchMediaDimensionsByKey = {},
   measuredShotHeights: Record<string, number | undefined> = {},
+  layoutOverrides: AgentWorkbenchLayoutOverrides =
+    agentWorkbenchLayoutOverrides(workbench),
 ): {
   nodes: AgentWorkbenchNode[];
   edges: AgentWorkbenchEdge[];
 } {
+  const overviewId = overviewNodeId();
+  const overviewHeight = overviewNodeHeight(workbench);
   const nodes: AgentWorkbenchNode[] = [
     {
-      id: overviewNodeId(),
+      id: overviewId,
       type: "agentOverview",
-      position: { x: ORIGIN_X, y: ORIGIN_Y },
+      position: layoutOverrides[overviewId] ?? { x: ORIGIN_X, y: ORIGIN_Y },
       data: { kind: "overview", workbench },
       width: OVERVIEW_WIDTH,
-      height: OVERVIEW_HEIGHT,
-      measured: { width: OVERVIEW_WIDTH, height: OVERVIEW_HEIGHT },
-      style: { width: OVERVIEW_WIDTH, height: OVERVIEW_HEIGHT },
-      draggable: false,
+      height: overviewHeight,
+      measured: { width: OVERVIEW_WIDTH, height: overviewHeight },
+      style: { width: OVERVIEW_WIDTH, height: overviewHeight },
+      draggable: true,
       selectable: true,
     },
   ];
@@ -132,19 +147,20 @@ export function agentWorkbenchToFlow(
   const audioNodes = workbenchAudioNodes(workbench);
 
   audioNodes.forEach((audio, index) => {
+    const nodeId = audioNodeId(audio.artifact.node_id || `${audio.label}-${index}`);
     nodes.push({
-      id: audioNodeId(audio.artifact.node_id || `${audio.label}-${index}`),
+      id: nodeId,
       type: "agentAudio",
-      position: {
+      position: layoutOverrides[nodeId] ?? {
         x: ORIGIN_X,
-        y: ORIGIN_Y + OVERVIEW_HEIGHT + 32 + index * (AUDIO_HEIGHT + AUDIO_GAP),
+        y: ORIGIN_Y + overviewHeight + 32 + index * (AUDIO_HEIGHT + AUDIO_GAP),
       },
       data: { kind: "audio", ...audio },
       width: AUDIO_WIDTH,
       height: AUDIO_HEIGHT,
       measured: { width: AUDIO_WIDTH, height: AUDIO_HEIGHT },
       style: { width: AUDIO_WIDTH, height: AUDIO_HEIGHT },
-      draggable: false,
+      draggable: true,
       selectable: true,
     });
   });
@@ -174,13 +190,13 @@ export function agentWorkbenchToFlow(
     nodes.push({
       id: currentSceneNodeId,
       type: "agentScene",
-      position: scenePosition,
+      position: layoutOverrides[currentSceneNodeId] ?? scenePosition,
       data: { kind: "scene", scene },
       width: sceneLayout.width,
       height: sceneLayout.height,
       measured: { width: sceneLayout.width, height: sceneLayout.height },
       style: { width: sceneLayout.width, height: sceneLayout.height },
-      draggable: false,
+      draggable: true,
       selectable: true,
     });
     edges.push({
@@ -194,21 +210,22 @@ export function agentWorkbenchToFlow(
     shots.forEach((shot, index) => {
       const layout = shotLayouts[index];
       const currentShotNodeId = shotNodeId(shot.id);
+      const shotPosition = {
+        x: SCENE_PADDING + layout.x,
+        y: SCENE_HEADER + layout.y,
+      };
       nodes.push({
         id: currentShotNodeId,
         type: "agentShot",
         parentId: currentSceneNodeId,
         extent: "parent",
-        position: {
-          x: SCENE_PADDING + layout.x,
-          y: SCENE_HEADER + layout.y,
-        },
+        position: layoutOverrides[currentShotNodeId] ?? shotPosition,
         data: { kind: "shot", shot },
         width: SHOT_WIDTH,
         height: layout.height,
         measured: { width: SHOT_WIDTH, height: layout.height },
         style: { width: SHOT_WIDTH, height: layout.height },
-        draggable: false,
+        draggable: true,
         selectable: true,
       });
       if (index > 0) {
@@ -231,10 +248,11 @@ export function agentWorkbenchToFlow(
         ? sceneColumns * sceneColumnWidth + Math.max(0, sceneColumns - 1) * SCENE_GAP
         : 0;
     const sceneAreaHeight = Math.max(...sceneColumnHeights, 0);
+    const currentFinalOutputNodeId = finalOutputNodeId(workbench.final_output.id);
     nodes.push({
-      id: finalOutputNodeId(workbench.final_output.id),
+      id: currentFinalOutputNodeId,
       type: "agentFinalOutput",
-      position: {
+      position: layoutOverrides[currentFinalOutputNodeId] ?? {
         x: SCENE_X + sceneAreaWidth + 80,
         y: ORIGIN_Y + Math.max(0, Math.min(sceneAreaHeight, 360)),
       },
@@ -243,19 +261,144 @@ export function agentWorkbenchToFlow(
       height: FINAL_OUTPUT_HEIGHT,
       measured: { width: FINAL_OUTPUT_WIDTH, height: FINAL_OUTPUT_HEIGHT },
       style: { width: FINAL_OUTPUT_WIDTH, height: FINAL_OUTPUT_HEIGHT },
-      draggable: false,
+      draggable: true,
       selectable: true,
     });
     edges.push({
       id: `agent-edge-overview-final-${workbench.final_output.id}`,
       type: "agentWorkbench",
       source: overviewNodeId(),
-      target: finalOutputNodeId(workbench.final_output.id),
+      target: currentFinalOutputNodeId,
       data: { label: "final" },
     });
   }
 
   return { nodes, edges };
+}
+
+function overviewNodeHeight(workbench: AgentWorkbenchProjection) {
+  const overview = workbench.overview;
+  const sections = [
+    28,
+    overviewTextHeight(overview.brief?.concept || overview.memory?.soul || ""),
+    68,
+  ];
+
+  if (overview.audio_plan) {
+    sections.push(overview.audio_plan.voiceover_script ? 104 : 72);
+  }
+  if (overview.source_materials.length > 0) {
+    sections.push(50);
+  }
+  const referenceVideoAnalyses = overview.reference_video_analyses ?? [];
+  if (referenceVideoAnalyses.length > 0) {
+    const visibleAnalysisCount = Math.min(referenceVideoAnalyses.length, 3);
+    sections.push(
+      visibleAnalysisCount * 42 +
+        Math.max(0, visibleAnalysisCount - 1) * OVERVIEW_CHIP_GAP,
+    );
+  }
+
+  sections.push(
+    overviewChipBlockHeight(
+      overview.key_elements.slice(0, 5).map((element) => element.name),
+    ),
+  );
+  sections.push(
+    overviewChipBlockHeight(
+      overview.key_element_states
+        .slice(0, 6)
+        .map((state) => state.label || state.client_key),
+    ),
+  );
+
+  const contentHeight =
+    OVERVIEW_PADDING * 2 +
+    sections.reduce((sum, height) => sum + height, 0) +
+    Math.max(0, sections.length - 1) * OVERVIEW_SECTION_GAP;
+
+  return Math.max(OVERVIEW_MIN_HEIGHT, Math.ceil(contentHeight));
+}
+
+function overviewTextHeight(text: string | undefined) {
+  if (!text) {
+    return 18;
+  }
+  const estimatedLines = Math.min(3, Math.max(1, Math.ceil(text.length / 32)));
+  return estimatedLines * 17.5;
+}
+
+function overviewChipBlockHeight(labels: string[]) {
+  if (labels.length === 0) {
+    return 0;
+  }
+  let rows = 1;
+  let rowWidth = 0;
+  for (const label of labels) {
+    const width = overviewChipWidth(label);
+    if (
+      rowWidth > 0 &&
+      rowWidth + OVERVIEW_CHIP_GAP + width > OVERVIEW_INNER_WIDTH
+    ) {
+      rows += 1;
+      rowWidth = width;
+      continue;
+    }
+    rowWidth = rowWidth > 0 ? rowWidth + OVERVIEW_CHIP_GAP + width : width;
+  }
+  return rows * OVERVIEW_CHIP_HEIGHT + (rows - 1) * OVERVIEW_CHIP_GAP;
+}
+
+function overviewChipWidth(label: string) {
+  let width = 14;
+  for (const character of label) {
+    width += character.charCodeAt(0) > 127 ? 12 : 7;
+  }
+  return Math.min(OVERVIEW_INNER_WIDTH, Math.max(48, width));
+}
+
+export function agentWorkbenchLayoutOverrides(
+  workbench: AgentWorkbenchProjection,
+): AgentWorkbenchLayoutOverrides {
+  const out: AgentWorkbenchLayoutOverrides = {};
+  for (const position of workbench.layout_positions ?? []) {
+    const nodeId = nodeIdForLayoutPosition(workbench, position);
+    if (!nodeId) {
+      continue;
+    }
+    out[nodeId] = { x: position.x, y: position.y };
+  }
+  return out;
+}
+
+function nodeIdForLayoutPosition(
+  workbench: AgentWorkbenchProjection,
+  position: AgentWorkbenchLayoutPosition,
+) {
+  if (position.object_type === "overview") {
+    return position.object_id === workbench.overview.workspace_id
+      ? overviewNodeId()
+      : "";
+  }
+  if (position.object_type === "scene") {
+    return sceneNodeId(position.object_id);
+  }
+  if (position.object_type === "shot") {
+    return shotNodeId(position.object_id);
+  }
+  if (position.object_type === "artifact") {
+    return audioNodeId(position.object_id);
+  }
+  if (position.object_type === "final_output") {
+    const finalOutput = workbench.final_output;
+    if (!finalOutput) {
+      return "";
+    }
+    const objectId =
+      finalOutput.timeline_plan_id || finalOutput.id || finalOutput.output_node_id;
+    return position.object_id === objectId ? finalOutputNodeId(finalOutput.id) : "";
+  }
+  return "";
 }
 
 function workbenchAudioNodes(workbench: AgentWorkbenchProjection) {
