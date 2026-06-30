@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/creative"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -312,6 +313,17 @@ func TestReadProjectContextSummarizesRenderPlansByTargetPhase(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("summary missing %q: %s", want, got)
 		}
+	}
+}
+
+func TestReadProjectContextSummarizesReferenceVideoAnalyses(t *testing.T) {
+	got := summarizeReferenceVideoAnalyses([]creative.ReferenceVideoAnalysisSummary{{
+		ID:      "analysis-1",
+		Status:  "succeeded",
+		Summary: "前三秒痛点 hook。",
+	}})
+	if !strings.Contains(got, "reference_video_analysis/analysis-1") || !strings.Contains(got, "前三秒痛点 hook") {
+		t.Fatalf("summary = %s", got)
 	}
 }
 

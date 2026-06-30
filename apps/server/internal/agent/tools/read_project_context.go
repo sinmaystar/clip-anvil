@@ -105,6 +105,7 @@ func (t *ReadProjectContextNativeTool) InvokableRun(ctx context.Context, argumen
 	if packet.ActiveAudioPlan != nil {
 		audioPlanStatus = packet.ActiveAudioPlan.Title + " / " + packet.ActiveAudioPlan.Status
 	}
+	referenceVideoAnalysisStatus := summarizeReferenceVideoAnalyses(packet.ReferenceVideoAnalyses)
 	items := []NaturalResultItem{
 		{Label: "CreativeBrief", Value: briefStatus},
 		{Label: "ProjectMemory", Value: memoryStatus},
@@ -112,6 +113,7 @@ func (t *ReadProjectContextNativeTool) InvokableRun(ctx context.Context, argumen
 		{Label: "Storyboard", Value: fmt.Sprintf("%d 个场景，%d 个分镜，%d 个依赖", len(packet.Scenes), len(packet.Shots), len(packet.Dependencies))},
 		{Label: "AudioPlan", Value: audioPlanStatus},
 		{Label: "RenderPlan", Value: renderPlanStatus},
+		{Label: "ReferenceVideoAnalysis", Value: referenceVideoAnalysisStatus},
 		{Label: "ObjectIndex", Value: agentidentity.RenderObjectIndex(packet.ObjectIndex)},
 	}
 	if includeProductionState(input.Include) {
@@ -277,6 +279,28 @@ func summarizeRenderPlans(plans []db.RenderPlan) string {
 		parts = append(parts, "待决策："+strings.Join(pending, "；"))
 	}
 	return strings.Join(parts, "，")
+}
+
+func summarizeReferenceVideoAnalyses(items []creative.ReferenceVideoAnalysisSummary) string {
+	if len(items) == 0 {
+		return "没有参考视频分析"
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		ref := strings.TrimSpace(item.ID)
+		if ref == "" {
+			continue
+		}
+		summary := strings.TrimSpace(item.Summary)
+		if summary == "" {
+			summary = strings.TrimSpace(item.Brief)
+		}
+		parts = append(parts, fmt.Sprintf("ref=reference_video_analysis/%s status=%s summary=%s", ref, item.Status, summary))
+	}
+	if len(parts) == 0 {
+		return "没有参考视频分析"
+	}
+	return strings.Join(parts, "\n")
 }
 
 func validateReadProjectContextInput(input ReadProjectContextToolInput) error {

@@ -70,6 +70,7 @@ type Store interface {
 	GetActiveAudioPlanByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (db.AudioPlan, error)
 	ListRenderPlansByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.RenderPlan, error)
 	ListRenderPlansByScope(ctx context.Context, arg db.ListRenderPlansByScopeParams) ([]db.RenderPlan, error)
+	ListReferenceVideoAnalysesByWorkspace(ctx context.Context, arg db.ListReferenceVideoAnalysesByWorkspaceParams) ([]db.ReferenceVideoAnalysis, error)
 	ListAgentObjectsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentObjectIndex, error)
 }
 
@@ -409,6 +410,14 @@ func (s *Service) ReadProjectContext(ctx context.Context, input ReadContextInput
 	if err != nil {
 		return ContextPacket{}, err
 	}
+	referenceVideoAnalyses, err := s.store.ListReferenceVideoAnalysesByWorkspace(ctx, db.ListReferenceVideoAnalysesByWorkspaceParams{
+		WorkspaceID: input.WorkspaceID,
+		LimitCount:  20,
+	})
+	if err != nil {
+		return ContextPacket{}, err
+	}
+	packet.ReferenceVideoAnalyses = referenceVideoAnalysisSummaries(referenceVideoAnalyses)
 	packet.ObjectIndex, err = s.store.ListAgentObjectsByWorkspace(ctx, input.WorkspaceID)
 	if err != nil {
 		return ContextPacket{}, err
@@ -419,6 +428,41 @@ func (s *Service) ReadProjectContext(ctx context.Context, input ReadContextInput
 func shouldReadScopedRenderPlans(scopeType string, scopeID string) bool {
 	scopeType = strings.TrimSpace(scopeType)
 	return scopeType == "shot" && strings.TrimSpace(scopeID) != ""
+}
+
+func referenceVideoAnalysisSummaries(rows []db.ReferenceVideoAnalysis) []ReferenceVideoAnalysisSummary {
+	out := make([]ReferenceVideoAnalysisSummary, 0, len(rows))
+	for _, row := range rows {
+		result := map[string]any{}
+		_ = json.Unmarshal(row.Result, &result)
+		summary, _ := result["summary"].(string)
+		out = append(out, ReferenceVideoAnalysisSummary{
+			ID:           uuidString(row.ID),
+			SourceNodeID: uuidString(row.SourceNodeID),
+			Status:       row.Status,
+			Brief:        row.Brief,
+			Summary:      strings.TrimSpace(summary),
+			Warnings:     stringSlice(result["warnings"]),
+		})
+	}
+	return out
+}
+
+func stringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+				out = append(out, strings.TrimSpace(text))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func (s *Service) requireAgentWorkspace(ctx context.Context, workspaceID pgtype.UUID) error {
@@ -845,6 +889,13 @@ func parseUUID(value string) (pgtype.UUID, error) {
 		return pgtype.UUID{}, err
 	}
 	return pgtype.UUID{Bytes: parsed, Valid: true}, nil
+}
+
+func uuidString(id pgtype.UUID) string {
+	if !id.Valid {
+		return ""
+	}
+	return uuid.UUID(id.Bytes).String()
 }
 
 func jsonBytes(value any, empty string) []byte {

@@ -4,7 +4,7 @@ description: Use when Producer needs to extract reusable style, pacing, shot lan
 role_scope: [producer]
 task_types: [producer_turn, decision_resume]
 domain: [commerce_ad, reference_video]
-tools: [read_project_context, update_project_memory, upsert_key_elements, upsert_storyboard, request_user_decision]
+tools: [read_project_context, analyze_reference_video, update_project_memory, upsert_key_elements, upsert_storyboard, request_user_decision]
 source:
   kind: clipanvil-local
 version: 0.1.0
@@ -31,10 +31,11 @@ Load this skill when the user uploads or mentions a reference video and asks Cli
 ## Tool Protocol
 
 1. Call read_project_context to inspect uploaded media and current facts.
-2. Use update_project_memory for reference-derived style rules and forbidden copying boundaries.
-3. Use upsert_key_elements when the reference establishes reusable style anchors.
-4. Use upsert_storyboard to map the reference rhythm into ClipAnvil scenes and shots.
-5. Use request_user_decision when there are multiple viable adaptation strategies.
+2. Call analyze_reference_video with the user's adaptation goal before writing ProjectMemory or Storyboard from the reference video.
+3. Use update_project_memory for concise reference-derived style rules and forbidden copying boundaries.
+4. Use upsert_key_elements when the reference establishes reusable style anchors.
+5. Use upsert_storyboard to map the reference rhythm into ClipAnvil scenes and shots.
+6. Use request_user_decision when there are multiple viable adaptation strategies.
 
 ## Quality Bar
 
