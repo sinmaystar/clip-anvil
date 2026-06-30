@@ -108,6 +108,14 @@ func TestExecutorMarksClaimedInformationalSignalsProcessedOnSuccess(t *testing.T
 				ClaimedByTaskID:  uuidWithByte(3),
 			},
 			{
+				ID:               uuidWithByte(24),
+				WorkspaceID:      uuidWithByte(1),
+				ProducerThreadID: uuidWithByte(2),
+				SignalType:       "audio_generation_succeeded",
+				Status:           "claimed",
+				ClaimedByTaskID:  uuidWithByte(3),
+			},
+			{
 				ID:               uuidWithByte(22),
 				WorkspaceID:      uuidWithByte(1),
 				ProducerThreadID: uuidWithByte(2),
@@ -129,7 +137,7 @@ func TestExecutorMarksClaimedInformationalSignalsProcessedOnSuccess(t *testing.T
 		t.Fatal(err)
 	}
 
-	if len(runtime.processedSignals) != 2 || runtime.processedSignals[0] != uuidWithByte(21) || runtime.processedSignals[1] != uuidWithByte(23) {
+	if len(runtime.processedSignals) != 3 || runtime.processedSignals[0] != uuidWithByte(21) || runtime.processedSignals[1] != uuidWithByte(23) || runtime.processedSignals[2] != uuidWithByte(24) {
 		t.Fatalf("processed signals = %#v", runtime.processedSignals)
 	}
 	if len(runtime.releasedSignals) != 1 {
@@ -602,6 +610,48 @@ func TestExecutorPersistsLiveNativeToolTraceFromGraphContext(t *testing.T) {
 	}
 }
 
+func TestExecutorPersistsLoadAgentSkillTraceWithVersionAndHash(t *testing.T) {
+	runtime := &fakeRuntime{}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime: runtime,
+		Graph: &fakeGraph{
+			emitLiveToolTrace: true,
+			liveToolName:      "load_agent_skill",
+			liveToolArguments: map[string]any{
+				"name":   "commerce-ad-producer",
+				"reason": "需要加载 Producer 电商广告工作手册。",
+			},
+			liveToolResult: `{"name":"commerce-ad-producer","version":"0.1.0","source_hash":"sha256:abc123","content":"# Commerce Ad Producer"}`,
+			output:         ProducerTurnOutput{AssistantText: "完成。"},
+		},
+	})
+
+	err := executor.RunTask(context.Background(), RunTaskInput{
+		WorkspaceID:      uuidWithByte(1),
+		ThreadID:         uuidWithByte(2),
+		TaskID:           uuidWithByte(3),
+		TaskType:         "producer_turn",
+		TriggerMessageID: uuidWithByte(4),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := runtime.appendedMessageTypes()
+	want := []string{"tool_call", "tool_result", "text"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("message types = %#v, want %#v", got, want)
+	}
+	if !bytes.Contains(runtime.appended[0].RawMessage, []byte(`"tool_name":"load_agent_skill"`)) ||
+		!bytes.Contains(runtime.appended[0].RawMessage, []byte(`"reason":"需要加载 Producer 电商广告工作手册。"`)) {
+		t.Fatalf("tool call raw = %s", runtime.appended[0].RawMessage)
+	}
+	if !bytes.Contains(runtime.appended[1].RawMessage, []byte(`\"version\":\"0.1.0\"`)) ||
+		!bytes.Contains(runtime.appended[1].RawMessage, []byte(`\"source_hash\":\"sha256:abc123\"`)) {
+		t.Fatalf("tool result raw = %s", runtime.appended[1].RawMessage)
+	}
+}
+
 func TestExecutorDoesNotPersistSystemReminderWithLiveNativeToolTrace(t *testing.T) {
 	runtime := &fakeRuntime{}
 	executor := NewExecutor(ExecutorConfig{
@@ -906,6 +956,9 @@ type fakeGraph struct {
 	deltas            []string
 	err               error
 	emitLiveToolTrace bool
+	liveToolName      string
+	liveToolArguments map[string]any
+	liveToolResult    string
 	input             ProducerTurnInput
 	runOptions        agenteino.RunOptions
 	ctx               context.Context
@@ -929,6 +982,18 @@ func (f *fakeGraph) Run(ctx context.Context, input ProducerTurnInput, options ..
 		if !ok {
 			return ProducerTurnOutput{}, errors.New("live native tool trace sink missing")
 		}
+		toolName := strings.TrimSpace(f.liveToolName)
+		if toolName == "" {
+			toolName = "upsert_project_brief"
+		}
+		arguments := f.liveToolArguments
+		if arguments == nil {
+			arguments = map[string]any{"brief": "实时写入项目 brief。"}
+		}
+		result := strings.TrimSpace(f.liveToolResult)
+		if result == "" {
+			result = "已写入 CreativeBrief。"
+		}
 		runtime := agenttools.NativeRuntimeContext{
 			WorkspaceID: uuidWithByte(1),
 			ThreadID:    uuidWithByte(2),
@@ -936,14 +1001,14 @@ func (f *fakeGraph) Run(ctx context.Context, input ProducerTurnInput, options ..
 			ToolCallID:  "call-live",
 		}
 		if err := sink.NativeToolCallStarted(ctx, runtime, agenttools.NativeToolTrace{
-			ToolName:  "upsert_project_brief",
-			Arguments: map[string]any{"brief": "实时写入项目 brief。"},
+			ToolName:  toolName,
+			Arguments: arguments,
 		}); err != nil {
 			return ProducerTurnOutput{}, err
 		}
 		if err := sink.NativeToolCallCompleted(ctx, runtime, agenttools.NativeToolTrace{
-			ToolName: "upsert_project_brief",
-			Result:   "已写入 CreativeBrief。",
+			ToolName: toolName,
+			Result:   result,
 		}); err != nil {
 			return ProducerTurnOutput{}, err
 		}

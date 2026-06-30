@@ -220,6 +220,50 @@ func TestDispatchCraftsmanNativeLimitsDispatchToShotRefs(t *testing.T) {
 	}
 }
 
+func TestDispatchCraftsmanNativeLimitsDispatchToExplicitShotScopeRef(t *testing.T) {
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		shots: []db.Shot{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", SemanticKey: "scene_main.shot_01", Title: "开场", Status: "preview_ready"},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot_02", SemanticKey: "scene_main.shot_02", Title: "细节", Status: "preview_ready"},
+			{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), ClientKey: "shot_03", SemanticKey: "scene_main.shot_03", Title: "推行", Status: "preview_ready"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanNativeTool(store, runtime, &fakeCraftsmanEnqueuer{})
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		ToolCallID:  "producer-dispatch-call",
+	})
+
+	got, err := tool.InvokableRun(ctx, `{
+		"brief":"只重生成 shot_03。",
+		"scope":{"type":"shot","id":"shot_03"},
+		"shot_refs":[],
+		"target_phase":"shot_video",
+		"execution_policy":"execute_immediately",
+		"force":true
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "已将 1 个分镜视频 RenderPlan 任务加入队列") {
+		t.Fatalf("result = %s", got)
+	}
+	if len(runtime.createdTasks) != 1 {
+		t.Fatalf("created tasks = %d, want 1", len(runtime.createdTasks))
+	}
+	var input map[string]any
+	if err := json.Unmarshal(runtime.createdTasks[0].Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["shot_client_key"] != "shot_03" || input["scope_key"] != "scene_main.shot_03" {
+		t.Fatalf("task input = %#v", input)
+	}
+}
+
 func TestDispatchCraftsmanSkipsActiveSameScopePhaseTask(t *testing.T) {
 	shotID := uuidWithByte(11)
 	store := &fakeCraftsmanDispatchStore{

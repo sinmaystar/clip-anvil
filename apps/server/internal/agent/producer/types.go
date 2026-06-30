@@ -7,6 +7,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -16,6 +17,7 @@ type ProducerTurnInput struct {
 	WorkspaceID        pgtype.UUID
 	ThreadID           pgtype.UUID
 	TaskID             pgtype.UUID
+	TaskType           string
 	TriggerMessageID   pgtype.UUID
 	TriggerMessageSeq  int64
 	RuntimeTriggerText string
@@ -54,6 +56,8 @@ type ProducerContext struct {
 	Model              ProducerModelSelection
 	ToolInfos          []*schema.ToolInfo
 	ImageAttachments   map[string]ProducerImageAttachment
+	ProjectFacts       []contextcompact.FullSummaryFact
+	ProjectMediaCards  []contextcompact.MediaCard
 	PendingReminders   []string
 	EmitDelta          ProducerDeltaHandler
 }

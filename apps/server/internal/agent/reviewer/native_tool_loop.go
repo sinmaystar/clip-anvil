@@ -388,6 +388,7 @@ func nativeReviewerToolRuntimeMiddleware(stateStore *reviewerLoopToolStateStore)
 							WorkspaceID:                state.Context.Input.WorkspaceID,
 							ThreadID:                   state.Context.Input.ThreadID,
 							TaskID:                     state.Context.Input.TaskID,
+							TaskType:                   "reviewer_turn",
 							ToolCallID:                 input.CallID,
 							ReviewTask:                 state.Context.Input.Task.ReviewTask,
 							ReviewShotID:               state.Context.Input.Task.Target.ShotID,

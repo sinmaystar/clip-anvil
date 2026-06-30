@@ -115,6 +115,109 @@ func TestCompositionContextIncludesApprovedAudioPlanAndAudioArtifacts(t *testing
 	}
 }
 
+func TestCompositionContextIncludesPreviewImageFallbackWhenShotVideoMissing(t *testing.T) {
+	workspaceID := uuidWithByte(1)
+	shot1ID := uuidWithByte(21)
+	shot2ID := uuidWithByte(22)
+	shot3ID := uuidWithByte(23)
+	shot4ID := uuidWithByte(24)
+	video1VersionID := uuidWithByte(31)
+	video2VersionID := uuidWithByte(32)
+	video3VersionID := uuidWithByte(33)
+	preview4VersionID := uuidWithByte(34)
+	video1AssetID := uuidWithByte(41)
+	video2AssetID := uuidWithByte(42)
+	video3AssetID := uuidWithByte(43)
+	preview4AssetID := uuidWithByte(44)
+
+	store := &fakeComposerStore{
+		shots: []db.Shot{
+			{ID: shot1ID, WorkspaceID: workspaceID, ClientKey: "shot_01", SemanticKey: "shot_01", SortOrder: 1, Title: "顺滑拉箱"},
+			{ID: shot2ID, WorkspaceID: workspaceID, ClientKey: "shot_02", SemanticKey: "shot_02", SortOrder: 2, Title: "轻量提拿"},
+			{ID: shot3ID, WorkspaceID: workspaceID, ClientKey: "shot_03", SemanticKey: "shot_03", SortOrder: 3, Title: "商务特写"},
+			{ID: shot4ID, WorkspaceID: workspaceID, ClientKey: "shot_04", SemanticKey: "shot_04", SortOrder: 4, Title: "分区收纳收尾"},
+		},
+		nodesByShot: map[pgtype.UUID][]db.MediaNode{
+			shot1ID: {{
+				ID:               uuidWithByte(51),
+				WorkspaceID:      workspaceID,
+				ShotID:           shot1ID,
+				NodeType:         db.NodeTypeVideo,
+				Title:            "shot_01 shot video",
+				CurrentVersionID: video1VersionID,
+				Metadata:         mustComposerJSON(t, map[string]any{"agent_artifact_kind": "shot_video"}),
+				SemanticKey:      "shot_01.shot_video.r1.node",
+				ArtifactKind:     "shot_video",
+			}},
+			shot2ID: {{
+				ID:               uuidWithByte(52),
+				WorkspaceID:      workspaceID,
+				ShotID:           shot2ID,
+				NodeType:         db.NodeTypeVideo,
+				Title:            "shot_02 shot video",
+				CurrentVersionID: video2VersionID,
+				Metadata:         mustComposerJSON(t, map[string]any{"agent_artifact_kind": "shot_video"}),
+				SemanticKey:      "shot_02.shot_video.r1.node",
+				ArtifactKind:     "shot_video",
+			}},
+			shot3ID: {{
+				ID:               uuidWithByte(53),
+				WorkspaceID:      workspaceID,
+				ShotID:           shot3ID,
+				NodeType:         db.NodeTypeVideo,
+				Title:            "shot_03 shot video",
+				CurrentVersionID: video3VersionID,
+				Metadata:         mustComposerJSON(t, map[string]any{"agent_artifact_kind": "shot_video"}),
+				SemanticKey:      "shot_03.shot_video.r1.node",
+				ArtifactKind:     "shot_video",
+			}},
+			shot4ID: {{
+				ID:               uuidWithByte(54),
+				WorkspaceID:      workspaceID,
+				ShotID:           shot4ID,
+				NodeType:         db.NodeTypeImage,
+				Title:            "shot_04 preview image",
+				CurrentVersionID: preview4VersionID,
+				Metadata:         mustComposerJSON(t, map[string]any{"agent_artifact_kind": "preview_image"}),
+				SemanticKey:      "shot_04.preview_image.r1.node",
+				ArtifactKind:     "preview_image",
+			}},
+		},
+		versions: map[pgtype.UUID]db.ArtifactVersion{
+			video1VersionID:   {ID: video1VersionID, AssetID: video1AssetID, Status: db.JobStatusSucceeded},
+			video2VersionID:   {ID: video2VersionID, AssetID: video2AssetID, Status: db.JobStatusSucceeded},
+			video3VersionID:   {ID: video3VersionID, AssetID: video3AssetID, Status: db.JobStatusSucceeded},
+			preview4VersionID: {ID: preview4VersionID, AssetID: preview4AssetID, Status: db.JobStatusSucceeded},
+		},
+		assets: map[pgtype.UUID]db.MediaAsset{
+			video1AssetID:   {ID: video1AssetID, WorkspaceID: workspaceID, Mime: "video/mp4", StorageUrl: textValue("workspace/shot-01.mp4")},
+			video2AssetID:   {ID: video2AssetID, WorkspaceID: workspaceID, Mime: "video/mp4", StorageUrl: textValue("workspace/shot-02.mp4")},
+			video3AssetID:   {ID: video3AssetID, WorkspaceID: workspaceID, Mime: "video/mp4", StorageUrl: textValue("workspace/shot-03.mp4")},
+			preview4AssetID: {ID: preview4AssetID, WorkspaceID: workspaceID, Mime: "image/jpeg", StorageUrl: textValue("workspace/shot-04.jpg")},
+		},
+	}
+
+	ctx, err := NewToolContextProvider(store).GetCompositionContext(context.Background(), agenttools.NativeRuntimeContext{WorkspaceID: workspaceID}, pgtype.UUID{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assets, _ := ctx["available_composition_assets"].([]map[string]any)
+	if len(assets) != 4 {
+		t.Fatalf("assets = %#v", assets)
+	}
+	preview, ok := composerContextAssetByNodeRef(assets, "shot_04.preview_image.r1.node")
+	if !ok {
+		t.Fatalf("shot_04 preview fallback missing from assets: %#v", assets)
+	}
+	if preview["role"] != "still" || preview["artifact_kind"] != "preview_image" || preview["mime_type"] != "image/jpeg" {
+		t.Fatalf("preview fallback asset = %#v", preview)
+	}
+	if preview["node_ref"] != "shot_04.preview_image.r1.node" {
+		t.Fatalf("preview fallback should expose full media_node semantic key: %#v", preview)
+	}
+}
+
 func composerContextHasRole(assets []map[string]any, role string) bool {
 	for _, asset := range assets {
 		if asset["role"] == role {
@@ -122,6 +225,15 @@ func composerContextHasRole(assets []map[string]any, role string) bool {
 		}
 	}
 	return false
+}
+
+func composerContextAssetByNodeRef(assets []map[string]any, nodeRef string) (map[string]any, bool) {
+	for _, asset := range assets {
+		if asset["node_ref"] == nodeRef {
+			return asset, true
+		}
+	}
+	return nil, false
 }
 
 func mustComposerJSON(t *testing.T, value any) []byte {

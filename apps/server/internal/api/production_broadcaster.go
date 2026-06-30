@@ -241,7 +241,7 @@ func (b *ProductionBroadcaster) publishProducerWorkerCompletionSignal(ctx contex
 	scopeKey := firstNonEmpty(intentSemantic.ScopeKey, metadataString(nodeMetadata, "scope_key"), metadataString(nodeMetadata, "shot_client_key"))
 	renderPlanKey := firstNonEmpty(intentSemantic.RenderPlanKey, metadataString(nodeMetadata, "render_plan_key"))
 	payload := productionBroadcastJSON(map[string]any{
-		"trigger":              "worker_generation_completed",
+		"trigger":              workerSignalTypeForArtifactKind(artifactKind, status),
 		"target_phase":         targetPhase,
 		"render_plan_id":       uuidString(task.RenderPlanID),
 		"render_plan_key":      renderPlanKey,
@@ -267,24 +267,32 @@ func (b *ProductionBroadcaster) publishProducerWorkerCompletionSignal(ctx contex
 		"worker_task_key":      strings.TrimSpace(task.SemanticKey),
 		"worker_thread_id":     uuidString(task.ThreadID),
 	})
+	signalType := workerSignalTypeForArtifactKind(artifactKind, status)
 	_, err = b.agentPreviewSink.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
 		WorkspaceID:      event.WorkspaceID,
 		ProducerThreadID: thread.ID,
 		SourceRole:       "worker",
 		SourceTaskID:     task.ID,
 		SourceThreadID:   task.ThreadID,
-		SignalType:       "worker_generation_completed",
+		SignalType:       signalType,
 		ScopeType:        defaultSignalScopeType(task.ScopeType),
 		ScopeID:          task.ScopeID,
 		RenderPlanID:     task.RenderPlanID,
 		Priority:         70,
-		DedupeKey:        "worker_generation_completed:" + uuidString(event.JobID),
+		DedupeKey:        signalType + ":" + uuidString(event.JobID),
 		Payload:          payload,
 	})
 	if err != nil {
 		return
 	}
 	b.ensureProducerWakeTask(ctx, event.WorkspaceID, thread.ID, payload)
+}
+
+func workerSignalTypeForArtifactKind(artifactKind string, status string) string {
+	if status == "succeeded" && (artifactKind == "voiceover_audio" || artifactKind == "bgm_audio") {
+		return "audio_generation_succeeded"
+	}
+	return "worker_generation_completed"
 }
 
 func (b *ProductionBroadcaster) publishProducerCompositionSignal(ctx context.Context, event production.ProductionEvent, node db.MediaNode, artifactKind string, job db.GenerationJob, task db.AgentTask, version db.ArtifactVersion, versionID string) {
@@ -448,6 +456,15 @@ func previewEventForProductionEvent(eventType string) (string, string, bool) {
 
 func terminalAgentEventForProductionEvent(artifactKind string, eventType string) (string, string, bool) {
 	switch artifactKind {
+	case "reference_image":
+		switch eventType {
+		case production.ProductionEventJobSucceeded:
+			return "", "reference_generation_succeeded", true
+		case production.ProductionEventJobFailed, production.ProductionEventJobCancelled:
+			return "", "reference_generation_failed", true
+		default:
+			return "", "", false
+		}
 	case "preview_image":
 		statusEvent, agentEventType, ok := previewEventForProductionEvent(eventType)
 		if !ok {
@@ -475,6 +492,15 @@ func terminalAgentEventForProductionEvent(artifactKind string, eventType string)
 		default:
 			return "", "", false
 		}
+	case "voiceover_audio", "bgm_audio":
+		switch eventType {
+		case production.ProductionEventJobSucceeded:
+			return "", "audio_generation_succeeded", true
+		case production.ProductionEventJobFailed, production.ProductionEventJobCancelled:
+			return "", "audio_generation_failed", true
+		default:
+			return "", "", false
+		}
 	default:
 		return "", "", false
 	}
@@ -482,6 +508,8 @@ func terminalAgentEventForProductionEvent(artifactKind string, eventType string)
 
 func targetPhaseForAgentArtifactKind(artifactKind string) string {
 	switch artifactKind {
+	case "reference_image":
+		return "reference_image"
 	case "preview_image":
 		return "preview_image"
 	case "shot_video":
@@ -508,7 +536,7 @@ func agentArtifactKind(node db.MediaNode) (string, bool) {
 	}
 	kind, _ := metadata["agent_artifact_kind"].(string)
 	switch kind {
-	case "preview_image", "shot_video", "final_video":
+	case "reference_image", "preview_image", "shot_video", "final_video", "voiceover_audio", "bgm_audio":
 		return kind, true
 	default:
 		return "", false

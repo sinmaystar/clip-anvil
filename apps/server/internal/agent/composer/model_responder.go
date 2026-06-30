@@ -10,6 +10,7 @@ import (
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	agentprompt "github.com/sinmaystar/clip-anvil/internal/agent/prompt"
 )
 
@@ -21,13 +22,14 @@ type arkChatModel interface {
 type arkChatModelFactory func(ctx context.Context, config *ark.ChatModelConfig) (arkChatModel, error)
 
 type VolcengineModelResponderConfig struct {
-	APIKey      string
-	BaseURL     string
-	Region      string
-	Model       string
-	MaxTokens   int
-	Temperature float32
-	Factory     arkChatModelFactory
+	APIKey           string
+	BaseURL          string
+	Region           string
+	Model            string
+	MaxTokens        int
+	Temperature      float32
+	Factory          arkChatModelFactory
+	ContextCompactor contextcompact.Middleware
 }
 
 type VolcengineModelResponder struct {
@@ -83,21 +85,74 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, composerContext C
 		}
 		generator = boundModel
 	}
-	final, err := generator.Generate(ctx, composerPromptMessages(composerContext))
+	prompt := composerPromptMessagesWithBoundaries(composerContext)
+	messages := prompt.Messages
+	facts, mediaCards := composerContextCompactionFacts(composerContext)
+	var compacted contextcompact.ProjectionOutput
+	if r.cfg.ContextCompactor != nil {
+		compacted, err = r.cfg.ContextCompactor.Project(ctx, contextcompact.ProjectionInput{
+			WorkspaceID:       composerContext.Input.WorkspaceID,
+			ThreadID:          composerContext.Input.ThreadID,
+			TaskID:            composerContext.Input.TaskID,
+			Role:              "composer",
+			ModelID:           modelID,
+			Messages:          messages,
+			ToolInfos:         composerContext.ToolInfos,
+			MediaCards:        mediaCards,
+			Facts:             facts,
+			Trigger:           "composer_before_model",
+			SameTurnFromIndex: prompt.SameTurnFromIndex,
+			PendingFromIndex:  prompt.PendingFromIndex,
+		})
+		if err != nil {
+			return ComposerTurnOutput{}, fmt.Errorf("compact composer context: %w", err)
+		}
+		messages = compacted.Messages
+	}
+	retriedContextOverflow := false
+	final, err := generator.Generate(ctx, messages)
+	if err != nil && contextcompact.IsContextOverflowError(err) && r.cfg.ContextCompactor != nil {
+		retriedContextOverflow = true
+		compacted, err = r.cfg.ContextCompactor.Project(ctx, contextcompact.ProjectionInput{
+			WorkspaceID:       composerContext.Input.WorkspaceID,
+			ThreadID:          composerContext.Input.ThreadID,
+			TaskID:            composerContext.Input.TaskID,
+			Role:              "composer",
+			ModelID:           modelID,
+			Messages:          prompt.Messages,
+			ToolInfos:         composerContext.ToolInfos,
+			MediaCards:        mediaCards,
+			Facts:             facts,
+			Trigger:           "model_error_context_overflow",
+			SameTurnFromIndex: prompt.SameTurnFromIndex,
+			PendingFromIndex:  prompt.PendingFromIndex,
+			ForceFullCompact:  true,
+		})
+		if err != nil {
+			return ComposerTurnOutput{}, fmt.Errorf("compact composer context after overflow: %w", err)
+		}
+		messages = compacted.Messages
+		final, err = generator.Generate(ctx, messages)
+	}
 	if err != nil {
 		return ComposerTurnOutput{}, fmt.Errorf("generate composer ark chat model: %w", err)
 	}
 	if final == nil {
 		return ComposerTurnOutput{}, fmt.Errorf("generate composer ark chat model returned nil message")
 	}
+	metadata := map[string]any{
+		"provider":               "volcengine",
+		"model_id":               modelID,
+		"native_tool_call_count": len(final.ToolCalls),
+	}
+	enrichComposerContextCompactionMetadata(metadata, compacted)
+	if retriedContextOverflow {
+		metadata["context_compaction_retry"] = true
+	}
 	return ComposerTurnOutput{
 		AssistantText: strings.TrimSpace(final.Content),
-		Metadata: map[string]any{
-			"provider":               "volcengine",
-			"model_id":               modelID,
-			"native_tool_call_count": len(final.ToolCalls),
-		},
-		ModelMessage: final,
+		Metadata:      metadata,
+		ModelMessage:  final,
 	}, nil
 }
 
@@ -123,11 +178,18 @@ func (DeterministicResponder) Respond(_ context.Context, composerContext Context
 	}, nil
 }
 
-func composerPromptMessages(composerContext Context) []*schema.Message {
+type composerPromptBoundary struct {
+	Messages          []*schema.Message
+	SameTurnFromIndex int
+	PendingFromIndex  int
+}
+
+func composerPromptMessagesWithBoundaries(composerContext Context) composerPromptBoundary {
 	messages := []*schema.Message{
 		{Role: schema.System, Content: SystemPrompt},
 		{Role: schema.User, Content: composerUserMessage(composerContext)},
 	}
+	sameTurnFromIndex := contextcompact.CurrentToolLoopFromIndex(len(messages), len(composerContext.SameTurnMessages))
 	for _, message := range composerContext.SameTurnMessages {
 		switch message.Role {
 		case "assistant":
@@ -152,7 +214,20 @@ func composerPromptMessages(composerContext Context) []*schema.Message {
 			})
 		}
 	}
-	return agentprompt.AppendPendingReminders(messages, composerContext.PendingReminders)
+	pendingFromIndex := contextcompact.PendingReminderTargetIndex(messages, composerContext.PendingReminders)
+	messages = agentprompt.AppendPendingReminders(messages, composerContext.PendingReminders)
+	return composerPromptBoundary{Messages: messages, SameTurnFromIndex: sameTurnFromIndex, PendingFromIndex: pendingFromIndex}
+}
+
+func enrichComposerContextCompactionMetadata(metadata map[string]any, output contextcompact.ProjectionOutput) {
+	if len(output.Applied) == 0 {
+		return
+	}
+	metadata["context_compaction_applied"] = true
+	metadata["context_compaction_mode"] = output.CompactionMode
+	metadata["context_compaction_count"] = len(output.Applied)
+	metadata["context_compaction_refs"] = output.CompactionRefs
+	metadata["context_compaction_detail_files"] = output.DetailFiles
 }
 
 func composerUserMessage(composerContext Context) string {

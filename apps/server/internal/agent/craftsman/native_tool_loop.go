@@ -367,6 +367,7 @@ func nativeCraftsmanToolRuntimeMiddleware(stateStore *craftsmanLoopToolStateStor
 							WorkspaceID:     state.Context.Input.WorkspaceID,
 							ThreadID:        state.Context.Input.ThreadID,
 							TaskID:          state.Context.Input.TaskID,
+							TaskType:        "craftsman_turn",
 							ToolCallID:      input.CallID,
 							ExecutionPolicy: state.Context.Input.ExecutionPolicy,
 							ScopeType:       state.Context.Input.ScopeType,

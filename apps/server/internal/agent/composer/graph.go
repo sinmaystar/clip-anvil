@@ -420,6 +420,7 @@ func composerNativeRuntime(callID string, state composerLoopState) agenttools.Na
 		WorkspaceID: state.Context.Input.WorkspaceID,
 		ThreadID:    state.Context.Input.ThreadID,
 		TaskID:      state.Context.Input.TaskID,
+		TaskType:    "composer_turn",
 		ToolCallID:  callID,
 		ScopeType:   "final_output",
 		ScopeID:     scopeID,

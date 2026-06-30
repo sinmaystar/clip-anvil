@@ -317,10 +317,10 @@ a:focus-visible {
   margin: 0;
   max-width: 680px;
   color: var(--fg-primary);
-  font-size: clamp(42px, 5vw, 62px);
+  font-size: 62px;
   font-weight: 790;
-  letter-spacing: -0.045em;
-  line-height: 0.98;
+  letter-spacing: 0;
+  line-height: 1.18;
 }
 
 .auth-hero p:not(.auth-kicker) {
@@ -894,15 +894,15 @@ a:focus-visible {
 }
 
 .agent-chat-float {
-  position: absolute;
-  z-index: 5;
+  position: fixed;
+  z-index: 30;
   top: var(--space-4);
   right: var(--space-4);
   display: grid;
   overflow: hidden;
   min-height: 0;
   min-width: 360px;
-  max-height: calc(100% - var(--space-4));
+  max-height: calc(100vh - (var(--space-4) * 2));
   grid-template-rows: auto minmax(96px, 1fr) auto;
   gap: 14px;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
@@ -1385,6 +1385,7 @@ a:focus-visible {
 }
 
 .agent-thread-selector {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1394,23 +1395,158 @@ a:focus-visible {
   font-weight: 700;
 }
 
-.agent-thread-selector select {
-  width: 126px;
-  max-width: 28vw;
+.agent-thread-selector-label {
+  flex: 0 0 auto;
+}
+
+.agent-thread-selector-trigger {
+  display: inline-flex;
+  max-width: min(220px, 30vw);
   min-width: 0;
+  align-items: center;
+  gap: 5px;
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
   background: color-mix(in srgb, var(--fg-primary) 3%, transparent);
   color: var(--fg-secondary);
+  cursor: pointer;
   font: inherit;
   font-size: 11px;
   outline: none;
-  padding: 5px 26px 5px 9px;
+  padding: 5px 8px 5px 10px;
 }
 
-.agent-thread-selector select:focus {
+.agent-thread-selector-trigger:hover,
+.agent-thread-selector-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--fg-primary);
+}
+
+.agent-thread-selector-trigger:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 50%, var(--border-subtle));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.agent-thread-selector-trigger-main,
+.agent-thread-selector-trigger-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-thread-selector-trigger-main {
+  flex: 0 0 auto;
+  color: var(--fg-primary);
+}
+
+.agent-thread-selector-trigger-sub {
+  flex: 1 1 auto;
+}
+
+.agent-thread-selector-chevron {
+  flex: 0 0 auto;
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  transform: translateY(-1px);
+}
+
+.agent-thread-selector-menu {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: min(380px, calc(100vw - 44px));
+  max-height: min(360px, 58vh);
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 88%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--color-panel) 98%, transparent);
+  box-shadow: var(--shadow-popover);
+  padding: 6px;
+  backdrop-filter: blur(18px);
+}
+
+.agent-thread-selector-option {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  font: inherit;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.agent-thread-selector-option:hover,
+.agent-thread-selector-option:focus-visible,
+.agent-thread-selector-option[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--fg-primary);
+  outline: none;
+}
+
+.agent-thread-selector-option-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.agent-thread-selector-role {
+  flex: 0 0 auto;
+  color: var(--fg-primary);
+  font-weight: 780;
+}
+
+.agent-thread-selector-scope,
+.agent-thread-selector-option-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-thread-selector-scope {
+  flex: 1 1 auto;
+}
+
+.agent-thread-selector-status {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--fg-tertiary);
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+}
+
+.agent-thread-selector-status-running,
+.agent-thread-selector-status-queued {
+  border-color: color-mix(in srgb, var(--status-running) 36%, var(--border-subtle));
+  color: var(--status-running);
+}
+
+.agent-thread-selector-status-failed {
+  border-color: color-mix(in srgb, var(--status-failed) 36%, var(--border-subtle));
+  color: var(--status-failed);
+}
+
+.agent-thread-selector-status-succeeded {
+  border-color: color-mix(in srgb, var(--status-succeeded) 36%, var(--border-subtle));
+  color: var(--status-succeeded);
+}
+
+.agent-thread-selector-option-meta {
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-weight: 560;
 }
 
 .agent-thread-drawer {
@@ -2480,6 +2616,10 @@ a:focus-visible {
     padding: 34px;
   }
 
+  .auth-hero h1 {
+    font-size: 48px;
+  }
+
   .film-stack {
     display: none;
   }
@@ -2499,6 +2639,10 @@ a:focus-visible {
 
   .app-account-name {
     display: none;
+  }
+
+  .auth-hero h1 {
+    font-size: 42px;
   }
 }
 
@@ -5015,6 +5159,11 @@ a:focus-visible {
 
 .agent-workbench-surface .react-flow {
   min-height: 420px;
+}
+
+.agent-workbench-handle.react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .agent-workbench-surface .react-flow__controls {

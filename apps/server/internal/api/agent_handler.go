@@ -476,6 +476,7 @@ func (h *AgentHandler) PostMessage(ctx context.Context, c *app.RequestContext) {
 				WorkspaceID:       workspace.ID,
 				ThreadID:          thread.ID,
 				TaskID:            task.ID,
+				TaskType:          task.TaskType,
 				TriggerMessageID:  msg.ID,
 				TriggerMessageSeq: msg.Seq,
 			})
@@ -1118,6 +1119,7 @@ func producerDecisionResumeRunInput(workspaceID pgtype.UUID, task db.AgentTask, 
 		WorkspaceID:      workspaceID,
 		ThreadID:         task.ThreadID,
 		TaskID:           task.ID,
+		TaskType:         task.TaskType,
 		TriggerMessageID: triggerMessageID,
 	}
 	var input struct {

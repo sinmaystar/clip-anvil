@@ -1,4 +1,4 @@
-import type { Node, NodeProps } from "@xyflow/react";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import {
   useCallback,
   useEffect,
@@ -63,6 +63,18 @@ export function AgentShotNode({ data, selected }: NodeProps<ShotNode>) {
       data-status={shot.status}
       ref={shotRef}
     >
+      <Handle
+        className="agent-workbench-handle"
+        isConnectable={false}
+        position={Position.Left}
+        type="target"
+      />
+      <Handle
+        className="agent-workbench-handle"
+        isConnectable={false}
+        position={Position.Right}
+        type="source"
+      />
       <header>
         <div>
           <span>{shot.client_key || `#${shot.sequence_index}`}</span>

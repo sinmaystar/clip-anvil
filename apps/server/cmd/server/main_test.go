@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	agentcontextcompact "github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	agentproducer "github.com/sinmaystar/clip-anvil/internal/agent/producer"
 	"github.com/sinmaystar/clip-anvil/internal/config"
 )
@@ -41,7 +42,7 @@ func TestProducerResponderForConfigUsesDeterministicOutsideRealMode(t *testing.T
 		Production: config.ProductionConfig{
 			ProviderMode: "mock",
 		},
-	})
+	}, nil)
 	if _, ok := responder.(agentproducer.DeterministicResponder); !ok {
 		t.Fatalf("expected deterministic responder, got %T", responder)
 	}
@@ -55,7 +56,7 @@ func TestProducerResponderForConfigUsesDeterministicWhenRealModeHasNoKey(t *test
 				APIKey: "   ",
 			},
 		},
-	})
+	}, nil)
 	if _, ok := responder.(agentproducer.DeterministicResponder); !ok {
 		t.Fatalf("expected deterministic responder, got %T", responder)
 	}
@@ -67,7 +68,7 @@ func TestProducerResponderForConfigUsesM1E2EFixtureWhenEnabled(t *testing.T) {
 		Production: config.ProductionConfig{
 			ProviderMode: "mock",
 		},
-	})
+	}, nil)
 
 	out, err := responder.Respond(context.Background(), agentproducer.ProducerContext{})
 	if err != nil {
@@ -92,9 +93,33 @@ func TestProducerResponderForConfigUsesVolcengineWhenRealModeHasKey(t *testing.T
 				TextModel: "test-model",
 			},
 		},
-	})
+	}, nil)
 	if _, ok := responder.(agentproducer.VolcengineModelResponder); !ok {
 		t.Fatalf("expected Volcengine responder, got %T", responder)
+	}
+}
+
+func TestContextFullSummarizerForConfigUsesStaticOutsideRealMode(t *testing.T) {
+	summarizer := contextFullSummarizerForConfig(&config.Config{
+		Production: config.ProductionConfig{ProviderMode: "mock"},
+	})
+	if _, ok := summarizer.(agentcontextcompact.StaticFullSummarizer); !ok {
+		t.Fatalf("expected static summarizer, got %T", summarizer)
+	}
+}
+
+func TestContextFullSummarizerForConfigUsesVolcengineWhenRealModeHasKey(t *testing.T) {
+	summarizer := contextFullSummarizerForConfig(&config.Config{
+		Production: config.ProductionConfig{
+			ProviderMode: "real",
+			Volcengine: config.VolcengineConfig{
+				APIKey:    "test-key",
+				TextModel: "doubao-summary",
+			},
+		},
+	})
+	if _, ok := summarizer.(agentcontextcompact.VolcengineFullSummarizer); !ok {
+		t.Fatalf("expected Volcengine summarizer, got %T", summarizer)
 	}
 }
 

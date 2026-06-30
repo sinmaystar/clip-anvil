@@ -1,4 +1,4 @@
-import type { Node, NodeProps } from "@xyflow/react";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import type { AgentWorkbenchFinalOutputNodeData } from "../../lib/agentWorkbenchViewModel";
 
 type FinalOutputNode = Node<
@@ -21,6 +21,12 @@ export function AgentFinalOutputNode({
       data-selected={selected}
       data-status={finalOutput.status}
     >
+      <Handle
+        className="agent-workbench-handle"
+        isConnectable={false}
+        position={Position.Left}
+        type="target"
+      />
       <header>
         <div>
           <span>Final</span>

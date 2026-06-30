@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -159,6 +160,23 @@ func TestRuntimeContextLoaderCarriesNaturalLanguageRuntimeTrigger(t *testing.T) 
 	}
 }
 
+func TestRuntimeContextLoaderLoadsProjectFactsForFullCompact(t *testing.T) {
+	loader := RuntimeContextLoader{
+		Runtime: &fakeProducerContextRuntime{},
+		Facts: fakeProducerFactsProvider{
+			facts: []contextcompact.FullSummaryFact{{Ref: "project_memory/active", Kind: "project_memory", Source: "db", Summary: "轻松出行"}},
+		},
+	}
+
+	out, err := loader.LoadProducerContext(context.Background(), ProducerTurnInput{WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.ProjectFacts) != 1 || out.ProjectFacts[0].Ref != "project_memory/active" {
+		t.Fatalf("ProjectFacts = %#v", out.ProjectFacts)
+	}
+}
+
 type fakeProducerContextRuntime struct {
 	messages []db.AgentMessage
 	afterSeq int64
@@ -179,6 +197,15 @@ func (f *fakeProducerContextRuntime) ListMessages(_ context.Context, _ pgtype.UU
 		}
 	}
 	return out, nil
+}
+
+type fakeProducerFactsProvider struct {
+	facts []contextcompact.FullSummaryFact
+	cards []contextcompact.MediaCard
+}
+
+func (f fakeProducerFactsProvider) LoadProducerFacts(context.Context, pgtype.UUID) ([]contextcompact.FullSummaryFact, []contextcompact.MediaCard, error) {
+	return f.facts, f.cards, nil
 }
 
 type fakeImageReader struct {

@@ -63,6 +63,16 @@ func TestOutputTextPreservesLineBoundaries(t *testing.T) {
 	}
 }
 
+func TestUploadFileOptionsIncludesRemoteMetadataPath(t *testing.T) {
+	got := uploadFileOptions("/workspace/.clipanvil/context/detail.md")
+	if got.FileName != "detail.md" {
+		t.Fatalf("FileName = %q, want detail.md", got.FileName)
+	}
+	if got.Metadata.Path != "/workspace/.clipanvil/context/detail.md" {
+		t.Fatalf("Metadata.Path = %q, want remote path", got.Metadata.Path)
+	}
+}
+
 func TestRunExecPreservesNonZeroExitAndTruncatesOutput(t *testing.T) {
 	client := &execFakeClient{result: ExecResult{
 		ExitCode: 2,

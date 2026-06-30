@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	"github.com/sinmaystar/clip-anvil/internal/production"
 	"github.com/sinmaystar/clip-anvil/internal/sandbox"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -15,6 +16,9 @@ import (
 
 func TestComposerNativeToolsRegisterExpectedNames(t *testing.T) {
 	registry, err := NewNativeRegistry(
+		NewReadFileNativeTool(nil, nil),
+		NewEditFileNativeTool(nil, nil),
+		NewSearchAgentHistoryNativeTool(nil, contextcompact.DefaultConfig()),
 		NewGetCompositionContextNativeTool(nil),
 		NewStageMediaInputsNativeTool(nil),
 		NewProbeMediaNativeTool(nil),
@@ -39,6 +43,9 @@ func TestComposerNativeToolsRegisterExpectedNames(t *testing.T) {
 		got[info.Name] = true
 	}
 	for _, want := range []string{
+		"read_file",
+		"edit_file",
+		"search_agent_history",
 		"get_composition_context",
 		"stage_media_inputs",
 		"probe_media",
@@ -222,6 +229,35 @@ func TestUpdateTimelinePlanStatusMergesExistingResult(t *testing.T) {
 	}
 	if merged["output_path"] != "/workspace/output/final.mp4" || merged["storage_url"] != "workspace-1/final.mp4" || merged["segments_count"].(float64) != 2 {
 		t.Fatalf("merged result = %#v", merged)
+	}
+}
+
+func TestProbeMediaRejectsInputDirectory(t *testing.T) {
+	tool := NewProbeMediaNativeTool(nil)
+	out, err := tool.InvokableRun(context.Background(), `{"workspace_path":"/workspace/input"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"工具调用失败", "workspace_path", "具体文件路径", "stage_media_inputs"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestRunFFmpegCommandRejectsUnstagedRootInputPath(t *testing.T) {
+	tool := NewRunFFmpegCommandNativeTool(nil)
+	out, err := tool.InvokableRun(context.Background(), `{
+		"executable":"ffmpeg",
+		"args":["-i","/workspace/shot_02.mp4","-c:v","libx264","/workspace/output/final.mp4"]
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"工具调用失败", "/workspace/input", "stage_media_inputs"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q: %s", want, out)
+		}
 	}
 }
 

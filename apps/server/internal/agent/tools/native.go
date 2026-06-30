@@ -20,6 +20,7 @@ type NativeRuntimeContext struct {
 	WorkspaceID     pgtype.UUID
 	ThreadID        pgtype.UUID
 	TaskID          pgtype.UUID
+	TaskType        string
 	ToolCallID      string
 	ExecutionPolicy string
 	ScopeType       string

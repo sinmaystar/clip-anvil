@@ -2,6 +2,7 @@ package reviewer
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -48,6 +50,43 @@ func TestVolcengineReviewerResponderReturnsNativeToolCallingMessage(t *testing.T
 	}
 	if len(streamer.messages[1].UserInputMultiContent) != 2 {
 		t.Fatalf("multi content = %#v", streamer.messages[1].UserInputMultiContent)
+	}
+}
+
+func TestVolcengineReviewerResponderRetriesOnceWithFullCompactOnContextOverflow(t *testing.T) {
+	streamer := &fakeReviewArkStreamer{
+		chunks:     []*schema.Message{{Content: "ok"}},
+		streamErrs: []error{errors.New("tokens exceed context window")},
+	}
+	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
+		APIKey: "test-key",
+		Model:  "doubao-reviewer",
+		ContextCompactor: contextcompact.NewMiddleware(contextcompact.MiddlewareConfig{
+			Config:         compactReviewerResponderTestConfig(),
+			Store:          reviewerContextcompactTestStore(),
+			FileWriter:     reviewerContextcompactTestFileWriter(),
+			FullSummarizer: contextcompact.StaticFullSummarizer{},
+		}),
+		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatStreamer, error) {
+			return streamer, nil
+		},
+	})
+
+	out, err := responder.Respond(context.Background(), Context{
+		Input: GraphInput{WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3)},
+		Text:  "Review Target\n- shot: shot_01",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Metadata["context_compaction_retry"] != true {
+		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+	if streamer.streamCalls != 2 {
+		t.Fatalf("streamCalls = %d, want 2", streamer.streamCalls)
+	}
+	if !strings.Contains(streamer.messages[1].Content, "# Compacted Agent Handoff Summary") {
+		t.Fatalf("retry prompt missing full summary: %#v", streamer.messages)
 	}
 }
 
@@ -120,13 +159,20 @@ func TestReviewerPendingRemindersAppendToLatestUserMessage(t *testing.T) {
 }
 
 type fakeReviewArkStreamer struct {
-	messages   []*schema.Message
-	chunks     []*schema.Message
-	boundTools []*schema.ToolInfo
+	messages    []*schema.Message
+	chunks      []*schema.Message
+	boundTools  []*schema.ToolInfo
+	streamErrs  []error
+	streamCalls int
 }
 
 func (f *fakeReviewArkStreamer) Stream(_ context.Context, messages []*schema.Message, _ ...einoModel.Option) (*schema.StreamReader[*schema.Message], error) {
 	f.messages = messages
+	if f.streamCalls < len(f.streamErrs) && f.streamErrs[f.streamCalls] != nil {
+		f.streamCalls++
+		return nil, f.streamErrs[f.streamCalls-1]
+	}
+	f.streamCalls++
 	sr, sw := schema.Pipe[*schema.Message](1)
 	go func() {
 		defer sw.Close()

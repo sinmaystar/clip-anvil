@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/url"
+	pathpkg "path"
 	"strings"
 	"time"
 
@@ -146,7 +147,7 @@ func (c *OpenSandboxClient) Upload(ctx context.Context, sandboxID string, path s
 	if err != nil {
 		return err
 	}
-	return sb.UploadFile(ctx, r, osb.UploadFileOptions{FileName: path})
+	return sb.UploadFile(ctx, r, uploadFileOptions(path))
 }
 
 func (c *OpenSandboxClient) Download(ctx context.Context, sandboxID string, path string) (io.ReadCloser, FileInfo, error) {
@@ -206,4 +207,17 @@ func outputText(messages []osb.OutputMessage) string {
 		b.WriteString(message.Text)
 	}
 	return b.String()
+}
+
+func uploadFileOptions(remotePath string) osb.UploadFileOptions {
+	fileName := pathpkg.Base(remotePath)
+	if fileName == "." || fileName == "/" || fileName == "" {
+		fileName = "file"
+	}
+	return osb.UploadFileOptions{
+		FileName: fileName,
+		Metadata: osb.FileMetadata{
+			Path: remotePath,
+		},
+	}
 }

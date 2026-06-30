@@ -601,6 +601,16 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		}
 		return []db.Shot{shot}, nil
 	}
+	if ref := strings.TrimSpace(args.ScopeRef); ref != "" {
+		shot, err := t.resolveShotRef(ctx, workspaceID, ref)
+		if err != nil {
+			return nil, err
+		}
+		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+			return nil, nil
+		}
+		return []db.Shot{shot}, nil
+	}
 	if len(args.ShotRefs) == 0 {
 		shots, err := t.store.ListActiveShotsByWorkspace(ctx, workspaceID)
 		if err != nil {

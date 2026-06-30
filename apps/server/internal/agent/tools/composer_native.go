@@ -265,7 +265,7 @@ func (t ProbeMediaNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
 
 func (t ProbeMediaNativeTool) InvokableRun(ctx context.Context, raw string, _ ...einotool.Option) (string, error) {
 	input, msg, ok := decodeToolArgs(toolProbeMedia, raw, func(input ProbeMediaToolInput) error {
-		return requireText(input.WorkspacePath, "workspace_path")
+		return validateProbeMediaInput(input)
 	})
 	if !ok {
 		return msg, nil
@@ -994,7 +994,67 @@ func validateRunFFmpegCommand(input RunFFmpegCommandToolInput) error {
 	if len(input.Args) == 0 {
 		return errors.New("args 至少需要 1 个参数")
 	}
+	for index, arg := range input.Args {
+		if arg != "-i" || index+1 >= len(input.Args) {
+			continue
+		}
+		if err := validateFFmpegInputPath(input.Args[index+1]); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func validateProbeMediaInput(input ProbeMediaToolInput) error {
+	if err := requireText(input.WorkspacePath, "workspace_path"); err != nil {
+		return err
+	}
+	cleaned := path.Clean(strings.TrimSpace(input.WorkspacePath))
+	switch cleaned {
+	case "/workspace", "/workspace/input", "/workspace/output":
+		return errors.New("workspace_path 必须是 stage_media_inputs 返回的具体文件路径，不能是目录；请先 stage_media_inputs，再 probe manifest 中的 workspace_path")
+	}
+	if !strings.HasPrefix(cleaned, "/workspace/") {
+		return errors.New("workspace_path 必须位于 /workspace 内，并使用 stage_media_inputs 返回的具体文件路径")
+	}
+	return nil
+}
+
+func validateFFmpegInputPath(value string) error {
+	cleaned := path.Clean(strings.TrimSpace(value))
+	if cleaned == "" || strings.HasPrefix(cleaned, "-") {
+		return nil
+	}
+	if cleaned == "/workspace" || cleaned == "/workspace/input" || cleaned == "/workspace/output" {
+		return errors.New("ffmpeg -i 必须使用具体文件路径，不能使用 /workspace 目录；请先 stage_media_inputs，再使用 manifest 中的 workspace_path")
+	}
+	if !strings.HasPrefix(cleaned, "/workspace/") {
+		return errors.New("ffmpeg 输入路径必须位于 /workspace 内")
+	}
+	if isRootWorkspaceMediaPath(cleaned) {
+		return errors.New("ffmpeg 媒体输入必须来自 /workspace/input 或 /workspace/output；请先 stage_media_inputs，并使用 manifest 中的 workspace_path")
+	}
+	return nil
+}
+
+func isRootWorkspaceMediaPath(value string) bool {
+	if !strings.HasPrefix(value, "/workspace/") {
+		return false
+	}
+	if strings.HasPrefix(value, "/workspace/input/") || strings.HasPrefix(value, "/workspace/output/") || strings.HasPrefix(value, "/workspace/.clipanvil/") {
+		return false
+	}
+	rest := strings.TrimPrefix(value, "/workspace/")
+	if strings.Contains(rest, "/") {
+		return false
+	}
+	ext := strings.ToLower(path.Ext(rest))
+	switch ext {
+	case ".mp4", ".mov", ".m4v", ".webm", ".mkv", ".png", ".jpg", ".jpeg", ".webp", ".mp3", ".wav", ".m4a", ".aac", ".flac":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateSubmitCompositionArtifact(input SubmitCompositionArtifactInput) error {

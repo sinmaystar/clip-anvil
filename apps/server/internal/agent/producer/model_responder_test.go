@@ -15,6 +15,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	arkModel "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -71,6 +72,9 @@ func TestProducerSystemPromptContainsDomainConcepts(t *testing.T) {
 		"KeyElement 是视频中需要保持一致或复用的关键元素",
 		"Storyboard 不是一段纯文本脚本",
 		"不要在 Producer 字段中写 Seedance",
+		"## Skills Library",
+		"load_agent_skill",
+		"commerce-ad-producer",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q", want)
@@ -79,6 +83,7 @@ func TestProducerSystemPromptContainsDomainConcepts(t *testing.T) {
 	for _, forbidden := range []string{
 		"当前 Project Context",
 		"已有 2 个分镜",
+		"# Commerce Ad Producer",
 	} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("prompt contains dynamic project state %q", forbidden)
@@ -112,6 +117,13 @@ func TestProducerSystemPromptEnablesCurrentGenerationAndReviewerGate(t *testing.
 		"Reviewer 不直接重跑生成",
 		"select_artifact_version",
 		"不要虚构 compile_render_plan",
+		"reference_generation_succeeded",
+		"audio_generation_succeeded",
+		"worker_generation_completed",
+		"composition_completed",
+		"用户明确授权自动推进",
+		"shot_04.preview_image.r1.node",
+		"media_node",
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("prompt missing current capability wording %q", required)
@@ -223,6 +235,106 @@ func TestVolcengineModelResponderBindsProducerTools(t *testing.T) {
 	}
 	if len(streamer.boundTools) != 1 || streamer.boundTools[0].Name != "update_storyboard" {
 		t.Fatalf("bound tools = %#v", streamer.boundTools)
+	}
+}
+
+func TestVolcengineModelResponderAppliesContextCompactionProjection(t *testing.T) {
+	longResult := strings.Repeat("ffmpeg stderr line with frame details\n", 180)
+	streamer := &fakeArkStreamer{chunks: []*schema.Message{{Content: "ok"}}}
+	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
+		APIKey: "test-key",
+		Model:  "doubao-test",
+		ContextCompactor: contextcompact.NewMiddleware(contextcompact.MiddlewareConfig{
+			Config:     compactResponderTestConfig(),
+			Store:      contextcompactTestStore(),
+			FileWriter: contextcompactTestFileWriter(),
+		}),
+		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatStreamer, error) {
+			return streamer, nil
+		},
+	})
+	originalContent := []byte(`{"text":"` + longResult + `"}`)
+
+	out, err := responder.Respond(context.Background(), ProducerContext{
+		Input: ProducerTurnInput{WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3)},
+		Messages: []db.AgentMessage{
+			{Role: "user", MessageType: "text", Content: mustUserContent(t, uimessage.UserMessageInput{Text: "继续"})},
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				Content:     originalContent,
+				RawMessage:  []byte(`{"tool_call_id":"call-ffmpeg","tool_name":"run_ffmpeg_command","result_text":` + mustJSONString(t, longResult) + `}`),
+			},
+			{Role: "user", MessageType: "text", Content: mustUserContent(t, uimessage.UserMessageInput{Text: "请继续推进"})},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Metadata["context_compaction_applied"] != true {
+		t.Fatalf("metadata missing compaction applied: %#v", out.Metadata)
+	}
+	if out.Metadata["context_compaction_mode"] != "micro" || out.Metadata["context_compaction_count"] != 1 {
+		t.Fatalf("metadata missing compaction mode/count: %#v", out.Metadata)
+	}
+	if refs, ok := out.Metadata["context_compaction_refs"].([]string); !ok || len(refs) == 0 {
+		t.Fatalf("metadata missing compaction refs: %#v", out.Metadata)
+	}
+	if files, ok := out.Metadata["context_compaction_detail_files"].([]string); !ok || len(files) == 0 {
+		t.Fatalf("metadata missing compaction detail files: %#v", out.Metadata)
+	}
+	if len(streamer.messages) < 3 {
+		t.Fatalf("messages = %#v", streamer.messages)
+	}
+	tool := streamer.messages[2]
+	if tool.Role != schema.Tool || tool.ToolCallID != "call-ffmpeg" || tool.ToolName != "run_ffmpeg_command" {
+		t.Fatalf("tool message identity changed: %#v", tool)
+	}
+	if !strings.Contains(tool.Content, "compact_ref:") || !strings.Contains(tool.Content, "detail_file: /workspace/.clipanvil/context/") {
+		t.Fatalf("tool message was not compacted: %s", tool.Content)
+	}
+	if strings.Contains(tool.Content, "ffmpeg stderr line with frame details") {
+		t.Fatal("provider input still contains original long tool result")
+	}
+	if string(originalContent) != `{"text":"`+longResult+`"}` {
+		t.Fatal("original agent_message content was mutated")
+	}
+}
+
+func TestVolcengineModelResponderRetriesOnceWithFullCompactOnContextOverflow(t *testing.T) {
+	streamer := &fakeArkStreamer{
+		chunks:     []*schema.Message{{Content: "ok"}},
+		streamErrs: []error{errors.New("prompt is too long")},
+	}
+	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
+		APIKey: "test-key",
+		Model:  "doubao-test",
+		ContextCompactor: contextcompact.NewMiddleware(contextcompact.MiddlewareConfig{
+			Config:         compactResponderTestConfig(),
+			Store:          contextcompactTestStore(),
+			FileWriter:     contextcompactTestFileWriter(),
+			FullSummarizer: contextcompact.StaticFullSummarizer{},
+		}),
+		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatStreamer, error) {
+			return streamer, nil
+		},
+	})
+
+	out, err := responder.Respond(context.Background(), ProducerContext{
+		Input:          ProducerTurnInput{WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3)},
+		LatestUserText: "继续生成营销视频",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Metadata["context_compaction_retry"] != true {
+		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+	if streamer.streamCalls != 2 {
+		t.Fatalf("streamCalls = %d, want 2", streamer.streamCalls)
+	}
+	if !strings.Contains(streamer.messages[1].Content, "# Compacted Agent Handoff Summary") {
+		t.Fatalf("retry prompt missing full summary: %#v", streamer.messages)
 	}
 }
 
@@ -479,6 +591,11 @@ func TestProducerPromptMessagesKeepsSystemPromptStable(t *testing.T) {
 	for _, want := range []string{"final video", "audio_sync", "platform selling power", "final_video_review"} {
 		if !strings.Contains(messages[0].Content, want) {
 			t.Fatalf("system prompt missing final review guidance %q", want)
+		}
+	}
+	for _, want := range []string{"reference_generation_succeeded", "audio_generation_succeeded", "shot_04.preview_image.r1.node", "media_node"} {
+		if !strings.Contains(messages[0].Content, want) {
+			t.Fatalf("system prompt missing signal/ref guidance %q", want)
 		}
 	}
 }
@@ -914,13 +1031,20 @@ func TestVolcengineModelResponderRejectsMissingConfigBeforeNetwork(t *testing.T)
 }
 
 type fakeArkStreamer struct {
-	messages   []*schema.Message
-	chunks     []*schema.Message
-	boundTools []*schema.ToolInfo
+	messages    []*schema.Message
+	chunks      []*schema.Message
+	boundTools  []*schema.ToolInfo
+	streamErrs  []error
+	streamCalls int
 }
 
 func (f *fakeArkStreamer) Stream(_ context.Context, messages []*schema.Message, _ ...einoModel.Option) (*schema.StreamReader[*schema.Message], error) {
 	f.messages = messages
+	if f.streamCalls < len(f.streamErrs) && f.streamErrs[f.streamCalls] != nil {
+		f.streamCalls++
+		return nil, f.streamErrs[f.streamCalls-1]
+	}
+	f.streamCalls++
 	sr, sw := schema.Pipe[*schema.Message](1)
 	go func() {
 		defer sw.Close()

@@ -120,10 +120,15 @@ func nativeProducerToolRuntimeMiddleware(stateStore *producerLoopToolStateStore)
 					}
 					if state, ok := stateStore.stateByKey(stateKey); ok {
 						stateStore.rememberCallWithKey(input.CallID, stateKey, state)
+						taskType := strings.TrimSpace(state.Context.Input.TaskType)
+						if taskType == "" {
+							taskType = "producer_turn"
+						}
 						ctx = agenttools.WithNativeRuntimeContext(ctx, agenttools.NativeRuntimeContext{
 							WorkspaceID: state.Context.Input.WorkspaceID,
 							ThreadID:    state.Context.Input.ThreadID,
 							TaskID:      state.Context.Input.TaskID,
+							TaskType:    taskType,
 							ToolCallID:  input.CallID,
 						})
 					}
