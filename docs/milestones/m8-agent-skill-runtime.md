@@ -6,7 +6,7 @@
 
 参考文档：
 
-- [Agent Skill Runtime 与 ClipAnvil 本地化 Skill 方案设计](../superpowers/specs/2026-06-29-agent-skill-runtime-design.md)
+- [Agent Skill Runtime 与 ClipAnvil 本地化 Skill 方案设计](../archive/superpowers/specs/2026-06-29-agent-skill-runtime-design.md)
 - [Agent MultiAgent 架构现状](../engineering/agent-multiagent-architecture.md)
 - [M7 Agent AudioPlan 与 Composer 音频成片](./m7-agent-audio-plan-composer.md)
 

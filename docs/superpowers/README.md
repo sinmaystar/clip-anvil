@@ -1,14 +1,17 @@
-# Superpowers Specs And Plans
+# Superpowers Working Area
 
-`docs/superpowers/` 保存当前仍有参考价值的阶段 spec、plan 和执行记录，尤其是最近的 Agent 三角色重构、Agent Canvas Workbench、Producer pending signal 和语义身份层设计。
+`docs/superpowers/` 只保存当前仍在进行的 spec / plan，以及最近仍需要直接查看的验收报告。
+
+当前没有活跃 spec / plan。已完成的阶段设计和实施计划已经移动到 `docs/archive/superpowers/`。
 
 使用规则：
 
 - 当前实现事实仍以代码、迁移、sqlc 生成代码和 `docs/engineering/` 为准。
-- `specs/` 和 `plans/` 可用于追溯为什么这么设计、当时的验收标准是什么。
-- 这些文件不是最新 API/schema 的唯一来源；如果和代码冲突，优先信代码。
+- 新 spec / plan 可以先放在 `specs/` 或 `plans/`；阶段完成后移动到 archive，并更新引用它的 milestone。
+- `reports/` 用于保存仍有诊断价值的 smoke / E2E 验收报告。
+- 如果这里的文档和代码冲突，优先信代码。
 
-更早的历史 specs、plans 和 Eino graph 导出在：
+历史 specs、plans 和 Eino graph 导出在：
 
 - [`../archive/superpowers/specs/`](../archive/superpowers/specs/)
 - [`../archive/superpowers/plans/`](../archive/superpowers/plans/)

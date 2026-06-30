@@ -6,12 +6,12 @@
 
 参考文档：
 
-- [Agent Context Compaction 上下文压缩方案设计](../superpowers/specs/2026-06-30-agent-context-compaction-design.md)
-- [M9.1 实施计划](../superpowers/plans/2026-06-30-m9-1-contextcompact-file-tools.md)
-- [M9.2 实施计划](../superpowers/plans/2026-06-30-m9-2-micro-compact.md)
-- [M9.3 实施计划](../superpowers/plans/2026-06-30-m9-3-four-agent-contextcompact.md)
-- [M9.4 实施计划](../superpowers/plans/2026-06-30-m9-4-full-compact.md)
-- [M9.5 实施计划](../superpowers/plans/2026-06-30-m9-5-media-e2e.md)
+- [Agent Context Compaction 上下文压缩方案设计](../archive/superpowers/specs/2026-06-30-agent-context-compaction-design.md)
+- [M9.1 实施计划](../archive/superpowers/plans/2026-06-30-m9-1-contextcompact-file-tools.md)
+- [M9.2 实施计划](../archive/superpowers/plans/2026-06-30-m9-2-micro-compact.md)
+- [M9.3 实施计划](../archive/superpowers/plans/2026-06-30-m9-3-four-agent-contextcompact.md)
+- [M9.4 实施计划](../archive/superpowers/plans/2026-06-30-m9-4-full-compact.md)
+- [M9.5 实施计划](../archive/superpowers/plans/2026-06-30-m9-5-media-e2e.md)
 - [M8 Agent Skill Runtime 与 OpenMontage 本地化](./m8-agent-skill-runtime.md)
 - [Agent MultiAgent 架构现状](../engineering/agent-multiagent-architecture.md)
 - [数据库工程说明](../engineering/database.md)
