@@ -15,16 +15,17 @@ import (
 )
 
 const (
-	toolReadProjectContext = "read_project_context"
-	toolUpsertBrief        = "upsert_project_brief"
-	toolUpdateMemory       = "update_project_memory"
-	toolUpsertElements     = "upsert_key_elements"
-	toolUpsertStoryboard   = "upsert_storyboard"
-	toolReadProjectMemory  = "read_project_memory"
-	toolUpsertRenderPlan   = "upsert_render_plan"
-	toolDecideRenderPlan   = "decide_render_plan"
-	toolDispatchReviewer   = "dispatch_reviewer"
-	toolSubmitReviewResult = "submit_review_result"
+	toolReadProjectContext    = "read_project_context"
+	toolAnalyzeReferenceVideo = "analyze_reference_video"
+	toolUpsertBrief           = "upsert_project_brief"
+	toolUpdateMemory          = "update_project_memory"
+	toolUpsertElements        = "upsert_key_elements"
+	toolUpsertStoryboard      = "upsert_storyboard"
+	toolReadProjectMemory     = "read_project_memory"
+	toolUpsertRenderPlan      = "upsert_render_plan"
+	toolDecideRenderPlan      = "decide_render_plan"
+	toolDispatchReviewer      = "dispatch_reviewer"
+	toolSubmitReviewResult    = "submit_review_result"
 )
 
 func toolInfoFor[T any](name string, desc string) (*schema.ToolInfo, error) {

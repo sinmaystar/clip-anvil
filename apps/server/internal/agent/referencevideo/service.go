@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -25,13 +27,23 @@ type Analyzer interface {
 	AnalyzeReferenceVideo(ctx context.Context, input AnalyzerRequest) (AnalyzerResponse, error)
 }
 
+type SourceURLSigner interface {
+	PresignedGetURL(ctx context.Context, workspaceID pgtype.UUID, key string, expiry time.Duration) (string, error)
+}
+
 type Service struct {
-	store    Store
-	analyzer Analyzer
+	store     Store
+	analyzer  Analyzer
+	urlSigner SourceURLSigner
 }
 
 func NewService(store Store, analyzer Analyzer) *Service {
 	return &Service{store: store, analyzer: analyzer}
+}
+
+func (s *Service) WithSourceURLSigner(signer SourceURLSigner) *Service {
+	s.urlSigner = signer
+	return s
 }
 
 func (s *Service) Analyze(ctx context.Context, input AnalyzeInput) (AnalyzeOutput, error) {
@@ -68,7 +80,7 @@ func (s *Service) Analyze(ctx context.Context, input AnalyzeInput) (AnalyzeOutpu
 			SourceNodeID: uuidString(node.ID),
 			Title:        node.Title,
 			Mime:         asset.Mime,
-			StorageURL:   textString(asset.StorageUrl),
+			StorageURL:   s.providerReachableURL(ctx, input.WorkspaceID, asset.StorageUrl),
 		},
 	}
 	if s.analyzer == nil {
@@ -105,6 +117,22 @@ func (s *Service) Analyze(ctx context.Context, input AnalyzeInput) (AnalyzeOutpu
 		Summary:  response.Result.Summary,
 		Warnings: response.Result.Warnings,
 	}, nil
+}
+
+func (s *Service) providerReachableURL(ctx context.Context, workspaceID pgtype.UUID, value pgtype.Text) string {
+	raw := textString(value)
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || s.urlSigner == nil {
+		return raw
+	}
+	key, err := storage.KeyFromStorageURL(workspaceID, raw)
+	if err != nil {
+		return raw
+	}
+	signed, err := s.urlSigner.PresignedGetURL(ctx, workspaceID, key, time.Hour)
+	if err != nil || strings.TrimSpace(signed) == "" {
+		return raw
+	}
+	return signed
 }
 
 func (s *Service) loadSourceVideo(ctx context.Context, input AnalyzeInput) (db.MediaNode, db.MediaAsset, error) {

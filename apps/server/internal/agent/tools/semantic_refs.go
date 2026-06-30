@@ -1,8 +1,13 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
 type ToolObjectRef struct {
@@ -15,6 +20,36 @@ type ToolArtifactRef struct {
 	Scope        ToolObjectRef `json:"scope" jsonschema_description:"按作用域选择 artifact，例如 type=shot,key=shot_03。"`
 	ArtifactKind string        `json:"artifact_kind" jsonschema:"enum=reference_image,enum=preview_image,enum=shot_video,enum=final_video" jsonschema_description:"要选择的产物类型。"`
 	Selector     string        `json:"selector" jsonschema:"enum=current,enum=latest,enum=winner" jsonschema_description:"选择器。current/winner 表示当前选中版本；latest 表示最新版本。默认 current。"`
+}
+
+type AgentObjectRefResolver struct {
+	queries interface {
+		ListAgentObjectsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentObjectIndex, error)
+	}
+}
+
+func NewAgentObjectRefResolver(queries interface {
+	ListAgentObjectsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentObjectIndex, error)
+}) AgentObjectRefResolver {
+	return AgentObjectRefResolver{queries: queries}
+}
+
+func (r AgentObjectRefResolver) ResolveObjectRef(ctx context.Context, workspaceID pgtype.UUID, ref ToolObjectRef) (pgtype.UUID, bool, error) {
+	if r.queries == nil {
+		return pgtype.UUID{}, false, nil
+	}
+	rows, err := r.queries.ListAgentObjectsByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return pgtype.UUID{}, false, err
+	}
+	objectType := strings.TrimSpace(ref.Type)
+	key := strings.TrimSpace(ref.Key)
+	for _, row := range rows {
+		if row.ObjectType == objectType && row.SemanticKey == key {
+			return row.ObjectID, true, nil
+		}
+	}
+	return pgtype.UUID{}, false, nil
 }
 
 func validateObjectRef(ref ToolObjectRef, field string) error {

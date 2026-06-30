@@ -29,6 +29,7 @@ import (
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
 	agentproducer "github.com/sinmaystar/clip-anvil/internal/agent/producer"
 	agentpss "github.com/sinmaystar/clip-anvil/internal/agent/pss"
+	agentreferencevideo "github.com/sinmaystar/clip-anvil/internal/agent/referencevideo"
 	agentrenderplan "github.com/sinmaystar/clip-anvil/internal/agent/renderplan"
 	agentreviewer "github.com/sinmaystar/clip-anvil/internal/agent/reviewer"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
@@ -117,6 +118,20 @@ func main() {
 	creativeStateService := agentcreative.NewService(queries)
 	audioPlanService := agentaudio.NewService(queries)
 	renderPlanService := agentrenderplan.NewService(queries, agentrenderplan.NewPromptCompiler())
+	referenceVideoAnalyzer := agentreferencevideo.NewVolcengineAnalyzer(
+		agentreferencevideo.VolcengineAnalyzerConfig{
+			APIKey:  cfg.Production.Volcengine.APIKey,
+			BaseURL: cfg.Production.Volcengine.BaseURL,
+			Region:  cfg.Production.Volcengine.Region,
+			Model:   cfg.Production.Volcengine.TextModel,
+		},
+		agentreferencevideo.NewArkVideoAnalysisClient(
+			cfg.Production.Volcengine.APIKey,
+			cfg.Production.Volcengine.BaseURL,
+			cfg.Production.Volcengine.Region,
+		),
+	)
+	referenceVideoAnalysisService := agentreferencevideo.NewService(queries, referenceVideoAnalyzer).WithSourceURLSigner(storageService)
 	workspaceHandler := api.NewWorkspaceHandler(pgPool, queries)
 	canvasHandler := api.NewCanvasHandler(queries, storageService)
 	nodeHandler := api.NewNodeHandler(pgPool, queries, canvasHub)
@@ -347,6 +362,7 @@ func main() {
 		newEditFileTool(),
 		newSearchAgentHistoryTool(),
 		agenttools.NewReadProjectContextNativeTool(creativeStateService, producerPSSBuilder),
+		agenttools.NewAnalyzeReferenceVideoNativeTool(referenceVideoAnalysisService, agenttools.NewAgentObjectRefResolver(queries)),
 		agenttools.NewUpsertProjectBriefNativeTool(creativeStateService),
 		agenttools.NewUpdateProjectMemoryNativeTool(creativeStateService),
 		agenttools.NewUpsertKeyElementsNativeTool(creativeStateService),

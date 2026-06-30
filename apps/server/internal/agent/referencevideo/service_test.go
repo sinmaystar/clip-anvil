@@ -6,9 +6,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -134,6 +136,41 @@ func TestServicePersistsFailedAnalysis(t *testing.T) {
 	}
 }
 
+func TestServiceUsesPresignedURLForPrivateStorage(t *testing.T) {
+	workspaceID := uuidWithByte(2)
+	nodeID := uuidWithByte(1)
+	assetID := uuidWithByte(3)
+	store := &fakeStore{
+		node: db.MediaNode{
+			ID:          nodeID,
+			WorkspaceID: workspaceID,
+			NodeType:    db.NodeTypeVideo,
+			Source:      "agent",
+			AssetID:     assetID,
+		},
+		asset: db.MediaAsset{
+			ID:          assetID,
+			WorkspaceID: workspaceID,
+			Type:        db.AssetTypeVideo,
+			Mime:        "video/mp4",
+			StorageUrl:  pgtype.Text{String: storage.StorageURL(workspaceID, "uploads/reference.mp4"), Valid: true},
+		},
+	}
+	analyzer := &fakeAnalyzer{result: AnalysisResult{Summary: "ok"}}
+	service := NewService(store, analyzer).WithSourceURLSigner(fakeSourceURLSigner{url: "https://signed.example/reference.mp4"})
+	_, err := service.Analyze(context.Background(), AnalyzeInput{
+		WorkspaceID:  workspaceID,
+		SourceNodeID: nodeID,
+		Brief:        "分析参考视频",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analyzer.last.Media.StorageURL != "https://signed.example/reference.mp4" {
+		t.Fatalf("storage url = %q", analyzer.last.Media.StorageURL)
+	}
+}
+
 type fakeAnalyzer struct {
 	result AnalysisResult
 	err    error
@@ -160,6 +197,15 @@ type fakeStore struct {
 	running   db.ReferenceVideoAnalysis
 	succeeded db.ReferenceVideoAnalysis
 	failed    db.ReferenceVideoAnalysis
+}
+
+type fakeSourceURLSigner struct {
+	url string
+	err error
+}
+
+func (f fakeSourceURLSigner) PresignedGetURL(context.Context, pgtype.UUID, string, time.Duration) (string, error) {
+	return f.url, f.err
 }
 
 func (f *fakeStore) GetMediaNodeByID(context.Context, pgtype.UUID) (db.MediaNode, error) {
