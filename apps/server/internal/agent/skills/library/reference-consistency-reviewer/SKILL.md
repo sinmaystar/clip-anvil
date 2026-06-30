@@ -20,6 +20,7 @@ Load this skill when the target has reference images, reference video style, key
 - Compare visible subject details against key element state and prompt constraints.
 - Check product color, material, logo, proportions, and distinctive parts.
 - Check continuity between chained frames or adjacent shots.
+- For outputs using reference_video, judge whether motion/style was adapted without copying brand, people, subtitle copy, or distinctive expression.
 - Separate acceptable stylization from identity drift.
 
 ## Do Not

@@ -20,6 +20,9 @@ Load this skill before creating or repairing a shot video RenderPlan.
 - Translate shot goals into subject, action, scene, spatial composition, camera movement, and temporal order.
 - Preserve ProjectMemory constraints and explicit reference bindings.
 - Prefer first-frame or first/last-frame strategy when the shot depends on generated preview images.
+- When using a reference video, bind it as content_type=video_url and model_role=reference_video.
+- Use reference videos only for motion, pacing, camera language, or style. Product appearance must come from user product images or approved KeyElementState references.
+- In notes, explicitly state what to borrow and what must not be copied.
 - Keep each shot focused on one main action and one main camera movement.
 - Make the RenderPlan explicit about operation, output_type, model_prompt_profile, subject_bindings, reference strategy, and risk notes when those fields affect execution or review.
 

@@ -189,6 +189,31 @@ func TestUpsertRenderPlanToolValidatesAudioPlanScope(t *testing.T) {
 	}
 }
 
+func TestValidateReferenceBindingAllowsReferenceVideo(t *testing.T) {
+	input := UpsertRenderPlanToolInput{
+		Brief:              "用参考视频借鉴运镜",
+		Mode:               "create",
+		GenerationText:     "为 shot_01 创建短视频计划：产品外观来自已确认商品图，参考视频只用于运动节奏、镜头推进方式和剪辑密度，不复制其中品牌、人物、字幕或原始内容。",
+		Scope:              RenderPlanScopeInput{Type: "shot", ID: "09000000-0000-0000-0000-000000000000", Key: "shot_01"},
+		TargetPhase:        "shot_video",
+		TaskType:           "generate",
+		Operation:          "multi_modal_reference_video",
+		ModelPromptProfile: "seedance_2_video",
+		ReferenceBindings: []ReferenceBindingInput{{
+			ClientKey:      "ref_motion",
+			SourceType:     "media_node",
+			SourceID:       "source.ref_video_01.node",
+			ContentType:    "video_url",
+			ModelRole:      "reference_video",
+			SemanticTarget: "只借鉴运镜节奏",
+		}},
+		Rationale: "参考视频用于运动和节奏，不复制内容。",
+	}
+	if err := validateUpsertRenderPlanInput(input); err != nil {
+		t.Fatalf("validate error = %v", err)
+	}
+}
+
 func TestUpsertRenderPlanToolRejectsRuntimeTargetPhaseMismatch(t *testing.T) {
 	tool := NewUpsertRenderPlanNativeTool(nil)
 	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{

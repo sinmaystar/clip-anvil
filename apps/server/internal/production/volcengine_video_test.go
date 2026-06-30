@@ -123,6 +123,46 @@ func TestVideoRuntimeResolvesImageRefsBeforeCreatingTask(t *testing.T) {
 	}
 }
 
+func TestVideoRuntimeSendsReferenceVideoInput(t *testing.T) {
+	client := &fakeVideoTaskClient{
+		taskID: "task-reference-video",
+		polls: []model.GetContentGenerationTaskResponse{{
+			ID:      "task-reference-video",
+			Status:  model.StatusSucceeded,
+			Content: model.Content{VideoURL: "https://provider.invalid/video.mp4"},
+		}},
+	}
+	runtime := newVolcengineVideoRuntimeForTest(
+		VolcengineProviderConfig{APIKey: "test-key", VideoModel: "doubao-seedance-2-0-260128"},
+		client,
+		nil,
+		time.Millisecond,
+		time.Second,
+	)
+	intent := videoIntent()
+	intent.OperationType = "multi_modal_reference_video"
+	intent.Model.ModelID = "doubao-seedance-2-0-260128"
+	intent.InputRefs = []InputRef{{
+		NodeType:    "video",
+		StorageURL:  "https://assets.example/reference.mp4",
+		ContentType: "video_url",
+		ModelRole:   "reference_video",
+		Required:    false,
+	}}
+
+	_ = runVideoRuntime(t, runtime, intent)
+	if len(client.createReq.Content) != 2 {
+		t.Fatalf("content = %#v", client.createReq.Content)
+	}
+	item := client.createReq.Content[1]
+	if item.VideoURL == nil || item.VideoURL.Url != "https://assets.example/reference.mp4" {
+		t.Fatalf("video url item = %#v", item)
+	}
+	if item.Role == nil || *item.Role != "reference_video" {
+		t.Fatalf("role = %#v", item.Role)
+	}
+}
+
 func TestVideoRuntimeOverridesResolutionWhenConfigured(t *testing.T) {
 	client := &fakeVideoTaskClient{
 		taskID: "task-video-resolution-override",
