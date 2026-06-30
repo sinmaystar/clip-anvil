@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	"github.com/sinmaystar/clip-anvil/internal/agent/modelselection"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/storage"
@@ -31,10 +32,15 @@ type ProducerMessageRuntime interface {
 	ListMessages(ctx context.Context, threadID pgtype.UUID, afterSeq int64, limit int32) ([]db.AgentMessage, error)
 }
 
+type ProducerFactsProvider interface {
+	LoadProducerFacts(ctx context.Context, workspaceID pgtype.UUID) ([]contextcompact.FullSummaryFact, []contextcompact.MediaCard, error)
+}
+
 type RuntimeContextLoader struct {
 	Runtime        ProducerMessageRuntime
 	Queries        *db.Queries
 	ImageReader    ImageObjectReader
+	Facts          ProducerFactsProvider
 	ModelSelection interface {
 		ResolveProducerModel(ctx context.Context, workspace db.Workspace) (modelselection.Option, error)
 	}
@@ -50,6 +56,10 @@ func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input Pro
 		return ProducerContext{}, err
 	}
 	imageAttachments := l.loadImageAttachments(ctx, messages)
+	projectFacts, projectMediaCards, err := l.loadProjectFacts(ctx, input.WorkspaceID)
+	if err != nil {
+		return ProducerContext{}, err
+	}
 	return ProducerContext{
 		Input:              input,
 		Messages:           messages,
@@ -57,6 +67,8 @@ func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input Pro
 		RuntimeTriggerText: strings.TrimSpace(input.RuntimeTriggerText),
 		Model:              model,
 		ImageAttachments:   imageAttachments,
+		ProjectFacts:       projectFacts,
+		ProjectMediaCards:  projectMediaCards,
 		EmitDelta:          input.EmitDelta,
 	}, nil
 }
@@ -92,6 +104,13 @@ func (l RuntimeContextLoader) loadModel(ctx context.Context, workspaceID pgtype.
 		SupportsThinking:    option.SupportsThinking,
 		MaxCompletionTokens: option.MaxCompletionTokens,
 	}, nil
+}
+
+func (l RuntimeContextLoader) loadProjectFacts(ctx context.Context, workspaceID pgtype.UUID) ([]contextcompact.FullSummaryFact, []contextcompact.MediaCard, error) {
+	if l.Facts == nil || !workspaceID.Valid {
+		return nil, nil, nil
+	}
+	return l.Facts.LoadProducerFacts(ctx, workspaceID)
 }
 
 func (l RuntimeContextLoader) loadImageAttachments(ctx context.Context, messages []db.AgentMessage) map[string]ProducerImageAttachment {

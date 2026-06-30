@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 
 	agentaudio "github.com/sinmaystar/clip-anvil/internal/agent/audio"
 	agentcomposer "github.com/sinmaystar/clip-anvil/internal/agent/composer"
+	agentcontextcompact "github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	agentcraftsman "github.com/sinmaystar/clip-anvil/internal/agent/craftsman"
 	agentcreative "github.com/sinmaystar/clip-anvil/internal/agent/creative"
 	agenteino "github.com/sinmaystar/clip-anvil/internal/agent/einoruntime"
@@ -30,6 +32,7 @@ import (
 	agentrenderplan "github.com/sinmaystar/clip-anvil/internal/agent/renderplan"
 	agentreviewer "github.com/sinmaystar/clip-anvil/internal/agent/reviewer"
 	agentruntime "github.com/sinmaystar/clip-anvil/internal/agent/runtime"
+	agentskills "github.com/sinmaystar/clip-anvil/internal/agent/skills"
 	agenttools "github.com/sinmaystar/clip-anvil/internal/agent/tools"
 	agentworker "github.com/sinmaystar/clip-anvil/internal/agent/worker"
 	"github.com/sinmaystar/clip-anvil/internal/api"
@@ -210,7 +213,33 @@ func main() {
 	})
 	workerEnqueuer := agentWorkerTaskEnqueuer{executor: workerExecutor}
 	renderPlanSubmitter := agenttools.NewRenderPlanSubmitter(queries, agentRuntime, workerEnqueuer)
+	skillRegistry := agentskills.DefaultRegistry()
+	contextCompactionStore := agentcontextcompact.NewSQLStore(queries)
+	contextDetailWriter := agentcontextcompact.NewSandboxDetailFileWriter(
+		contextSandboxEnsurer{manager: sandboxManager},
+		contextSandboxFileClient{client: sandboxClient},
+	)
+	contextCompactor := agentcontextcompact.NewMiddleware(agentcontextcompact.MiddlewareConfig{
+		Config:         cfg.Agent.ContextCompaction,
+		Store:          contextCompactionStore,
+		FileWriter:     contextDetailWriter,
+		FullSummarizer: contextFullSummarizerForConfig(cfg),
+	})
+	newReadFileTool := func() agenttools.NativeTool {
+		return agenttools.NewReadFileNativeTool(sandboxManager, sandboxClient)
+	}
+	newEditFileTool := func() agenttools.NativeTool {
+		return agenttools.NewEditFileNativeTool(sandboxManager, sandboxClient)
+	}
+	newSearchAgentHistoryTool := func() agenttools.NativeTool {
+		return agenttools.NewSearchAgentHistoryNativeTool(contextCompactionStore, cfg.Agent.ContextCompaction)
+	}
 	composerNativeToolRegistry := mustNativeRegistry(
+		agenttools.NewLoadAgentSkillNativeTool(skillRegistry, agentskills.RoleComposer),
+		agenttools.NewLoadAgentSkillResourceNativeTool(skillRegistry, agentskills.RoleComposer),
+		newReadFileTool(),
+		newEditFileTool(),
+		newSearchAgentHistoryTool(),
 		agenttools.NewGetCompositionContextNativeTool(agentcomposer.NewToolContextProvider(queries)),
 		agenttools.NewStageMediaInputsNativeTool(sandboxJobService),
 		agenttools.NewProbeMediaNativeTool(sandboxJobService),
@@ -225,7 +254,7 @@ func main() {
 		Runtime:            agentRuntime,
 		Store:              queries,
 		Production:         productionService,
-		ToolResponder:      composerResponderForConfig(cfg),
+		ToolResponder:      composerResponderForConfig(cfg, contextCompactor),
 		NativeToolRegistry: composerNativeToolRegistry,
 		Broadcaster:        agentCanvasBroadcaster,
 		CheckPointStore:    agentEinoCheckpointStore,
@@ -248,8 +277,13 @@ func main() {
 			Store:   queries,
 			Runtime: agentRuntime,
 		},
-		ToolResponder: craftsmanResponderForConfig(cfg),
+		ToolResponder: craftsmanResponderForConfig(cfg, contextCompactor),
 		NativeToolRegistry: mustNativeRegistry(
+			agenttools.NewLoadAgentSkillNativeTool(skillRegistry, agentskills.RoleCraftsman),
+			agenttools.NewLoadAgentSkillResourceNativeTool(skillRegistry, agentskills.RoleCraftsman),
+			newReadFileTool(),
+			newEditFileTool(),
+			newSearchAgentHistoryTool(),
 			agenttools.NewReadProjectMemoryNativeTool(creativeStateService),
 			agenttools.NewUpsertRenderPlanNativeTool(renderPlanService, renderPlanSubmitter).WithReferenceStore(queries),
 		),
@@ -269,6 +303,11 @@ func main() {
 	})
 	craftsmanEnqueuer := agentCraftsmanTaskEnqueuer{executor: craftsmanExecutor}
 	reviewerNativeToolRegistry, err := agenttools.NewNativeRegistry(
+		agenttools.NewLoadAgentSkillNativeTool(skillRegistry, agentskills.RoleReviewer),
+		agenttools.NewLoadAgentSkillResourceNativeTool(skillRegistry, agentskills.RoleReviewer),
+		newReadFileTool(),
+		newEditFileTool(),
+		newSearchAgentHistoryTool(),
 		agenttools.NewReadProjectContextNativeTool(creativeStateService),
 		agenttools.NewReadProjectMemoryNativeTool(creativeStateService),
 		agenttools.NewSubmitReviewResultNativeTool(queries),
@@ -284,7 +323,7 @@ func main() {
 			ImageReader: storageService,
 			PSSBuilder:  producerPSSBuilder,
 		},
-		ToolResponder:      reviewerResponderForConfig(cfg),
+		ToolResponder:      reviewerResponderForConfig(cfg, contextCompactor),
 		NativeToolRegistry: reviewerNativeToolRegistry,
 		CheckPointStore:    agentEinoCheckpointStore,
 		CompileCallbacks:   []compose.GraphCompileCallback{agentGraphInfoRegistry.CompileCallback()},
@@ -302,6 +341,11 @@ func main() {
 	})
 	reviewerEnqueuer := agentReviewerTaskEnqueuer{executor: reviewerExecutor}
 	producerNativeToolRegistry, err := agenttools.NewNativeRegistry(
+		agenttools.NewLoadAgentSkillNativeTool(skillRegistry, agentskills.RoleProducer),
+		agenttools.NewLoadAgentSkillResourceNativeTool(skillRegistry, agentskills.RoleProducer),
+		newReadFileTool(),
+		newEditFileTool(),
+		newSearchAgentHistoryTool(),
 		agenttools.NewReadProjectContextNativeTool(creativeStateService, producerPSSBuilder),
 		agenttools.NewUpsertProjectBriefNativeTool(creativeStateService),
 		agenttools.NewUpdateProjectMemoryNativeTool(creativeStateService),
@@ -323,9 +367,10 @@ func main() {
 			Runtime:        agentRuntime,
 			Queries:        queries,
 			ImageReader:    storageService,
+			Facts:          agentproducer.NewPSSFactsProvider(queries),
 			ModelSelection: agentModelSelection,
 		},
-		Responder:          producerResponderForConfig(cfg),
+		Responder:          producerResponderForConfig(cfg, contextCompactor),
 		NativeToolRegistry: producerNativeToolRegistry,
 		SignalRuntime:      agentRuntime,
 		CheckPointStore:    agentEinoCheckpointStore,
@@ -581,6 +626,7 @@ func (e *agentProducerTaskEnqueuer) EnqueueProducerTask(ctx context.Context, tas
 			WorkspaceID: task.WorkspaceID,
 			ThreadID:    task.ThreadID,
 			TaskID:      task.ID,
+			TaskType:    task.TaskType,
 		}); err != nil {
 			slog.Warn("failed to run producer task", "task_id", task.ID, "error", err)
 		}
@@ -746,25 +792,43 @@ const (
 	craftsmanModelMaxTokens = 8192
 	reviewerModelMaxTokens  = 4096
 	composerModelMaxTokens  = 4096
+	summaryModelMaxTokens   = 4096
 )
 
-func craftsmanResponderForConfig(cfg *config.Config) agentcraftsman.ToolCallingResponder {
+func contextFullSummarizerForConfig(cfg *config.Config) agentcontextcompact.FullSummarizer {
+	if cfg.Production.ProviderMode != "real" ||
+		strings.TrimSpace(cfg.Production.Volcengine.APIKey) == "" ||
+		strings.TrimSpace(cfg.Production.Volcengine.TextModel) == "" {
+		return agentcontextcompact.StaticFullSummarizer{ModelID: "static-fallback"}
+	}
+	return agentcontextcompact.NewVolcengineFullSummarizer(agentcontextcompact.VolcengineFullSummarizerConfig{
+		APIKey:      cfg.Production.Volcengine.APIKey,
+		BaseURL:     cfg.Production.Volcengine.BaseURL,
+		Region:      cfg.Production.Volcengine.Region,
+		Model:       cfg.Production.Volcengine.TextModel,
+		MaxTokens:   summaryModelMaxTokens,
+		Temperature: 0.1,
+	})
+}
+
+func craftsmanResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentcraftsman.ToolCallingResponder {
 	craftsmanFixture := strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_CRAFTSMAN_FIXTURE"))
 	if craftsmanFixture == "m2_render_plan" || craftsmanFixture == "m3_reviewer_gate" {
 		slog.Warn("using M2 render plan E2E craftsman fixture responder")
 		return e2eM2RenderPlanCraftsmanResponder{}
 	}
 	return agentcraftsman.NewVolcengineModelResponder(agentcraftsman.VolcengineModelResponderConfig{
-		APIKey:      cfg.Production.Volcengine.APIKey,
-		BaseURL:     cfg.Production.Volcengine.BaseURL,
-		Region:      cfg.Production.Volcengine.Region,
-		Model:       cfg.Production.Volcengine.TextModel,
-		MaxTokens:   craftsmanModelMaxTokens,
-		Temperature: 0.2,
+		APIKey:           cfg.Production.Volcengine.APIKey,
+		BaseURL:          cfg.Production.Volcengine.BaseURL,
+		Region:           cfg.Production.Volcengine.Region,
+		Model:            cfg.Production.Volcengine.TextModel,
+		MaxTokens:        craftsmanModelMaxTokens,
+		Temperature:      0.2,
+		ContextCompactor: contextCompactor,
 	})
 }
 
-func producerResponderForConfig(cfg *config.Config) agentproducer.Responder {
+func producerResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentproducer.Responder {
 	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_PRODUCER_FIXTURE")) == "m3_reviewer_gate" {
 		slog.Warn("using M3 reviewer gate E2E producer fixture responder")
 		return e2eM3ReviewerGateProducerResponder{}
@@ -788,31 +852,33 @@ func producerResponderForConfig(cfg *config.Config) agentproducer.Responder {
 		return agentproducer.DeterministicResponder{}
 	}
 	return agentproducer.NewVolcengineModelResponder(agentproducer.VolcengineModelResponderConfig{
-		APIKey:      cfg.Production.Volcengine.APIKey,
-		BaseURL:     cfg.Production.Volcengine.BaseURL,
-		Region:      cfg.Production.Volcengine.Region,
-		Model:       cfg.Production.Volcengine.TextModel,
-		MaxTokens:   producerModelMaxTokens,
-		Temperature: 0.3,
+		APIKey:           cfg.Production.Volcengine.APIKey,
+		BaseURL:          cfg.Production.Volcengine.BaseURL,
+		Region:           cfg.Production.Volcengine.Region,
+		Model:            cfg.Production.Volcengine.TextModel,
+		MaxTokens:        producerModelMaxTokens,
+		Temperature:      0.3,
+		ContextCompactor: contextCompactor,
 	})
 }
 
-func reviewerResponderForConfig(cfg *config.Config) agentreviewer.ToolResponder {
+func reviewerResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentreviewer.ToolResponder {
 	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_REVIEWER_FIXTURE")) == "m3_reviewer_gate" {
 		slog.Warn("using M3 reviewer gate E2E reviewer fixture responder")
 		return e2eM3ReviewerGateResponder{}
 	}
 	return agentreviewer.NewVolcengineModelResponder(agentreviewer.VolcengineModelResponderConfig{
-		APIKey:      cfg.Production.Volcengine.APIKey,
-		BaseURL:     cfg.Production.Volcengine.BaseURL,
-		Region:      cfg.Production.Volcengine.Region,
-		Model:       cfg.Production.Volcengine.TextModel,
-		MaxTokens:   reviewerModelMaxTokens,
-		Temperature: 0.1,
+		APIKey:           cfg.Production.Volcengine.APIKey,
+		BaseURL:          cfg.Production.Volcengine.BaseURL,
+		Region:           cfg.Production.Volcengine.Region,
+		Model:            cfg.Production.Volcengine.TextModel,
+		MaxTokens:        reviewerModelMaxTokens,
+		Temperature:      0.1,
+		ContextCompactor: contextCompactor,
 	})
 }
 
-func composerResponderForConfig(cfg *config.Config) agentcomposer.ToolResponder {
+func composerResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentcomposer.ToolResponder {
 	if cfg.Production.ProviderMode != "real" ||
 		strings.TrimSpace(cfg.Production.Volcengine.APIKey) == "" {
 		slog.Warn(
@@ -824,13 +890,69 @@ func composerResponderForConfig(cfg *config.Config) agentcomposer.ToolResponder 
 		return agentcomposer.NewDeterministicResponder()
 	}
 	return agentcomposer.NewVolcengineModelResponder(agentcomposer.VolcengineModelResponderConfig{
-		APIKey:      cfg.Production.Volcengine.APIKey,
-		BaseURL:     cfg.Production.Volcengine.BaseURL,
-		Region:      cfg.Production.Volcengine.Region,
-		Model:       cfg.Production.Volcengine.TextModel,
-		MaxTokens:   composerModelMaxTokens,
-		Temperature: 0.2,
+		APIKey:           cfg.Production.Volcengine.APIKey,
+		BaseURL:          cfg.Production.Volcengine.BaseURL,
+		Region:           cfg.Production.Volcengine.Region,
+		Model:            cfg.Production.Volcengine.TextModel,
+		MaxTokens:        composerModelMaxTokens,
+		Temperature:      0.2,
+		ContextCompactor: contextCompactor,
 	})
+}
+
+type contextSandboxEnsurer struct {
+	manager *sandbox.Manager
+}
+
+func (e contextSandboxEnsurer) EnsureContextSandbox(ctx context.Context, workspaceID pgtype.UUID) (agentcontextcompact.ContextSandbox, error) {
+	if e.manager == nil {
+		return agentcontextcompact.ContextSandbox{}, fmt.Errorf("sandbox manager is not configured")
+	}
+	workspaceSandbox, err := e.manager.EnsureSandbox(ctx, workspaceID)
+	if err != nil {
+		return agentcontextcompact.ContextSandbox{}, err
+	}
+	return agentcontextcompact.ContextSandbox{
+		SandboxID:  workspaceSandbox.SandboxID,
+		VolumeName: workspaceSandbox.VolumeName,
+	}, nil
+}
+
+type contextSandboxFileClient struct {
+	client sandbox.Client
+}
+
+func (c contextSandboxFileClient) Exec(ctx context.Context, sandboxID string, command string, cwd string, timeoutSeconds int) error {
+	if c.client == nil {
+		return fmt.Errorf("sandbox client is not configured")
+	}
+	result, err := c.client.Exec(ctx, sandboxID, sandbox.ExecRequest{
+		Command:        command,
+		Cwd:            cwd,
+		TimeoutSeconds: timeoutSeconds,
+	})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("sandbox command failed with exit code %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+	return nil
+}
+
+func (c contextSandboxFileClient) Upload(ctx context.Context, sandboxID string, path string, reader io.Reader) error {
+	if c.client == nil {
+		return fmt.Errorf("sandbox client is not configured")
+	}
+	return c.client.Upload(ctx, sandboxID, path, reader)
+}
+
+func (c contextSandboxFileClient) Download(ctx context.Context, sandboxID string, path string) (io.ReadCloser, error) {
+	if c.client == nil {
+		return nil, fmt.Errorf("sandbox client is not configured")
+	}
+	reader, _, err := c.client.Download(ctx, sandboxID, path)
+	return reader, err
 }
 
 func checkSandboxServerHealth(ctx context.Context, client *http.Client, endpoint string) error {

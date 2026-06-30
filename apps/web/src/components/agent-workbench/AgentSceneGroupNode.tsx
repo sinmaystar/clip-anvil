@@ -1,4 +1,4 @@
-import type { Node, NodeProps } from "@xyflow/react";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import type { AgentWorkbenchSceneNodeData } from "../../lib/agentWorkbenchViewModel";
 
 type SceneNode = Node<AgentWorkbenchSceneNodeData, "agentScene">;
@@ -14,6 +14,18 @@ export function AgentSceneGroupNode({
     .join(" · ");
   return (
     <section className="agent-workbench-scene-node" data-selected={selected}>
+      <Handle
+        className="agent-workbench-handle"
+        isConnectable={false}
+        position={Position.Left}
+        type="target"
+      />
+      <Handle
+        className="agent-workbench-handle"
+        isConnectable={false}
+        position={Position.Right}
+        type="source"
+      />
       <header className="agent-workbench-scene-header">
         <div>
           <span>Scene</span>

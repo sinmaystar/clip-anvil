@@ -76,6 +76,7 @@ func TestProductionBroadcasterCreatesProducerSignalOnAgentWorkerCompletion(t *te
 			NodeType:    db.NodeTypeImage,
 			ShotID:      broadcasterUUID(2),
 			Metadata:    []byte(`{"agent_artifact_kind":"preview_image","shot_client_key":"shot_03"}`),
+			SemanticKey: "shot_03.preview_image.r1.node",
 		},
 		job: db.GenerationJob{
 			ID:              broadcasterUUID(30),
@@ -140,7 +141,10 @@ func TestProductionBroadcasterCreatesProducerSignalOnAgentWorkerCompletion(t *te
 	}
 	if payload["scope_key"] != "shot_03" ||
 		payload["render_plan_key"] != "shot_03.preview_image.r1" ||
+		payload["render_plan_ref"] != "render_plan/shot_03.preview_image.r1" ||
+		payload["node_ref"] != "media_node/shot_03.preview_image.r1.node" ||
 		payload["generation_job_key"] != "job.shot_03.preview_image.r1" ||
+		payload["generation_job_ref"] != "generation_job/job.shot_03.preview_image.r1" ||
 		payload["artifact_version_key"] != "shot_03.preview_image.r1.artifact.v1" {
 		t.Fatalf("payload semantic keys = %#v", payload)
 	}
@@ -226,6 +230,169 @@ func TestProductionBroadcasterCreatesProducerSignalOnAgentComposerCompletion(t *
 		payload["generation_job_key"] != "final_video.0c59850d.compose.job.a1" ||
 		payload["artifact_version_key"] != "final_video.0c59850d.compose.artifact.v1" ||
 		payload["artifact_kind"] != "final_video" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if len(sink.enqueuedProducerTasks) != 1 || sink.enqueuedProducerTasks[0].ID != broadcasterUUID(91) {
+		t.Fatalf("enqueued producer tasks = %#v", sink.enqueuedProducerTasks)
+	}
+}
+
+func TestProductionBroadcasterEmitsAudioSuccessEventAndProducerSignal(t *testing.T) {
+	store := &fakeProductionBroadcasterStore{
+		node: db.MediaNode{
+			ID:           broadcasterUUID(20),
+			WorkspaceID:  broadcasterUUID(1),
+			NodeType:     db.NodeTypeAudio,
+			Metadata:     []byte(`{"agent_artifact_kind":"voiceover_audio","scope_key":"audio_plan.active","render_plan_key":"audio_plan.active.voiceover_audio.r1"}`),
+			SemanticKey:  "audio_plan.active.voiceover_audio.r1.node",
+			ArtifactKind: "voiceover_audio",
+		},
+		job: db.GenerationJob{
+			ID:              broadcasterUUID(30),
+			WorkspaceID:     broadcasterUUID(1),
+			TargetNodeID:    broadcasterUUID(20),
+			RequestedByType: "agent_worker",
+			RequestedByID:   pgtype.Text{String: uuidString(broadcasterUUID(40)), Valid: true},
+			Status:          db.JobStatusSucceeded,
+			SemanticKey:     "audio_plan.active.voiceover_audio.r1.job.a1",
+			Intent:          []byte(`{"semantic":{"scope_key":"audio_plan.active","render_plan_key":"audio_plan.active.voiceover_audio.r1","artifact_kind":"voiceover_audio"}}`),
+		},
+		version: db.ArtifactVersion{
+			ID:           broadcasterUUID(50),
+			NodeID:       broadcasterUUID(20),
+			JobID:        broadcasterUUID(30),
+			Status:       db.JobStatusSucceeded,
+			SemanticKey:  "audio_plan.active.voiceover_audio.r1.artifact.v1",
+			ArtifactKind: "voiceover_audio",
+		},
+		task: db.AgentTask{
+			ID:           broadcasterUUID(40),
+			WorkspaceID:  broadcasterUUID(1),
+			ThreadID:     broadcasterUUID(60),
+			ScopeType:    "audio_plan",
+			ScopeID:      broadcasterUUID(2),
+			RenderPlanID: broadcasterUUID(80),
+			SemanticKey:  "worker.audio_plan.active.voiceover_audio.r1",
+		},
+	}
+	sink := &fakeAgentPreviewEventSink{
+		producerThread: db.AgentThread{ID: broadcasterUUID(90), WorkspaceID: broadcasterUUID(1), Role: "producer"},
+		createdTask:    db.AgentTask{ID: broadcasterUUID(91), WorkspaceID: broadcasterUUID(1), ThreadID: broadcasterUUID(90), Role: "producer", TaskType: "producer_turn", Status: "queued"},
+	}
+	broadcaster := NewProductionBroadcaster(nil, store, nil)
+	broadcaster.SetAgentPreviewEventSink(sink)
+
+	broadcaster.PublishProductionEvent(production.ProductionEvent{
+		WorkspaceID:  broadcasterUUID(1),
+		TargetNodeID: broadcasterUUID(20),
+		JobID:        broadcasterUUID(30),
+		Type:         production.ProductionEventJobSucceeded,
+		Progress:     100,
+	})
+
+	if sink.created.EventType != "audio_generation_succeeded" {
+		t.Fatalf("event params = %#v", sink.created)
+	}
+	if len(sink.signals) != 1 {
+		t.Fatalf("signals = %#v", sink.signals)
+	}
+	signal := sink.signals[0]
+	if signal.SignalType != "audio_generation_succeeded" ||
+		signal.ScopeType != "audio_plan" ||
+		signal.RenderPlanID != broadcasterUUID(80) ||
+		signal.DedupeKey != "audio_generation_succeeded:1e000000-0000-0000-0000-000000000000" {
+		t.Fatalf("signal = %#v", signal)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(signal.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["trigger"] != "audio_generation_succeeded" ||
+		payload["target_phase"] != "voiceover_audio" ||
+		payload["scope_ref"] != "audio_plan/audio_plan.active" ||
+		payload["render_plan_ref"] != "render_plan/audio_plan.active.voiceover_audio.r1" ||
+		payload["node_ref"] != "media_node/audio_plan.active.voiceover_audio.r1.node" ||
+		payload["artifact_version_ref"] != "artifact_version/audio_plan.active.voiceover_audio.r1.artifact.v1" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if len(sink.enqueuedProducerTasks) != 1 || sink.enqueuedProducerTasks[0].ID != broadcasterUUID(91) {
+		t.Fatalf("enqueued producer tasks = %#v", sink.enqueuedProducerTasks)
+	}
+}
+
+func TestProductionBroadcasterEmitsReferenceImageSuccessEventAndProducerSignal(t *testing.T) {
+	store := &fakeProductionBroadcasterStore{
+		node: db.MediaNode{
+			ID:           broadcasterUUID(20),
+			WorkspaceID:  broadcasterUUID(1),
+			NodeType:     db.NodeTypeImage,
+			Metadata:     []byte(`{"agent_artifact_kind":"reference_image","scope_key":"element_suitcase.default","render_plan_key":"element_suitcase.default.reference_image.r1"}`),
+			SemanticKey:  "element_suitcase.default.reference_image.r1.node",
+			ArtifactKind: "reference_image",
+		},
+		job: db.GenerationJob{
+			ID:              broadcasterUUID(30),
+			WorkspaceID:     broadcasterUUID(1),
+			TargetNodeID:    broadcasterUUID(20),
+			RequestedByType: "agent_worker",
+			RequestedByID:   pgtype.Text{String: uuidString(broadcasterUUID(40)), Valid: true},
+			Status:          db.JobStatusSucceeded,
+			SemanticKey:     "element_suitcase.default.reference_image.r1.job.a1",
+			Intent:          []byte(`{"semantic":{"scope_key":"element_suitcase.default","render_plan_key":"element_suitcase.default.reference_image.r1","artifact_kind":"reference_image"}}`),
+		},
+		version: db.ArtifactVersion{
+			ID:           broadcasterUUID(50),
+			NodeID:       broadcasterUUID(20),
+			JobID:        broadcasterUUID(30),
+			Status:       db.JobStatusSucceeded,
+			SemanticKey:  "element_suitcase.default.reference_image.r1.artifact.v1",
+			ArtifactKind: "reference_image",
+		},
+		task: db.AgentTask{
+			ID:           broadcasterUUID(40),
+			WorkspaceID:  broadcasterUUID(1),
+			ThreadID:     broadcasterUUID(60),
+			ScopeType:    "key_element_state",
+			ScopeID:      broadcasterUUID(2),
+			RenderPlanID: broadcasterUUID(80),
+			SemanticKey:  "worker.element_suitcase.default.reference_image.r1",
+		},
+	}
+	sink := &fakeAgentPreviewEventSink{
+		producerThread: db.AgentThread{ID: broadcasterUUID(90), WorkspaceID: broadcasterUUID(1), Role: "producer"},
+		createdTask:    db.AgentTask{ID: broadcasterUUID(91), WorkspaceID: broadcasterUUID(1), ThreadID: broadcasterUUID(90), Role: "producer", TaskType: "producer_turn", Status: "queued"},
+	}
+	broadcaster := NewProductionBroadcaster(nil, store, nil)
+	broadcaster.SetAgentPreviewEventSink(sink)
+
+	broadcaster.PublishProductionEvent(production.ProductionEvent{
+		WorkspaceID:  broadcasterUUID(1),
+		TargetNodeID: broadcasterUUID(20),
+		JobID:        broadcasterUUID(30),
+		Type:         production.ProductionEventJobSucceeded,
+		Progress:     100,
+	})
+
+	if sink.created.EventType != "reference_generation_succeeded" {
+		t.Fatalf("event params = %#v", sink.created)
+	}
+	if len(sink.signals) != 1 {
+		t.Fatalf("signals = %#v", sink.signals)
+	}
+	signal := sink.signals[0]
+	if signal.SignalType != "worker_generation_completed" ||
+		signal.ScopeType != "key_element_state" ||
+		signal.RenderPlanID != broadcasterUUID(80) {
+		t.Fatalf("signal = %#v", signal)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(signal.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["target_phase"] != "reference_image" ||
+		payload["scope_ref"] != "key_element_state/element_suitcase.default" ||
+		payload["render_plan_ref"] != "render_plan/element_suitcase.default.reference_image.r1" ||
+		payload["node_ref"] != "media_node/element_suitcase.default.reference_image.r1.node" {
 		t.Fatalf("payload = %#v", payload)
 	}
 	if len(sink.enqueuedProducerTasks) != 1 || sink.enqueuedProducerTasks[0].ID != broadcasterUUID(91) {

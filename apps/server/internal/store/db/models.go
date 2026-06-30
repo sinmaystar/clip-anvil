@@ -247,6 +247,28 @@ type Account struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AgentContextCompaction struct {
+	ID                     pgtype.UUID        `json:"id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	ThreadID               pgtype.UUID        `json:"thread_id"`
+	TaskID                 pgtype.UUID        `json:"task_id"`
+	Role                   string             `json:"role"`
+	Mode                   string             `json:"mode"`
+	Trigger                string             `json:"trigger"`
+	SemanticKey            string             `json:"semantic_key"`
+	SourceSeqStart         int64              `json:"source_seq_start"`
+	SourceSeqEnd           int64              `json:"source_seq_end"`
+	SourceMessageIds       []byte             `json:"source_message_ids"`
+	SourceMediaRefs        []byte             `json:"source_media_refs"`
+	OriginalTokenEstimate  int64              `json:"original_token_estimate"`
+	CompactedTokenEstimate int64              `json:"compacted_token_estimate"`
+	OriginalBytes          int64              `json:"original_bytes"`
+	Summary                string             `json:"summary"`
+	DetailFiles            []byte             `json:"detail_files"`
+	Payload                []byte             `json:"payload"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
 type AgentEvent struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -274,6 +296,13 @@ type AgentMessage struct {
 	TaskID      pgtype.UUID        `json:"task_id"`
 	EventID     pgtype.UUID        `json:"event_id"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentMessageCompaction struct {
+	MessageID     pgtype.UUID        `json:"message_id"`
+	CompactionID  pgtype.UUID        `json:"compaction_id"`
+	CompactedRole string             `json:"compacted_role"`
+	CompactedAt   pgtype.Timestamptz `json:"compacted_at"`
 }
 
 type AgentObjectIndex struct {

@@ -80,6 +80,75 @@ func TestLoadSandboxConfig(t *testing.T) {
 	}
 }
 
+func TestLoadAgentContextCompactionDefaults(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Agent.ContextCompaction.Enabled {
+		t.Fatal("Agent.ContextCompaction.Enabled = false, want true")
+	}
+	if cfg.Agent.ContextCompaction.ModelContextWindowTokens != 256000 {
+		t.Fatalf("ModelContextWindowTokens = %d, want 256000", cfg.Agent.ContextCompaction.ModelContextWindowTokens)
+	}
+	if cfg.Agent.ContextCompaction.MicroTriggerTokens != 180000 {
+		t.Fatalf("MicroTriggerTokens = %d, want 180000", cfg.Agent.ContextCompaction.MicroTriggerTokens)
+	}
+	if cfg.Agent.ContextCompaction.MicroTargetTokens != 150000 {
+		t.Fatalf("MicroTargetTokens = %d, want 150000", cfg.Agent.ContextCompaction.MicroTargetTokens)
+	}
+}
+
+func TestLoadAgentContextCompactionAllowsEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	configData := []byte(`
+server:
+  port: 9999
+postgres:
+  dsn: "postgres://test:test@localhost:5432/test?sslmode=disable"
+redis:
+  addr: "localhost:6379"
+minio:
+  endpoint: "localhost:9000"
+  sandbox_endpoint: "host.docker.internal:9000"
+  access_key: "clipanvil"
+  secret_key: "clipanvil_dev"
+  use_ssl: false
+jwt:
+  secret: "test-secret"
+  expire_hours: 12
+agent:
+  producer_max_tool_calls: 1000
+  tool_timeout_seconds: 300
+`)
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Chdir(dir)
+	t.Setenv("CLIPANVIL_AGENT_CONTEXT_COMPACTION_ENABLED", "false")
+	t.Setenv("CLIPANVIL_AGENT_CONTEXT_COMPACTION_MICRO_TRIGGER_TOKENS", "12345")
+	t.Setenv("CLIPANVIL_AGENT_CONTEXT_COMPACTION_MICRO_TARGET_TOKENS", "12000")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Agent.ContextCompaction.Enabled {
+		t.Fatal("Agent.ContextCompaction.Enabled = true, want env override false")
+	}
+	if cfg.Agent.ContextCompaction.MicroTriggerTokens != 12345 {
+		t.Fatalf("MicroTriggerTokens = %d, want 12345", cfg.Agent.ContextCompaction.MicroTriggerTokens)
+	}
+	if cfg.Agent.ContextCompaction.MicroTargetTokens != 12000 {
+		t.Fatalf("MicroTargetTokens = %d, want 12000", cfg.Agent.ContextCompaction.MicroTargetTokens)
+	}
+	if cfg.Agent.ContextCompaction.FullTriggerTokens != 200000 {
+		t.Fatalf("FullTriggerTokens = %d, want default 200000", cfg.Agent.ContextCompaction.FullTriggerTokens)
+	}
+}
+
 func TestLoadAllowsEnvOverrideForServerPort(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

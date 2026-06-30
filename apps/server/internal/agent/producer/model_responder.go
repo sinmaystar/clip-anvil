@@ -15,8 +15,10 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/jackc/pgx/v5/pgtype"
 	arkModel "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	agentprompt "github.com/sinmaystar/clip-anvil/internal/agent/prompt"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
@@ -33,14 +35,15 @@ func durationPtr(value time.Duration) *time.Duration {
 type arkChatModelFactory func(ctx context.Context, config *ark.ChatModelConfig) (arkChatStreamer, error)
 
 type VolcengineModelResponderConfig struct {
-	APIKey      string
-	BaseURL     string
-	Region      string
-	Model       string
-	MaxTokens   int
-	Temperature float32
-	Factory     arkChatModelFactory
-	Logger      *slog.Logger
+	APIKey           string
+	BaseURL          string
+	Region           string
+	Model            string
+	MaxTokens        int
+	Temperature      float32
+	Factory          arkChatModelFactory
+	Logger           *slog.Logger
+	ContextCompactor contextcompact.Middleware
 }
 
 type VolcengineModelResponder struct {
@@ -109,8 +112,34 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, producerContext P
 		return ProducerTurnOutput{}, fmt.Errorf("create ark chat model: %w", err)
 	}
 
-	messages := producerPromptMessages(producerContext)
 	diagnostics := baseModelDiagnostics(producerContext, modelID, maxCompletionTokens)
+	prompt := producerPromptMessagesWithBoundaries(producerContext)
+	messages := prompt.Messages
+	facts, mediaCards := producerContextCompactionFacts(producerContext)
+	var compacted contextcompact.ProjectionOutput
+	if r.cfg.ContextCompactor != nil {
+		compacted, err = r.cfg.ContextCompactor.Project(ctx, contextcompact.ProjectionInput{
+			WorkspaceID:       producerContext.Input.WorkspaceID,
+			ThreadID:          producerContext.Input.ThreadID,
+			TaskID:            producerContext.Input.TaskID,
+			Role:              "producer",
+			ModelID:           modelID,
+			Messages:          messages,
+			MessageRefs:       prompt.MessageRefs,
+			ToolInfos:         producerContext.ToolInfos,
+			MediaCards:        mediaCards,
+			Facts:             facts,
+			Trigger:           "producer_before_model",
+			SameTurnFromIndex: prompt.SameTurnFromIndex,
+			PendingFromIndex:  prompt.PendingFromIndex,
+		})
+		if err != nil {
+			logProducerModelFailure(ctx, logger, "context_compaction", diagnostics, err)
+			return ProducerTurnOutput{}, fmt.Errorf("compact producer context: %w", err)
+		}
+		messages = compacted.Messages
+		enrichContextCompactionDiagnostics(diagnostics, compacted)
+	}
 	diagnostics["message_count"] = len(messages)
 	diagnostics["image_attachment_count"] = len(producerContext.ImageAttachments)
 	diagnostics["tool_binding_count"] = len(producerContext.ToolInfos)
@@ -129,7 +158,34 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, producerContext P
 		}
 		streamer = boundModel
 	}
+	retriedContextOverflow := false
 	stream, err := streamer.Stream(ctx, messages)
+	if err != nil && contextcompact.IsContextOverflowError(err) && r.cfg.ContextCompactor != nil {
+		retriedContextOverflow = true
+		compacted, err = r.cfg.ContextCompactor.Project(ctx, contextcompact.ProjectionInput{
+			WorkspaceID:       producerContext.Input.WorkspaceID,
+			ThreadID:          producerContext.Input.ThreadID,
+			TaskID:            producerContext.Input.TaskID,
+			Role:              "producer",
+			ModelID:           modelID,
+			Messages:          prompt.Messages,
+			MessageRefs:       prompt.MessageRefs,
+			ToolInfos:         producerContext.ToolInfos,
+			MediaCards:        mediaCards,
+			Facts:             facts,
+			Trigger:           "model_error_context_overflow",
+			SameTurnFromIndex: prompt.SameTurnFromIndex,
+			PendingFromIndex:  prompt.PendingFromIndex,
+			ForceFullCompact:  true,
+		})
+		if err != nil {
+			logProducerModelFailure(ctx, logger, "context_compaction_retry", diagnostics, err)
+			return ProducerTurnOutput{}, fmt.Errorf("compact producer context after overflow: %w", err)
+		}
+		messages = compacted.Messages
+		enrichContextCompactionDiagnostics(diagnostics, compacted)
+		stream, err = streamer.Stream(ctx, messages)
+	}
 	if err != nil {
 		logProducerModelFailure(ctx, logger, "stream_start", diagnostics, err)
 		return ProducerTurnOutput{}, fmt.Errorf("stream ark chat model: %w", err)
@@ -216,6 +272,10 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, producerContext P
 		"streaming":        true,
 		"visible_thinking": showThinking,
 		"diagnostics":      diagnostics,
+	}
+	enrichContextCompactionMetadata(metadata, compacted)
+	if retriedContextOverflow {
+		metadata["context_compaction_retry"] = true
 	}
 	if displayName := strings.TrimSpace(producerContext.Model.DisplayName); displayName != "" {
 		metadata["model_display_name"] = displayName
@@ -347,6 +407,30 @@ func enrichReasoningPassbackDiagnostics(diagnostics map[string]any, messages []*
 	diagnostics["reasoning_passback_chars"] = chars
 }
 
+func enrichContextCompactionDiagnostics(diagnostics map[string]any, output contextcompact.ProjectionOutput) {
+	if len(output.Applied) == 0 {
+		return
+	}
+	diagnostics["context_compaction_applied"] = true
+	diagnostics["context_compaction_mode"] = output.CompactionMode
+	diagnostics["context_compaction_count"] = len(output.Applied)
+	diagnostics["context_compaction_token_before"] = output.TokenBefore
+	diagnostics["context_compaction_token_after"] = output.TokenAfter
+	diagnostics["context_compaction_refs"] = output.CompactionRefs
+	diagnostics["context_compaction_detail_files"] = output.DetailFiles
+}
+
+func enrichContextCompactionMetadata(metadata map[string]any, output contextcompact.ProjectionOutput) {
+	if len(output.Applied) == 0 {
+		return
+	}
+	metadata["context_compaction_applied"] = true
+	metadata["context_compaction_mode"] = output.CompactionMode
+	metadata["context_compaction_count"] = len(output.Applied)
+	metadata["context_compaction_refs"] = output.CompactionRefs
+	metadata["context_compaction_detail_files"] = output.DetailFiles
+}
+
 func logProducerModelFailure(ctx context.Context, logger *slog.Logger, stage string, diagnostics map[string]any, cause error) {
 	values := diagnosticsLogValues(diagnostics)
 	values = append(values, "stage", stage, "error", cause)
@@ -468,11 +552,23 @@ func diagnosticsLogValues(diagnostics map[string]any) []any {
 	return values
 }
 
+type producerPromptBoundary struct {
+	Messages          []*schema.Message
+	MessageRefs       []contextcompact.SourceMessageRef
+	SameTurnFromIndex int
+	PendingFromIndex  int
+}
+
 func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
+	return producerPromptMessagesWithBoundaries(producerContext).Messages
+}
+
+func producerPromptMessagesWithBoundaries(producerContext ProducerContext) producerPromptBoundary {
 	systemPrompt := ProducerSystemPrompt(producerContext)
 	messages := []*schema.Message{
 		schema.SystemMessage(systemPrompt),
 	}
+	messageRefs := make([]contextcompact.SourceMessageRef, 0, len(producerContext.Messages))
 	for _, msg := range producerContext.Messages {
 		switch msg.Role {
 		case "user":
@@ -481,6 +577,7 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 				continue
 			}
 			messages = append(messages, userPromptMessage(msg.Content, text, producerContext.ImageAttachments))
+			messageRefs = appendPromptMessageRef(messageRefs, len(messages)-1, msg.ID)
 		case "assistant":
 			if msg.MessageType == "text" {
 				text := agentMessageText(msg.Content)
@@ -488,18 +585,25 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 					continue
 				}
 				messages = append(messages, schema.AssistantMessage(text, nil))
+				messageRefs = appendPromptMessageRef(messageRefs, len(messages)-1, msg.ID)
 			} else if msg.MessageType == "tool_call" {
 				if toolMessage := historicalToolCallPromptMessage(msg); toolMessage != nil {
 					messages = append(messages, toolMessage)
+					messageRefs = appendPromptMessageRef(messageRefs, len(messages)-1, msg.ID)
 				}
 			}
 		case "tool":
 			if msg.MessageType == "tool_result" {
 				if toolMessage := historicalToolResultPromptMessage(msg); toolMessage != nil {
 					messages = append(messages, toolMessage)
+					messageRefs = appendPromptMessageRef(messageRefs, len(messages)-1, msg.ID)
 				}
 			}
 		}
+	}
+	sameTurnFromIndex := 0
+	if len(producerContext.SameTurnMessages) > 0 {
+		sameTurnFromIndex = len(messages)
 	}
 	for _, msg := range producerContext.SameTurnMessages {
 		next := sameTurnPromptMessage(msg)
@@ -517,7 +621,16 @@ func producerPromptMessages(producerContext ProducerContext) []*schema.Message {
 		}
 		messages = append(messages, schema.UserMessage(text))
 	}
-	return agentprompt.AppendPendingReminders(messages, producerContext.PendingReminders)
+	pendingFromIndex := contextcompact.PendingReminderTargetIndex(messages, producerContext.PendingReminders)
+	messages = agentprompt.AppendPendingReminders(messages, producerContext.PendingReminders)
+	return producerPromptBoundary{Messages: messages, MessageRefs: messageRefs, SameTurnFromIndex: sameTurnFromIndex, PendingFromIndex: pendingFromIndex}
+}
+
+func appendPromptMessageRef(refs []contextcompact.SourceMessageRef, index int, id pgtype.UUID) []contextcompact.SourceMessageRef {
+	if !id.Valid {
+		return refs
+	}
+	return append(refs, contextcompact.SourceMessageRef{MessageIndex: index, MessageID: id})
 }
 
 func hasSameTurnToolExchange(messages []ProducerSameTurnMessage) bool {

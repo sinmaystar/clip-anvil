@@ -74,7 +74,7 @@ func (p ToolContextProvider) currentShotVideoAssets(ctx context.Context, workspa
 	})
 	out := []map[string]any{}
 	for _, shot := range shots {
-		node, ok, err := p.currentShotVideoWinner(ctx, workspaceID, shot)
+		node, role, ok, err := p.currentShotCompositionAsset(ctx, workspaceID, shot)
 		if err != nil {
 			return nil, err
 		}
@@ -90,12 +90,14 @@ func (p ToolContextProvider) currentShotVideoAssets(ctx context.Context, workspa
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"role":                "clip",
+			"role":                role,
 			"shot_id":             uuidString(shot.ID),
+			"shot_ref":            defaultComposerRef(shot.SemanticKey, shot.ClientKey),
 			"shot_title":          shot.Title,
 			"node_id":             uuidString(node.ID),
 			"node_ref":            composerNodeRef(node),
 			"title":               node.Title,
+			"artifact_kind":       defaultComposerRef(node.ArtifactKind, composerArtifactKind(node.Metadata)),
 			"artifact_version_id": uuidString(version.ID),
 			"asset_id":            uuidString(asset.ID),
 			"source_url":          asset.StorageUrl.String,
@@ -106,16 +108,24 @@ func (p ToolContextProvider) currentShotVideoAssets(ctx context.Context, workspa
 	return out, nil
 }
 
-func (p ToolContextProvider) currentShotVideoWinner(ctx context.Context, workspaceID pgtype.UUID, shot db.Shot) (db.MediaNode, bool, error) {
+func (p ToolContextProvider) currentShotCompositionAsset(ctx context.Context, workspaceID pgtype.UUID, shot db.Shot) (db.MediaNode, string, bool, error) {
 	nodes, err := p.store.ListMediaNodesByShot(ctx, db.ListMediaNodesByShotParams{WorkspaceID: workspaceID, ShotID: shot.ID})
 	if err != nil {
-		return db.MediaNode{}, false, err
+		return db.MediaNode{}, "", false, err
 	}
+	if node, ok, err := p.currentShotAssetByKind(ctx, nodes, db.NodeTypeVideo, "shot_video"); err != nil || ok {
+		return node, "clip", ok, err
+	}
+	node, ok, err := p.currentShotAssetByKind(ctx, nodes, db.NodeTypeImage, "preview_image")
+	return node, "still", ok, err
+}
+
+func (p ToolContextProvider) currentShotAssetByKind(ctx context.Context, nodes []db.MediaNode, nodeType db.NodeType, artifactKind string) (db.MediaNode, bool, error) {
 	for _, node := range nodes {
-		if node.NodeType != db.NodeTypeVideo || !node.CurrentVersionID.Valid {
+		if node.NodeType != nodeType || !node.CurrentVersionID.Valid {
 			continue
 		}
-		if kind := composerArtifactKind(node.Metadata); kind != "" && kind != "shot_video" {
+		if kind := defaultComposerRef(node.ArtifactKind, composerArtifactKind(node.Metadata)); kind != "" && kind != artifactKind {
 			continue
 		}
 		version, err := p.store.GetArtifactVersionByID(ctx, node.CurrentVersionID)

@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+
+	contextcompact "github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 )
 
 type Config struct {
@@ -59,8 +61,9 @@ type SandboxResourceLimits struct {
 }
 
 type AgentConfig struct {
-	ProducerMaxToolCalls int `mapstructure:"producer_max_tool_calls"`
-	ToolTimeoutSeconds   int `mapstructure:"tool_timeout_seconds"`
+	ProducerMaxToolCalls int                   `mapstructure:"producer_max_tool_calls"`
+	ToolTimeoutSeconds   int                   `mapstructure:"tool_timeout_seconds"`
+	ContextCompaction    contextcompact.Config `mapstructure:"context_compaction"`
 }
 
 type ProductionConfig struct {
@@ -119,6 +122,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	contextCompactionEnabledSet := v.IsSet("agent.context_compaction.enabled")
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, err
@@ -129,6 +133,8 @@ func Load() (*Config, error) {
 	if cfg.Agent.ToolTimeoutSeconds <= 0 {
 		cfg.Agent.ToolTimeoutSeconds = 300
 	}
+	cfg.Agent.ContextCompaction.EnabledSet = contextCompactionEnabledSet
+	cfg.Agent.ContextCompaction = cfg.Agent.ContextCompaction.WithDefaults()
 	return &cfg, nil
 }
 
@@ -154,6 +160,18 @@ func bindEnv(v *viper.Viper) error {
 		"sandbox.resource_limits.memory",
 		"agent.producer_max_tool_calls",
 		"agent.tool_timeout_seconds",
+		"agent.context_compaction.enabled",
+		"agent.context_compaction.model_context_window_tokens",
+		"agent.context_compaction.micro_trigger_tokens",
+		"agent.context_compaction.micro_target_tokens",
+		"agent.context_compaction.micro_min_reduction_tokens",
+		"agent.context_compaction.full_trigger_tokens",
+		"agent.context_compaction.full_target_tokens",
+		"agent.context_compaction.preserve_recent_user_messages",
+		"agent.context_compaction.preserve_recent_total_messages",
+		"agent.context_compaction.search_max_results",
+		"agent.context_compaction.media_image_input_token_weight",
+		"agent.context_compaction.media_card_max_chars",
 		"production.provider_mode",
 		"production.default_provider",
 		"production.default_text_model",

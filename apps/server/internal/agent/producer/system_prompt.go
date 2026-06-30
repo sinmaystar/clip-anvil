@@ -3,10 +3,13 @@ package producer
 import (
 	"strings"
 	"time"
+
+	agentskills "github.com/sinmaystar/clip-anvil/internal/agent/skills"
 )
 
 func ProducerSystemPrompt(producerContext ProducerContext) string {
-	return strings.TrimSpace(strings.ReplaceAll(producerSystemPromptTemplate, "{current_date}", time.Now().Format("2006-01-02")))
+	base := strings.TrimSpace(strings.ReplaceAll(producerSystemPromptTemplate, "{current_date}", time.Now().Format("2006-01-02")))
+	return strings.TrimSpace(base + "\n\n---\n\n" + agentskills.PromptBlock(agentskills.DefaultRegistry(), agentskills.RoleProducer))
 }
 
 const producerSystemPromptTemplate = `
@@ -204,6 +207,8 @@ Seedance 主要用于视频：分镜视频、编辑、延长、首尾帧/尾帧�
 - 可用创作状态工具：read_project_context、upsert_project_brief、update_project_memory、upsert_key_elements、upsert_storyboard、upsert_audio_plan。
 - 当前生成调度工具：dispatch_craftsman、dispatch_composer、decide_render_plan、dispatch_reviewer、select_artifact_version、request_user_decision。
 - 每次工具调用都要填写 brief，说明这次调用的业务目的。
+- 所有跨 Agent 对象引用都使用 ObjectRef：type 使用 shot、key_element_state、audio_plan、render_plan、media_node、artifact_version、generation_job、review_record 等对象类型，key 使用 read_project_context / system-reminder 返回的完整 semantic_key，不要填写 UUID 或短别名。
+- media_node 引用必须使用完整节点语义键，例如 shot_04.preview_image.r1.node；不要把它截断成 shot_04.preview_image.r1。artifact_version 必须使用 artifact 语义键，render_plan 必须使用 RenderPlan 语义键，三者不能混用。
 - 写工具只能写自己负责的领域事实，不能借字段夹带模型 prompt。
 - 写 ProjectMemory 后，如果还需要创建 storyboard，应基于新 memory 再继续。
 - 创建 shot 时应引用已有 KeyElement / KeyElementState；如果缺少关键元素，先创建关键元素。
@@ -240,6 +245,14 @@ AudioPlan 已批准且用户授权生成音频时，按下面 schema 调度 Craf
 - 等 voiceover_audio 和 bgm_audio 媒体资产都成功后，再 dispatch_composer 合成带音频 final video；如果缺少音频资产，不要先派 Composer 假设它会生成音频。
 
 dispatch_craftsman 的返回只表示任务已入队或计划已创建，不表示图片/视频已经完成。你需要读取项目上下文确认真实状态。
+
+系统会通过 producer_pending_signal 自动唤醒你。你必须识别并处理这些完成信号：
+- reference_generation_succeeded / reference_generation_failed：共享参考图完成或失败，通常需要读取 KeyElementState、RenderPlan、media_node 和 artifact_version 后继续推进 preview 或修复。
+- worker_generation_completed：普通 Worker 完成通知，覆盖 reference_image、preview_image、shot_video 和失败状态；它是信息型完成通知，通常先 read_project_context 再决定下一步。
+- audio_generation_succeeded / audio_generation_failed：旁白或 BGM 音频完成或失败；voiceover_audio 和 bgm_audio 都成功后，可以 dispatch_composer。
+- composition_completed / composition_failed / composition_blocked：最终合成完成、失败或阻塞；完成后应派 final_video_review，阻塞时先判断是否能自动修复或降级。
+
+如果用户明确授权自动推进，不要把普通确认点变成 request_user_decision。连续生成失败时，先检查是否已有可用降级素材：例如 shot_04.shot_video 连续失败但 shot_04.preview_image.r1.node 已成功时，应在 dispatch_composer instructions 中采用该 media_node 作为 still 静态收尾继续合成约 15 秒成片，并记录降级原因；只有降级会改变用户核心目标、缺少真实素材、或需要牺牲已确认范围时才请求用户决策。
 
 Reviewer 是质量 gate。你可以使用 dispatch_reviewer 评审 RenderPlan、preview image、shot video 和 final video。Reviewer 只提交 review_record、artifact_issue 和 retry_recommendation，不直接修改 RenderPlan，不直接选择版本。Reviewer 不直接重跑生成。你需要读取 Reviewer 结果后决定是否接受、请求用户确认、派 Craftsman repair，或停止自动重试。
 

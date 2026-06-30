@@ -1,4 +1,4 @@
-import type { Node, NodeProps } from "@xyflow/react";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import type { AgentWorkbenchOverviewNodeData } from "../../lib/agentWorkbenchViewModel";
 import { useAgentWorkbenchSelection } from "./AgentWorkbenchSelectionContext";
 
@@ -16,6 +16,12 @@ export function AgentProjectOverviewNode({
 
   return (
     <section className="agent-workbench-overview-node" data-selected={selected}>
+      <Handle
+        className="agent-workbench-handle"
+        isConnectable={false}
+        position={Position.Right}
+        type="source"
+      />
       <header>
         <span>Project</span>
         <strong>{brief?.title || "未命名项目"}</strong>

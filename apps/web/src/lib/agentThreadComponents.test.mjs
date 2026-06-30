@@ -19,8 +19,12 @@ describe("agent thread observer components", () => {
     );
 
     assert.match(panel, /agent-thread-selector/);
-    assert.match(panel, /<select/);
+    assert.doesNotMatch(panel, /<select/);
     assert.match(panel, /选择子 Agent/);
+    assert.match(panel, /agent-thread-selector-trigger/);
+    assert.match(panel, /agent-thread-selector-menu/);
+    assert.match(panel, /agent-thread-selector-option/);
+    assert.match(panel, /agent-thread-selector-status/);
     assert.doesNotMatch(panel, /agent-thread-strip/);
     assert.doesNotMatch(panel, /agent-thread-observer-item/);
     assert.match(drawer, /agent-thread-drawer/);

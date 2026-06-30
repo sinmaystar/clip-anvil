@@ -189,6 +189,9 @@ func applySubmitReviewResultRuntimeTarget(input SubmitReviewResultInput, runtime
 	if strings.TrimSpace(runtime.ReviewTask) != "" {
 		input.ReviewTask = strings.TrimSpace(runtime.ReviewTask)
 	}
+	if strings.TrimSpace(input.Brief) == "" {
+		input.Brief = defaultSubmitReviewResultBrief(input.ReviewTask)
+	}
 	if strings.TrimSpace(runtime.ReviewShotID) != "" {
 		input.Target.ShotID = strings.TrimSpace(runtime.ReviewShotID)
 	}
@@ -267,6 +270,21 @@ func applySubmitReviewResultRuntimeTarget(input SubmitReviewResultInput, runtime
 		}
 	}
 	return input
+}
+
+func defaultSubmitReviewResultBrief(reviewTask string) string {
+	switch reviewTask {
+	case reviewTaskPreRenderPlan:
+		return "提交 RenderPlan 预评审结果"
+	case reviewTaskPreviewImage:
+		return "提交预览图评审结果"
+	case reviewTaskShotVideo:
+		return "提交分镜视频评审结果"
+	case reviewTaskFinalVideo:
+		return "提交最终成片评审结果"
+	default:
+		return "提交 Reviewer 评审结果"
+	}
 }
 
 func workspaceScopeForReviewTask(reviewTask string) string {
@@ -464,10 +482,14 @@ func validateReviewRubricAxes(reviewTask string, rubric []ReviewRubricAxisInput)
 		}
 		seen[axis.Axis] = true
 	}
+	missing := make([]string, 0)
 	for _, axis := range reviewTaskAxes[reviewTask] {
 		if !seen[axis] {
-			return fmt.Errorf("%s 缺少 required axis %s", reviewTask, axis)
+			missing = append(missing, axis)
 		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%s 缺少 required axes: %s", reviewTask, strings.Join(missing, ", "))
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package craftsman
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	"github.com/sinmaystar/clip-anvil/internal/agent/uimessage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -22,6 +24,12 @@ func TestCraftsmanSystemPromptIncludesReviewerRepairRules(t *testing.T) {
 		"retry_recommendation",
 		"mode=fork_from",
 		"不要直接问用户",
+		"## Skills Library",
+		"load_agent_skill",
+		"seedance-renderplan-craftsman",
+		"media_node",
+		"shot_04.preview_image.r1.node",
+		"artifact_version",
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("craftsman prompt missing %q", required)
@@ -32,6 +40,7 @@ func TestCraftsmanSystemPromptIncludesReviewerRepairRules(t *testing.T) {
 		"M2 阶段",
 		"TODO",
 		"TBD",
+		"# Seedance RenderPlan Craftsman",
 	} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("craftsman prompt contains stale placeholder wording %q", forbidden)
@@ -94,6 +103,43 @@ func TestVolcengineCraftsmanResponderReturnsNativeToolCallFromGenerate(t *testin
 	}
 	if model.generateCalls != 1 {
 		t.Fatalf("generate calls = %d, want 1", model.generateCalls)
+	}
+}
+
+func TestVolcengineCraftsmanResponderRetriesOnceWithFullCompactOnContextOverflow(t *testing.T) {
+	model := &fakeCraftsmanArkModel{
+		message:      &schema.Message{Role: schema.Assistant, Content: "ok"},
+		generateErrs: []error{errors.New("maximum context length")},
+	}
+	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
+		APIKey: "test-key",
+		Model:  "doubao-test",
+		ContextCompactor: contextcompact.NewMiddleware(contextcompact.MiddlewareConfig{
+			Config:         compactCraftsmanResponderTestConfig(),
+			Store:          craftsmanContextcompactTestStore(),
+			FileWriter:     craftsmanContextcompactTestFileWriter(),
+			FullSummarizer: contextcompact.StaticFullSummarizer{},
+		}),
+		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatModel, error) {
+			return model, nil
+		},
+	})
+
+	out, err := responder.Respond(context.Background(), Context{
+		Input: GraphInput{WorkspaceID: uuidWithByte(1), ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3)},
+		Text:  "Current Task\n- target_phase: preview_image",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Metadata["context_compaction_retry"] != true {
+		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+	if model.generateCalls != 2 {
+		t.Fatalf("generateCalls = %d, want 2", model.generateCalls)
+	}
+	if !strings.Contains(model.messages[1].Content, "# Compacted Agent Handoff Summary") {
+		t.Fatalf("retry prompt missing full summary: %#v", model.messages)
 	}
 }
 
@@ -169,6 +215,7 @@ type fakeCraftsmanArkModel struct {
 	messages      []*schema.Message
 	message       *schema.Message
 	chunks        []*schema.Message
+	generateErrs  []error
 	generateCalls int
 	toolInfos     []*schema.ToolInfo
 }
@@ -180,6 +227,10 @@ func (f *fakeCraftsmanArkModel) WithTools(tools []*schema.ToolInfo) (einoModel.T
 
 func (f *fakeCraftsmanArkModel) Generate(_ context.Context, messages []*schema.Message, _ ...einoModel.Option) (*schema.Message, error) {
 	f.messages = messages
+	if f.generateCalls < len(f.generateErrs) && f.generateErrs[f.generateCalls] != nil {
+		f.generateCalls++
+		return nil, f.generateErrs[f.generateCalls-1]
+	}
 	f.generateCalls++
 	return f.message, nil
 }

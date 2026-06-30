@@ -95,6 +95,7 @@ type RunTaskInput struct {
 	WorkspaceID        pgtype.UUID
 	ThreadID           pgtype.UUID
 	TaskID             pgtype.UUID
+	TaskType           string
 	TriggerMessageID   pgtype.UUID
 	TriggerMessageSeq  int64
 	RuntimeTriggerText string
@@ -154,10 +155,15 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		return e.failTask(ctx, input, "producer_trigger_message_persist_failed", err.Error())
 	}
 
+	taskType := strings.TrimSpace(input.TaskType)
+	if taskType == "" {
+		taskType = "producer_turn"
+	}
 	graphInput := ProducerTurnInput{
 		WorkspaceID:        input.WorkspaceID,
 		ThreadID:           input.ThreadID,
 		TaskID:             input.TaskID,
+		TaskType:           taskType,
 		TriggerMessageID:   input.TriggerMessageID,
 		TriggerMessageSeq:  input.TriggerMessageSeq,
 		RuntimeTriggerText: input.RuntimeTriggerText,
@@ -393,7 +399,7 @@ func (e *Executor) markInformationalSignalsProcessed(ctx context.Context, input 
 
 func isInformationalProducerSignal(signalType string) bool {
 	switch strings.TrimSpace(signalType) {
-	case "worker_generation_completed", "review_completed", "composition_completed", "composition_failed":
+	case "worker_generation_completed", "review_completed", "audio_generation_succeeded", "audio_generation_failed", "composition_completed", "composition_failed":
 		return true
 	default:
 		return false

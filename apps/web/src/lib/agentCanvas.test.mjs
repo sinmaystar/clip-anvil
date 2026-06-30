@@ -15,6 +15,18 @@ const agentShotNodeUrl = new URL(
   "../components/agent-workbench/AgentShotNode.tsx",
   import.meta.url,
 );
+const agentOverviewNodeUrl = new URL(
+  "../components/agent-workbench/AgentProjectOverviewNode.tsx",
+  import.meta.url,
+);
+const agentSceneNodeUrl = new URL(
+  "../components/agent-workbench/AgentSceneGroupNode.tsx",
+  import.meta.url,
+);
+const agentFinalOutputNodeUrl = new URL(
+  "../components/agent-workbench/AgentFinalOutputNode.tsx",
+  import.meta.url,
+);
 const agentWorkbenchViewModelUrl = new URL(
   "./agentWorkbenchViewModel.ts",
   import.meta.url,
@@ -297,6 +309,23 @@ describe("agent React Flow canvas", () => {
     assert.doesNotMatch(source, /\sfitView\s/);
   });
 
+  it("declares React Flow handles for every Agent Workbench node used by edges", async () => {
+    const overviewSource = await readFile(agentOverviewNodeUrl, "utf8");
+    const sceneSource = await readFile(agentSceneNodeUrl, "utf8");
+    const shotSource = await readFile(agentShotNodeUrl, "utf8");
+    const finalOutputSource = await readFile(agentFinalOutputNodeUrl, "utf8");
+
+    assert.match(overviewSource, /Handle/);
+    assert.match(overviewSource, /type="source"/);
+    assert.match(sceneSource, /Handle/);
+    assert.match(sceneSource, /type="target"/);
+    assert.match(shotSource, /Handle/);
+    assert.match(shotSource, /type="source"/);
+    assert.match(shotSource, /type="target"/);
+    assert.match(finalOutputSource, /Handle/);
+    assert.match(finalOutputSource, /type="target"/);
+  });
+
   it("does not mount the old production overview panels in the Agent chat", async () => {
     const pageSource = await readFile(agentPageUrl, "utf8");
 
@@ -320,6 +349,23 @@ describe("agent React Flow canvas", () => {
     assert.doesNotMatch(
       cssSource,
       /\.agent-chat-float\s*\{[\s\S]*grid-template-rows:\s*auto auto minmax\(96px,\s*1fr\) auto;/,
+    );
+  });
+
+  it("lets the Agent chat float use the full viewport height", async () => {
+    const cssSource = await readFile(mainCssUrl, "utf8");
+
+    assert.match(
+      cssSource,
+      /\.agent-chat-float\s*\{[\s\S]*position:\s*fixed;/,
+    );
+    assert.match(
+      cssSource,
+      /\.agent-chat-float\s*\{[\s\S]*max-height:\s*calc\(100vh - \(var\(--space-4\) \* 2\)\);/,
+    );
+    assert.doesNotMatch(
+      cssSource,
+      /\.agent-chat-float\s*\{[\s\S]*max-height:\s*calc\(100% - var\(--space-4\)\);/,
     );
   });
 });
