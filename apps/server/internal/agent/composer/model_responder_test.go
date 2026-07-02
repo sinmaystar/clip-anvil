@@ -158,6 +158,36 @@ func TestComposerCompactsOldProbeOutputButPreservesCurrentTimelinePath(t *testin
 	}
 }
 
+func TestComposerResponderUsesDeterministicTemplatePathBeforeModel(t *testing.T) {
+	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{})
+
+	out, err := responder.Respond(context.Background(), Context{
+		Input: GraphInput{Input: CompositionInput{
+			TemplateKey:            "concat_with_fades",
+			SourceStoryboardNodeID: "04000000-0000-0000-0000-000000000000",
+			Instructions:           "compose final video",
+			ProducerTaskID:         "producer-task",
+			ParentToolCallID:       "producer-tool-call",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if out.ModelMessage == nil || len(out.ModelMessage.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %#v, want one deterministic call", out.ModelMessage)
+	}
+	call := out.ModelMessage.ToolCalls[0]
+	if call.Function.Name != "get_composition_context" {
+		t.Fatalf("tool = %q, want get_composition_context", call.Function.Name)
+	}
+	if !strings.Contains(call.Function.Arguments, "04000000-0000-0000-0000-000000000000") {
+		t.Fatalf("arguments missing source id: %s", call.Function.Arguments)
+	}
+	if out.Metadata["provider"] != "deterministic_template" {
+		t.Fatalf("metadata provider = %v", out.Metadata["provider"])
+	}
+}
+
 type fakeComposerArkModel struct {
 	messages      []*schema.Message
 	final         *schema.Message

@@ -19,6 +19,27 @@ func TestCanvasHubRegisterAndUnregister(t *testing.T) {
 	}
 }
 
+func TestCanvasHubWrapsRawConnectionForSerializedWrites(t *testing.T) {
+	workspaceID := testUUID(0x0b)
+	hub := NewCanvasHub()
+
+	hub.Register(workspaceID, nil)
+
+	wrapped := hub.byRaw[nil]
+	if wrapped == nil {
+		t.Fatal("raw connection was not wrapped")
+	}
+	if _, ok := hub.conns[workspaceID][wrapped]; !ok {
+		t.Fatal("workspace should store the wrapped connection")
+	}
+
+	hub.Unregister(workspaceID, nil)
+
+	if _, ok := hub.byRaw[nil]; ok {
+		t.Fatal("wrapped connection should be removed after unregister")
+	}
+}
+
 func TestCanvasHubBroadcastWithoutConnections(t *testing.T) {
 	hub := NewCanvasHub()
 

@@ -29,6 +29,9 @@ const (
 	toolSubmitCompositionArtifact  = "submit_composition_artifact"
 	composerTemplateSimpleConcat   = "simple_concat"
 	composerTemplateConcatWithFade = "concat_with_fades"
+	composerTimelineWidth          = 1080
+	composerTimelineHeight         = 1920
+	composerTimelineFPS            = 30
 )
 
 type CompositionContextProvider interface {
@@ -630,6 +633,8 @@ func (t SubmitCompositionArtifactNativeTool) updateTimelineAfterSubmit(ctx conte
 type timelineSegmentInput struct {
 	WorkspacePath string
 	DurationSec   float64
+	Role          string
+	MimeType      string
 }
 
 type timelineAudioInput struct {
@@ -672,6 +677,8 @@ func timelineSegments(plan map[string]any) ([]timelineSegmentInput, error) {
 		segments = append(segments, timelineSegmentInput{
 			WorkspacePath: workspacePath,
 			DurationSec:   compositionFloatValue(segment["duration_sec"], 0),
+			Role:          strings.TrimSpace(compositionStringValue(segment["role"])),
+			MimeType:      strings.TrimSpace(compositionStringValue(segment["mime_type"])),
 		})
 	}
 	return segments, nil
@@ -750,16 +757,25 @@ func timelineFFmpegArgs(plan map[string]any, outputPath string) ([]string, error
 		return nil, err
 	}
 	if len(audioTracks) == 0 {
+		if timelineHasStillSegment(segments) {
+			args := timelineInputArgs(segments)
+			filterParts := timelineVideoFilterParts(segments, "v")
+			return append(args,
+				"-filter_complex", strings.Join(filterParts, ";"),
+				"-map", "[v]",
+				"-c:v", "libx264",
+				"-preset", "fast",
+				"-crf", "23",
+				outputPath,
+			), nil
+		}
 		paths := make([]string, 0, len(segments))
 		for _, segment := range segments {
 			paths = append(paths, segment.WorkspacePath)
 		}
 		return concatFFmpegArgs(paths, outputPath), nil
 	}
-	args := []string{"-y"}
-	for _, segment := range segments {
-		args = append(args, "-i", segment.WorkspacePath)
-	}
+	args := timelineInputArgs(segments)
 	for _, track := range audioTracks {
 		if track.Role == "bgm" {
 			args = append(args, "-stream_loop", "-1")
@@ -782,18 +798,37 @@ func timelineFFmpegArgs(plan map[string]any, outputPath string) ([]string, error
 	return args, nil
 }
 
-func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timelineAudioInput) string {
-	parts := []string{}
-	if len(segments) == 1 {
-		parts = append(parts, "[0:v]setpts=PTS-STARTPTS,format=yuv420p,setsar=1[vout]")
-	} else {
-		videoInputs := make([]string, 0, len(segments))
-		for index := range segments {
-			videoInputs = append(videoInputs, fmt.Sprintf("[%d:v]", index))
+func timelineInputArgs(segments []timelineSegmentInput) []string {
+	args := []string{"-y"}
+	for _, segment := range segments {
+		if timelineSegmentIsStill(segment) {
+			duration := segment.DurationSec
+			if duration <= 0 {
+				duration = 5
+			}
+			args = append(args, "-loop", "1", "-t", fmt.Sprintf("%.3f", duration), "-i", segment.WorkspacePath)
+			continue
 		}
-		parts = append(parts, strings.Join(videoInputs, "")+fmt.Sprintf("concat=n=%d:v=1:a=0[vcat]", len(segments)))
-		parts = append(parts, "[vcat]format=yuv420p,setsar=1[vout]")
+		args = append(args, "-i", segment.WorkspacePath)
 	}
+	return args
+}
+
+func timelineHasStillSegment(segments []timelineSegmentInput) bool {
+	for _, segment := range segments {
+		if timelineSegmentIsStill(segment) {
+			return true
+		}
+	}
+	return false
+}
+
+func timelineSegmentIsStill(segment timelineSegmentInput) bool {
+	return segment.Role == "still" || strings.HasPrefix(strings.ToLower(segment.MimeType), "image/")
+}
+
+func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timelineAudioInput) string {
+	parts := timelineVideoFilterParts(segments, "vout")
 
 	audioLabels := make([]string, 0, len(audioTracks))
 	voiceoverLabel := ""
@@ -862,6 +897,35 @@ func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timeline
 		parts = append(parts, strings.Join(inputs, "")+fmt.Sprintf("amix=inputs=%d:duration=shortest:dropout_transition=0[aout]", len(audioLabels)))
 	}
 	return strings.Join(parts, ";")
+}
+
+func timelineVideoFilterParts(segments []timelineSegmentInput, outputLabel string) []string {
+	parts := make([]string, 0, len(segments)+1)
+	labels := make([]string, 0, len(segments))
+	for index := range segments {
+		label := fmt.Sprintf("vnorm%d", index)
+		labels = append(labels, label)
+		parts = append(parts, fmt.Sprintf(
+			"[%d:v]setpts=PTS-STARTPTS,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,fps=%d,format=yuv420p,setsar=1[%s]",
+			index,
+			composerTimelineWidth,
+			composerTimelineHeight,
+			composerTimelineWidth,
+			composerTimelineHeight,
+			composerTimelineFPS,
+			label,
+		))
+	}
+	if len(labels) == 1 {
+		parts = append(parts, fmt.Sprintf("[%s]null[%s]", labels[0], outputLabel))
+		return parts
+	}
+	videoInputs := make([]string, 0, len(labels))
+	for _, label := range labels {
+		videoInputs = append(videoInputs, fmt.Sprintf("[%s]", label))
+	}
+	parts = append(parts, strings.Join(videoInputs, "")+fmt.Sprintf("concat=n=%d:v=1:a=0[%s]", len(labels), outputLabel))
+	return parts
 }
 
 func timelineNeedsVoiceoverSidechain(audioTracks []timelineAudioInput) bool {

@@ -135,6 +135,8 @@ func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
 		"/workspace/input/voiceover.mp3",
 		"/workspace/input/bgm.mp3",
 		"concat=n=2:v=1:a=0",
+		"scale=1080:1920:force_original_aspect_ratio=decrease",
+		"pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
 		"atrim",
 		"volume=1.000",
 		"volume=0.280",
@@ -146,6 +148,42 @@ func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
 		"-c:a aac",
 		"-shortest",
 		"/workspace/output/final-audio.mp4",
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("ffmpeg args %q missing %q", args, want)
+		}
+	}
+}
+
+func TestRenderTimelineTemplateLoopsStillSegments(t *testing.T) {
+	sandbox := &fakeCompositionSandbox{}
+	tool := NewRenderTimelineTemplateNativeTool(NewSandboxTimelineTemplateRenderer(sandbox))
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		TaskID:      uuidWithByte(2),
+		ScopeType:   "final_output",
+		ScopeID:     uuidWithByte(3),
+	})
+	got, err := tool.InvokableRun(ctx, `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"template_key":"concat_with_fades",
+		"plan":{"segments":[
+			{"id":"shot-01","workspace_path":"/workspace/input/a.mp4"},
+			{"id":"shot-cta","role":"still","mime_type":"image/png","workspace_path":"/workspace/input/cta.png","duration_sec":5}
+		],"output":{"workspace_path":"/workspace/output/final-still.mp4","format":"mp4"}}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("render_timeline_template failed: %s", got)
+	}
+	args := strings.Join(sandbox.ffmpegInput.Args, " ")
+	for _, want := range []string{
+		"-loop 1 -t 5.000 -i /workspace/input/cta.png",
+		"scale=1080:1920:force_original_aspect_ratio=decrease",
+		"pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+		"concat=n=2:v=1:a=0",
 	} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("ffmpeg args %q missing %q", args, want)
