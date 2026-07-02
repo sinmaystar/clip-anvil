@@ -40,7 +40,7 @@ The work is staged. Do not start a later phase until the current phase acceptanc
   - Responsibility: skill registration and skill text contract tests.
 - Modify: `apps/server/internal/agent/producer/system_prompt.go`
   - Responsibility: Producer global rules. It must make no-Seedance dynamic storyboard behavior unambiguous.
-- Modify: `apps/server/internal/agent/producer/system_prompt_test.go`
+- Modify: `apps/server/internal/agent/producer/model_responder_test.go`
   - Responsibility: Producer prompt contract tests.
 - Modify: `apps/server/internal/agent/tools/dispatch_craftsman.go`
   - Responsibility: dispatch task input and recommended route. It must preserve shot facts needed by Craftsman and recommend motion-only for every selected shot.
@@ -233,7 +233,7 @@ func TestSeedanceCraftsmanRefusesMotionOnlyRoute(t *testing.T) {
 Run:
 
 ```bash
-go test ./apps/server/internal/agent/skills -run 'TestCommerceAdProducerPreservesDynamicStoryboardForNoSeedance|TestMotionShotProducerIsRoutePolicyOnly|TestMotionShotCraftsmanInheritsDynamicShotFacts|TestSeedanceCraftsmanRefusesMotionOnlyRoute' -count=1
+(cd apps/server && go test ./internal/agent/skills -run 'TestCommerceAdProducerPreservesDynamicStoryboardForNoSeedance|TestMotionShotProducerIsRoutePolicyOnly|TestMotionShotCraftsmanInheritsDynamicShotFacts|TestSeedanceCraftsmanRefusesMotionOnlyRoute' -count=1)
 ```
 
 Expected: FAIL with missing contract strings.
@@ -304,7 +304,7 @@ Find `apps/server/internal/agent/skills/library/seedance-renderplan-craftsman/SK
 Run:
 
 ```bash
-go test ./apps/server/internal/agent/skills -run 'TestCommerceAdProducerPreservesDynamicStoryboardForNoSeedance|TestMotionShotProducerIsRoutePolicyOnly|TestMotionShotCraftsmanInheritsDynamicShotFacts|TestSeedanceCraftsmanRefusesMotionOnlyRoute' -count=1
+(cd apps/server && go test ./internal/agent/skills -run 'TestCommerceAdProducerPreservesDynamicStoryboardForNoSeedance|TestMotionShotProducerIsRoutePolicyOnly|TestMotionShotCraftsmanInheritsDynamicShotFacts|TestSeedanceCraftsmanRefusesMotionOnlyRoute' -count=1)
 ```
 
 Expected: PASS.
@@ -312,7 +312,7 @@ Expected: PASS.
 ### Task 1.3: Add Producer Prompt Contract Test
 
 **Files:**
-- Modify: `apps/server/internal/agent/producer/system_prompt_test.go`
+- Modify: `apps/server/internal/agent/producer/model_responder_test.go`
 - Modify: `apps/server/internal/agent/producer/system_prompt.go`
 
 - [ ] **Step 1: Inspect existing prompt tests**
@@ -320,14 +320,14 @@ Expected: PASS.
 Run:
 
 ```bash
-sed -n '1,240p' apps/server/internal/agent/producer/system_prompt_test.go
+sed -n '1,140p' apps/server/internal/agent/producer/model_responder_test.go
 ```
 
 Expected: output shows existing prompt contract style or confirms a new test file is needed.
 
 - [ ] **Step 2: Add failing prompt test**
 
-Add this test to `apps/server/internal/agent/producer/system_prompt_test.go`:
+Add this test to `apps/server/internal/agent/producer/model_responder_test.go`:
 
 ```go
 func TestProducerPromptNoSeedanceKeepsDynamicStoryboard(t *testing.T) {
@@ -351,7 +351,7 @@ func TestProducerPromptNoSeedanceKeepsDynamicStoryboard(t *testing.T) {
 Run:
 
 ```bash
-go test ./apps/server/internal/agent/producer -run TestProducerPromptNoSeedanceKeepsDynamicStoryboard -count=1
+(cd apps/server && go test ./internal/agent/producer -run TestProducerPromptNoSeedanceKeepsDynamicStoryboard -count=1)
 ```
 
 Expected: FAIL with a missing prompt string.
@@ -371,7 +371,7 @@ In `apps/server/internal/agent/producer/system_prompt.go`, inside `Seedream / Se
 Run:
 
 ```bash
-go test ./apps/server/internal/agent/producer -run TestProducerPromptNoSeedanceKeepsDynamicStoryboard -count=1
+(cd apps/server && go test ./internal/agent/producer -run TestProducerPromptNoSeedanceKeepsDynamicStoryboard -count=1)
 ```
 
 Expected: PASS.
@@ -386,7 +386,7 @@ Expected: PASS.
 Run:
 
 ```bash
-go test ./apps/server/internal/agent/skills ./apps/server/internal/agent/producer -count=1
+(cd apps/server && go test ./internal/agent/skills ./internal/agent/producer -count=1)
 ```
 
 Expected: PASS.
@@ -396,7 +396,7 @@ Expected: PASS.
 Run:
 
 ```bash
-gofmt -w apps/server/internal/agent/skills/registry_test.go apps/server/internal/agent/producer/system_prompt_test.go
+gofmt -w apps/server/internal/agent/skills/registry_test.go apps/server/internal/agent/producer/model_responder_test.go
 git diff --check
 ```
 
@@ -413,7 +413,7 @@ git add apps/server/internal/agent/skills/library/commerce-ad-producer/SKILL.md 
   apps/server/internal/agent/skills/library/seedance-renderplan-craftsman/SKILL.md \
   apps/server/internal/agent/skills/registry_test.go \
   apps/server/internal/agent/producer/system_prompt.go \
-  apps/server/internal/agent/producer/system_prompt_test.go
+  apps/server/internal/agent/producer/model_responder_test.go
 git commit -m "feat: enforce dynamic no-seedance remotion route contracts"
 ```
 
@@ -526,7 +526,7 @@ func mustString(value any) string {
 Run:
 
 ```bash
-go test ./apps/server/internal/agent/tools -run TestDispatchCraftsmanMotionOnlyPolicyDispatchesEveryDynamicShotWithFacts -count=1
+(cd apps/server && go test ./internal/agent/tools -run TestDispatchCraftsmanMotionOnlyPolicyDispatchesEveryDynamicShotWithFacts -count=1)
 ```
 
 Expected: FAIL because `shot_facts` is missing or `duration_sec` is still hardcoded.
@@ -643,7 +643,7 @@ func motionShotDuration(value float64) int {
 Run:
 
 ```bash
-go test ./apps/server/internal/agent/tools -run TestDispatchCraftsmanMotionOnlyPolicyDispatchesEveryDynamicShotWithFacts -count=1
+(cd apps/server && go test ./internal/agent/tools -run TestDispatchCraftsmanMotionOnlyPolicyDispatchesEveryDynamicShotWithFacts -count=1)
 ```
 
 Expected: PASS.
@@ -659,7 +659,7 @@ Run:
 
 ```bash
 gofmt -w apps/server/internal/agent/tools/dispatch_craftsman.go apps/server/internal/agent/tools/dispatch_craftsman_test.go
-go test ./apps/server/internal/agent/tools -run 'TestDispatchCraftsman' -count=1
+(cd apps/server && go test ./internal/agent/tools -run 'TestDispatchCraftsman' -count=1)
 git diff --check
 ```
 
@@ -754,7 +754,7 @@ func TestNormalizeRejectsLongSingleMotionShotDuration(t *testing.T) {
 Run:
 
 ```bash
-go test ./apps/server/internal/motionshot -run 'TestNormalizeUsesExplicitVisualLayersAndClipsTextToDuration|TestNormalizeRejectsLongSingleMotionShotDuration' -count=1
+(cd apps/server && go test ./internal/motionshot -run 'TestNormalizeUsesExplicitVisualLayersAndClipsTextToDuration|TestNormalizeRejectsLongSingleMotionShotDuration' -count=1)
 ```
 
 Expected: first test FAILS because explicit visual layers are ignored or text end is not clipped; second test PASSES.
@@ -849,7 +849,7 @@ Run:
 
 ```bash
 gofmt -w apps/server/internal/motionshot/plan.go apps/server/internal/motionshot/plan_test.go
-go test ./apps/server/internal/motionshot -count=1
+(cd apps/server && go test ./internal/motionshot -count=1)
 ```
 
 Expected: PASS.
@@ -976,7 +976,7 @@ func TestMotionShotVideoCraftsmanFixtureVariesPlansByShotFacts(t *testing.T) {
 Run:
 
 ```bash
-go test ./apps/server/cmd/server -run 'TestMotionShotVideoFixturePlansAudioAndMotionShotVideo|TestMotionShotVideoCraftsmanFixtureVariesPlansByShotFacts' -count=1
+(cd apps/server && go test ./cmd/server -run 'TestMotionShotVideoFixturePlansAudioAndMotionShotVideo|TestMotionShotVideoCraftsmanFixtureVariesPlansByShotFacts' -count=1)
 ```
 
 Expected: FAIL because fixture still uses `shot_01_motion_ad` and an 8 second single segment.
@@ -1264,9 +1264,9 @@ echo "[m12] dev env"
 CLIPANVIL_PRINT_DEV_ENV=1 ./scripts/dev-start.sh
 
 echo "[m12] targeted tests"
-go test ./apps/server/cmd/server -run 'TestMotionShotVideoFixturePlansAudioAndMotionShotVideo|TestMotionShotVideoCraftsmanFixtureVariesPlansByShotFacts|TestMotionShotVideoFixtureDispatchesAudioOnContinuationMessages|TestMotionShotVideoFixturePrioritizesFinalCompositionOverMotionShotContinuation' -count=1
-go test ./apps/server/internal/agent/tools -run 'TestDispatchCraftsmanMotionOnlyPolicy' -count=1
-go test ./apps/server/internal/motionshot -count=1
+(cd apps/server && go test ./cmd/server -run 'TestMotionShotVideoFixturePlansAudioAndMotionShotVideo|TestMotionShotVideoCraftsmanFixtureVariesPlansByShotFacts|TestMotionShotVideoFixtureDispatchesAudioOnContinuationMessages|TestMotionShotVideoFixturePrioritizesFinalCompositionOverMotionShotContinuation' -count=1)
+(cd apps/server && go test ./internal/agent/tools -run 'TestDispatchCraftsmanMotionOnlyPolicy' -count=1)
+(cd apps/server && go test ./internal/motionshot -count=1)
 
 cat <<'EOF'
 [m12] Browser smoke steps:
@@ -1299,9 +1299,9 @@ Run:
 
 ```bash
 gofmt -w apps/server/cmd/server/e2e_producer_fixture.go apps/server/cmd/server/e2e_craftsman_fixture.go apps/server/cmd/server/e2e_composer_fixture.go apps/server/cmd/server/main_test.go
-go test ./apps/server/cmd/server -run 'TestMotionShotVideo' -count=1
-go test ./apps/server/internal/agent/tools -run 'TestDispatchCraftsmanMotionOnlyPolicy' -count=1
-go test ./apps/server/internal/motionshot -count=1
+(cd apps/server && go test ./cmd/server -run 'TestMotionShotVideo' -count=1)
+(cd apps/server && go test ./internal/agent/tools -run 'TestDispatchCraftsmanMotionOnlyPolicy' -count=1)
+(cd apps/server && go test ./internal/motionshot -count=1)
 bash -n scripts/smoke-m12-dynamic-remotion-route.sh
 git diff --check
 ```
@@ -1580,7 +1580,7 @@ Expected: commit succeeds.
 Run after all phases pass:
 
 ```bash
-go test ./apps/server/internal/agent/skills ./apps/server/internal/agent/producer ./apps/server/internal/agent/tools ./apps/server/internal/motionshot ./apps/server/cmd/server -count=1
+(cd apps/server && go test ./internal/agent/skills ./internal/agent/producer ./internal/agent/tools ./internal/motionshot ./cmd/server -count=1)
 make server-build
 pnpm --filter @clip-anvil/web... build
 git diff --check

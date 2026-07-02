@@ -21,9 +21,13 @@ Load this skill when the user wants a low-cost marketing video, explicitly forbi
 - Read project context before changing durable facts or spending generation budget.
 - Lock the route in ProjectMemory: `internal_motion_video` for video, `motion_shot_video` RenderPlan profile, `remotion-motion-shot-v1` model, Seedream allowed for still images, Volcengine audio allowed for voiceover or BGM.
 - Separate the asset route from the video route: preview/reference images may use Seedream, audio may use Volcengine TTS/BGM, shot video must use motion shots when the user forbids Seedance.
+- This skill must be paired with commerce-ad-producer. Commerce ad structure still comes from CreativeBrief, ProjectMemory, KeyElement, Storyboard, and AudioPlan.
+- Route policy only: do not create a fixed storyboard, do not replace dynamic shot planning, and do not choose a canned 30 second template.
 - Keep motion shots scoped to one communication job: product hero, benefit, comparison, and CTA should usually be separate shots for better pacing.
 - Create or update AudioPlan before final composition when voiceover/BGM is part of the deliverable. Composer owns captions, audio mixing, and final sync.
 - Dispatch Craftsman with `video_route_policy: motion_only` when Seedance is forbidden.
+- For no-Seedance requests, dispatch every ready shot_video with video_route_policy: motion_only.
+- Preserve real shot_refs from the dynamic storyboard; do not dispatch only one synthetic shot unless the dynamic storyboard truly has one shot.
 - Dispatch Reviewer for motion-shot RenderPlans or artifacts when text readability, product visibility, motion rhythm, or route compliance matters.
 
 ## Do Not
@@ -32,6 +36,7 @@ Load this skill when the user wants a low-cost marketing video, explicitly forbi
 - Do not ask Craftsman to write arbitrary Remotion code. Craftsman writes structured RenderPlan fields; the provider owns renderable Remotion components.
 - Do not treat a queued Composer task as a completed final video.
 - Do not hide image generation, motion shot, audio, and final composition behind one opaque step when the user needs cost transparency.
+- Do not turn a multi-shot request into a single internal motion card.
 
 ## Tool Protocol
 

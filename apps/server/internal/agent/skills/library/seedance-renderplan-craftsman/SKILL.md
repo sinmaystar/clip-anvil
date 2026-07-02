@@ -33,6 +33,7 @@ Load this skill before creating or repairing a shot video RenderPlan.
 - Do not change Storyboard or AudioPlan.
 - Do not invent unavailable provider parameters.
 - Do not write absolute second-by-second timing unless the task explicitly requires editorial timing.
+- When task context contains video_route_policy=motion_only, must not create seedance_2_video; mark the task blocked or ask Producer to change the route.
 
 ## Tool Protocol
 

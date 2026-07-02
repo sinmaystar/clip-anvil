@@ -248,6 +248,72 @@ func TestMotionShotSkillsCarryRemotionGuidance(t *testing.T) {
 	}
 }
 
+func TestCommerceAdProducerPreservesDynamicStoryboardForNoSeedance(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("commerce-ad-producer", RoleProducer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"no-Seedance does not reduce the storyboard to one shot",
+		"20-45 second commerce ads usually need 4-9 shots",
+		"each shot must have narrative_purpose, duration_sec, visual_intent, action_text, camera_intent, and narration",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("commerce-ad-producer missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestMotionShotProducerIsRoutePolicyOnly(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("motion-shot-producer", RoleProducer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"must be paired with commerce-ad-producer",
+		"do not create a fixed storyboard",
+		"dispatch every ready shot_video with video_route_policy: motion_only",
+		"do not dispatch only one synthetic shot unless the dynamic storyboard truly has one shot",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("motion-shot-producer missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestMotionShotCraftsmanInheritsDynamicShotFacts(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("motion-shot-craftsman", RoleCraftsman, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"inherit the current shot duration_sec",
+		"vary layout, motion_style, transitions, and text positions by shot purpose",
+		"do not bake full voiceover subtitles into the motion shot",
+		"block the task when no usable image input is available",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("motion-shot-craftsman missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestSeedanceCraftsmanRefusesMotionOnlyRoute(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("seedance-renderplan-craftsman", RoleCraftsman, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"video_route_policy=motion_only",
+		"must not create seedance_2_video",
+		"mark the task blocked or ask Producer to change the route",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("seedance-renderplan-craftsman missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
 func TestM82PromptBlockStillExcludesSkillBodies(t *testing.T) {
 	block := PromptBlock(DefaultRegistry(), RoleCraftsman)
 	if !strings.Contains(block, "seedance-renderplan-craftsman") || !strings.Contains(block, "seedream-renderplan-craftsman") {

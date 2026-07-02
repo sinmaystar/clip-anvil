@@ -91,6 +91,21 @@ func TestProducerSystemPromptContainsDomainConcepts(t *testing.T) {
 	}
 }
 
+func TestProducerPromptNoSeedanceKeepsDynamicStoryboard(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{})
+	for _, needle := range []string{
+		"no-Seedance 不等于固定模板",
+		"继续使用动态 Storyboard",
+		"30 秒左右营销视频通常需要 4-9 个 shot",
+		"每个 shot_video 都必须填写 video_route_policy=motion_only",
+		"最终 30 秒以上成片由 Composer 拼接多个 motion_shot_video、旁白和 BGM",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("Producer prompt missing %q", needle)
+		}
+	}
+}
+
 func TestProducerSystemPromptEnablesCurrentGenerationAndReviewerGate(t *testing.T) {
 	prompt := ProducerSystemPrompt(ProducerContext{})
 	for _, forbidden := range []string{

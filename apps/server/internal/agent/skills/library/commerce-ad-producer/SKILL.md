@@ -22,6 +22,10 @@ Load this skill when a user asks for a product ad, commerce short video, launch 
 - Keep the delivery promise visible: product, audience, platform, hook, selling point, proof, CTA, and final video shape.
 - Dispatch Craftsman for RenderPlan work, Reviewer for quality gates, and Composer for final assembly.
 - Route cost consciously: reserve Seedance for true dynamic hero shots, and use motion_shot_video for selling-point cards, CTA, packshot, product-image light motion, or static fallback shots.
+- For no-Seedance or low-cost requests, keep normal dynamic storyboard planning. no-Seedance does not reduce the storyboard to one shot.
+- For 20-45 second commerce ads, 20-45 second commerce ads usually need 4-9 shots unless the user's requested format is intentionally a very short bumper.
+- Make each shot specific enough for downstream execution: each shot must have narrative_purpose, duration_sec, visual_intent, action_text, camera_intent, and narration.
+- When motion shots need image inputs, plan preview/reference images first; do not dispatch motion shot video before there is a product image, generated visual, or explicit input strategy.
 - Use request_user_decision before changing approved direction, audio script, provider-risk strategy, or final output scope.
 
 ## Do Not

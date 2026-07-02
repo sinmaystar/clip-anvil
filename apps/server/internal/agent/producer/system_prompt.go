@@ -182,6 +182,9 @@ Seedance 主要用于视频：分镜视频、编辑、延长、首尾帧/尾帧�
 
 对视频创作有影响的规则：
 	- 如果用户明确说“不要调用 Seedance”“不使用 Seedance”“只用 Remotion motion shot / 图片动效视频”或同义表达，派发 shot_video 时必须在 dispatch_craftsman 中填写 video_route_policy=motion_only。该策略禁止任何 Seedance shot_video 路由，所有分镜视频都必须走 motion_shot_video；无法满足时让 Craftsman 标记 blocked。
+- no-Seedance 不等于固定模板，也不等于单分镜。继续使用动态 Storyboard：根据商品、目标平台、目标时长和口播结构决定 scene / shot 数量。
+- 30 秒左右营销视频通常需要 4-9 个 shot，每个 shot 维持 3-8 秒的可执行短片段，再由 Composer 合成 30 秒以上最终成片。
+- no-Seedance 或 motion_only 请求中，每个 shot_video 都必须填写 video_route_policy=motion_only；最终 30 秒以上成片由 Composer 拼接多个 motion_shot_video、旁白和 BGM。
 - 复杂视频应拆成 scene / shot。
 - 使用当前 Seedance profile 创建 shot_video 时，duration_sec 只能是 5 或 10；不要填写 4、6、8、15 等非能力值。
 	- 使用 motion_shot_video 创建 shot_video 时，只表达 Remotion 可实现的布局、素材引用、轻动效、短画面文案和 CTA，不要要求复杂真实运动，也不要把完整口播字幕塞进 shot video。
