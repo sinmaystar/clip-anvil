@@ -229,15 +229,18 @@ func e2eTimelinePlan(context agentcomposer.Context) (map[string]any, error) {
 		roleByAsset[strings.TrimSpace(asset.AssetID)] = strings.TrimSpace(asset.Role)
 	}
 	pathByRole := map[string]e2eStageMediaFile{}
+	clipByShot := map[string]e2eStageMediaFile{}
 	for _, file := range stage.Files {
 		role := roleByAsset[strings.TrimSpace(file.AssetID)]
+		if role == "clip" {
+			if shotKey := e2eShotKeyForStageFile(file); shotKey != "" {
+				clipByShot[shotKey] = file
+			}
+			continue
+		}
 		if role != "" {
 			pathByRole[role] = file
 		}
-	}
-	clip, ok := pathByRole["clip"]
-	if !ok {
-		return nil, fmt.Errorf("staged clip asset missing")
 	}
 	voiceover, ok := pathByRole["voiceover"]
 	if !ok {
@@ -247,14 +250,12 @@ func e2eTimelinePlan(context agentcomposer.Context) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("staged bgm asset missing")
 	}
+	segments, totalDuration, err := e2eMotionSegments(clipByShot)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
-		"segments": []map[string]any{{
-			"id":             "shot_01_motion_ad",
-			"asset_id":       clip.AssetID,
-			"workspace_path": clip.WorkspacePath,
-			"start_sec":      0,
-			"duration_sec":   8,
-		}},
+		"segments": segments,
 		"audio_tracks": []map[string]any{
 			{
 				"id":             "voiceover",
@@ -262,7 +263,7 @@ func e2eTimelinePlan(context agentcomposer.Context) (map[string]any, error) {
 				"asset_id":       voiceover.AssetID,
 				"workspace_path": voiceover.WorkspacePath,
 				"start_sec":      0,
-				"duration_sec":   8,
+				"duration_sec":   totalDuration,
 				"volume":         1,
 				"fade_in_sec":    0.05,
 				"fade_out_sec":   0.1,
@@ -273,7 +274,7 @@ func e2eTimelinePlan(context agentcomposer.Context) (map[string]any, error) {
 				"asset_id":       bgm.AssetID,
 				"workspace_path": bgm.WorkspacePath,
 				"start_sec":      0,
-				"duration_sec":   8,
+				"duration_sec":   totalDuration,
 				"volume":         0.28,
 				"fade_in_sec":    0.3,
 				"fade_out_sec":   0.8,
@@ -287,7 +288,7 @@ func e2eTimelinePlan(context agentcomposer.Context) (map[string]any, error) {
 			},
 		},
 		"output": map[string]any{
-			"workspace_path": "/workspace/output/yuexing-template-final.mp4",
+			"workspace_path": "/workspace/output/yuexing-dynamic-remotion-final.mp4",
 			"width":          1080,
 			"height":         1920,
 			"fps":            24,
@@ -295,6 +296,45 @@ func e2eTimelinePlan(context agentcomposer.Context) (map[string]any, error) {
 			"audio_codec":    "aac",
 		},
 	}, nil
+}
+
+func e2eMotionSegments(clipByShot map[string]e2eStageMediaFile) ([]map[string]any, int, error) {
+	shotOrder := []string{"shot_01_hook", "shot_02_product", "shot_03_wheels", "shot_04_travel", "shot_05_cta"}
+	shotDurations := map[string]int{
+		"shot_01_hook":    6,
+		"shot_02_product": 8,
+		"shot_03_wheels":  8,
+		"shot_04_travel":  6,
+		"shot_05_cta":     6,
+	}
+	segments := make([]map[string]any, 0, len(shotOrder))
+	startSec := 0
+	for _, shotKey := range shotOrder {
+		clip, ok := clipByShot[shotKey]
+		if !ok {
+			return nil, 0, fmt.Errorf("staged clip for %s missing", shotKey)
+		}
+		duration := shotDurations[shotKey]
+		segments = append(segments, map[string]any{
+			"id":             shotKey,
+			"asset_id":       clip.AssetID,
+			"workspace_path": clip.WorkspacePath,
+			"start_sec":      startSec,
+			"duration_sec":   duration,
+		})
+		startSec += duration
+	}
+	return segments, startSec, nil
+}
+
+func e2eShotKeyForStageFile(file e2eStageMediaFile) string {
+	text := strings.Join([]string{file.AssetID, file.WorkspacePath, file.FileName}, " ")
+	for _, shotKey := range []string{"shot_01_hook", "shot_02_product", "shot_03_wheels", "shot_04_travel", "shot_05_cta"} {
+		if strings.Contains(text, shotKey) {
+			return shotKey
+		}
+	}
+	return ""
 }
 
 func e2eCompositionContext(context agentcomposer.Context) (e2eCompositionContextResult, error) {

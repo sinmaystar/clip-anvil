@@ -45,8 +45,8 @@ func (e2eMotionShotVideoProducerResponder) Respond(_ context.Context, producerCo
 	}
 	if toolResultCount == 0 && e2eProducerContextWantsFinalComposition(producerContext) {
 		return e2eToolCallOutput("e2e-motion-dispatch-composer", "dispatch_composer", `{
-			"source_storyboard_ref":{"type":"media_node","key":"shot_01_motion_ad.shot_video.r1.node"},
-			"instructions":"把已成功的 Remotion motion shot 悦行行李箱 shot_video 与 AudioPlan 中已成功的 voiceover_audio、bgm_audio 合成为 8 秒 9:16 最终 MP4；保留产品图、文字节奏和 CTA，混入旁白和 BGM，禁止调用 Seedance。",
+			"source_storyboard_ref":{"type":"media_node","key":"shot_01_hook.shot_video.r1.node"},
+			"instructions":"把已成功的 5 段 Remotion motion shot 悦行行李箱 shot_video 与 AudioPlan 中已成功的 voiceover_audio、bgm_audio 合成为 34 秒 9:16 最终 MP4；保留多分镜节奏、转场、字幕安全区和 CTA，混入旁白和 BGM，禁止调用 Seedance。",
 			"template_key":"simple_concat"
 		}`), nil
 	}
@@ -63,8 +63,8 @@ func (e2eMotionShotVideoProducerResponder) Respond(_ context.Context, producerCo
 			"target_phase":"shot_video",
 			"execution_policy":"execute_immediately",
 			"video_route_policy":"motion_only",
-			"shot_refs":["shot_01_motion_ad"],
-			"input_node_refs":["shot_01_motion_ad preview image"],
+			"shot_refs":["shot_01_hook","shot_02_product","shot_03_wheels","shot_04_travel","shot_05_cta"],
+			"input_node_refs":["shot_01_hook preview image","shot_02_product preview image","shot_03_wheels preview image","shot_04_travel preview image","shot_05_cta preview image"],
 			"force":true,
 			"max_attempts":1
 		}`), nil
@@ -72,14 +72,14 @@ func (e2eMotionShotVideoProducerResponder) Respond(_ context.Context, producerCo
 	switch toolResultCount {
 	case 0:
 		return e2eToolCallOutput("e2e-motion-upsert-brief", "upsert_project_brief", `{
-			"brief":"基于用户上传的 box.png，为悦行行李箱创建 8 秒 9:16 口播广告，硬性要求不调用 Seedance 视频；图片可以使用 Seedream，音频使用火山 TTS/BGM，视频只使用 Remotion motion shot。",
+			"brief":"基于用户上传的 box.png，为悦行行李箱创建 34 秒 9:16 口播广告，硬性要求不调用 Seedance 视频；图片可以使用 Seedream，音频使用火山 TTS/BGM，视频只使用 Remotion motion shot。",
 			"mode":"create",
 			"title":"悦行行李箱 Remotion Motion Shot 口播广告",
 			"video_type":"marketing_ad",
 			"target_audience":"短途出行和商务通勤用户",
 			"tone":"轻快、可信、现代",
-			"visual_style":"Seedream 先生成商业广告主视觉/背景图，Remotion 再做 4 段 motion shot：开场痛点、产品展示、卖点卡、CTA；产品图轻微推进，文字分段入场，明确口播节奏",
-			"duration_sec":8,
+			"visual_style":"Seedream 先为每个分镜生成商业广告主视觉/背景图，Remotion 再做 5 个动态 motion shot：痛点钩子、产品展示、万向轮卖点、短途出行情境、CTA；每段都有不同布局、转场和文字安全区。",
+			"duration_sec":34,
 			"aspect_ratio":"9:16",
 			"language":"zh-CN",
 			"objective":"用低成本 motion shot 突出悦行行李箱轻便、顺滑万向轮、短途出行和安心托运，并合成旁白音频。",
@@ -136,52 +136,125 @@ func (e2eMotionShotVideoProducerResponder) Respond(_ context.Context, producerCo
 		}`), nil
 	case 2:
 		return e2eToolCallOutput("e2e-motion-storyboard", "upsert_storyboard", `{
-			"brief":"创建单分镜悦行行李箱 Remotion motion shot 口播广告 storyboard。",
+			"brief":"创建 34 秒悦行行李箱 Remotion motion shot 动态多分镜 storyboard。",
 			"mode":"create",
 			"scope":{"type":"workspace"},
 			"scenes":[
 				{
-					"client_key":"scene_motion_ad",
+					"client_key":"scene_motion_ad_intro",
 					"sort_order":1,
-					"title":"悦行行李箱 Motion Shot 广告",
-					"description":"以用户上传产品图为主视觉的 8 秒竖版 motion shot，内部包含开场痛点、产品展示、卖点卡、CTA 四段。",
+					"title":"痛点与产品建立",
+					"description":"以短途出行痛点开场，再建立悦行行李箱商品主体。",
 					"location":"Remotion 图文动效画面",
 					"mood":"清爽、轻快、可信"
+				},
+				{
+					"client_key":"scene_motion_ad_benefit",
+					"sort_order":2,
+					"title":"卖点与出行情境",
+					"description":"解释万向轮、轻便、省力和短途出行收益。",
+					"location":"Remotion 图文动效画面",
+					"mood":"明快、可信、行动感"
+				},
+				{
+					"client_key":"scene_motion_ad_outro",
+					"sort_order":3,
+					"title":"CTA 收束",
+					"description":"品牌口号和行动按钮收束。",
+					"location":"Remotion 图文动效画面",
+					"mood":"明亮、明确、利落"
 				}
 			],
 			"shots":[
 				{
-					"client_key":"shot_01_motion_ad",
-					"scene_client_key":"scene_motion_ad",
+					"client_key":"shot_01_hook",
+					"scene_client_key":"scene_motion_ad_intro",
 					"sort_order":1,
-					"title":"悦行行李箱 4 段口播 Motion Shot",
-					"shot_kind":"product_card",
-					"creative_text":"4 段 motion shot：开场痛点讲短途拖箱费力；产品展示突出 box.png 行李箱；卖点卡依次呈现轻便好推、顺滑万向轮、安心托运；结尾 CTA 现在出发。",
-					"narrative_purpose":"用低成本 Remotion motion shot 完成产品口播广告。",
+					"title":"短途出行痛点钩子",
+					"shot_kind":"hook_card",
+					"creative_text":"用短途出行拖箱费力的痛点开场，商品图轻推近。",
+					"narrative_purpose":"前三秒抓住短途出行用户注意。",
+					"duration_sec":6,
+					"visual_intent":"深色干净背景，行李箱位于中上，顶部短 hook。",
+					"action_text":"产品图慢推近，痛点文字弹出。",
+					"camera_intent":"Remotion slow push in，无真实复杂运动。",
+					"narration":"短途出行，别让行李箱拖后腿。"
+				},
+				{
+					"client_key":"shot_02_product",
+					"scene_client_key":"scene_motion_ad_intro",
+					"sort_order":2,
+					"title":"悦行行李箱产品展示",
+					"shot_kind":"product_hero",
+					"creative_text":"建立悦行行李箱主体，突出银灰硬壳、竖向纹理和轻便外观。",
+					"narrative_purpose":"让用户记住商品主体和品牌名。",
 					"duration_sec":8,
-					"visual_intent":"突出行李箱产品图、轻便、顺滑万向轮、短途出行、安心托运。",
-					"action_text":"产品图轻微推进，文字层按开场痛点、产品展示、卖点卡、CTA 四段切换。",
-					"camera_intent":"Remotion Ken Burns 轻推近、文字分段入场，无真实复杂运动。",
-					"narration":"悦行行李箱，轻便好推，短途出行更省心。顺滑万向轮，安心托运，马上出发。"
+					"visual_intent":"商品大图居中，品牌标题和轻便卖点分层。",
+					"action_text":"商品轻微浮起，品牌名淡入。",
+					"camera_intent":"轻微视差和中心聚焦。",
+					"narration":"悦行行李箱，轻便好推，通勤和短途都省心。"
+				},
+				{
+					"client_key":"shot_03_wheels",
+					"scene_client_key":"scene_motion_ad_benefit",
+					"sort_order":3,
+					"title":"顺滑万向轮卖点",
+					"shot_kind":"benefit_card",
+					"creative_text":"用信息卡解释顺滑万向轮、转向稳定、推行省力。",
+					"narrative_purpose":"证明核心功能卖点。",
+					"duration_sec":8,
+					"visual_intent":"底部轮子细节和三点卖点文字清晰分组。",
+					"action_text":"三条卖点逐条入场。",
+					"camera_intent":"稳定信息卡，轻微横向漂移。",
+					"narration":"顺滑万向轮，转向更稳，推行更省力。"
+				},
+				{
+					"client_key":"shot_04_travel",
+					"scene_client_key":"scene_motion_ad_benefit",
+					"sort_order":4,
+					"title":"短途旅行场景",
+					"shot_kind":"scenario_card",
+					"creative_text":"把商品放进短途出行语境，强调安心托运和周末出发。",
+					"narrative_purpose":"把功能转成用户生活收益。",
+					"duration_sec":6,
+					"visual_intent":"旅行氛围背景，商品和目的地标签形成层次。",
+					"action_text":"背景慢移，目的地标签滑入。",
+					"camera_intent":"柔和拉远，保留字幕安全区。",
+					"narration":"短途旅行、商务通勤，轻装出发更从容。"
+				},
+				{
+					"client_key":"shot_05_cta",
+					"scene_client_key":"scene_motion_ad_outro",
+					"sort_order":5,
+					"title":"CTA 现在出发",
+					"shot_kind":"cta_card",
+					"creative_text":"品牌口号和 CTA 收束，强调现在出发。",
+					"narrative_purpose":"促进行动。",
+					"duration_sec":6,
+					"visual_intent":"商品居中，按钮式 CTA 位于下方安全区。",
+					"action_text":"CTA 按钮弹出，背景渐亮。",
+					"camera_intent":"轻微拉远后定格。",
+					"narration":"悦行行李箱，现在出发。"
 				}
 			],
-			"reason":"E2E fixture 创建可派发 shot_video 的 4 段 motion shot 分镜。"
+			"reason":"E2E fixture 创建可派发 shot_video 的 5 个动态 motion shot 分镜。"
 		}`), nil
 	case 3:
 		return e2eToolCallOutput("e2e-motion-audio-plan", "upsert_audio_plan", `{
 			"brief":"创建悦行行李箱 motion shot 广告的旁白和 BGM AudioPlan。",
 			"mode":"replace_draft",
-			"title":"悦行行李箱 8 秒口播音频",
+			"title":"悦行行李箱 34 秒口播音频",
 			"language":"zh-CN",
-			"target_duration_sec":8,
-			"voiceover_script":"短途出行，行李箱别再拖后腿。悦行行李箱，轻便好推，顺滑万向轮转向更稳。安心托运，现在出发。",
+			"target_duration_sec":34,
+			"voiceover_script":"短途出行，别让行李箱拖后腿。悦行行李箱，轻便好推，通勤和短途都省心。顺滑万向轮，转向更稳，推行更省力。短途旅行、商务通勤，轻装出发更从容。悦行行李箱，现在出发。",
 			"voice_profile":{"source":"generated","speaker":"warm_female","style":"清爽、可信、轻快"},
 			"bgm_plan":{"source":"generated","provider":"volcengine","model":"seed-audio-1.0","style":"轻快电子流行，无人声，弱鼓点，适合旅行广告"},
 			"cue_plan":[
-				{"shot_ref":"shot_01_motion_ad","start_sec":0,"end_sec":2,"text":"短途出行，行李箱别再拖后腿。"},
-				{"shot_ref":"shot_01_motion_ad","start_sec":2,"end_sec":4,"text":"悦行行李箱，轻便好推。"},
-				{"shot_ref":"shot_01_motion_ad","start_sec":4,"end_sec":6,"text":"顺滑万向轮，转向更稳。"},
-				{"shot_ref":"shot_01_motion_ad","start_sec":6,"end_sec":8,"text":"安心托运，现在出发。"}
+				{"shot_ref":"shot_01_hook","start_sec":0,"end_sec":6,"text":"短途出行，别让行李箱拖后腿。"},
+				{"shot_ref":"shot_02_product","start_sec":6,"end_sec":14,"text":"悦行行李箱，轻便好推，通勤和短途都省心。"},
+				{"shot_ref":"shot_03_wheels","start_sec":14,"end_sec":22,"text":"顺滑万向轮，转向更稳，推行更省力。"},
+				{"shot_ref":"shot_04_travel","start_sec":22,"end_sec":28,"text":"短途旅行、商务通勤，轻装出发更从容。"},
+				{"shot_ref":"shot_05_cta","start_sec":28,"end_sec":34,"text":"悦行行李箱，现在出发。"}
 			],
 			"generation_params":{"format":"mp3","sample_rate":48000,"speech_rate":1.04}
 		}`), nil
@@ -196,7 +269,7 @@ func (e2eMotionShotVideoProducerResponder) Respond(_ context.Context, producerCo
 			"scope":{"type":"shot"},
 			"target_phase":"preview_image",
 			"execution_policy":"execute_immediately",
-			"shot_refs":["shot_01_motion_ad"],
+			"shot_refs":["shot_01_hook","shot_02_product","shot_03_wheels","shot_04_travel","shot_05_cta"],
 			"input_node_refs":["box.png"],
 			"force":true,
 			"max_attempts":1
@@ -208,14 +281,14 @@ func (e2eMotionShotVideoProducerResponder) Respond(_ context.Context, producerCo
 			"target_phase":"shot_video",
 			"execution_policy":"execute_immediately",
 			"video_route_policy":"motion_only",
-			"shot_refs":["shot_01_motion_ad"],
-			"input_node_refs":["shot_01_motion_ad preview image"],
+			"shot_refs":["shot_01_hook","shot_02_product","shot_03_wheels","shot_04_travel","shot_05_cta"],
+			"input_node_refs":["shot_01_hook preview image","shot_02_product preview image","shot_03_wheels preview image","shot_04_travel preview image","shot_05_cta preview image"],
 			"force":true,
 			"max_attempts":1
 		}`), nil
 	case 7:
 		return agentproducer.ProducerTurnOutput{
-			AssistantText: "已按 motion_only/no-Seedance 策略派发悦行行李箱 4 段 motion shot。由于异步派发会结束当前 Producer turn，请后续发送“继续生成旁白音频”和“继续生成 BGM 音频”来派发音频素材。",
+			AssistantText: "已按 motion_only/no-Seedance 策略派发悦行行李箱 5 个动态 motion shot。由于异步派发会结束当前 Producer turn，请后续发送“继续生成旁白音频”和“继续生成 BGM 音频”来派发音频素材。",
 			Metadata:      map[string]any{"e2e_fixture": "motion_shot_video"},
 		}, nil
 	default:
