@@ -90,17 +90,10 @@ func Normalize(input RenderInput) (Plan, error) {
 		DurationFrames: duration * fps,
 		MotionStyle:    motionStyle,
 		SafeArea:       safeArea,
-		VisualLayers: []VisualLayer{{
-			Role:     "product",
-			InputRef: strings.TrimSpace(input.Assets[0].WorkspacePath),
-			Fit:      "contain",
-			Motion:   "slow_push_in",
-			StartSec: 0,
-			EndSec:   float64(duration),
-		}},
-		TextLayers:  textLayers(input.Params, duration),
-		Transitions: mapParam(input.Params, "transitions"),
-		BrandColors: stringSliceParam(input.Params, "brand_colors"),
+		VisualLayers:   visualLayers(input.Params, input.Assets, duration),
+		TextLayers:     textLayers(input.Params, duration),
+		Transitions:    mapParam(input.Params, "transitions"),
+		BrandColors:    stringSliceParam(input.Params, "brand_colors"),
 	}, nil
 }
 
@@ -155,8 +148,8 @@ func textLayers(params map[string]any, duration int) []TextLayer {
 			out = append(out, TextLayer{
 				Role:      stringParam(values, "role", "copy"),
 				Text:      text,
-				StartSec:  floatParam(values, "start_sec", 0),
-				EndSec:    floatParam(values, "end_sec", float64(duration)),
+				StartSec:  clampFloat(floatParam(values, "start_sec", 0), 0, float64(duration)),
+				EndSec:    clampFloat(floatParam(values, "end_sec", float64(duration)), 0, float64(duration)),
 				Animation: stringParam(values, "animation", "fade_rise"),
 				Position:  stringParam(values, "position", "middle_safe"),
 			})
@@ -166,6 +159,41 @@ func textLayers(params map[string]any, duration int) []TextLayer {
 		}
 	}
 	return layers
+}
+
+func visualLayers(params map[string]any, assets []Asset, duration int) []VisualLayer {
+	if raw, ok := params["visual_layers"].([]any); ok && len(raw) > 0 {
+		out := make([]VisualLayer, 0, len(raw))
+		for _, item := range raw {
+			values, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			inputRef := stringParam(values, "input_ref", "")
+			if inputRef == "" || inputRef == "primary_image" {
+				inputRef = strings.TrimSpace(assets[0].WorkspacePath)
+			}
+			out = append(out, VisualLayer{
+				Role:     stringParam(values, "role", "product"),
+				InputRef: inputRef,
+				Fit:      stringParam(values, "fit", "contain"),
+				Motion:   stringParam(values, "motion", "slow_push_in"),
+				StartSec: clampFloat(floatParam(values, "start_sec", 0), 0, float64(duration)),
+				EndSec:   clampFloat(floatParam(values, "end_sec", float64(duration)), 0, float64(duration)),
+			})
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return []VisualLayer{{
+		Role:     "product",
+		InputRef: strings.TrimSpace(assets[0].WorkspacePath),
+		Fit:      "contain",
+		Motion:   "slow_push_in",
+		StartSec: 0,
+		EndSec:   float64(duration),
+	}}
 }
 
 func mapParam(params map[string]any, key string) map[string]any {
@@ -238,4 +266,14 @@ func minFloat(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func clampFloat(value float64, min float64, max float64) float64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
