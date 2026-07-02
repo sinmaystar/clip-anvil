@@ -121,6 +121,13 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		ParentToolCallID: taskInput.ParentToolCallID,
 		MaxAttempts:      taskInput.MaxAttempts,
 		WorkerParams:     taskInput.WorkerParams,
+		InputNodeRefs:    taskInput.InputNodeRefs,
+		VideoRoutePolicy: taskInput.VideoRoutePolicy,
+
+		RecommendedModelPromptProfile: taskInput.RecommendedModelPromptProfile,
+		RecommendedOperation:          taskInput.RecommendedOperation,
+		RecommendedParams:             taskInput.RecommendedParams,
+		RecommendedRouteReason:        taskInput.RecommendedRouteReason,
 	}
 	checkpointKey := agenteino.CheckpointKey("craftsman_generation", input.WorkspaceID, input.ThreadID, input.TaskID)
 	ctx = cozelooptrace.ContextWithAttributes(ctx,
@@ -290,14 +297,20 @@ func (t *craftsmanLiveToolTrace) NativeToolCallCompleted(ctx context.Context, ru
 }
 
 type parsedTaskInput struct {
-	Mode             string
-	ExecutionPolicy  string
-	ScopeKey         string
-	ParentToolCallID string
-	ProducerThreadID pgtype.UUID
-	ProducerTaskID   pgtype.UUID
-	MaxAttempts      int
-	WorkerParams     map[string]any
+	Mode                          string
+	ExecutionPolicy               string
+	ScopeKey                      string
+	ParentToolCallID              string
+	ProducerThreadID              pgtype.UUID
+	ProducerTaskID                pgtype.UUID
+	MaxAttempts                   int
+	WorkerParams                  map[string]any
+	InputNodeRefs                 []string
+	VideoRoutePolicy              string
+	RecommendedModelPromptProfile string
+	RecommendedOperation          string
+	RecommendedParams             map[string]any
+	RecommendedRouteReason        string
 }
 
 func parseTaskInput(raw []byte) (parsedTaskInput, error) {
@@ -339,6 +352,22 @@ func parseTaskInput(raw []byte) (parsedTaskInput, error) {
 	}
 	if refs := taskInputStringSlice(out.WorkerParams["input_node_refs"]); len(refs) > 0 {
 		out.WorkerParams["input_node_refs"] = refs
+		out.InputNodeRefs = refs
+	}
+	if value, ok := out.WorkerParams["video_route_policy"].(string); ok {
+		out.VideoRoutePolicy = strings.TrimSpace(value)
+	}
+	if value, ok := out.WorkerParams["recommended_model_prompt_profile"].(string); ok {
+		out.RecommendedModelPromptProfile = strings.TrimSpace(value)
+	}
+	if value, ok := out.WorkerParams["recommended_operation"].(string); ok {
+		out.RecommendedOperation = strings.TrimSpace(value)
+	}
+	if value, ok := out.WorkerParams["recommended_params"].(map[string]any); ok {
+		out.RecommendedParams = value
+	}
+	if value, ok := out.WorkerParams["recommended_route_reason"].(string); ok {
+		out.RecommendedRouteReason = strings.TrimSpace(value)
 	}
 	if maxAttempts := taskInputInt(out.WorkerParams["requested_max_attempts"]); maxAttempts > 0 {
 		out.MaxAttempts = maxAttempts

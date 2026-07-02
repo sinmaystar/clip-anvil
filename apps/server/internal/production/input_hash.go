@@ -24,6 +24,7 @@ type InputHashFacts struct {
 	Params          map[string]any           `json:"params"`
 	Dependencies    []InputHashDependency    `json:"dependencies"`
 	ReferencePacks  []InputHashReferencePack `json:"reference_packs"`
+	InputRefs       []InputHashInputRef      `json:"input_refs,omitempty"`
 }
 
 type InputHashDependency struct {
@@ -41,6 +42,21 @@ type InputHashReferencePackMember struct {
 	NodeID           string `json:"node_id"`
 	CurrentVersionID string `json:"current_version_id"`
 	InputHash        string `json:"input_hash"`
+}
+
+type InputHashInputRef struct {
+	OrderIndex       int    `json:"order_index"`
+	NodeID           string `json:"node_id"`
+	Kind             string `json:"kind"`
+	Required         bool   `json:"required"`
+	NodeType         string `json:"node_type,omitempty"`
+	CurrentVersionID string `json:"current_version_id,omitempty"`
+	AssetID          string `json:"asset_id,omitempty"`
+	AssetType        string `json:"asset_type,omitempty"`
+	Mime             string `json:"mime,omitempty"`
+	ContentType      string `json:"content_type,omitempty"`
+	ModelRole        string `json:"model_role,omitempty"`
+	InputHash        string `json:"input_hash,omitempty"`
 }
 
 func ComputeInputHash(facts InputHashFacts) (string, error) {
@@ -85,6 +101,31 @@ func InputHashFactsForNode(
 		Params:          intent.Params,
 		Dependencies:    dependencies,
 		ReferencePacks:  referencePacks,
+		InputRefs:       inputRefHashFacts(intent.InputRefs),
 		ProviderVersion: ProviderBridgeVersion,
 	}
+}
+
+func inputRefHashFacts(refs []InputRef) []InputHashInputRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]InputHashInputRef, 0, len(refs))
+	for i, ref := range refs {
+		out = append(out, InputHashInputRef{
+			OrderIndex:       i,
+			NodeID:           uuidToString(ref.NodeID),
+			Kind:             ref.Kind,
+			Required:         ref.Required,
+			NodeType:         ref.NodeType,
+			CurrentVersionID: ref.CurrentVersionID,
+			AssetID:          ref.AssetID,
+			AssetType:        ref.AssetType,
+			Mime:             ref.Mime,
+			ContentType:      ref.ContentType,
+			ModelRole:        ref.ModelRole,
+			InputHash:        ref.InputHash,
+		})
+	}
+	return out
 }

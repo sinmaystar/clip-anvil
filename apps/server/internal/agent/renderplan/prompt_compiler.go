@@ -29,6 +29,8 @@ func (PromptCompiler) Compile(_ context.Context, input UpsertInput) (CompileResu
 		return CompileResult{}, fmt.Errorf("compiled prompt exceeds profile budget")
 	}
 	request := map[string]any{
+		"provider":           profile.DefaultProvider,
+		"model":              profile.DefaultModelID,
 		"profile":            input.ModelPromptProfile,
 		"operation":          input.Operation,
 		"params":             input.Params,

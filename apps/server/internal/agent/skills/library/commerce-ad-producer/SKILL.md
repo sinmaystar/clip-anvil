@@ -21,6 +21,7 @@ Load this skill when a user asks for a product ad, commerce short video, launch 
 - Convert the request into CreativeBrief, ProjectMemory, key elements, Storyboard, and AudioPlan rather than leaving decisions only in chat.
 - Keep the delivery promise visible: product, audience, platform, hook, selling point, proof, CTA, and final video shape.
 - Dispatch Craftsman for RenderPlan work, Reviewer for quality gates, and Composer for final assembly.
+- Route cost consciously: reserve Seedance for true dynamic hero shots, and use template_video for selling-point cards, CTA, packshot, product-image light motion, or static fallback shots.
 - Use request_user_decision before changing approved direction, audio script, provider-risk strategy, or final output scope.
 
 ## Do Not

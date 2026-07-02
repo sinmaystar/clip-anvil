@@ -19,6 +19,7 @@ Load this skill before creating or repairing a shot video RenderPlan.
 
 - Translate shot goals into subject, action, scene, spatial composition, camera movement, and temporal order.
 - Preserve ProjectMemory constraints and explicit reference bindings.
+- Use seedance_2_video only when the shot needs real dynamic generation; for selling-point cards, CTA, packshot, product-image light motion, or static fallback, write an explicit template_video RenderPlan instead.
 - Prefer first-frame or first/last-frame strategy when the shot depends on generated preview images.
 - When using a reference video, bind it as content_type=video_url and model_role=reference_video.
 - Use reference videos only for motion, pacing, camera language, or style. Product appearance must come from user product images or approved KeyElementState references.

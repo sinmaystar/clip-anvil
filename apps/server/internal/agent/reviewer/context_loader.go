@@ -23,7 +23,9 @@ type ContextStore interface {
 	GetArtifactVersionByID(ctx context.Context, id pgtype.UUID) (db.ArtifactVersion, error)
 	GetGenerationJobByID(ctx context.Context, id pgtype.UUID) (db.GenerationJob, error)
 	GetMediaAssetByID(ctx context.Context, id pgtype.UUID) (db.MediaAsset, error)
+	GetRenderPlanByID(ctx context.Context, params db.GetRenderPlanByIDParams) (db.RenderPlan, error)
 	ListReviewRecordsByShotPhase(ctx context.Context, params db.ListReviewRecordsByShotPhaseParams) ([]db.ReviewRecord, error)
+	ListReviewRecordsByRenderPlan(ctx context.Context, renderPlanID pgtype.UUID) ([]db.ReviewRecord, error)
 }
 
 type ImageObjectReader interface {
@@ -51,8 +53,12 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 	}
 	if input.Task.TargetPhase != TargetPhasePreviewImage &&
 		input.Task.TargetPhase != TargetPhaseShotVideo &&
-		input.Task.TargetPhase != TargetPhaseFinalVideo {
+		input.Task.TargetPhase != TargetPhaseFinalVideo &&
+		input.Task.TargetPhase != TargetPhasePreRenderPlan {
 		return Context{}, fmt.Errorf("%w: unsupported review phase %q", ErrInvalidInput, input.Task.TargetPhase)
+	}
+	if input.Task.TargetPhase == TargetPhasePreRenderPlan {
+		return l.loadPreRenderPlanContext(ctx, input)
 	}
 	requiresShot := input.Task.TargetPhase != TargetPhaseFinalVideo
 	shotID, hasShotID := pgUUIDFromString(input.Task.ShotID)
@@ -152,6 +158,50 @@ func (l ContextLoader) Load(ctx context.Context, input GraphInput) (Context, err
 	return out, nil
 }
 
+func (l ContextLoader) loadPreRenderPlanContext(ctx context.Context, input GraphInput) (Context, error) {
+	renderPlanID, ok := pgUUIDFromString(input.Task.Target.RenderPlanID)
+	if !ok {
+		return Context{}, fmt.Errorf("%w: render_plan_id is required", ErrInvalidInput)
+	}
+	plan, err := l.Store.GetRenderPlanByID(ctx, db.GetRenderPlanByIDParams{
+		WorkspaceID: input.WorkspaceID,
+		ID:          renderPlanID,
+	})
+	if err != nil {
+		return Context{}, err
+	}
+	if plan.WorkspaceID != input.WorkspaceID {
+		return Context{}, ErrInvalidInput
+	}
+	shot := db.Shot{}
+	if plan.ScopeType == "shot" && plan.ScopeID.Valid {
+		if loadedShot, err := l.Store.GetShotByID(ctx, plan.ScopeID); err == nil && loadedShot.WorkspaceID == input.WorkspaceID {
+			shot = loadedShot
+		}
+	}
+	priorReviews, err := l.Store.ListReviewRecordsByRenderPlan(ctx, plan.ID)
+	if err != nil {
+		return Context{}, err
+	}
+	productionText := ""
+	if l.PSSBuilder != nil {
+		pss, err := l.PSSBuilder.BuildProducerPSS(ctx, input.WorkspaceID)
+		if err != nil {
+			return Context{}, err
+		}
+		productionText = pss.Text
+	}
+	out := Context{
+		Input:          input,
+		Shot:           shot,
+		RenderPlan:     plan,
+		PriorReviews:   priorReviews,
+		ProductionText: productionText,
+	}
+	out.Text = buildReviewContextText(out)
+	return out, nil
+}
+
 func (l ContextLoader) modelAssetReference(ctx context.Context, asset db.MediaAsset) (string, string) {
 	rawURL := strings.TrimSpace(asset.StorageUrl.String)
 	mime := strings.TrimSpace(asset.Mime)
@@ -188,13 +238,31 @@ func buildReviewContextText(reviewContext Context) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Review Target\n")
 	fmt.Fprintf(&b, "- phase: %s\n", reviewContext.Input.Task.TargetPhase)
+	if reviewContext.RenderPlan.ID.Valid {
+		fmt.Fprintf(&b, "- render_plan_ref: render_plan/%s target_phase=%s operation=%s profile=%s status=%s\n", semanticOrFallback(reviewContext.RenderPlan.SemanticKey, reviewContext.RenderPlan.RenderPlanKey), reviewContext.RenderPlan.TargetPhase, reviewContext.RenderPlan.Operation, reviewContext.RenderPlan.ModelPromptProfile, reviewContext.RenderPlan.Status)
+		fmt.Fprintf(&b, "- render_plan_scope: %s/%s revision=%d\n", reviewContext.RenderPlan.ScopeType, uuidString(reviewContext.RenderPlan.ScopeID), reviewContext.RenderPlan.Revision)
+		writeJSONSummary(&b, "params", reviewContext.RenderPlan.Params)
+		writeJSONSummary(&b, "audit_hints", reviewContext.RenderPlan.AuditHints)
+		writeJSONSummary(&b, "compiled_request", reviewContext.RenderPlan.CompiledRequest)
+		writeJSONSummary(&b, "cost_estimate", reviewContext.RenderPlan.CostEstimate)
+		if strings.TrimSpace(reviewContext.RenderPlan.Rationale) != "" {
+			fmt.Fprintf(&b, "- rationale: %s\n", strings.TrimSpace(reviewContext.RenderPlan.Rationale))
+		}
+	}
 	if reviewContext.Shot.ID.Valid {
 		fmt.Fprintf(&b, "- shot_ref: shot/%s %s status=%s\n", semanticOrFallback(reviewContext.Shot.SemanticKey, reviewContext.Shot.ClientKey), reviewContext.Shot.Title, reviewContext.Shot.Status)
 	}
-	fmt.Fprintf(&b, "- node_ref: media_node/%s type=%s status=%s\n", semanticOrFallback(reviewContext.Node.SemanticKey, reviewContext.Node.Title), reviewContext.Node.NodeType, reviewContext.Node.Status)
-	fmt.Fprintf(&b, "- artifact_version_ref: artifact_version/%s v%d status=%s\n", semanticOrFallback(reviewContext.Version.SemanticKey, reviewContext.Version.DisplayName), reviewContext.Version.VersionNo, reviewContext.Version.Status)
+	if reviewContext.Node.ID.Valid {
+		fmt.Fprintf(&b, "- node_ref: media_node/%s type=%s status=%s\n", semanticOrFallback(reviewContext.Node.SemanticKey, reviewContext.Node.Title), reviewContext.Node.NodeType, reviewContext.Node.Status)
+	}
+	if reviewContext.Version.ID.Valid {
+		fmt.Fprintf(&b, "- artifact_version_ref: artifact_version/%s v%d status=%s\n", semanticOrFallback(reviewContext.Version.SemanticKey, reviewContext.Version.DisplayName), reviewContext.Version.VersionNo, reviewContext.Version.Status)
+	}
 	if strings.TrimSpace(reviewContext.GenerationJob.RenderedPrompt) != "" {
 		fmt.Fprintf(&b, "- prompt: %s\n", strings.TrimSpace(reviewContext.GenerationJob.RenderedPrompt))
+	}
+	if routeFacts := routeFactsText(reviewContext); routeFacts != "" {
+		fmt.Fprintf(&b, "\nRoute Facts\n%s\n", routeFacts)
 	}
 	if reviewContext.Input.Task.TargetPhase == TargetPhaseFinalVideo {
 		fmt.Fprintf(&b, "\nFinal Audio Review Focus\n")
@@ -216,6 +284,108 @@ func buildReviewContextText(reviewContext Context) string {
 		fmt.Fprintf(&b, "\nProduction State\n%s\n", strings.TrimSpace(reviewContext.ProductionText))
 	}
 	return b.String()
+}
+
+func writeJSONSummary(b *strings.Builder, label string, raw []byte) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "{}" || trimmed == "[]" {
+		return
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err == nil {
+		if compact, err := json.Marshal(value); err == nil {
+			trimmed = string(compact)
+		}
+	}
+	if len(trimmed) > 1200 {
+		trimmed = trimmed[:1200] + "...(truncated)"
+	}
+	fmt.Fprintf(b, "- %s: %s\n", label, trimmed)
+}
+
+func routeFactsText(reviewContext Context) string {
+	facts := routeFacts{
+		Provider:      firstNonEmpty(reviewContext.GenerationJob.Provider, reviewContext.Node.ModelProvider.String),
+		ModelID:       firstNonEmpty(reviewContext.GenerationJob.ModelID, reviewContext.Node.ModelID.String),
+		OperationType: strings.TrimSpace(reviewContext.GenerationJob.OperationType),
+	}
+	for _, raw := range [][]byte{
+		reviewContext.Node.Metadata,
+		reviewContext.Version.Output,
+		reviewContext.Version.ProviderResponse,
+		reviewContext.GenerationJob.ProviderResponse,
+	} {
+		mergeRouteFacts(&facts, raw)
+	}
+	if facts.empty() {
+		return ""
+	}
+	lines := []string{}
+	if facts.Provider != "" || facts.ModelID != "" || facts.OperationType != "" {
+		lines = append(lines, fmt.Sprintf("- provider=%s model_id=%s operation_type=%s", facts.Provider, facts.ModelID, facts.OperationType))
+	}
+	if facts.RenderingFamily != "" || facts.TemplateEngine != "" || facts.TemplateKey != "" {
+		lines = append(lines, fmt.Sprintf("- rendering_family=%s template_engine=%s template_key=%s", facts.RenderingFamily, facts.TemplateEngine, facts.TemplateKey))
+	}
+	if facts.RenderingFamily == "template_video" || facts.TemplateEngine != "" || facts.TemplateKey != "" || facts.Provider == "internal_template_video" {
+		lines = append(lines, "- review_focus=readability, platform_selling_power, brand_consistency, motion_rhythm, audio_sync, truthfulness")
+	}
+	return strings.Join(lines, "\n")
+}
+
+type routeFacts struct {
+	Provider        string
+	ModelID         string
+	OperationType   string
+	RenderingFamily string
+	TemplateEngine  string
+	TemplateKey     string
+}
+
+func (f routeFacts) empty() bool {
+	return f.Provider == "" &&
+		f.ModelID == "" &&
+		f.OperationType == "" &&
+		f.RenderingFamily == "" &&
+		f.TemplateEngine == "" &&
+		f.TemplateKey == ""
+}
+
+func mergeRouteFacts(facts *routeFacts, raw []byte) {
+	if len(raw) == 0 {
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return
+	}
+	facts.Provider = firstNonEmpty(facts.Provider, jsonString(payload, "provider"))
+	facts.ModelID = firstNonEmpty(facts.ModelID, jsonString(payload, "model_id"))
+	facts.OperationType = firstNonEmpty(facts.OperationType, jsonString(payload, "operation_type"))
+	facts.RenderingFamily = firstNonEmpty(facts.RenderingFamily, jsonString(payload, "rendering_family"))
+	facts.TemplateEngine = firstNonEmpty(facts.TemplateEngine, jsonString(payload, "template_engine"))
+	facts.TemplateKey = firstNonEmpty(facts.TemplateKey, jsonString(payload, "template_key"))
+}
+
+func jsonString(payload map[string]any, key string) string {
+	value, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func audioJSONSummary(raw []byte) string {

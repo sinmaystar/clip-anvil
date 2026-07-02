@@ -22,11 +22,13 @@ type DispatchReviewerStore interface {
 	GetArtifactVersionByID(ctx context.Context, id pgtype.UUID) (db.ArtifactVersion, error)
 	GetRenderPlanByID(ctx context.Context, params db.GetRenderPlanByIDParams) (db.RenderPlan, error)
 	ListReviewRecordsByArtifactVersion(ctx context.Context, artifactVersionID pgtype.UUID) ([]db.ReviewRecord, error)
+	ListReviewRecordsByRenderPlan(ctx context.Context, renderPlanID pgtype.UUID) ([]db.ReviewRecord, error)
 	GetAgentObjectBySemanticKey(ctx context.Context, params db.GetAgentObjectBySemanticKeyParams) (db.AgentObjectIndex, error)
 }
 
 type DispatchReviewerRuntime interface {
 	GetOrCreateReviewerThreadForScope(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error)
+	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
 	CreateTask(ctx context.Context, params agentruntime.CreateTaskParams) (db.AgentTask, error)
 	CreateEvent(ctx context.Context, params agentruntime.CreateEventParams) (db.AgentEvent, error)
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
@@ -92,6 +94,9 @@ func (t *DispatchReviewerNativeTool) InvokableRun(ctx context.Context, arguments
 	scopeType, scopeID, err := dispatchReviewerScope(input)
 	if err != nil {
 		return NaturalToolError(toolDispatchReviewer, err.Error(), "请修正 target 后重试。"), nil
+	}
+	if err := t.ensureNoActiveReviewerTask(ctx, runtime.WorkspaceID, scopeType, scopeID); err != nil {
+		return NaturalToolError(toolDispatchReviewer, err.Error(), "请等待当前 Reviewer 完成后读取 review_record，再决定是否修复、接受或重新评审。"), nil
 	}
 	thread, err := t.runtime.GetOrCreateReviewerThreadForScope(ctx, runtime.WorkspaceID, scopeType, scopeID)
 	if err != nil {
@@ -282,6 +287,9 @@ func (t *DispatchReviewerNativeTool) validateTargetState(ctx context.Context, wo
 			summary.renderPlanKey = plan.SemanticKey
 			target.RenderPlanRef = ensureToolObjectRef(target.RenderPlanRef, agentidentity.ObjectRenderPlan, plan.SemanticKey)
 		}
+		if err := t.ensureNoCompletedPreRenderPlanReview(ctx, plan.ID); err != nil {
+			return ReviewTargetInput{}, reviewerTargetSummary{}, err
+		}
 		return target, summary, nil
 	}
 	nodeID, nodeKey, err := t.resolveReviewerObjectID(ctx, workspaceID, agentidentity.ObjectMediaNode, target.NodeRef, target.NodeID, "target.node_ref")
@@ -367,6 +375,48 @@ func (t *DispatchReviewerNativeTool) ensureNoCompletedFinalVideoReview(ctx conte
 			}
 			return fmt.Errorf("final_video artifact_version 已有终态评审 %s：review_record/%s；请读取项目上下文并处理该评审结果，不要重复派发 Reviewer", record.Status, recordRef)
 		}
+	}
+	return nil
+}
+
+func (t *DispatchReviewerNativeTool) ensureNoCompletedPreRenderPlanReview(ctx context.Context, renderPlanID pgtype.UUID) error {
+	records, err := t.store.ListReviewRecordsByRenderPlan(ctx, renderPlanID)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.ReviewTask != reviewTaskPreRenderPlan && record.TargetPhase != "pre_render_plan" {
+			continue
+		}
+		switch record.Status {
+		case reviewVerdictAccepted, reviewVerdictAcceptedWithWarnings, reviewVerdictRejected, reviewVerdictBlocked:
+			recordRef := strings.TrimSpace(record.SemanticKey)
+			if recordRef == "" {
+				recordRef = uuidString(record.ID)
+			}
+			return fmt.Errorf("render_plan 已有终态评审 %s：review_record/%s；请读取项目上下文并处理该评审结果，不要重复派发 Reviewer", record.Status, recordRef)
+		}
+	}
+	return nil
+}
+
+func (t *DispatchReviewerNativeTool) ensureNoActiveReviewerTask(ctx context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) error {
+	activeTasks, err := t.runtime.ListActiveAgentTasksByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	for _, task := range activeTasks {
+		if task.Role != "reviewer" || task.TaskType != "reviewer_turn" || task.ScopeType != scopeType || task.ScopeID != scopeID {
+			continue
+		}
+		if task.Status != "queued" && task.Status != "running" {
+			continue
+		}
+		taskRef := strings.TrimSpace(task.SemanticKey)
+		if taskRef == "" {
+			taskRef = uuidString(task.ID)
+		}
+		return fmt.Errorf("active_reviewer_task_exists：%s status=%s；不要重复派发相同 scope 的 Reviewer", objectLabel("agent_task", taskRef), task.Status)
 	}
 	return nil
 }

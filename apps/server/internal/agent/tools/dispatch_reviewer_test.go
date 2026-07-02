@@ -209,13 +209,136 @@ func TestDispatchReviewerRejectsDuplicateFinalVideoReview(t *testing.T) {
 	}
 }
 
+func TestDispatchReviewerRejectsDuplicatePreRenderPlanReview(t *testing.T) {
+	workspaceID := uuidWithByte(1)
+	renderPlanID := uuidWithByte(7)
+	store := fakeDispatchReviewerStore{
+		workspace: db.Workspace{ID: workspaceID, Mode: db.WorkspaceModeAgent},
+		plan: db.RenderPlan{
+			ID:            renderPlanID,
+			WorkspaceID:   workspaceID,
+			ScopeType:     "shot",
+			ScopeID:       uuidWithByte(4),
+			SemanticKey:   "shot_01.shot_video.r1",
+			RenderPlanKey: "shot_01.shot_video.r1",
+		},
+		objects: map[string]db.AgentObjectIndex{
+			"render_plan/shot_01.shot_video.r1": {
+				WorkspaceID: workspaceID,
+				ObjectType:  "render_plan",
+				ObjectID:    renderPlanID,
+				SemanticKey: "shot_01.shot_video.r1",
+			},
+		},
+		reviewsByRenderPlan: []db.ReviewRecord{
+			{
+				ID:           uuidWithByte(12),
+				WorkspaceID:  workspaceID,
+				RenderPlanID: renderPlanID,
+				ReviewTask:   reviewTaskPreRenderPlan,
+				TargetPhase:  "pre_render_plan",
+				Status:       reviewVerdictAcceptedWithWarnings,
+				SemanticKey:  "shot_01.shot_video.r1.review.v1",
+			},
+		},
+	}
+	runtime := &fakeDispatchReviewerRuntime{}
+	enqueuer := &fakeReviewerTaskEnqueuer{}
+	tool := NewDispatchReviewerNativeTool(store, runtime, enqueuer)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{WorkspaceID: workspaceID, ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3), ToolCallID: "call_1"})
+
+	out, err := tool.InvokableRun(ctx, `{
+		"brief":"复核 RenderPlan",
+		"review_task":"pre_render_plan_review",
+		"target":{"workspace_scope":"render_plan","render_plan_ref":{"type":"render_plan","key":"shot_01.shot_video.r1"}},
+		"reason":"RenderPlan 已有终态预评审后不应重复派发"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "工具调用失败") ||
+		!strings.Contains(out, "已有终态评审") ||
+		!strings.Contains(out, "review_record/shot_01.shot_video.r1.review.v1") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+	if runtime.createdTask.ID.Valid {
+		t.Fatalf("unexpected task created: %#v", runtime.createdTask)
+	}
+	if len(enqueuer.tasks) != 0 {
+		t.Fatalf("enqueued tasks = %d", len(enqueuer.tasks))
+	}
+}
+
+func TestDispatchReviewerRejectsActiveReviewerTaskForSameScope(t *testing.T) {
+	workspaceID := uuidWithByte(1)
+	renderPlanID := uuidWithByte(7)
+	store := fakeDispatchReviewerStore{
+		workspace: db.Workspace{ID: workspaceID, Mode: db.WorkspaceModeAgent},
+		plan: db.RenderPlan{
+			ID:            renderPlanID,
+			WorkspaceID:   workspaceID,
+			ScopeType:     "shot",
+			ScopeID:       uuidWithByte(4),
+			SemanticKey:   "shot_01.shot_video.r2",
+			RenderPlanKey: "shot_01.shot_video.r2",
+		},
+		objects: map[string]db.AgentObjectIndex{
+			"render_plan/shot_01.shot_video.r2": {
+				WorkspaceID: workspaceID,
+				ObjectType:  "render_plan",
+				ObjectID:    renderPlanID,
+				SemanticKey: "shot_01.shot_video.r2",
+			},
+		},
+	}
+	runtime := &fakeDispatchReviewerRuntime{
+		activeTasks: []db.AgentTask{
+			{
+				ID:          uuidWithByte(10),
+				WorkspaceID: workspaceID,
+				Role:        "reviewer",
+				ScopeType:   "render_plan",
+				ScopeID:     renderPlanID,
+				TaskType:    "reviewer_turn",
+				Status:      "running",
+				SemanticKey: "reviewer.active.pre_render",
+			},
+		},
+	}
+	enqueuer := &fakeReviewerTaskEnqueuer{}
+	tool := NewDispatchReviewerNativeTool(store, runtime, enqueuer)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{WorkspaceID: workspaceID, ThreadID: uuidWithByte(2), TaskID: uuidWithByte(3), ToolCallID: "call_1"})
+
+	out, err := tool.InvokableRun(ctx, `{
+		"brief":"复核 RenderPlan",
+		"review_task":"pre_render_plan_review",
+		"target":{"workspace_scope":"render_plan","render_plan_ref":{"type":"render_plan","key":"shot_01.shot_video.r2"}},
+		"reason":"已有相同 scope 的 Reviewer 正在运行，不应重复派发"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "工具调用失败") ||
+		!strings.Contains(out, "active_reviewer_task_exists") ||
+		!strings.Contains(out, "agent_task/reviewer.active.pre_render") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+	if runtime.createdTask.ID.Valid {
+		t.Fatalf("unexpected task created: %#v", runtime.createdTask)
+	}
+	if len(enqueuer.tasks) != 0 {
+		t.Fatalf("enqueued tasks = %d", len(enqueuer.tasks))
+	}
+}
+
 type fakeDispatchReviewerStore struct {
-	workspace        db.Workspace
-	node             db.MediaNode
-	version          db.ArtifactVersion
-	plan             db.RenderPlan
-	objects          map[string]db.AgentObjectIndex
-	reviewsByVersion []db.ReviewRecord
+	workspace           db.Workspace
+	node                db.MediaNode
+	version             db.ArtifactVersion
+	plan                db.RenderPlan
+	objects             map[string]db.AgentObjectIndex
+	reviewsByVersion    []db.ReviewRecord
+	reviewsByRenderPlan []db.ReviewRecord
 }
 
 func (f fakeDispatchReviewerStore) GetWorkspaceByID(context.Context, pgtype.UUID) (db.Workspace, error) {
@@ -238,6 +361,10 @@ func (f fakeDispatchReviewerStore) ListReviewRecordsByArtifactVersion(context.Co
 	return f.reviewsByVersion, nil
 }
 
+func (f fakeDispatchReviewerStore) ListReviewRecordsByRenderPlan(context.Context, pgtype.UUID) ([]db.ReviewRecord, error) {
+	return f.reviewsByRenderPlan, nil
+}
+
 func (f fakeDispatchReviewerStore) GetAgentObjectBySemanticKey(_ context.Context, params db.GetAgentObjectBySemanticKeyParams) (db.AgentObjectIndex, error) {
 	if f.objects == nil {
 		return db.AgentObjectIndex{}, pgx.ErrNoRows
@@ -253,6 +380,7 @@ type fakeDispatchReviewerRuntime struct {
 	createdTask db.AgentTask
 	appendSeq   int64
 	appended    []db.AgentMessage
+	activeTasks []db.AgentTask
 }
 
 func (f *fakeDispatchReviewerRuntime) GetOrCreateReviewerThreadForScope(_ context.Context, workspaceID pgtype.UUID, scopeType string, scopeID pgtype.UUID) (db.AgentThread, error) {
@@ -271,6 +399,10 @@ func (f *fakeDispatchReviewerRuntime) CreateTask(_ context.Context, params agent
 		Input:       params.Input,
 	}
 	return f.createdTask, nil
+}
+
+func (f *fakeDispatchReviewerRuntime) ListActiveAgentTasksByWorkspace(context.Context, pgtype.UUID) ([]db.AgentTask, error) {
+	return f.activeTasks, nil
 }
 
 func (f *fakeDispatchReviewerRuntime) CreateEvent(context.Context, agentruntime.CreateEventParams) (db.AgentEvent, error) {

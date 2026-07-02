@@ -17,16 +17,23 @@ type NativeTool interface {
 }
 
 type NativeRuntimeContext struct {
-	WorkspaceID     pgtype.UUID
-	ThreadID        pgtype.UUID
-	TaskID          pgtype.UUID
-	TaskType        string
-	ToolCallID      string
-	ExecutionPolicy string
-	ScopeType       string
-	ScopeID         pgtype.UUID
-	ScopeKey        string
-	TargetPhase     string
+	WorkspaceID      pgtype.UUID
+	ThreadID         pgtype.UUID
+	TaskID           pgtype.UUID
+	TaskType         string
+	ToolCallID       string
+	ExecutionPolicy  string
+	ScopeType        string
+	ScopeID          pgtype.UUID
+	ScopeKey         string
+	TargetPhase      string
+	InputNodeRefs    []string
+	VideoRoutePolicy string
+
+	RecommendedModelPromptProfile string
+	RecommendedOperation          string
+	RecommendedParams             map[string]any
+	RecommendedRouteReason        string
 
 	ReviewTask                 string
 	ReviewShotID               string

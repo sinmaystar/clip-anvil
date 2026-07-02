@@ -25,6 +25,7 @@ const (
 	ProfileSeedream5Image = "seedream_5_image"
 	ProfileSeedance2Video = "seedance_2_video"
 	ProfileSeedAudio1     = "seed_audio_1"
+	ProfileTemplateVideo  = "template_video"
 
 	StatusDraft              = "draft"
 	StatusBlocked            = "blocked"
@@ -110,22 +111,25 @@ type PromptParts struct {
 }
 
 type Params struct {
-	Ratio                     string  `json:"ratio,omitempty"`
-	DurationSec               float64 `json:"duration_sec,omitempty"`
-	Resolution                string  `json:"resolution,omitempty"`
-	Watermark                 bool    `json:"watermark,omitempty"`
-	Speaker                   string  `json:"speaker,omitempty"`
-	Format                    string  `json:"format,omitempty"`
-	SampleRate                int     `json:"sample_rate,omitempty"`
-	SpeechRate                float64 `json:"speech_rate,omitempty"`
-	PitchRate                 float64 `json:"pitch_rate,omitempty"`
-	LoudnessRate              float64 `json:"loudness_rate,omitempty"`
-	GenerateAudio             bool    `json:"generate_audio,omitempty"`
-	ReturnLastFrame           bool    `json:"return_last_frame,omitempty"`
-	CameraFixed               bool    `json:"camera_fixed,omitempty"`
-	SequentialImageGeneration string  `json:"sequential_image_generation,omitempty"`
-	MaxImages                 int     `json:"max_images,omitempty"`
-	Seed                      int64   `json:"seed,omitempty"`
+	Ratio                     string         `json:"ratio,omitempty"`
+	DurationSec               float64        `json:"duration_sec,omitempty"`
+	Resolution                string         `json:"resolution,omitempty"`
+	Watermark                 bool           `json:"watermark,omitempty"`
+	Speaker                   string         `json:"speaker,omitempty"`
+	Format                    string         `json:"format,omitempty"`
+	SampleRate                int            `json:"sample_rate,omitempty"`
+	SpeechRate                float64        `json:"speech_rate,omitempty"`
+	PitchRate                 float64        `json:"pitch_rate,omitempty"`
+	LoudnessRate              float64        `json:"loudness_rate,omitempty"`
+	GenerateAudio             bool           `json:"generate_audio,omitempty"`
+	ReturnLastFrame           bool           `json:"return_last_frame,omitempty"`
+	CameraFixed               bool           `json:"camera_fixed,omitempty"`
+	TemplateKey               string         `json:"template_key,omitempty"`
+	FPS                       int            `json:"fps,omitempty"`
+	Variables                 map[string]any `json:"variables,omitempty"`
+	SequentialImageGeneration string         `json:"sequential_image_generation,omitempty"`
+	MaxImages                 int            `json:"max_images,omitempty"`
+	Seed                      int64          `json:"seed,omitempty"`
 }
 
 type AuditHints struct {

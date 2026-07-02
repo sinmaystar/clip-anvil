@@ -486,6 +486,7 @@ type jobServiceFakeClient struct {
 	result   ExecResult
 	inspect  FileInfo
 	commands []string
+	uploads  []string
 }
 
 func (f *jobServiceFakeClient) Create(ctx context.Context, req CreateRequest) (SandboxInfo, error) {
@@ -515,6 +516,7 @@ func (f *jobServiceFakeClient) Exec(ctx context.Context, sandboxID string, req E
 }
 
 func (f *jobServiceFakeClient) Upload(ctx context.Context, sandboxID string, path string, r io.Reader) error {
+	f.uploads = append(f.uploads, path)
 	return nil
 }
 

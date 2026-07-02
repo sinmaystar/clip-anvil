@@ -179,12 +179,14 @@ func (c *OpenSandboxClient) Delete(ctx context.Context, sandboxID string) error 
 func connectionConfig(cfg config.SandboxConfig) osb.ConnectionConfig {
 	endpoint := strings.TrimRight(cfg.Endpoint, "/")
 	endpoint = strings.TrimSuffix(endpoint, "/v1")
+	requestTimeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Host == "" {
 		return osb.ConnectionConfig{
 			Domain:         endpoint,
 			APIKey:         cfg.APIKey,
 			UseServerProxy: cfg.UseServerProxy,
+			RequestTimeout: requestTimeout,
 		}
 	}
 	return osb.ConnectionConfig{
@@ -192,6 +194,7 @@ func connectionConfig(cfg config.SandboxConfig) osb.ConnectionConfig {
 		Protocol:       parsed.Scheme,
 		APIKey:         cfg.APIKey,
 		UseServerProxy: cfg.UseServerProxy,
+		RequestTimeout: requestTimeout,
 		EndpointHostRewrite: map[string]string{
 			"host.docker.internal": "localhost",
 		},

@@ -231,6 +231,14 @@ func modelForRenderPlan(plan db.RenderPlan) agentworker.ModelSpec {
 			modelID = "seed-audio-1.0"
 		}
 	}
+	if plan.ModelPromptProfile == "template_video" {
+		if provider == "" {
+			provider = "internal_template_video"
+		}
+		if modelID == "" {
+			modelID = "hyperframes-html"
+		}
+	}
 	return agentworker.ModelSpec{Provider: provider, ModelID: modelID}
 }
 

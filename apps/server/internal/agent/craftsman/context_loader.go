@@ -409,6 +409,24 @@ func writeTaskContext(b *strings.Builder, input GraphInput) {
 	if strings.TrimSpace(input.ExecutionPolicy) != "" {
 		fmt.Fprintf(b, "- execution_policy: %s\n", input.ExecutionPolicy)
 	}
+	if strings.TrimSpace(input.VideoRoutePolicy) != "" {
+		fmt.Fprintf(b, "- video_route_policy: %s\n", input.VideoRoutePolicy)
+		if input.VideoRoutePolicy == "template_only" {
+			fmt.Fprintf(b, "- video_route_policy_rule: 禁止调用 Seedance；必须使用 HyperFrames/template_video，无法满足时标记 blocked。\n")
+		}
+	}
+	if strings.TrimSpace(input.RecommendedModelPromptProfile) != "" {
+		fmt.Fprintf(b, "- recommended_model_prompt_profile: %s\n", input.RecommendedModelPromptProfile)
+	}
+	if strings.TrimSpace(input.RecommendedOperation) != "" {
+		fmt.Fprintf(b, "- recommended_operation: %s\n", input.RecommendedOperation)
+	}
+	if strings.TrimSpace(input.RecommendedRouteReason) != "" {
+		fmt.Fprintf(b, "- recommended_route_reason: %s\n", input.RecommendedRouteReason)
+	}
+	if len(input.InputNodeRefs) > 0 {
+		fmt.Fprintf(b, "- input_node_refs: %s\n", strings.Join(input.InputNodeRefs, "；"))
+	}
 	fmt.Fprintf(b, "\n")
 }
 

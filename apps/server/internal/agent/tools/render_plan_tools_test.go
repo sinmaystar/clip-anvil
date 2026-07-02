@@ -29,7 +29,7 @@ func TestRenderPlanToolInfosUseTypedSchemasAndChineseDescriptions(t *testing.T) 
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(schema)
-	for _, want := range []string{"generation_text", "model_prompt_profile", "reference_bindings", "prompt_parts"} {
+	for _, want := range []string{"generation_text", "model_prompt_profile", "reference_bindings", "prompt_parts", "template_video", "template_to_video"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("schema missing %s: %s", want, string(raw))
 		}
@@ -144,6 +144,130 @@ func TestUpsertRenderPlanRuntimeDefaultsInferVideoOperationFromFirstFrame(t *tes
 	}
 	if got.PromptParts.Objective != got.GenerationText || got.PromptParts.Action != got.GenerationText {
 		t.Fatalf("prompt parts should be backed by generation_text: %#v", got.PromptParts)
+	}
+}
+
+func TestUpsertRenderPlanRuntimeDefaultsUseRecommendedTemplateRoute(t *testing.T) {
+	input := UpsertRenderPlanToolInput{
+		Brief:          "为 shot_03 创建低成本模板视频计划。",
+		Mode:           "create",
+		GenerationText: "生成 5 秒 9:16 模板视频：商品图轻微推进，三张卖点卡依次出现，末尾出现 CTA。",
+	}
+
+	got := applyUpsertRenderPlanRuntimeDefaults(input, NativeRuntimeContext{
+		ScopeType:                     "shot",
+		ScopeID:                       uuidWithByte(9),
+		ScopeKey:                      "scene_main.shot_03",
+		TargetPhase:                   "shot_video",
+		RecommendedModelPromptProfile: "template_video",
+		RecommendedOperation:          "image_to_template_video",
+		RecommendedParams: map[string]any{
+			"template_key": "static_fallback_ken_burns_v1",
+			"fps":          float64(24),
+		},
+		InputNodeRefs: []string{"shot_03 preview image"},
+	})
+
+	if got.ModelPromptProfile != "template_video" || got.Operation != "image_to_template_video" {
+		t.Fatalf("recommended route not inherited: profile=%q operation=%q", got.ModelPromptProfile, got.Operation)
+	}
+	if got.Params.TemplateKey != "static_fallback_ken_burns_v1" || got.Params.FPS != 24 {
+		t.Fatalf("recommended params = %#v", got.Params)
+	}
+	if len(got.ReferenceBindings) != 1 {
+		t.Fatalf("reference bindings = %#v", got.ReferenceBindings)
+	}
+	binding := got.ReferenceBindings[0]
+	if binding.SourceType != "media_node" || binding.SourceID != "shot_03 preview image" || binding.ContentType != "image_url" || binding.ModelRole != "reference_image" {
+		t.Fatalf("binding = %#v", binding)
+	}
+}
+
+func TestUpsertRenderPlanTemplateOnlyPolicyDefaultsToTemplateRoute(t *testing.T) {
+	input := UpsertRenderPlanToolInput{
+		Brief:          "为 shot_01 创建不调用 Seedance 的模板视频计划。",
+		Mode:           "create",
+		GenerationText: "生成 5 秒 9:16 悦行行李箱口播广告模板视频：使用商品图轻微推进，叠加卖点字幕和 CTA。",
+	}
+
+	got := applyUpsertRenderPlanRuntimeDefaults(input, NativeRuntimeContext{
+		ScopeType:        "shot",
+		ScopeID:          uuidWithByte(8),
+		ScopeKey:         "scene_main.shot_01",
+		TargetPhase:      "shot_video",
+		VideoRoutePolicy: "template_only",
+		InputNodeRefs:    []string{"source.material.box.node"},
+	})
+
+	if got.ModelPromptProfile != "template_video" || got.Operation != "image_to_template_video" {
+		t.Fatalf("template_only route = profile=%q operation=%q", got.ModelPromptProfile, got.Operation)
+	}
+	if len(got.ReferenceBindings) != 1 || got.ReferenceBindings[0].ModelRole != "reference_image" {
+		t.Fatalf("template refs = %#v", got.ReferenceBindings)
+	}
+}
+
+func TestUpsertRenderPlanTemplateOnlyPolicyRejectsSeedance(t *testing.T) {
+	tool := NewUpsertRenderPlanNativeTool(nil)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID:      uuidWithByte(1),
+		ThreadID:         uuidWithByte(2),
+		TaskID:           uuidWithByte(3),
+		ScopeType:        "shot",
+		ScopeID:          uuidWithByte(4),
+		TargetPhase:      "shot_video",
+		VideoRoutePolicy: "template_only",
+		ToolCallID:       "call_render_plan",
+	})
+
+	got, err := tool.InvokableRun(ctx, `{
+		"brief":"错误尝试 Seedance。",
+		"mode":"create",
+		"generation_text":"生成 5 秒真实动态行李箱广告视频。",
+		"model_prompt_profile":"seedance_2_video",
+		"operation":"image_to_video_first_frame"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"video_route_policy=template_only", "禁止 Seedance", "template_video"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("result missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "render plan service 未配置") {
+		t.Fatalf("policy guard should run before service lookup: %s", got)
+	}
+}
+
+func TestUpsertRenderPlanToolValidatesExplicitTemplateVideoPlan(t *testing.T) {
+	input := UpsertRenderPlanToolInput{
+		Brief:              "为 shot_03 创建低成本模板视频计划。",
+		Mode:               "create",
+		GenerationText:     "生成 5 秒 9:16 模板视频：商品图轻微推进，三张卖点卡依次出现，末尾出现 CTA，不使用真实动态生成。",
+		Scope:              RenderPlanScopeInput{Type: "shot", ID: "09000000-0000-0000-0000-000000000000", Key: "shot_03"},
+		TargetPhase:        "shot_video",
+		TaskType:           "generate",
+		ModelPromptProfile: "template_video",
+		Operation:          "template_to_video",
+		Params:             RenderPlanParamsInput{DurationSec: 5, Ratio: "9:16", Resolution: "1080p"},
+		Rationale:          "该分镜是卖点卡片和 CTA，适合模板视频降低 Seedance 成本。",
+	}
+
+	if err := validateUpsertRenderPlanInput(input); err != nil {
+		t.Fatalf("validate template video input: %v", err)
+	}
+}
+
+func TestModelForRenderPlanUsesInternalTemplateVideoProvider(t *testing.T) {
+	got := modelForRenderPlan(db.RenderPlan{
+		TargetPhase:        "shot_video",
+		ModelPromptProfile: "template_video",
+		Params:             []byte(`{"template_key":"static_fallback_ken_burns_v1"}`),
+	})
+
+	if got.Provider != "internal_template_video" || got.ModelID != "hyperframes-html" {
+		t.Fatalf("model = %#v", got)
 	}
 }
 

@@ -192,6 +192,22 @@ func TestProviderRegistryDefaultsVolcengineAudioModel(t *testing.T) {
 	}
 }
 
+func TestProviderRegistryMockModeRoutesExternalProvidersToMock(t *testing.T) {
+	registry := NewProviderRegistry(ProviderConfig{ProviderMode: "mock"})
+
+	provider, err := registry.Resolve(GenerationIntent{
+		OutputType:    "audio",
+		OperationType: "text_to_audio",
+		Model:         ModelSpec{Provider: "volcengine", ModelID: "seed-audio-1.0"},
+	})
+	if err != nil {
+		t.Fatalf("resolve provider: %v", err)
+	}
+	if _, ok := provider.(MockProvider); !ok {
+		t.Fatalf("provider = %T, want MockProvider", provider)
+	}
+}
+
 func TestMockProviderReturnsAudioArtifact(t *testing.T) {
 	result, err := (MockProvider{}).Run(context.Background(), GenerationIntent{
 		OutputType:     "audio",
@@ -204,6 +220,9 @@ func TestMockProviderReturnsAudioArtifact(t *testing.T) {
 	}
 	if result.AssetMIME != "audio/wav" || len(result.AssetContent) == 0 {
 		t.Fatalf("audio artifact = %s/%d", result.AssetMIME, len(result.AssetContent))
+	}
+	if len(result.AssetContent) < 10000 {
+		t.Fatalf("audio artifact is too small: %d", len(result.AssetContent))
 	}
 }
 
@@ -722,6 +741,55 @@ func TestMaxAttemptsDefaultsToOne(t *testing.T) {
 	capability := Capability{Limits: CapabilityLimits{MaxAttempts: 3}}
 	if got := maxAttemptsForRun(options, capability); got != 1 {
 		t.Fatalf("max attempts = %d, want 1", got)
+	}
+}
+
+func TestIntentForNodeRestoresTemplateVideoConfig(t *testing.T) {
+	node := db.MediaNode{
+		ID:             pgtype.UUID{Bytes: [16]byte{0x31}, Valid: true},
+		WorkspaceID:    pgtype.UUID{Bytes: [16]byte{0x32}, Valid: true},
+		NodeType:       db.NodeTypeVideo,
+		OperationType:  "image_to_template_video",
+		PromptTemplate: "Template fallback shot",
+		ModelProvider:  pgtype.Text{String: "internal_template_video", Valid: true},
+		ModelID:        pgtype.Text{String: "hyperframes-html", Valid: true},
+		ModelParams: []byte(`{
+			"template_key":"static_fallback_ken_burns_v1",
+			"duration_sec":5,
+			"fps":24,
+			"variables":{"headline":"Travel lighter","cta":"Shop now"}
+		}`),
+	}
+	intent := intentForNode(node, RequestedBy{Type: "system"})
+	if intent.Model.Provider != "internal_template_video" ||
+		intent.Model.ModelID != "hyperframes-html" ||
+		intent.OperationType != "image_to_template_video" {
+		t.Fatalf("intent = %#v", intent)
+	}
+	if intent.Params["template_key"] != "static_fallback_ken_burns_v1" {
+		t.Fatalf("params = %#v", intent.Params)
+	}
+	variables, ok := intent.Params["variables"].(map[string]any)
+	if !ok || variables["headline"] != "Travel lighter" {
+		t.Fatalf("variables = %#v", intent.Params["variables"])
+	}
+	before, err := ComputeInputHash(InputHashFactsForNode(node, intent, nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.ModelParams = []byte(`{
+		"template_key":"static_fallback_ken_burns_v1",
+		"duration_sec":5,
+		"fps":24,
+		"variables":{"headline":"New headline","cta":"Shop now"}
+	}`)
+	afterIntent := intentForNode(node, RequestedBy{Type: "system"})
+	after, err := ComputeInputHash(InputHashFactsForNode(node, afterIntent, nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("hash did not change after persisted template variables changed")
 	}
 }
 

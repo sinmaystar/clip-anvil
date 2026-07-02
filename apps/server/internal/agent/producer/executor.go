@@ -860,35 +860,42 @@ func applyProducerTaskTriggerInput(input *RunTaskInput, raw []byte) producerTask
 }
 
 type producerTaskTriggerPayload struct {
-	Trigger            string `json:"trigger"`
-	CraftsmanTaskID    string `json:"craftsman_task_id"`
-	CraftsmanThreadID  string `json:"craftsman_thread_id"`
-	WorkerTaskID       string `json:"worker_task_id"`
-	WorkerThreadID     string `json:"worker_thread_id"`
-	ScopeType          string `json:"scope_type"`
-	ScopeID            string `json:"scope_id"`
-	ScopeKey           string `json:"scope_key"`
-	NodeKey            string `json:"node_key"`
-	ShotID             string `json:"shot_id"`
-	ShotKey            string `json:"shot_key"`
-	TargetPhase        string `json:"target_phase"`
-	RenderPlanID       string `json:"render_plan_id"`
-	RenderPlanKey      string `json:"render_plan_key"`
-	RenderPlanStatus   string `json:"render_plan_status"`
-	GenerationJobID    string `json:"generation_job_id"`
-	GenerationJobKey   string `json:"generation_job_key"`
-	ArtifactVersionID  string `json:"artifact_version_id"`
-	ArtifactVersionKey string `json:"artifact_version_key"`
-	ArtifactKind       string `json:"artifact_kind"`
-	ReviewRecordID     string `json:"review_record_id"`
-	ReviewRecordKey    string `json:"review_record_key"`
-	WorkerTaskKey      string `json:"worker_task_key"`
-	CraftsmanTaskKey   string `json:"craftsman_task_key"`
-	ReviewTask         string `json:"review_task"`
-	Verdict            string `json:"verdict"`
-	ShouldRetry        bool   `json:"should_retry"`
-	TriggerMessageID   string `json:"trigger_message_id"`
-	TriggerMessageSeq  int64  `json:"trigger_message_seq"`
+	Trigger                  string `json:"trigger"`
+	CraftsmanTaskID          string `json:"craftsman_task_id"`
+	CraftsmanThreadID        string `json:"craftsman_thread_id"`
+	WorkerTaskID             string `json:"worker_task_id"`
+	WorkerThreadID           string `json:"worker_thread_id"`
+	ScopeType                string `json:"scope_type"`
+	ScopeID                  string `json:"scope_id"`
+	ScopeKey                 string `json:"scope_key"`
+	NodeKey                  string `json:"node_key"`
+	ShotID                   string `json:"shot_id"`
+	ShotKey                  string `json:"shot_key"`
+	TargetPhase              string `json:"target_phase"`
+	RenderPlanID             string `json:"render_plan_id"`
+	RenderPlanKey            string `json:"render_plan_key"`
+	RenderPlanStatus         string `json:"render_plan_status"`
+	GenerationJobID          string `json:"generation_job_id"`
+	GenerationJobKey         string `json:"generation_job_key"`
+	ArtifactVersionID        string `json:"artifact_version_id"`
+	ArtifactVersionKey       string `json:"artifact_version_key"`
+	ArtifactKind             string `json:"artifact_kind"`
+	ModelProvider            string `json:"model_provider"`
+	ModelID                  string `json:"model_id"`
+	OperationType            string `json:"operation_type"`
+	FallbackStrategy         string `json:"fallback_strategy"`
+	RecommendedNextAction    string `json:"recommended_next_action"`
+	ShouldStopSameRouteRetry bool   `json:"should_stop_same_route_retry"`
+	CostRisk                 bool   `json:"cost_risk"`
+	ReviewRecordID           string `json:"review_record_id"`
+	ReviewRecordKey          string `json:"review_record_key"`
+	WorkerTaskKey            string `json:"worker_task_key"`
+	CraftsmanTaskKey         string `json:"craftsman_task_key"`
+	ReviewTask               string `json:"review_task"`
+	Verdict                  string `json:"verdict"`
+	ShouldRetry              bool   `json:"should_retry"`
+	TriggerMessageID         string `json:"trigger_message_id"`
+	TriggerMessageSeq        int64  `json:"trigger_message_seq"`
 }
 
 func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
@@ -934,6 +941,21 @@ func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 		}
 		if status := strings.TrimSpace(payload.RenderPlanStatus); status != "" {
 			lines = append(lines, "生成状态："+status+"。")
+		}
+		if modelRoute := producerModelRouteText(payload); modelRoute != "" {
+			lines = append(lines, "模型路线："+modelRoute+"。")
+		}
+		if strings.TrimSpace(payload.RenderPlanStatus) == "failed" && strings.TrimSpace(payload.FallbackStrategy) != "" {
+			lines = append(lines, "失败处置：检测到 fallback_strategy="+strings.TrimSpace(payload.FallbackStrategy)+"；不要继续同一路线自动重试，优先考虑 template fallback，或在真实复杂运动、用户质量门槛不确定时请求用户确认。")
+			if nextAction := strings.TrimSpace(payload.RecommendedNextAction); nextAction != "" {
+				lines = append(lines, "建议动作："+nextAction+"。")
+			}
+			if payload.ShouldStopSameRouteRetry {
+				lines = append(lines, "路由约束：不要继续同一路线自动重试。")
+			}
+			if payload.CostRisk {
+				lines = append(lines, "风险标记：cost_risk。")
+			}
 		}
 		if renderPlanKey := firstNonUUID(payload.RenderPlanKey, payload.RenderPlanID); renderPlanKey != "" {
 			lines = append(lines, "RenderPlan：render_plan/"+renderPlanKey+"。")
@@ -1007,6 +1029,20 @@ func producerRuntimeTriggerText(payload producerTaskTriggerPayload) string {
 	default:
 		return ""
 	}
+}
+
+func producerModelRouteText(payload producerTaskTriggerPayload) string {
+	parts := make([]string, 0, 3)
+	if provider := strings.TrimSpace(payload.ModelProvider); provider != "" {
+		parts = append(parts, "provider="+provider)
+	}
+	if modelID := strings.TrimSpace(payload.ModelID); modelID != "" {
+		parts = append(parts, "model_id="+modelID)
+	}
+	if operationType := strings.TrimSpace(payload.OperationType); operationType != "" {
+		parts = append(parts, "operation_type="+operationType)
+	}
+	return strings.Join(parts, " ")
 }
 
 func producerPayloadScopeRef(payload producerTaskTriggerPayload) string {

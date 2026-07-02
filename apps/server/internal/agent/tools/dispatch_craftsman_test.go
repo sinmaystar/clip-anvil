@@ -220,6 +220,155 @@ func TestDispatchCraftsmanNativeLimitsDispatchToShotRefs(t *testing.T) {
 	}
 }
 
+func TestDispatchCraftsmanRecommendsTemplateRouteForNonHeroShotVideos(t *testing.T) {
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		shots: []db.Shot{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", SemanticKey: "scene_main.shot_01", Title: "开场 hero", Status: "preview_ready"},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot_02", SemanticKey: "scene_main.shot_02", Title: "三点卖点卡", Status: "preview_ready"},
+			{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), ClientKey: "shot_03", SemanticKey: "scene_main.shot_03", Title: "CTA 收尾", Status: "preview_ready"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanTool(store, runtime, &fakeCraftsmanEnqueuer{})
+
+	out, err := tool.Execute(context.Background(), ExecuteInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		Arguments: map[string]any{
+			"brief":            "生成完整营销视频的分镜视频，控制 Seedance 成本。",
+			"target_phase":     "shot_video",
+			"execution_policy": "execute_immediately",
+			"scope":            map[string]any{"type": "shot"},
+			"force":            true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Result["status"] != "queued" {
+		t.Fatalf("result = %#v", out.Result)
+	}
+	if len(runtime.createdTasks) != 3 {
+		t.Fatalf("created tasks = %d, want 3", len(runtime.createdTasks))
+	}
+	profiles := []string{}
+	operations := []string{}
+	for _, task := range runtime.createdTasks {
+		var input map[string]any
+		if err := json.Unmarshal(task.Input, &input); err != nil {
+			t.Fatal(err)
+		}
+		profiles = append(profiles, input["recommended_model_prompt_profile"].(string))
+		operations = append(operations, input["recommended_operation"].(string))
+		if input["recommended_route_reason"] == "" {
+			t.Fatalf("missing route reason: %#v", input)
+		}
+	}
+	if strings.Join(profiles, ",") != "seedance_2_video,template_video,template_video" {
+		t.Fatalf("profiles = %#v", profiles)
+	}
+	if strings.Join(operations, ",") != "image_to_video_first_frame,image_to_template_video,image_to_template_video" {
+		t.Fatalf("operations = %#v", operations)
+	}
+}
+
+func TestDispatchCraftsmanTemplateOnlyPolicyAvoidsSeedanceForAllShotVideos(t *testing.T) {
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		shots: []db.Shot{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", SemanticKey: "scene_main.shot_01", Title: "悦行行李箱开场", Status: "preview_ready"},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot_02", SemanticKey: "scene_main.shot_02", Title: "卖点口播卡", Status: "preview_ready"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanTool(store, runtime, &fakeCraftsmanEnqueuer{})
+
+	out, err := tool.Execute(context.Background(), ExecuteInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		Arguments: map[string]any{
+			"brief":              "生成悦行行李箱口播广告，不要调用 Seedance，只使用 HyperFrames template video。",
+			"target_phase":       "shot_video",
+			"execution_policy":   "execute_immediately",
+			"scope":              map[string]any{"type": "shot"},
+			"video_route_policy": "template_only",
+			"force":              true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Result["status"] != "queued" {
+		t.Fatalf("result = %#v", out.Result)
+	}
+	if len(runtime.createdTasks) != 2 {
+		t.Fatalf("created tasks = %d, want 2", len(runtime.createdTasks))
+	}
+	for _, task := range runtime.createdTasks {
+		var input map[string]any
+		if err := json.Unmarshal(task.Input, &input); err != nil {
+			t.Fatal(err)
+		}
+		if input["video_route_policy"] != "template_only" {
+			t.Fatalf("missing video_route_policy: %#v", input)
+		}
+		if input["recommended_model_prompt_profile"] != "template_video" ||
+			input["recommended_operation"] != "image_to_template_video" {
+			t.Fatalf("policy did not force template route: %#v", input)
+		}
+		if strings.Contains(strings.ToLower(input["recommended_route_reason"].(string)), "seedance") &&
+			!strings.Contains(strings.ToLower(input["recommended_route_reason"].(string)), "no-seedance") {
+			t.Fatalf("route reason should explain no-Seedance policy: %#v", input)
+		}
+	}
+}
+
+func TestDispatchCraftsmanTemplateOnlyPolicyAllowsPlannedShotVideo(t *testing.T) {
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		shots: []db.Shot{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01", SemanticKey: "scene_main.shot_01", Title: "悦行行李箱口播卖点卡", Status: "planned"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanTool(store, runtime, &fakeCraftsmanEnqueuer{})
+
+	out, err := tool.Execute(context.Background(), ExecuteInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		Arguments: map[string]any{
+			"brief":              "用上传产品图生成模板口播广告，不要调用 Seedance。",
+			"target_phase":       "shot_video",
+			"execution_policy":   "execute_immediately",
+			"scope":              map[string]any{"type": "shot"},
+			"shot_refs":          []string{"shot_01"},
+			"input_node_refs":    []string{"box.png"},
+			"video_route_policy": "template_only",
+			"force":              true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Result["status"] != "queued" || len(runtime.createdTasks) != 1 {
+		t.Fatalf("result=%#v created=%d", out.Result, len(runtime.createdTasks))
+	}
+	var input map[string]any
+	if err := json.Unmarshal(runtime.createdTasks[0].Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["recommended_model_prompt_profile"] != "template_video" || input["video_route_policy"] != "template_only" {
+		t.Fatalf("task input = %#v", input)
+	}
+	if got := input["input_node_refs"].([]any); len(got) != 1 || got[0] != "box.png" {
+		t.Fatalf("input_node_refs = %#v", input["input_node_refs"])
+	}
+}
+
 func TestDispatchCraftsmanNativeLimitsDispatchToExplicitShotScopeRef(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},

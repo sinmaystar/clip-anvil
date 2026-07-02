@@ -32,8 +32,8 @@ type UpsertRenderPlanToolInput struct {
 	Scope                RenderPlanScopeInput      `json:"scope" jsonschema_description:"RenderPlan 归属对象。通常可以省略，工具会继承当前 Craftsman task scope；只有确有必要时才填写，且必须与当前 task scope 一致。"`
 	TargetPhase          string                    `json:"target_phase" jsonschema:"enum=reference_image,enum=preview_image,enum=shot_video,enum=voiceover_audio,enum=bgm_audio" jsonschema_description:"目标阶段。通常可以省略，工具会继承当前 Craftsman task target_phase。reference_image 为关键元素参考图；preview_image 为分镜预览图；shot_video 为分镜视频；voiceover_audio 和 bgm_audio 为全片 AudioPlan 音频计划。"`
 	TaskType             string                    `json:"task_type" jsonschema:"enum=generate,enum=edit,enum=extend,enum=bridge" jsonschema_description:"生成任务类型。通常省略，默认 generate；只有明确做编辑、延长、桥接时填写 edit/extend/bridge。"`
-	ModelPromptProfile   string                    `json:"model_prompt_profile" jsonschema:"enum=seedream_5_image,enum=seedance_2_video,enum=seed_audio_1" jsonschema_description:"通常省略，由 target_phase 自动推导：reference_image/preview_image 使用 seedream_5_image，shot_video 使用 seedance_2_video，voiceover_audio/bgm_audio 使用 seed_audio_1。"`
-	Operation            string                    `json:"operation" jsonschema:"enum=text_to_image,enum=image_to_image,enum=multi_image_to_image,enum=text_to_video,enum=image_to_video_first_frame,enum=image_to_video_first_last_frame,enum=multi_modal_reference_video,enum=video_edit,enum=video_extend,enum=video_bridge,enum=text_to_audio" jsonschema_description:"通常省略，由 target_phase 和 reference_bindings 自动推导。只有你明确知道需要 edit/extend/bridge 或特殊首尾帧时才填写。不要填 provider API 私有枚举。"`
+	ModelPromptProfile   string                    `json:"model_prompt_profile" jsonschema:"enum=seedream_5_image,enum=seedance_2_video,enum=seed_audio_1,enum=template_video" jsonschema_description:"通常省略，由 target_phase 自动推导：reference_image/preview_image 使用 seedream_5_image，shot_video 默认使用 seedance_2_video；若该分镜是卖点卡片、CTA、packshot、产品图轻动效或静态兜底视频，可显式填写 template_video 降低成本；voiceover_audio/bgm_audio 使用 seed_audio_1。"`
+	Operation            string                    `json:"operation" jsonschema:"enum=text_to_image,enum=image_to_image,enum=multi_image_to_image,enum=text_to_video,enum=image_to_video_first_frame,enum=image_to_video_first_last_frame,enum=multi_modal_reference_video,enum=video_edit,enum=video_extend,enum=video_bridge,enum=text_to_audio,enum=template_to_video,enum=image_to_template_video" jsonschema_description:"通常省略，由 target_phase 和 reference_bindings 自动推导。Seedance 使用 text_to_video / image_to_video_first_frame 等视频操作；template_video 使用 template_to_video 或 image_to_template_video。只有你明确知道需要 edit/extend/bridge 或特殊首尾帧时才填写。不要填 provider API 私有枚举。"`
 	ReferenceBindings    []ReferenceBindingInput   `json:"reference_bindings" jsonschema_description:"本计划使用的参考资源绑定。只填写真实需要的资源，通常 0 到 3 个；不要为了完整而编造引用。"`
 	SubjectBindings      []SubjectBindingInput     `json:"subject_bindings" jsonschema_description:"可选高级字段。只有需要显式声明主体句柄时才填写；一般把主体与一致性要求写进 generation_text 即可，避免长 JSON。"`
 	PromptParts          RenderPromptPartsInput    `json:"prompt_parts" jsonschema_description:"可选高级字段。一般留空，工具会把 generation_text 编译为 prompt_parts.objective；视频计划也会用 generation_text 兜底 action。只有确实需要结构化拆分时，才填写少量字段。"`
@@ -92,22 +92,25 @@ type RenderPromptPartsInput struct {
 }
 
 type RenderPlanParamsInput struct {
-	Ratio                     string  `json:"ratio" jsonschema_description:"输出比例，例如 9:16、16:9、1:1。未知时可为空并由 profile 默认。"`
-	DurationSec               float64 `json:"duration_sec" jsonschema_description:"视频时长，单位秒。Seedance 当前只支持 5 或 10 秒；图片计划为空或 0。不要填写 4、6、8、15 等非模型能力值。"`
-	Resolution                string  `json:"resolution" jsonschema_description:"分辨率档位，例如 1080p、2K、4K。必须符合模型能力。"`
-	Watermark                 bool    `json:"watermark" jsonschema_description:"是否添加水印。生产广告通常 false，除非配置要求。"`
-	Speaker                   string  `json:"speaker" jsonschema_description:"seed-audio-1.0 音色 ID。voiceover_audio 通常需要填写；bgm_audio 通常为空。"`
-	Format                    string  `json:"format" jsonschema_description:"音频输出格式，例如 mp3、wav、pcm、ogg_opus。"`
-	SampleRate                int     `json:"sample_rate" jsonschema_description:"音频采样率，例如 48000。"`
-	SpeechRate                float64 `json:"speech_rate" jsonschema_description:"语速调节参数。"`
-	PitchRate                 float64 `json:"pitch_rate" jsonschema_description:"音调调节参数。"`
-	LoudnessRate              float64 `json:"loudness_rate" jsonschema_description:"音量调节参数。"`
-	GenerateAudio             bool    `json:"generate_audio" jsonschema_description:"Seedance 是否生成音频。没有明确音频计划时默认 false。"`
-	ReturnLastFrame           bool    `json:"return_last_frame" jsonschema_description:"是否返回尾帧。last_frame_chain 的上游视频通常需要 true。"`
-	CameraFixed               bool    `json:"camera_fixed" jsonschema_description:"是否固定镜头。与 camera prompt 冲突时工具应返回错误。"`
-	SequentialImageGeneration string  `json:"sequential_image_generation" jsonschema:"enum=auto,enum=disabled" jsonschema_description:"Seedream 组图能力。只在需要生成多张连续图片时使用 auto。"`
-	MaxImages                 int     `json:"max_images" jsonschema_description:"Seedream 组图数量。单张参考图通常为 1。"`
-	Seed                      int64   `json:"seed" jsonschema_description:"可选随机种子。没有明确复现需求时留空或 0。"`
+	Ratio                     string         `json:"ratio" jsonschema_description:"输出比例，例如 9:16、16:9、1:1。未知时可为空并由 profile 默认。"`
+	DurationSec               float64        `json:"duration_sec" jsonschema_description:"视频时长，单位秒。Seedance 当前只支持 5 或 10 秒；template_video 默认 5 秒，可用于低成本卖点卡片或 CTA；图片计划为空或 0。"`
+	Resolution                string         `json:"resolution" jsonschema_description:"分辨率档位，例如 1080p、2K、4K。必须符合模型能力。"`
+	Watermark                 bool           `json:"watermark" jsonschema_description:"是否添加水印。生产广告通常 false，除非配置要求。"`
+	Speaker                   string         `json:"speaker" jsonschema_description:"seed-audio-1.0 音色 ID。voiceover_audio 通常需要填写；bgm_audio 通常为空。"`
+	Format                    string         `json:"format" jsonschema_description:"音频输出格式，例如 mp3、wav、pcm、ogg_opus。"`
+	SampleRate                int            `json:"sample_rate" jsonschema_description:"音频采样率，例如 48000。"`
+	SpeechRate                float64        `json:"speech_rate" jsonschema_description:"语速调节参数。"`
+	PitchRate                 float64        `json:"pitch_rate" jsonschema_description:"音调调节参数。"`
+	LoudnessRate              float64        `json:"loudness_rate" jsonschema_description:"音量调节参数。"`
+	GenerateAudio             bool           `json:"generate_audio" jsonschema_description:"Seedance 是否生成音频。没有明确音频计划时默认 false。"`
+	ReturnLastFrame           bool           `json:"return_last_frame" jsonschema_description:"是否返回尾帧。last_frame_chain 的上游视频通常需要 true。"`
+	CameraFixed               bool           `json:"camera_fixed" jsonschema_description:"是否固定镜头。与 camera prompt 冲突时工具应返回错误。"`
+	TemplateKey               string         `json:"template_key" jsonschema_description:"template_video 使用的受控模板 key。默认 static_fallback_ken_burns_v1；不要填写任意 HTML 或外部模板地址。"`
+	FPS                       int            `json:"fps" jsonschema_description:"template_video 帧率，当前支持 24 或 30。默认 24。"`
+	Variables                 map[string]any `json:"variables" jsonschema_description:"template_video 变量，例如 headline、caption、cta、brand_colors。只填写短文本和 #RRGGBB 色值数组。"`
+	SequentialImageGeneration string         `json:"sequential_image_generation" jsonschema:"enum=auto,enum=disabled" jsonschema_description:"Seedream 组图能力。只在需要生成多张连续图片时使用 auto。"`
+	MaxImages                 int            `json:"max_images" jsonschema_description:"Seedream 组图数量。单张参考图通常为 1。"`
+	Seed                      int64          `json:"seed" jsonschema_description:"可选随机种子。没有明确复现需求时留空或 0。"`
 }
 
 type RenderPlanAuditHintsInput struct {
@@ -289,10 +292,10 @@ func validateUpsertRenderPlanInput(input UpsertRenderPlanToolInput) error {
 	if err := requireMode(input.TaskType, "generate", "edit", "extend", "bridge"); err != nil {
 		return err
 	}
-	if err := requireMode(input.ModelPromptProfile, "seedream_5_image", "seedance_2_video", "seed_audio_1"); err != nil {
+	if err := requireMode(input.ModelPromptProfile, "seedream_5_image", "seedance_2_video", "seed_audio_1", "template_video"); err != nil {
 		return err
 	}
-	if err := requireMode(input.Operation, "text_to_image", "image_to_image", "multi_image_to_image", "text_to_video", "image_to_video_first_frame", "image_to_video_first_last_frame", "multi_modal_reference_video", "video_edit", "video_extend", "video_bridge", "text_to_audio"); err != nil {
+	if err := requireMode(input.Operation, "text_to_image", "image_to_image", "multi_image_to_image", "text_to_video", "image_to_video_first_frame", "image_to_video_first_last_frame", "multi_modal_reference_video", "video_edit", "video_extend", "video_bridge", "text_to_audio", "template_to_video", "image_to_template_video"); err != nil {
 		return err
 	}
 	if err := validateReferenceBindingContent(input.ReferenceBindings, input.Operation); err != nil {
@@ -401,6 +404,11 @@ func validateUpsertRenderPlanRuntime(runtime NativeRuntimeContext, input UpsertR
 	if strings.TrimSpace(runtime.TargetPhase) != "" && input.TargetPhase != runtime.TargetPhase {
 		return NaturalToolError(toolUpsertRenderPlan, fmt.Sprintf("target_phase 必须与当前 Craftsman 任务一致：当前是 %s，工具参数是 %s", runtime.TargetPhase, input.TargetPhase), "请继承 dispatch_craftsman 的 target_phase。preview_image 任务只能写 seedream 预览图计划，不能改成 shot_video。"), false
 	}
+	if isTemplateOnlyVideoPolicy(runtime.VideoRoutePolicy) && input.TargetPhase == renderplan.PhaseShotVideo && input.Mode != "mark_blocked" {
+		if input.ModelPromptProfile != renderplan.ProfileTemplateVideo || !isTemplateVideoOperation(input.Operation) {
+			return NaturalToolError(toolUpsertRenderPlan, fmt.Sprintf("当前任务设置 video_route_policy=template_only，禁止 Seedance；收到 profile=%s operation=%s", input.ModelPromptProfile, input.Operation), "请改用 model_prompt_profile=template_video，并使用 operation=image_to_template_video 或 template_to_video；如果无法生成模板视频，请用 mark_blocked 说明原因。"), false
+		}
+	}
 	return "", true
 }
 
@@ -438,13 +446,35 @@ func applyUpsertRenderPlanRuntimeDefaults(input UpsertRenderPlanToolInput, runti
 	if strings.TrimSpace(input.TaskType) == "" {
 		input.TaskType = renderplan.TaskGenerate
 	}
+	templateOnlyShotVideo := isTemplateOnlyVideoPolicy(runtime.VideoRoutePolicy) && input.TargetPhase == renderplan.PhaseShotVideo
 	if strings.TrimSpace(input.ModelPromptProfile) == "" {
-		input.ModelPromptProfile = inferRenderPlanProfile(input.TargetPhase)
+		if templateOnlyShotVideo {
+			input.ModelPromptProfile = renderplan.ProfileTemplateVideo
+		} else {
+			input.ModelPromptProfile = firstNonEmptyString(runtime.RecommendedModelPromptProfile, inferRenderPlanProfile(input.TargetPhase))
+		}
+	}
+	if len(input.ReferenceBindings) == 0 && len(runtime.InputNodeRefs) > 0 {
+		input.ReferenceBindings = referenceBindingsFromRuntimeInputRefs(runtime.InputNodeRefs, input.ModelPromptProfile)
 	}
 	if strings.TrimSpace(input.Operation) == "" {
-		input.Operation = inferRenderPlanOperation(input.TargetPhase, input.ReferenceBindings)
+		if templateOnlyShotVideo {
+			input.Operation = firstNonEmptyString(runtime.RecommendedOperation, "image_to_template_video")
+		} else {
+			input.Operation = firstNonEmptyString(runtime.RecommendedOperation, inferRenderPlanOperation(input.TargetPhase, input.ReferenceBindings))
+		}
 	}
+	input.Params = applyRecommendedRenderPlanParams(input.Params, runtime.RecommendedParams)
 	return normalizeUpsertRenderPlanInput(input)
+}
+
+func isTemplateVideoOperation(operation string) bool {
+	switch strings.TrimSpace(operation) {
+	case "image_to_template_video", "template_to_video":
+		return true
+	default:
+		return false
+	}
 }
 
 func inferRenderPlanProfile(targetPhase string) string {
@@ -495,6 +525,80 @@ func inferRenderPlanOperation(targetPhase string, bindings []ReferenceBindingInp
 		return "text_to_image"
 	default:
 		return ""
+	}
+}
+
+func referenceBindingsFromRuntimeInputRefs(inputRefs []string, profile string) []ReferenceBindingInput {
+	out := make([]ReferenceBindingInput, 0, len(inputRefs))
+	for index, ref := range inputRefs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		modelRole := "first_frame"
+		if profile == renderplan.ProfileTemplateVideo {
+			modelRole = "reference_image"
+		} else if len(inputRefs) == 2 && index == 1 {
+			modelRole = "last_frame"
+		} else if len(inputRefs) > 2 {
+			modelRole = "reference_image"
+		}
+		out = append(out, ReferenceBindingInput{
+			ClientKey:      fmt.Sprintf("ref_task_input_%d", len(out)+1),
+			SourceType:     "media_node",
+			SourceID:       ref,
+			ContentType:    "image_url",
+			ModelRole:      modelRole,
+			SemanticTarget: "current task input",
+			Required:       true,
+		})
+	}
+	return out
+}
+
+func applyRecommendedRenderPlanParams(input RenderPlanParamsInput, recommended map[string]any) RenderPlanParamsInput {
+	if len(recommended) == 0 {
+		return input
+	}
+	if input.Ratio == "" {
+		input.Ratio = stringValue(recommended, "ratio")
+	}
+	if input.DurationSec == 0 {
+		input.DurationSec = float64Value(recommended, "duration_sec")
+	}
+	if input.Resolution == "" {
+		input.Resolution = stringValue(recommended, "resolution")
+	}
+	if input.TemplateKey == "" {
+		input.TemplateKey = stringValue(recommended, "template_key")
+	}
+	if input.FPS == 0 {
+		input.FPS = int(int32Value(recommended, "fps", 0))
+	}
+	if input.Variables == nil {
+		if variables, ok := recommended["variables"].(map[string]any); ok {
+			input.Variables = variables
+		}
+	}
+	return input
+}
+
+func float64Value(raw map[string]any, key string) float64 {
+	value, ok := raw[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case int:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return 0
 	}
 }
 
@@ -625,6 +729,9 @@ func toRenderPlanParams(input RenderPlanParamsInput) renderplan.Params {
 		GenerateAudio:             input.GenerateAudio,
 		ReturnLastFrame:           input.ReturnLastFrame,
 		CameraFixed:               input.CameraFixed,
+		TemplateKey:               input.TemplateKey,
+		FPS:                       input.FPS,
+		Variables:                 input.Variables,
 		SequentialImageGeneration: input.SequentialImageGeneration,
 		MaxImages:                 input.MaxImages,
 		Seed:                      input.Seed,

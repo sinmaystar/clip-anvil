@@ -109,18 +109,21 @@ func TestM82DefaultRegistryContainsCommerceSkillPack(t *testing.T) {
 			"commerce-ad-producer",
 			"hitl-checkpoint-producer",
 			"reference-video-analysis-producer",
+			"template-video-producer",
 		},
 		RoleCraftsman: {
 			"audio-renderplan-craftsman",
 			"renderplan-repair-craftsman",
 			"seedance-renderplan-craftsman",
 			"seedream-renderplan-craftsman",
+			"template-video-craftsman",
 		},
 		RoleReviewer: {
 			"commerce-delivery-promise-reviewer",
 			"final-video-audio-reviewer",
 			"reference-consistency-reviewer",
 			"reviewer-quality-gate",
+			"template-video-reviewer",
 		},
 		RoleComposer: {
 			"composer-blocker-escalation",
@@ -206,6 +209,41 @@ func TestFinalVideoAudioReviewerSkillNamesAllFinalRequiredAxes(t *testing.T) {
 	} {
 		if !strings.Contains(loaded.Content, axis) {
 			t.Fatalf("final-video-audio-reviewer missing required axis %q:\n%s", axis, loaded.Content)
+		}
+	}
+}
+
+func TestTemplateVideoSkillsCarryHyperFramesBlueprintGuidance(t *testing.T) {
+	tests := []struct {
+		name string
+		role Role
+		want []string
+	}{
+		{
+			name: "template-video-producer",
+			role: RoleProducer,
+			want: []string{"internal_template_video", "template_video", "product_hero_v2", "benefit_grid_assemble", "comparison_split", "kinetic_type_beats", "cta_morph_press"},
+		},
+		{
+			name: "template-video-craftsman",
+			role: RoleCraftsman,
+			want: []string{"model_prompt_profile: template_video", "image_to_template_video", "template_key", "product_hero_v2", "benefit_grid_assemble", "comparison_split", "kinetic_type_beats", "cta_morph_press"},
+		},
+		{
+			name: "template-video-reviewer",
+			role: RoleReviewer,
+			want: []string{"scene_timing", "text_safety", "product_visibility", "audio_readiness", "seedance_policy", "pre_render_plan_review", "faithfulness", "subject_consistency", "continuity", "Do not invent rubric axis names"},
+		},
+	}
+	for _, tt := range tests {
+		loaded, err := DefaultRegistry().Load(tt.name, tt.role, "")
+		if err != nil {
+			t.Fatalf("load %s: %v", tt.name, err)
+		}
+		for _, want := range tt.want {
+			if !strings.Contains(loaded.Content, want) {
+				t.Fatalf("%s missing %q:\n%s", tt.name, want, loaded.Content)
+			}
 		}
 	}
 }

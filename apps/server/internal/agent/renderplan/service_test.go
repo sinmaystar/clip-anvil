@@ -62,7 +62,54 @@ func TestServiceRejectsShotVideoWithSeedreamProfile(t *testing.T) {
 	input.Operation = "image_to_video_first_frame"
 	input.PromptParts.Action = "旅客拉着行李箱穿过机场大厅。"
 	_, err := service.Upsert(context.Background(), input)
-	if err == nil || !strings.Contains(err.Error(), "shot_video 必须使用 seedance_2_video") {
+	if err == nil || !strings.Contains(err.Error(), "shot_video 必须使用 seedance_2_video 或 template_video") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(store.plans) != 0 {
+		t.Fatalf("store writes = %d, want 0", len(store.plans))
+	}
+}
+
+func TestServiceAcceptsTemplateShotVideoRenderPlan(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validReferenceInput()
+	input.Scope.Type = ScopeShot
+	input.Scope.Key = "scene_main.shot_02"
+	input.TargetPhase = PhaseShotVideo
+	input.ModelPromptProfile = ProfileTemplateVideo
+	input.Operation = "template_to_video"
+	input.PromptParts.Objective = "生成 5 秒低成本模板视频：商品卖点卡片、产品图轻微推进、结尾 CTA。"
+	input.PromptParts.Action = ""
+	input.PromptParts.Sequence = nil
+	input.Params = Params{Ratio: "9:16", DurationSec: 5, Resolution: "1080p"}
+	input.Rationale = "该分镜是文字和产品静帧驱动，适合模板视频降低 Seedance 成本。"
+
+	plan, err := service.Upsert(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.TargetPhase != PhaseShotVideo || plan.ModelPromptProfile != ProfileTemplateVideo || plan.Operation != "template_to_video" {
+		t.Fatalf("plan = %#v", plan)
+	}
+	if plan.Status != StatusCompiled {
+		t.Fatalf("status = %q, want compiled", plan.Status)
+	}
+	if plan.SemanticKey != "scene_main.shot_02.shot_video.r1" {
+		t.Fatalf("semantic key = %q", plan.SemanticKey)
+	}
+}
+
+func TestServiceRejectsTemplateVideoForNonShotPhase(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validReferenceInput()
+	input.ModelPromptProfile = ProfileTemplateVideo
+	input.Operation = "template_to_video"
+
+	_, err := service.Upsert(context.Background(), input)
+
+	if err == nil || !strings.Contains(err.Error(), "template_video 只能用于 shot_video") {
 		t.Fatalf("error = %v", err)
 	}
 	if len(store.plans) != 0 {

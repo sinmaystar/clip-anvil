@@ -2,7 +2,7 @@ package renderplan
 
 import "testing"
 
-func TestProfileByIDReturnsSeedreamSeedanceAndSeedAudioProfiles(t *testing.T) {
+func TestProfileByIDReturnsSeedreamSeedanceSeedAudioAndTemplateProfiles(t *testing.T) {
 	imageProfile, ok := ProfileByID(ProfileSeedream5Image)
 	if !ok {
 		t.Fatalf("seedream profile missing")
@@ -23,5 +23,17 @@ func TestProfileByIDReturnsSeedreamSeedanceAndSeedAudioProfiles(t *testing.T) {
 	}
 	if audioProfile.OutputType != "audio" || !audioProfile.AllowedOperations["text_to_audio"] || audioProfile.DefaultModelID != "seed-audio-1.0" {
 		t.Fatalf("audio profile = %#v", audioProfile)
+	}
+	templateProfile, ok := ProfileByID(ProfileTemplateVideo)
+	if !ok {
+		t.Fatalf("template video profile missing")
+	}
+	if templateProfile.DefaultProvider != "internal_template_video" ||
+		templateProfile.DefaultModelID != "hyperframes-html" ||
+		templateProfile.OutputType != "video" ||
+		!templateProfile.AllowedOperations["template_to_video"] ||
+		!templateProfile.AllowedOperations["image_to_template_video"] ||
+		templateProfile.DefaultParams.DurationSec != 5 {
+		t.Fatalf("template profile = %#v", templateProfile)
 	}
 }

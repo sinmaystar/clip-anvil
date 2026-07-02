@@ -56,6 +56,19 @@ func ProfileByID(id string) (ModelPromptProfile, bool) {
 			DefaultParams:  Params{Format: "mp3", SampleRate: 48000, Watermark: false},
 			MaxPromptChars: 2048,
 		}, true
+	case ProfileTemplateVideo:
+		return ModelPromptProfile{
+			ID:              ProfileTemplateVideo,
+			DefaultProvider: "internal_template_video",
+			DefaultModelID:  "hyperframes-html",
+			OutputType:      "video",
+			AllowedOperations: map[string]bool{
+				"template_to_video":       true,
+				"image_to_template_video": true,
+			},
+			DefaultParams:  Params{Ratio: "9:16", DurationSec: 5, Resolution: "1080p", TemplateKey: "static_fallback_ken_burns_v1", FPS: 24},
+			MaxPromptChars: 3000,
+		}, true
 	default:
 		return ModelPromptProfile{}, false
 	}

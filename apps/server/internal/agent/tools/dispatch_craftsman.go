@@ -96,6 +96,11 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 				"enum":        []string{"execute_immediately", "wait_for_producer"},
 				"description": "execute_immediately 表示 Craftsman 编译 RenderPlan 后自动提交 Worker；wait_for_producer 表示编译后等待 Producer accept/reject。",
 			},
+			"video_route_policy": map[string]any{
+				"type":        "string",
+				"enum":        []string{"default", "template_only"},
+				"description": "分镜视频路由策略。用户明确要求不要调用 Seedance 或只使用 HyperFrames/template video 时必须填写 template_only；默认 default。",
+			},
 			"force": map[string]any{
 				"type":        "boolean",
 				"description": "为 true 时，即使已有完成结果也创建新的尝试；默认 false。注意：force 不能绕过正在排队或运行中的同 scope/target_phase Craftsman 任务。",
@@ -162,7 +167,7 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 	if err != nil {
 		return ExecuteOutput{}, err
 	}
-	for _, scope := range scopes {
+	for index, scope := range scopes {
 		if active, ok := activeCraftsmanTaskForScopePhase(activeTasks, scope.ScopeType, scope.ScopeID, args.TargetPhase); ok {
 			item := map[string]any{
 				"scope_type":                scope.ScopeType,
@@ -204,6 +209,15 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			"producer_task_id":       uuidString(input.TaskID),
 			"craftsman_thread_id":    uuidString(thread.ID),
 			"requested_max_attempts": args.MaxAttempts,
+		}
+		if args.VideoRoutePolicy != "" {
+			taskInput["video_route_policy"] = args.VideoRoutePolicy
+		}
+		if route := recommendedVideoRoute(args, scope, index, len(scopes)); route.Profile != "" {
+			taskInput["recommended_model_prompt_profile"] = route.Profile
+			taskInput["recommended_operation"] = route.Operation
+			taskInput["recommended_params"] = route.Params
+			taskInput["recommended_route_reason"] = route.Reason
 		}
 		if scope.ScopeType == "shot" {
 			taskInput["shot_id"] = uuidString(scope.ScopeID)
@@ -261,7 +275,7 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			SourceRole:  "producer",
 			TargetRole:  "craftsman",
 			Scope:       mustJSON(map[string]any{"scope_type": scope.ScopeType, "scope_id": uuidString(scope.ScopeID), "scope_key": scope.ScopeKey, "client_key": scope.ClientKey}),
-			Payload:     mustJSON(map[string]any{"target_phase": args.TargetPhase, "execution_policy": args.ExecutionPolicy, "max_attempts": args.MaxAttempts}),
+			Payload:     mustJSON(map[string]any{"target_phase": args.TargetPhase, "execution_policy": args.ExecutionPolicy, "max_attempts": args.MaxAttempts, "video_route_policy": args.VideoRoutePolicy}),
 		})
 		if t.enqueuer != nil {
 			t.enqueuer.EnqueueCraftsmanTask(ctx, task)
@@ -333,6 +347,12 @@ func craftsmanDelegationText(scope craftsmanDispatchScope, args parsedDispatchCr
 	}
 	if args.Brief != "" {
 		lines = append(lines, "- brief: "+args.Brief)
+	}
+	if args.VideoRoutePolicy != "" {
+		lines = append(lines, "- video_route_policy: "+args.VideoRoutePolicy)
+		if isTemplateOnlyVideoPolicy(args.VideoRoutePolicy) {
+			lines = append(lines, "- video_route_policy_rule: 禁止调用 Seedance；必须使用 HyperFrames/template_video，无法满足时标记 blocked。")
+		}
 	}
 	if args.Critique != "" {
 		lines = append(lines, "- critique: "+args.Critique)
@@ -407,6 +427,7 @@ type parsedDispatchCraftsmanArgs struct {
 	Critique         string
 	FixHints         []string
 	InputNodeRefs    []string
+	VideoRoutePolicy string
 }
 
 func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, error) {
@@ -474,6 +495,7 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 		}
 	}
 	shotRefs := stringSliceValue(raw, "shot_refs")
+	videoRoutePolicy := normalizeVideoRoutePolicy(stringValue(raw, "video_route_policy"))
 	return parsedDispatchCraftsmanArgs{
 		Brief:            stringValue(raw, "brief"),
 		ScopeType:        scopeType,
@@ -489,6 +511,7 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 		Critique:         stringValue(raw, "critique"),
 		FixHints:         stringSliceValue(raw, "fix_hints"),
 		InputNodeRefs:    stringSliceValue(raw, "input_node_refs"),
+		VideoRoutePolicy: videoRoutePolicy,
 	}, nil
 }
 
@@ -497,6 +520,7 @@ type craftsmanDispatchScope struct {
 	ScopeID   pgtype.UUID
 	ScopeKey  string
 	ClientKey string
+	Title     string
 }
 
 func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) ([]craftsmanDispatchScope, error) {
@@ -532,9 +556,87 @@ func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pg
 	}
 	out := make([]craftsmanDispatchScope, 0, len(shots))
 	for _, shot := range shots {
-		out = append(out, craftsmanDispatchScope{ScopeType: "shot", ScopeID: shot.ID, ScopeKey: semanticScopeKey(shot.SemanticKey, "shot", shot.ClientKey), ClientKey: shot.ClientKey})
+		out = append(out, craftsmanDispatchScope{ScopeType: "shot", ScopeID: shot.ID, ScopeKey: semanticScopeKey(shot.SemanticKey, "shot", shot.ClientKey), ClientKey: shot.ClientKey, Title: shot.Title})
 	}
 	return out, nil
+}
+
+type recommendedRoute struct {
+	Profile   string
+	Operation string
+	Params    map[string]any
+	Reason    string
+}
+
+func recommendedVideoRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDispatchScope, index int, total int) recommendedRoute {
+	if args.TargetPhase != "shot_video" || scope.ScopeType != "shot" {
+		return recommendedRoute{}
+	}
+	if isTemplateOnlyVideoPolicy(args.VideoRoutePolicy) {
+		return templateRecommendedRoute(args, scope, "video_route_policy=template_only applies no-Seedance policy; routing to HyperFrames template_video")
+	}
+	if total <= 1 && !isTemplateRouteCandidate(args.Brief, scope) {
+		return recommendedRoute{
+			Profile:   "seedance_2_video",
+			Operation: "image_to_video_first_frame",
+			Params:    map[string]any{"ratio": "9:16", "duration_sec": 5, "resolution": "1080p"},
+			Reason:    "single shot video dispatch defaults to Seedance unless the brief/scope is template-like",
+		}
+	}
+	if index == 0 && !isTemplateRouteCandidate(args.Brief, scope) {
+		return recommendedRoute{
+			Profile:   "seedance_2_video",
+			Operation: "image_to_video_first_frame",
+			Params:    map[string]any{"ratio": "9:16", "duration_sec": 5, "resolution": "1080p"},
+			Reason:    "first broad shot_video dispatch is treated as the hero Seedance shot",
+		}
+	}
+	return templateRecommendedRoute(args, scope, "non-hero shot_video dispatch defaults to HyperFrames template_video to control Seedance cost")
+}
+
+func templateRecommendedRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDispatchScope, reason string) recommendedRoute {
+	return recommendedRoute{
+		Profile:   "template_video",
+		Operation: "image_to_template_video",
+		Params: map[string]any{
+			"ratio":        "9:16",
+			"duration_sec": 5,
+			"resolution":   "1080p",
+			"template_key": "static_fallback_ken_burns_v1",
+			"fps":          24,
+			"variables": map[string]any{
+				"headline": firstNonEmptyString(scope.Title, scope.ClientKey, "产品卖点"),
+				"caption":  firstNonEmptyString(args.Brief, "低成本模板视频"),
+				"cta":      "了解更多",
+			},
+		},
+		Reason: reason,
+	}
+}
+
+func isTemplateRouteCandidate(brief string, scope craftsmanDispatchScope) bool {
+	text := strings.ToLower(brief + " " + scope.Title + " " + scope.ScopeKey + " " + scope.ClientKey)
+	for _, keyword := range []string{"cta", "packshot", "benefit", "hyperframes", "template video", "no seedance", "without seedance", "seedance 禁止", "不要调用 seedance", "不调用 seedance", "不使用 seedance", "卖点", "卡片", "收尾", "尾帧", "商品图", "静态", "模板"} {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeVideoRoutePolicy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "default":
+		return ""
+	case "template_only", "template-only", "hyperframes_only", "hyperframe_only", "no_seedance", "no-seedance":
+		return "template_only"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func isTemplateOnlyVideoPolicy(value string) bool {
+	return normalizeVideoRoutePolicy(value) == "template_only"
 }
 
 func semanticScopeKey(semanticKey string, scopeType string, clientKey string) string {
@@ -596,7 +698,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		if err != nil {
 			return nil, err
 		}
-		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase, args.VideoRoutePolicy) {
 			return nil, nil
 		}
 		return []db.Shot{shot}, nil
@@ -606,7 +708,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		if err != nil {
 			return nil, err
 		}
-		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase, args.VideoRoutePolicy) {
 			return nil, nil
 		}
 		return []db.Shot{shot}, nil
@@ -618,7 +720,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		}
 		out := make([]db.Shot, 0, len(shots))
 		for _, shot := range shots {
-			if shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+			if shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase, args.VideoRoutePolicy) {
 				out = append(out, shot)
 			}
 		}
@@ -634,7 +736,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		if seen[shot.ID] {
 			continue
 		}
-		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase, args.VideoRoutePolicy) {
 			continue
 		}
 		seen[shot.ID] = true
@@ -681,9 +783,11 @@ func (t DispatchCraftsmanTool) resolveShotRef(ctx context.Context, workspaceID p
 	})
 }
 
-func shotDispatchableForPhase(status string, force bool, targetPhase string) bool {
+func shotDispatchableForPhase(status string, force bool, targetPhase string, videoRoutePolicy string) bool {
 	if targetPhase == "shot_video" {
 		switch strings.TrimSpace(status) {
+		case "planned", "draft":
+			return isTemplateOnlyVideoPolicy(videoRoutePolicy)
 		case "preview_ready", "failed":
 			return true
 		case "video_ready", "video_running":
