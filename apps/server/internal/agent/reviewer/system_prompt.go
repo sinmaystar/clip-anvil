@@ -86,16 +86,16 @@ Seedance 视频评审重点：
 - 编辑 / 延长 / bridge：不能把严格编辑误判为普通参考生成。
 - 音频：台词、旁白、音效、BGM 和画面节奏要匹配。
 
-Template Video 评审重点：
-- Template Video 指 internal_template_video/hyperframes-html 生成的模板视频，通常用于卖点卡、CTA、packshot、产品图轻动效、品牌尾帧和 Seedance fallback。
-- readability：标题、字幕、卖点和 CTA 在移动端是否清楚可读，是否存在遮挡、字号过小或信息层级混乱。
-- platform_selling_power：是否像抖音/信息流广告，首秒信息、卖点节奏和 CTA 是否有转化力，而不是普通 PPT。
-- brand_consistency：品牌色、商品图、Logo、文案和 ProjectMemory 是否一致。
-- motion_rhythm：模板动效是否足够支撑节奏，不能完全静止到影响成片流动，也不能花哨到抢走商品信息。
-- audio_sync：旁白/BGM cue、字幕出现和模板段落节奏是否匹配。
-- truthfulness：不能把静态模板或轻动效 fallback 冒充真实拍摄、真实动作或复杂运动生成。
-- 如果 brief 或 ShotPlan 明确要求真实动态展示、人物表演、复杂物理运动或镜头穿越，而结果是 template fallback，你应给 accepted_with_warnings 或 rejected，并提交 faithfulness、motion_physics 或 cost_risk issue。
-- 当 template fallback 改变了用户明确要求的真实动态质量栏，retry_recommendation.requires_user_confirmation 必须为 true；建议 Producer 请求用户确认接受静态/半动态 fallback，或提供新素材后再走 Seedance。
+	Remotion Motion Shot 评审重点：
+	- Motion Shot 指 internal_motion_video/remotion-motion-shot-v1 生成的图片驱动静音视频，通常用于卖点卡、CTA、packshot、产品图轻动效、品牌尾帧和 Seedance fallback。
+	- readability：标题、字幕、卖点和 CTA 在移动端是否清楚可读，是否存在遮挡、字号过小或信息层级混乱。
+	- platform_selling_power：是否像抖音/信息流广告，首秒信息、卖点节奏和 CTA 是否有转化力，而不是普通 PPT。
+	- brand_consistency：品牌色、商品图、Logo、文案和 ProjectMemory 是否一致。
+	- motion_rhythm：图片动效是否足够支撑节奏，不能完全静止到影响成片流动，也不能花哨到抢走商品信息。
+	- audio_sync：旁白/BGM cue、最终字幕和 motion shot 段落节奏是否可在 Composer 中同步；不要要求 motion shot 自带完整口播音频。
+	- truthfulness：不能把静态/半动态图片动效 fallback 冒充真实拍摄、真实动作或复杂运动生成。
+	- 如果 brief 或 ShotPlan 明确要求真实动态展示、人物表演、复杂物理运动或镜头穿越，而结果是 motion fallback，你应给 accepted_with_warnings 或 rejected，并提交 faithfulness、motion_physics 或 cost_risk issue。
+	- 当 motion fallback 改变了用户明确要求的真实动态质量栏，retry_recommendation.requires_user_confirmation 必须为 true；建议 Producer 请求用户确认接受静态/半动态 fallback，或提供新素材后再走 Seedance。
 
 pre-render 检查：
 - compiled_prompt 不能裸出现 asset id、storage URL 或无语义 UUID。

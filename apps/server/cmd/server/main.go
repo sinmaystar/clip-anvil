@@ -158,6 +158,7 @@ func main() {
 	})
 	sandboxJobService := sandbox.NewJobService(sandboxManager, sandboxClient, queries, storageService)
 	providerRegistry.Register("internal_ffmpeg", production.NewInternalFFmpegProvider(sandboxJobService))
+	providerRegistry.Register("internal_motion_video", production.NewMotionShotProvider(sandboxJobService))
 	productionService := production.NewService(pgPool, queries, providerRegistry, storageService)
 	productionService.SetRemoteAssetImporter(sandboxJobService)
 	legacyProductionRuntime := production.NewLegacyProviderRuntime(providerRegistry)
@@ -862,9 +863,9 @@ func contextFullSummarizerForConfig(cfg *config.Config) agentcontextcompact.Full
 
 func craftsmanResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentcraftsman.ToolCallingResponder {
 	craftsmanFixture := strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_CRAFTSMAN_FIXTURE"))
-	if craftsmanFixture == "template_only_video" {
-		slog.Warn("using template-only video E2E craftsman fixture responder")
-		return e2eTemplateOnlyVideoCraftsmanResponder{}
+	if craftsmanFixture == "motion_shot_video" {
+		slog.Warn("using motion-only video E2E craftsman fixture responder")
+		return e2eMotionShotVideoCraftsmanResponder{}
 	}
 	if craftsmanFixture == "m2_render_plan" || craftsmanFixture == "m3_reviewer_gate" {
 		slog.Warn("using M2 render plan E2E craftsman fixture responder")
@@ -882,9 +883,9 @@ func craftsmanResponderForConfig(cfg *config.Config, contextCompactor agentconte
 }
 
 func producerResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentproducer.Responder {
-	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_PRODUCER_FIXTURE")) == "template_only_video" {
-		slog.Warn("using template-only video E2E producer fixture responder")
-		return e2eTemplateOnlyVideoProducerResponder{}
+	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_PRODUCER_FIXTURE")) == "motion_shot_video" {
+		slog.Warn("using motion-only video E2E producer fixture responder")
+		return e2eMotionShotVideoProducerResponder{}
 	}
 	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_PRODUCER_FIXTURE")) == "m3_reviewer_gate" {
 		slog.Warn("using M3 reviewer gate E2E producer fixture responder")
@@ -936,9 +937,9 @@ func reviewerResponderForConfig(cfg *config.Config, contextCompactor agentcontex
 }
 
 func composerResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentcomposer.ToolResponder {
-	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_COMPOSER_FIXTURE")) == "template_only_video" {
-		slog.Warn("using template-only video E2E composer fixture responder")
-		return e2eTemplateOnlyVideoComposerResponder{}
+	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_COMPOSER_FIXTURE")) == "motion_shot_video" {
+		slog.Warn("using motion-only video E2E composer fixture responder")
+		return e2eMotionShotVideoComposerResponder{}
 	}
 	if cfg.Production.ProviderMode != "real" ||
 		strings.TrimSpace(cfg.Production.Volcengine.APIKey) == "" {

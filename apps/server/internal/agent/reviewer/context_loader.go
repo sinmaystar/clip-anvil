@@ -324,10 +324,10 @@ func routeFactsText(reviewContext Context) string {
 	if facts.Provider != "" || facts.ModelID != "" || facts.OperationType != "" {
 		lines = append(lines, fmt.Sprintf("- provider=%s model_id=%s operation_type=%s", facts.Provider, facts.ModelID, facts.OperationType))
 	}
-	if facts.RenderingFamily != "" || facts.TemplateEngine != "" || facts.TemplateKey != "" {
-		lines = append(lines, fmt.Sprintf("- rendering_family=%s template_engine=%s template_key=%s", facts.RenderingFamily, facts.TemplateEngine, facts.TemplateKey))
+	if facts.RenderingFamily != "" || facts.RendererEngine != "" || facts.MotionStyle != "" {
+		lines = append(lines, fmt.Sprintf("- rendering_family=%s renderer_engine=%s motion_style=%s", facts.RenderingFamily, facts.RendererEngine, facts.MotionStyle))
 	}
-	if facts.RenderingFamily == "template_video" || facts.TemplateEngine != "" || facts.TemplateKey != "" || facts.Provider == "internal_template_video" {
+	if facts.RenderingFamily == "motion_shot_video" || facts.RendererEngine == "remotion" || facts.Provider == "internal_motion_video" {
 		lines = append(lines, "- review_focus=readability, platform_selling_power, brand_consistency, motion_rhythm, audio_sync, truthfulness")
 	}
 	return strings.Join(lines, "\n")
@@ -338,8 +338,8 @@ type routeFacts struct {
 	ModelID         string
 	OperationType   string
 	RenderingFamily string
-	TemplateEngine  string
-	TemplateKey     string
+	RendererEngine  string
+	MotionStyle     string
 }
 
 func (f routeFacts) empty() bool {
@@ -347,8 +347,8 @@ func (f routeFacts) empty() bool {
 		f.ModelID == "" &&
 		f.OperationType == "" &&
 		f.RenderingFamily == "" &&
-		f.TemplateEngine == "" &&
-		f.TemplateKey == ""
+		f.RendererEngine == "" &&
+		f.MotionStyle == ""
 }
 
 func mergeRouteFacts(facts *routeFacts, raw []byte) {
@@ -363,8 +363,8 @@ func mergeRouteFacts(facts *routeFacts, raw []byte) {
 	facts.ModelID = firstNonEmpty(facts.ModelID, jsonString(payload, "model_id"))
 	facts.OperationType = firstNonEmpty(facts.OperationType, jsonString(payload, "operation_type"))
 	facts.RenderingFamily = firstNonEmpty(facts.RenderingFamily, jsonString(payload, "rendering_family"))
-	facts.TemplateEngine = firstNonEmpty(facts.TemplateEngine, jsonString(payload, "template_engine"))
-	facts.TemplateKey = firstNonEmpty(facts.TemplateKey, jsonString(payload, "template_key"))
+	facts.RendererEngine = firstNonEmpty(facts.RendererEngine, jsonString(payload, "renderer_engine"))
+	facts.MotionStyle = firstNonEmpty(facts.MotionStyle, jsonString(payload, "motion_style"))
 }
 
 func jsonString(payload map[string]any, key string) string {

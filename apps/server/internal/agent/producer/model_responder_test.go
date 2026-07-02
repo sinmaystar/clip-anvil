@@ -123,7 +123,7 @@ func TestProducerSystemPromptEnablesCurrentGenerationAndReviewerGate(t *testing.
 		"composition_completed",
 		"fallback_strategy",
 		"不要继续同一路线自动重试",
-		"template fallback",
+		"motion shot fallback",
 		"cost_risk",
 		"用户明确授权自动推进",
 		"shot_04.preview_image.r1.node",

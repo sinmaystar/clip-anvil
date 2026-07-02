@@ -13,27 +13,27 @@ import (
 )
 
 type e2eM2RenderPlanCraftsmanResponder struct{}
-type e2eTemplateOnlyVideoCraftsmanResponder struct{}
+type e2eMotionShotVideoCraftsmanResponder struct{}
 
-func (e2eTemplateOnlyVideoCraftsmanResponder) Respond(_ context.Context, craftsmanContext agentcraftsman.Context) (agentcraftsman.CraftsmanTurnOutput, error) {
+func (e2eMotionShotVideoCraftsmanResponder) Respond(_ context.Context, craftsmanContext agentcraftsman.Context) (agentcraftsman.CraftsmanTurnOutput, error) {
 	switch e2eCraftsmanToolResultCount(craftsmanContext.SameTurnMessages) {
 	case 0:
-		return e2eCraftsmanToolCallOutput("e2e-template-read-memory-"+e2eCraftsmanScopeKey(craftsmanContext), "read_project_memory", `{"brief":"读取 template_only/no-Seedance 视频和音频任务约束。","include_prompt_hints":true}`), nil
+		return e2eCraftsmanToolCallOutput("e2e-motion-read-memory-"+e2eCraftsmanScopeKey(craftsmanContext), "read_project_memory", `{"brief":"读取 motion_only/no-Seedance 视频和音频任务约束。","include_prompt_hints":true}`), nil
 	case 1:
 		switch craftsmanContext.Input.Mode {
 		case "voiceover_audio":
-			return e2eCraftsmanToolCallOutput("e2e-template-upsert-voiceover-"+e2eCraftsmanScopeKey(craftsmanContext), "upsert_render_plan", e2eVoiceoverRenderPlanArgs(craftsmanContext)), nil
+			return e2eCraftsmanToolCallOutput("e2e-motion-upsert-voiceover-"+e2eCraftsmanScopeKey(craftsmanContext), "upsert_render_plan", e2eVoiceoverRenderPlanArgs(craftsmanContext)), nil
 		case "bgm_audio":
-			return e2eCraftsmanToolCallOutput("e2e-template-upsert-bgm-"+e2eCraftsmanScopeKey(craftsmanContext), "upsert_render_plan", e2eBGMRenderPlanArgs(craftsmanContext)), nil
+			return e2eCraftsmanToolCallOutput("e2e-motion-upsert-bgm-"+e2eCraftsmanScopeKey(craftsmanContext), "upsert_render_plan", e2eBGMRenderPlanArgs(craftsmanContext)), nil
 		case "preview_image", "reference_image":
-			return e2eCraftsmanToolCallOutput("e2e-template-upsert-seedream-image-"+e2eCraftsmanScopeKey(craftsmanContext), "upsert_render_plan", e2eSeedreamTemplateAssetRenderPlanArgs(craftsmanContext)), nil
+			return e2eCraftsmanToolCallOutput("e2e-motion-upsert-seedream-image-"+e2eCraftsmanScopeKey(craftsmanContext), "upsert_render_plan", e2eSeedreamMotionAssetRenderPlanArgs(craftsmanContext)), nil
 		default:
-			return e2eCraftsmanToolCallOutput("e2e-template-upsert-render-plan-"+e2eCraftsmanScopeKey(craftsmanContext), "upsert_render_plan", e2eTemplateVideoRenderPlanArgs(craftsmanContext)), nil
+			return e2eCraftsmanToolCallOutput("e2e-motion-upsert-render-plan-"+e2eCraftsmanScopeKey(craftsmanContext), "upsert_render_plan", e2eMotionShotVideoRenderPlanArgs(craftsmanContext)), nil
 		}
 	default:
 		return agentcraftsman.CraftsmanTurnOutput{
-			AssistantText: "已创建 template_video 或 seed_audio_1 RenderPlan，并按 execute_immediately 提交 Worker。",
-			Metadata:      map[string]any{"e2e_fixture": "template_only_video"},
+			AssistantText: "已创建 motion_shot_video 或 seed_audio_1 RenderPlan，并按 execute_immediately 提交 Worker。",
+			Metadata:      map[string]any{"e2e_fixture": "motion_shot_video"},
 		}, nil
 	}
 }
@@ -144,54 +144,55 @@ func e2eRenderPlanArgs(c agentcraftsman.Context) string {
 	}`, clientKey, shotID, objective, subject, setting, action, camera, clientKey)
 }
 
-func e2eTemplateVideoRenderPlanArgs(c agentcraftsman.Context) string {
+func e2eMotionShotVideoRenderPlanArgs(c agentcraftsman.Context) string {
 	shotID := uuidString(c.Shot.ID)
 	clientKey := strings.TrimSpace(c.Shot.ClientKey)
 	if clientKey == "" {
-		clientKey = "shot_01_template_ad"
+		clientKey = "shot_01_motion_ad"
 	}
 	return fmt.Sprintf(`{
-		"brief":"为分镜 %s 创建 no-Seedance HyperFrames template video RenderPlan。",
+		"brief":"为分镜 %s 创建 no-Seedance Remotion motion shot RenderPlan。",
 		"mode":"create",
 		"scope":{"type":"shot","id":%q},
 		"target_phase":"shot_video",
 		"task_type":"generate",
-		"model_prompt_profile":"template_video",
-		"operation":"image_to_template_video",
-		"generation_text":"生成 8 秒 9:16 悦行行李箱 4 段口播广告模板视频：使用用户上传的 box.png 产品图作为主视觉，画面轻微推进；第 1 段开场痛点：短途出行，行李箱别拖后腿；第 2 段产品展示：悦行行李箱轻便硬壳；第 3 段卖点卡：顺滑万向轮、安心托运；第 4 段 CTA：现在出发。禁止调用 Seedance，不要真实复杂运动或人物表演。",
+		"model_prompt_profile":"motion_shot_video",
+		"operation":"image_to_motion_video",
+		"generation_text":"生成 8 秒 9:16 悦行行李箱 Remotion motion shot：使用 Seedream 生成的主视觉图片作为商品层，做轻微推进、视差、文字分段入场和 CTA 收束；只输出无声 shot_video，旁白、BGM、字幕同步交给 Composer。禁止调用 Seedance。",
 		"params":{
 			"ratio":"9:16",
 			"duration_sec":8,
 			"resolution":"1080p",
 			"watermark":false,
-			"template_key":"marketing_ad_4_scene_v1",
-			"fps":24,
-			"variables":{
-				"headline":"悦行行李箱",
-				"caption":"轻便好推｜顺滑万向轮｜短途出行更省心",
-				"cta":"现在出发",
-				"brand_colors":["#111827","#F5C542"],
-				"scenes":[
-					{"badge":"01","headline":"短途出行别费力","caption":"登机、出站、通勤，行李箱不该拖慢你。"},
-					{"badge":"02","headline":"悦行行李箱","caption":"轻便硬壳，干净利落，短途刚刚好。"},
-					{"badge":"03","headline":"顺滑万向轮","caption":"转弯更稳，推行更省力，安心托运。"},
-					{"badge":"GO","headline":"现在出发","caption":"悦行行李箱，让短途出行更省心。"}
-				]
-			}
+			"fps":30,
+			"motion_style":"premium_product_ad",
+			"safe_area":"caption_safe_bottom",
+			"brand_colors":["#111827","#F5C542"],
+			"visual_layers":[
+				{"id":"product_hero","input_ref":"primary_image","role":"product","start_sec":0,"end_sec":8,"animation":"slow_push_in","position":"center_upper","scale_from":0.96,"scale_to":1.08},
+				{"id":"warm_glow","role":"background","start_sec":0,"end_sec":8,"animation":"ambient_gradient","position":"full_bleed"}
+			],
+			"text_layers":[
+				{"role":"hook","text":"短途出行别费力","start_sec":0.2,"end_sec":1.8,"animation":"pop_slide_up","position":"upper_third"},
+				{"role":"headline","text":"悦行行李箱","start_sec":1.8,"end_sec":3.8,"animation":"fade_rise","position":"middle_safe"},
+				{"role":"benefit","text":"轻便好推｜顺滑万向轮","start_sec":3.8,"end_sec":6.2,"animation":"fade_rise","position":"bottom_safe"},
+				{"role":"cta","text":"安心托运 现在出发","start_sec":6.2,"end_sec":8,"animation":"scale_snap","position":"bottom_safe"}
+			],
+			"transitions":{"in":"soft_zoom","out":"fade"}
 		},
 		"audit_hints":{
-			"auto_filled":["根据 template_only 策略使用 HyperFrames marketing_ad_4_scene_v1。"],
-			"prompt_compiler_notes":["reference_bindings 由 dispatch_craftsman 的 input_node_refs 自动继承 box.png。"]
+			"auto_filled":["根据 motion_only 策略使用 internal_motion_video/remotion-motion-shot-v1。"],
+			"prompt_compiler_notes":["reference_bindings 由 dispatch_craftsman 的 input_node_refs 自动继承 Seedream 主视觉图片；Composer 负责旁白、BGM、字幕同步。"]
 		},
-		"rationale":"%s 分镜是卖点卡/CTA 型产品图轻动效广告，符合 template_video 能力边界；video_route_policy=template_only 禁止 Seedance。"
+		"rationale":"%s 分镜是卖点卡/CTA 型产品图轻动效广告，符合 motion_shot_video 能力边界；video_route_policy=motion_only 禁止 Seedance。"
 	}`, clientKey, shotID, clientKey)
 }
 
-func e2eSeedreamTemplateAssetRenderPlanArgs(c agentcraftsman.Context) string {
+func e2eSeedreamMotionAssetRenderPlanArgs(c agentcraftsman.Context) string {
 	shotID := uuidString(c.Shot.ID)
 	clientKey := strings.TrimSpace(c.Shot.ClientKey)
 	if clientKey == "" {
-		clientKey = "shot_01_template_ad"
+		clientKey = "shot_01_motion_ad"
 	}
 	referenceBindings := `"reference_bindings":[]`
 	if len(c.Input.InputNodeRefs) > 0 && strings.TrimSpace(c.Input.InputNodeRefs[0]) != "" {
@@ -205,7 +206,7 @@ func e2eSeedreamTemplateAssetRenderPlanArgs(c agentcraftsman.Context) string {
 			"semantic_target":"悦行行李箱外观和商品主体",
 			"priority":1,
 			"required":true,
-			"notes":"保持 box.png 中银灰色硬壳、竖向纹理和万向轮外观，生成更适合广告模板的视频主视觉图片。"
+			"notes":"保持 box.png 中银灰色硬壳、竖向纹理和万向轮外观，生成更适合 Remotion motion shot 的视频主视觉图片。"
 		}]`, strings.TrimSpace(c.Input.InputNodeRefs[0]))
 	}
 	return fmt.Sprintf(`{
@@ -219,7 +220,7 @@ func e2eSeedreamTemplateAssetRenderPlanArgs(c agentcraftsman.Context) string {
 		"generation_text":"基于用户上传的 box.png 行李箱商品图，生成一张 9:16 竖版商业广告主视觉：银灰色悦行行李箱位于画面中上部，背景是干净现代的短途出行场景或抽象旅行空间，光线明亮高级，留出下方字幕和 CTA 区域；保持行李箱硬壳竖向纹理、四个万向轮和银灰色质感，不要出现人物、竞品 Logo 或难以阅读的文字。",
 		%s,
 		"prompt_parts":{
-			"objective":"生成供 HyperFrames 模板视频使用的商业主视觉图片。",
+			"objective":"生成供 Remotion motion shot 使用的商业主视觉图片。",
 			"subject":"银灰色悦行行李箱，硬壳竖向纹理，四个万向轮，外观参考 box.png。",
 			"setting":"清爽现代的短途旅行广告背景，留出字幕空间。",
 			"composition":"9:16 竖版，商品位于中上部，下方保留文字安全区。",
@@ -236,10 +237,10 @@ func e2eSeedreamTemplateAssetRenderPlanArgs(c agentcraftsman.Context) string {
 			"max_images":1
 		},
 		"audit_hints":{
-			"auto_filled":["根据 template_only 策略，图片允许使用 Seedream，视频阶段仍禁止 Seedance。"],
-			"prompt_compiler_notes":["该图片作为后续 HyperFrames template video 的产品主视觉输入。"]
+			"auto_filled":["根据 motion_only 策略，图片允许使用 Seedream，视频阶段仍禁止 Seedance。"],
+			"prompt_compiler_notes":["该图片作为后续 Remotion motion shot 的产品主视觉输入。"]
 		},
-		"rationale":"%s 分镜需要先生成更有广告质感的静态主视觉图片，再交给 HyperFrames 做低成本视频合成；此步骤使用 Seedream 图片模型，不调用 Seedance 视频。"
+		"rationale":"%s 分镜需要先生成更有广告质感的静态主视觉图片，再交给 Remotion 做低成本视频合成；此步骤使用 Seedream 图片模型，不调用 Seedance 视频。"
 	}`, clientKey, shotID, referenceBindings, clientKey)
 }
 

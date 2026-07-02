@@ -11,47 +11,47 @@ import (
 	agentcomposer "github.com/sinmaystar/clip-anvil/internal/agent/composer"
 )
 
-type e2eTemplateOnlyVideoComposerResponder struct{}
+type e2eMotionShotVideoComposerResponder struct{}
 
-func (e2eTemplateOnlyVideoComposerResponder) Respond(_ context.Context, composerContext agentcomposer.Context) (agentcomposer.ComposerTurnOutput, error) {
+func (e2eMotionShotVideoComposerResponder) Respond(_ context.Context, composerContext agentcomposer.Context) (agentcomposer.ComposerTurnOutput, error) {
 	switch e2eComposerToolResultCount(composerContext.SameTurnMessages) {
 	case 0:
-		return e2eComposerToolCallOutput("e2e-template-composition-context", "get_composition_context", `{}`), nil
+		return e2eComposerToolCallOutput("e2e-motion-composition-context", "get_composition_context", `{}`), nil
 	case 1:
 		args, err := e2eStageMediaInputsArgs(composerContext)
 		if err != nil {
 			return e2eComposerBlockedOutput(err.Error()), nil
 		}
-		return e2eComposerToolCallOutput("e2e-template-stage-media", "stage_media_inputs", args), nil
+		return e2eComposerToolCallOutput("e2e-motion-stage-media", "stage_media_inputs", args), nil
 	case 2:
 		args, err := e2eCreateTimelinePlanArgs(composerContext)
 		if err != nil {
 			return e2eComposerBlockedOutput(err.Error()), nil
 		}
-		return e2eComposerToolCallOutput("e2e-template-create-timeline", "create_timeline_plan", args), nil
+		return e2eComposerToolCallOutput("e2e-motion-create-timeline", "create_timeline_plan", args), nil
 	case 3:
 		args, err := e2eRenderTimelineArgs(composerContext)
 		if err != nil {
 			return e2eComposerBlockedOutput(err.Error()), nil
 		}
-		return e2eComposerToolCallOutput("e2e-template-render-timeline", "render_timeline_template", args), nil
+		return e2eComposerToolCallOutput("e2e-motion-render-timeline", "render_timeline_template", args), nil
 	case 4:
 		args, err := e2eSubmitCompositionArgs(composerContext)
 		if err != nil {
 			return e2eComposerBlockedOutput(err.Error()), nil
 		}
-		return e2eComposerToolCallOutput("e2e-template-submit-composition", "submit_composition_artifact", args), nil
+		return e2eComposerToolCallOutput("e2e-motion-submit-composition", "submit_composition_artifact", args), nil
 	default:
 		return agentcomposer.ComposerTurnOutput{
-			AssistantText: "已通过 Composer native tools 合成 template_only/no-Seedance 最终视频。",
+			AssistantText: "已通过 Composer native tools 合成 motion_only/no-Seedance 最终视频。",
 			Result: agentcomposer.CompositionOutput{
 				Status:        "completed",
 				OperationType: "compose_final_video",
 			},
-			Metadata: map[string]any{"e2e_fixture": "template_only_video"},
+			Metadata: map[string]any{"e2e_fixture": "motion_shot_video"},
 			ModelMessage: &schema.Message{
 				Role:    schema.Assistant,
-				Content: "已通过 Composer native tools 合成 template_only/no-Seedance 最终视频。",
+				Content: "已通过 Composer native tools 合成 motion_only/no-Seedance 最终视频。",
 			},
 		}, nil
 	}
@@ -80,19 +80,19 @@ func e2eComposerToolCallOutput(id string, name string, arguments string) agentco
 				},
 			}},
 		},
-		Metadata: map[string]any{"e2e_fixture": "template_only_video"},
+		Metadata: map[string]any{"e2e_fixture": "motion_shot_video"},
 	}
 }
 
 func e2eComposerBlockedOutput(message string) agentcomposer.ComposerTurnOutput {
-	text := "template_only Composer fixture blocked: " + strings.TrimSpace(message)
+	text := "motion_only Composer fixture blocked: " + strings.TrimSpace(message)
 	return agentcomposer.ComposerTurnOutput{
 		AssistantText: text,
 		Result: agentcomposer.CompositionOutput{
 			Status:        "blocked",
 			OperationType: "compose_final_video",
 		},
-		Metadata: map[string]any{"e2e_fixture": "template_only_video"},
+		Metadata: map[string]any{"e2e_fixture": "motion_shot_video"},
 		ModelMessage: &schema.Message{
 			Role:    schema.Assistant,
 			Content: text,
@@ -174,7 +174,7 @@ func e2eCreateTimelinePlanArgs(context agentcomposer.Context) (string, error) {
 		"template_key":              "simple_concat",
 		"plan":                      plan,
 		"render_settings": map[string]any{
-			"reason": "template_only/no-Seedance E2E final composition",
+			"reason": "motion_only/no-Seedance E2E final composition",
 		},
 	})
 }
@@ -210,7 +210,7 @@ func e2eSubmitCompositionArgs(context agentcomposer.Context) (string, error) {
 		"sandbox_job_id":   render.SandboxJobID,
 		"mime_type":        "video/mp4",
 		"result": map[string]any{
-			"e2e_fixture": "template_only_video",
+			"e2e_fixture": "motion_shot_video",
 		},
 	})
 }
@@ -249,7 +249,7 @@ func e2eTimelinePlan(context agentcomposer.Context) (map[string]any, error) {
 	}
 	return map[string]any{
 		"segments": []map[string]any{{
-			"id":             "shot_01_template_ad",
+			"id":             "shot_01_motion_ad",
 			"asset_id":       clip.AssetID,
 			"workspace_path": clip.WorkspacePath,
 			"start_sec":      0,

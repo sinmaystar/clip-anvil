@@ -17,7 +17,7 @@ func TestReviewerSystemPromptContainsGateRules(t *testing.T) {
 		"voiceover",
 		"audio_sync",
 		"platform_selling_power",
-		"Template Video",
+		"Remotion Motion Shot",
 		"readability",
 		"motion_rhythm",
 		"truthfulness",

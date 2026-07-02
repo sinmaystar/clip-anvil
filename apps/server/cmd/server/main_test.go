@@ -116,8 +116,8 @@ func TestValidateRealMediaE2EConfigRequiresRealVolcengineImageAndAudio(t *testin
 	}
 }
 
-func TestTemplateOnlyVideoFixtureDoesNotRedispatchOnWorkerSignal(t *testing.T) {
-	out, err := e2eTemplateOnlyVideoProducerResponder{}.Respond(context.Background(), agentproducer.ProducerContext{
+func TestMotionShotVideoFixtureDoesNotRedispatchOnWorkerSignal(t *testing.T) {
+	out, err := e2eMotionShotVideoProducerResponder{}.Respond(context.Background(), agentproducer.ProducerContext{
 		RuntimeTriggerText: "触发原因：worker_generation_completed。",
 	})
 	if err != nil {
@@ -131,8 +131,8 @@ func TestTemplateOnlyVideoFixtureDoesNotRedispatchOnWorkerSignal(t *testing.T) {
 	}
 }
 
-func TestTemplateOnlyVideoFixturePlansAudioAndTemplateVideo(t *testing.T) {
-	fixture := e2eTemplateOnlyVideoProducerResponder{}
+func TestMotionShotVideoFixturePlansAudioAndMotionShotVideo(t *testing.T) {
+	fixture := e2eMotionShotVideoProducerResponder{}
 	wantTools := []string{
 		"upsert_project_brief",
 		"update_project_memory",
@@ -165,19 +165,38 @@ func TestTemplateOnlyVideoFixturePlansAudioAndTemplateVideo(t *testing.T) {
 		if count == 5 && !containsAll(call.Arguments, `"target_phase":"preview_image"`, `"input_node_refs":["box.png"]`) {
 			t.Fatalf("preview image dispatch missing Seedream image route: %s", call.Arguments)
 		}
-		if count == 6 && !containsAll(call.Arguments, `"video_route_policy":"template_only"`, `"target_phase":"shot_video"`, `"shot_01_template_ad preview image"`) {
-			t.Fatalf("shot video dispatch missing template_only policy: %s", call.Arguments)
+		if count == 6 && !containsAll(call.Arguments, `"video_route_policy":"motion_only"`, `"target_phase":"shot_video"`, `"shot_01_motion_ad preview image"`) {
+			t.Fatalf("shot video dispatch missing motion_only policy: %s", call.Arguments)
 		}
 	}
 }
 
-func TestTemplateOnlyVideoFixtureDispatchesAudioOnContinuationMessages(t *testing.T) {
-	fixture := e2eTemplateOnlyVideoProducerResponder{}
+func TestMotionShotVideoFixtureDoesNotTreatInitialBriefAsContinuation(t *testing.T) {
+	out, err := e2eMotionShotVideoProducerResponder{}.Respond(context.Background(), agentproducer.ProducerContext{
+		LatestUserText: "使用 box.png 生成悦行行李箱口播广告，视频用 Remotion motion shot，不要调用 Seedance。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ModelMessage == nil || len(out.ModelMessage.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %#v", out.ModelMessage)
+	}
+	call := out.ModelMessage.ToolCalls[0].Function
+	if call.Name != "upsert_project_brief" {
+		t.Fatalf("initial brief dispatched %s %s, want upsert_project_brief", call.Name, call.Arguments)
+	}
+	if out.Metadata["e2e_fixture"] != "motion_shot_video" {
+		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+}
+
+func TestMotionShotVideoFixtureDispatchesAudioOnContinuationMessages(t *testing.T) {
+	fixture := e2eMotionShotVideoProducerResponder{}
 	tests := []struct {
 		text      string
 		wantPhase string
 	}{
-		{text: "继续生成模板视频", wantPhase: "shot_video"},
+		{text: "继续生成动效视频", wantPhase: "shot_video"},
 		{text: "继续生成旁白音频", wantPhase: "voiceover_audio"},
 		{text: "继续生成 BGM 音频", wantPhase: "bgm_audio"},
 	}
@@ -193,15 +212,15 @@ func TestTemplateOnlyVideoFixtureDispatchesAudioOnContinuationMessages(t *testin
 		if call.Name != "dispatch_craftsman" || !strings.Contains(call.Arguments, `"target_phase":"`+tt.wantPhase+`"`) {
 			t.Fatalf("continuation %q dispatched %s %s", tt.text, call.Name, call.Arguments)
 		}
-		if tt.wantPhase == "shot_video" && !containsAll(call.Arguments, `"video_route_policy":"template_only"`, `"shot_01_template_ad preview image"`) {
-			t.Fatalf("template video continuation missing preview input: %s", call.Arguments)
+		if tt.wantPhase == "shot_video" && !containsAll(call.Arguments, `"video_route_policy":"motion_only"`, `"shot_01_motion_ad preview image"`) {
+			t.Fatalf("motion shot continuation missing preview input: %s", call.Arguments)
 		}
 	}
 }
 
-func TestTemplateOnlyVideoFixturePrioritizesFinalCompositionOverTemplateVideoContinuation(t *testing.T) {
-	out, err := e2eTemplateOnlyVideoProducerResponder{}.Respond(context.Background(), agentproducer.ProducerContext{
-		LatestUserText: "继续合成最终视频，使用已经成功的 HyperFrames/template video、真实火山旁白音频和真实火山 BGM 音频。",
+func TestMotionShotVideoFixturePrioritizesFinalCompositionOverMotionShotContinuation(t *testing.T) {
+	out, err := e2eMotionShotVideoProducerResponder{}.Respond(context.Background(), agentproducer.ProducerContext{
+		LatestUserText: "继续合成最终视频，使用已经成功的 Remotion motion shot、真实火山旁白音频和真实火山 BGM 音频。",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -215,9 +234,9 @@ func TestTemplateOnlyVideoFixturePrioritizesFinalCompositionOverTemplateVideoCon
 	}
 }
 
-func TestTemplateOnlyVideoFixtureStopsAfterComposerDispatchResult(t *testing.T) {
-	out, err := e2eTemplateOnlyVideoProducerResponder{}.Respond(context.Background(), agentproducer.ProducerContext{
-		LatestUserText: "继续合成最终视频，使用已经成功的 HyperFrames/template video、真实火山旁白音频和真实火山 BGM 音频。",
+func TestMotionShotVideoFixtureStopsAfterComposerDispatchResult(t *testing.T) {
+	out, err := e2eMotionShotVideoProducerResponder{}.Respond(context.Background(), agentproducer.ProducerContext{
+		LatestUserText: "继续合成最终视频，使用已经成功的 Remotion motion shot、真实火山旁白音频和真实火山 BGM 音频。",
 		SameTurnMessages: []agentproducer.ProducerSameTurnMessage{
 			{Role: "assistant", MessageType: "tool_call", ToolName: "dispatch_composer"},
 			{Role: "tool", MessageType: "tool_result", ToolName: "dispatch_composer", Content: `{"status":"queued"}`},
@@ -234,13 +253,13 @@ func TestTemplateOnlyVideoFixtureStopsAfterComposerDispatchResult(t *testing.T) 
 	}
 }
 
-func TestTemplateOnlyVideoCraftsmanFixtureCreatesSeedreamPreviewImagePlan(t *testing.T) {
-	out, err := e2eTemplateOnlyVideoCraftsmanResponder{}.Respond(context.Background(), agentcraftsman.Context{
+func TestMotionShotVideoCraftsmanFixtureCreatesSeedreamPreviewImagePlan(t *testing.T) {
+	out, err := e2eMotionShotVideoCraftsmanResponder{}.Respond(context.Background(), agentcraftsman.Context{
 		Input: agentcraftsman.GraphInput{
 			Mode:          "preview_image",
 			InputNodeRefs: []string{"box.png"},
 		},
-		Shot: dbShot("shot_01_template_ad", "悦行行李箱 4 段口播模板广告"),
+		Shot: dbShot("shot_01_motion_ad", "悦行行李箱 4 段口播模板广告"),
 		SameTurnMessages: []agentcraftsman.CraftsmanSameTurnMessage{{
 			Role: "tool",
 		}},

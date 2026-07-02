@@ -411,8 +411,8 @@ func writeTaskContext(b *strings.Builder, input GraphInput) {
 	}
 	if strings.TrimSpace(input.VideoRoutePolicy) != "" {
 		fmt.Fprintf(b, "- video_route_policy: %s\n", input.VideoRoutePolicy)
-		if input.VideoRoutePolicy == "template_only" {
-			fmt.Fprintf(b, "- video_route_policy_rule: 禁止调用 Seedance；必须使用 HyperFrames/template_video，无法满足时标记 blocked。\n")
+		if input.VideoRoutePolicy == "motion_only" {
+			fmt.Fprintf(b, "- video_route_policy_rule: 禁止调用 Seedance；必须使用 Remotion motion_shot_video，无法满足时标记 blocked。\n")
 		}
 	}
 	if strings.TrimSpace(input.RecommendedModelPromptProfile) != "" {

@@ -90,20 +90,20 @@ func TestModelAssetReferenceDoesNotInlineNonImageAssets(t *testing.T) {
 	}
 }
 
-func TestContextLoaderIncludesTemplateVideoRoutingFacts(t *testing.T) {
+func TestContextLoaderIncludesMotionShotRoutingFacts(t *testing.T) {
 	store := &fakeReviewContextStore{
 		shot: db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SemanticKey: "scene_main.shot_02", Title: "卖点卡片", Status: "video_ready"},
 		node: db.MediaNode{
 			ID:               uuidWithByte(3),
 			WorkspaceID:      uuidWithByte(1),
 			ShotID:           uuidWithByte(2),
-			Title:            "shot-02 template video",
+			Title:            "shot-02 motion shot video",
 			NodeType:         db.NodeTypeVideo,
 			Status:           db.NodeStatusSucceeded,
 			CurrentVersionID: uuidWithByte(4),
-			ModelProvider:    pgtype.Text{String: "internal_template_video", Valid: true},
-			ModelID:          pgtype.Text{String: "hyperframes-html", Valid: true},
-			Metadata:         []byte(`{"rendering_family":"template_video","template_engine":"hyperframes","template_key":"static_fallback_ken_burns_v1"}`),
+			ModelProvider:    pgtype.Text{String: "internal_motion_video", Valid: true},
+			ModelID:          pgtype.Text{String: "remotion-motion-shot-v1", Valid: true},
+			Metadata:         []byte(`{"rendering_family":"motion_shot_video","renderer_engine":"remotion","motion_style":"premium_product_ad"}`),
 			SemanticKey:      "scene_main.shot_02.shot_video.r1.node",
 		},
 		version: db.ArtifactVersion{
@@ -115,19 +115,19 @@ func TestContextLoaderIncludesTemplateVideoRoutingFacts(t *testing.T) {
 			Status:           db.JobStatusSucceeded,
 			SemanticKey:      "scene_main.shot_02.shot_video.r1.artifact.v1",
 			ArtifactKind:     "shot_video",
-			Output:           []byte(`{"rendering_family":"template_video","template_engine":"hyperframes","template_key":"static_fallback_ken_burns_v1","duration_sec":5}`),
-			ProviderResponse: []byte(`{"template_engine":"hyperframes","template_key":"static_fallback_ken_burns_v1","sandbox_job_id":"sandbox-1"}`),
+			Output:           []byte(`{"rendering_family":"motion_shot_video","renderer_engine":"remotion","motion_style":"premium_product_ad","duration_sec":5}`),
+			ProviderResponse: []byte(`{"renderer_engine":"remotion","motion_style":"premium_product_ad","sandbox_job_id":"sandbox-1"}`),
 		},
 		job: db.GenerationJob{
 			ID:               uuidWithByte(6),
 			WorkspaceID:      uuidWithByte(1),
 			TargetNodeID:     uuidWithByte(3),
-			Provider:         "internal_template_video",
-			ModelID:          "hyperframes-html",
-			OperationType:    "image_to_template_video",
+			Provider:         "internal_motion_video",
+			ModelID:          "remotion-motion-shot-v1",
+			OperationType:    "image_to_motion_video",
 			RenderedPrompt:   "商品图轻微推进，三张卖点卡依次出现，末尾 CTA",
 			Status:           db.JobStatusSucceeded,
-			ProviderResponse: []byte(`{"template_engine":"hyperframes","template_key":"static_fallback_ken_burns_v1"}`),
+			ProviderResponse: []byte(`{"renderer_engine":"remotion","motion_style":"premium_product_ad"}`),
 		},
 		asset: db.MediaAsset{
 			ID:          uuidWithByte(5),
@@ -156,12 +156,12 @@ func TestContextLoaderIncludesTemplateVideoRoutingFacts(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Route Facts",
-		"provider=internal_template_video",
-		"model_id=hyperframes-html",
-		"operation_type=image_to_template_video",
-		"rendering_family=template_video",
-		"template_engine=hyperframes",
-		"template_key=static_fallback_ken_burns_v1",
+		"provider=internal_motion_video",
+		"model_id=remotion-motion-shot-v1",
+		"operation_type=image_to_motion_video",
+		"rendering_family=motion_shot_video",
+		"renderer_engine=remotion",
+		"motion_style=premium_product_ad",
 		"review_focus=readability, platform_selling_power, brand_consistency, motion_rhythm, audio_sync, truthfulness",
 	} {
 		if !strings.Contains(out.Text, want) {
@@ -179,16 +179,16 @@ func TestContextLoaderBuildsPreRenderPlanReviewContext(t *testing.T) {
 			ScopeType:          "shot",
 			ScopeID:            uuidWithByte(2),
 			TargetPhase:        TargetPhaseShotVideo,
-			ModelPromptProfile: "template_video",
-			Operation:          "image_to_template_video",
+			ModelPromptProfile: "motion_shot_video",
+			Operation:          "image_to_motion_video",
 			Status:             "waiting_for_approval",
 			Revision:           1,
 			RenderPlanKey:      "shot_01.shot_video.r1",
 			SemanticKey:        "shot_01.shot_video.r1",
-			Params:             []byte(`{"template_key":"benefit_grid_assemble","video_route_policy":"template_only","duration_sec":8}`),
+			Params:             []byte(`{"motion_style":"premium_product_ad","video_route_policy":"motion_only","duration_sec":8}`),
 			AuditHints:         []byte(`{"forbidden_provider":"seedance","execution_policy":"wait_for_producer"}`),
 			CostEstimate:       []byte(`{"estimate":"not_charged_until_provider_submit"}`),
-			Rationale:          "低成本模板视频计划，不提交 Worker。",
+			Rationale:          "低成本图片动效视频计划，不提交 Worker。",
 		},
 		reviews: []db.ReviewRecord{
 			{ID: uuidWithByte(7), WorkspaceID: uuidWithByte(1), RenderPlanID: uuidWithByte(3), TargetPhase: TargetPhasePreRenderPlan, Status: "accepted_with_warnings", Critique: "上轮提醒补充音频预留"},
@@ -196,7 +196,7 @@ func TestContextLoaderBuildsPreRenderPlanReviewContext(t *testing.T) {
 	}
 	loader := ContextLoader{
 		Store:      store,
-		PSSBuilder: fakeReviewPSSBuilder{text: "当前项目\n- video_route_policy=template_only\n- AudioPlan: 火山 TTS 预留"},
+		PSSBuilder: fakeReviewPSSBuilder{text: "当前项目\n- video_route_policy=motion_only\n- AudioPlan: 火山 TTS 预留"},
 	}
 
 	out, err := loader.Load(context.Background(), GraphInput{
@@ -222,10 +222,10 @@ func TestContextLoaderBuildsPreRenderPlanReviewContext(t *testing.T) {
 		"pre_render_plan",
 		"render_plan/shot_01.shot_video.r1",
 		"target_phase=shot_video",
-		"operation=image_to_template_video",
-		"profile=template_video",
-		"template_key",
-		"benefit_grid_assemble",
+		"operation=image_to_motion_video",
+		"profile=motion_shot_video",
+		"motion_style",
+		"premium_product_ad",
 		"forbidden_provider",
 		"seedance",
 		"not_charged_until_provider_submit",

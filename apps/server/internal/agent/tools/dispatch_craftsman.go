@@ -98,8 +98,8 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 			},
 			"video_route_policy": map[string]any{
 				"type":        "string",
-				"enum":        []string{"default", "template_only"},
-				"description": "分镜视频路由策略。用户明确要求不要调用 Seedance 或只使用 HyperFrames/template video 时必须填写 template_only；默认 default。",
+				"enum":        []string{"default", "motion_only"},
+				"description": "分镜视频路由策略。用户明确要求不要调用 Seedance 或只使用 Remotion motion shot 时必须填写 motion_only；默认 default。",
 			},
 			"force": map[string]any{
 				"type":        "boolean",
@@ -350,8 +350,8 @@ func craftsmanDelegationText(scope craftsmanDispatchScope, args parsedDispatchCr
 	}
 	if args.VideoRoutePolicy != "" {
 		lines = append(lines, "- video_route_policy: "+args.VideoRoutePolicy)
-		if isTemplateOnlyVideoPolicy(args.VideoRoutePolicy) {
-			lines = append(lines, "- video_route_policy_rule: 禁止调用 Seedance；必须使用 HyperFrames/template_video，无法满足时标记 blocked。")
+		if isMotionOnlyVideoPolicy(args.VideoRoutePolicy) {
+			lines = append(lines, "- video_route_policy_rule: 禁止调用 Seedance；必须使用 Remotion motion_shot_video，无法满足时标记 blocked。")
 		}
 	}
 	if args.Critique != "" {
@@ -572,18 +572,18 @@ func recommendedVideoRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDisp
 	if args.TargetPhase != "shot_video" || scope.ScopeType != "shot" {
 		return recommendedRoute{}
 	}
-	if isTemplateOnlyVideoPolicy(args.VideoRoutePolicy) {
-		return templateRecommendedRoute(args, scope, "video_route_policy=template_only applies no-Seedance policy; routing to HyperFrames template_video")
+	if isMotionOnlyVideoPolicy(args.VideoRoutePolicy) {
+		return motionRecommendedRoute(args, scope, "video_route_policy=motion_only applies no-Seedance policy; routing to Remotion motion_shot_video")
 	}
-	if total <= 1 && !isTemplateRouteCandidate(args.Brief, scope) {
+	if total <= 1 && !isMotionRouteCandidate(args.Brief, scope) {
 		return recommendedRoute{
 			Profile:   "seedance_2_video",
 			Operation: "image_to_video_first_frame",
 			Params:    map[string]any{"ratio": "9:16", "duration_sec": 5, "resolution": "1080p"},
-			Reason:    "single shot video dispatch defaults to Seedance unless the brief/scope is template-like",
+			Reason:    "single shot video dispatch defaults to Seedance unless the brief/scope is motion-shot-like",
 		}
 	}
-	if index == 0 && !isTemplateRouteCandidate(args.Brief, scope) {
+	if index == 0 && !isMotionRouteCandidate(args.Brief, scope) {
 		return recommendedRoute{
 			Profile:   "seedance_2_video",
 			Operation: "image_to_video_first_frame",
@@ -591,32 +591,32 @@ func recommendedVideoRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDisp
 			Reason:    "first broad shot_video dispatch is treated as the hero Seedance shot",
 		}
 	}
-	return templateRecommendedRoute(args, scope, "non-hero shot_video dispatch defaults to HyperFrames template_video to control Seedance cost")
+	return motionRecommendedRoute(args, scope, "non-hero shot_video dispatch defaults to Remotion motion_shot_video to control Seedance cost")
 }
 
-func templateRecommendedRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDispatchScope, reason string) recommendedRoute {
+func motionRecommendedRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDispatchScope, reason string) recommendedRoute {
 	return recommendedRoute{
-		Profile:   "template_video",
-		Operation: "image_to_template_video",
+		Profile:   "motion_shot_video",
+		Operation: "image_to_motion_video",
 		Params: map[string]any{
 			"ratio":        "9:16",
 			"duration_sec": 5,
 			"resolution":   "1080p",
-			"template_key": "static_fallback_ken_burns_v1",
-			"fps":          24,
-			"variables": map[string]any{
-				"headline": firstNonEmptyString(scope.Title, scope.ClientKey, "产品卖点"),
-				"caption":  firstNonEmptyString(args.Brief, "低成本模板视频"),
-				"cta":      "了解更多",
+			"fps":          30,
+			"motion_style": "premium_product_ad",
+			"safe_area":    "caption_safe_bottom",
+			"text_layers": []map[string]any{
+				{"role": "hook", "text": firstNonEmptyString(scope.Title, scope.ClientKey, "产品卖点"), "start_sec": 0.2, "end_sec": 2.4, "animation": "pop_slide_up", "position": "upper_third"},
+				{"role": "caption", "text": firstNonEmptyString(args.Brief, "低成本图片动效视频"), "start_sec": 1.0, "end_sec": 4.4, "animation": "fade_rise", "position": "bottom_safe"},
 			},
 		},
 		Reason: reason,
 	}
 }
 
-func isTemplateRouteCandidate(brief string, scope craftsmanDispatchScope) bool {
+func isMotionRouteCandidate(brief string, scope craftsmanDispatchScope) bool {
 	text := strings.ToLower(brief + " " + scope.Title + " " + scope.ScopeKey + " " + scope.ClientKey)
-	for _, keyword := range []string{"cta", "packshot", "benefit", "hyperframes", "template video", "no seedance", "without seedance", "seedance 禁止", "不要调用 seedance", "不调用 seedance", "不使用 seedance", "卖点", "卡片", "收尾", "尾帧", "商品图", "静态", "模板"} {
+	for _, keyword := range []string{"cta", "packshot", "benefit", "motion shot", "remotion", "no seedance", "without seedance", "seedance 禁止", "不要调用 seedance", "不调用 seedance", "不使用 seedance", "卖点", "卡片", "收尾", "尾帧", "商品图", "静态", "图片动效", "轻动效"} {
 		if strings.Contains(text, keyword) {
 			return true
 		}
@@ -628,15 +628,15 @@ func normalizeVideoRoutePolicy(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "default":
 		return ""
-	case "template_only", "template-only", "hyperframes_only", "hyperframe_only", "no_seedance", "no-seedance":
-		return "template_only"
+	case "motion_only", "motion-only", "remotion_only", "remotion-only", "no_seedance", "no-seedance":
+		return "motion_only"
 	default:
 		return strings.TrimSpace(value)
 	}
 }
 
-func isTemplateOnlyVideoPolicy(value string) bool {
-	return normalizeVideoRoutePolicy(value) == "template_only"
+func isMotionOnlyVideoPolicy(value string) bool {
+	return normalizeVideoRoutePolicy(value) == "motion_only"
 }
 
 func semanticScopeKey(semanticKey string, scopeType string, clientKey string) string {
@@ -787,7 +787,7 @@ func shotDispatchableForPhase(status string, force bool, targetPhase string, vid
 	if targetPhase == "shot_video" {
 		switch strings.TrimSpace(status) {
 		case "planned", "draft":
-			return isTemplateOnlyVideoPolicy(videoRoutePolicy)
+			return isMotionOnlyVideoPolicy(videoRoutePolicy)
 		case "preview_ready", "failed":
 			return true
 		case "video_ready", "video_running":

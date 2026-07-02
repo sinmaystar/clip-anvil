@@ -13,18 +13,18 @@ import (
 type e2eM1CreativeStateResponder struct{}
 type e2eM2RenderPlanProducerResponder struct{}
 type e2eM3ReviewerGateProducerResponder struct{}
-type e2eTemplateOnlyVideoProducerResponder struct{}
+type e2eMotionShotVideoProducerResponder struct{}
 
-func (e2eTemplateOnlyVideoProducerResponder) Respond(_ context.Context, producerContext agentproducer.ProducerContext) (agentproducer.ProducerTurnOutput, error) {
+func (e2eMotionShotVideoProducerResponder) Respond(_ context.Context, producerContext agentproducer.ProducerContext) (agentproducer.ProducerTurnOutput, error) {
 	toolResultCount := e2eToolResultCount(producerContext.SameTurnMessages)
 	if e2eProducerContextHasSignal(producerContext, "worker_generation_completed") {
 		return agentproducer.ProducerTurnOutput{
-			AssistantText: "已确认 template_only/no-Seedance 媒体生成完成信号；本 E2E fixture 不会因工程 signal 自动重复派发任务。",
-			Metadata:      map[string]any{"e2e_fixture": "template_only_video", "signal_handled": "worker_generation_completed"},
+			AssistantText: "已确认 motion_only/no-Seedance 媒体生成完成信号；本 E2E fixture 不会因工程 signal 自动重复派发任务。",
+			Metadata:      map[string]any{"e2e_fixture": "motion_shot_video", "signal_handled": "worker_generation_completed"},
 		}, nil
 	}
 	if toolResultCount == 0 && e2eProducerContextWantsVoiceover(producerContext) {
-		return e2eToolCallOutput("e2e-template-dispatch-voiceover", "dispatch_craftsman", `{
+		return e2eToolCallOutput("e2e-motion-dispatch-voiceover", "dispatch_craftsman", `{
 			"brief":"基于已批准 AudioPlan 生成悦行行李箱广告旁白音频。",
 			"scope":{"type":"audio_plan","id":"audio_plan.active"},
 			"target_phase":"voiceover_audio",
@@ -34,7 +34,7 @@ func (e2eTemplateOnlyVideoProducerResponder) Respond(_ context.Context, producer
 		}`), nil
 	}
 	if toolResultCount == 0 && e2eProducerContextWantsBGM(producerContext) {
-		return e2eToolCallOutput("e2e-template-dispatch-bgm", "dispatch_craftsman", `{
+		return e2eToolCallOutput("e2e-motion-dispatch-bgm", "dispatch_craftsman", `{
 			"brief":"基于已批准 AudioPlan 生成悦行行李箱广告 BGM 音频。",
 			"scope":{"type":"audio_plan","id":"audio_plan.active"},
 			"target_phase":"bgm_audio",
@@ -44,76 +44,76 @@ func (e2eTemplateOnlyVideoProducerResponder) Respond(_ context.Context, producer
 		}`), nil
 	}
 	if toolResultCount == 0 && e2eProducerContextWantsFinalComposition(producerContext) {
-		return e2eToolCallOutput("e2e-template-dispatch-composer", "dispatch_composer", `{
-			"source_storyboard_ref":{"type":"media_node","key":"shot_01_template_ad.shot_video.r1.node"},
-			"instructions":"把已成功的 HyperFrames 悦行行李箱 shot_video 与 AudioPlan 中已成功的 voiceover_audio、bgm_audio 合成为 8 秒 9:16 最终 MP4；保留产品图、多段模板画面，混入旁白和 BGM，禁止调用 Seedance。",
+		return e2eToolCallOutput("e2e-motion-dispatch-composer", "dispatch_composer", `{
+			"source_storyboard_ref":{"type":"media_node","key":"shot_01_motion_ad.shot_video.r1.node"},
+			"instructions":"把已成功的 Remotion motion shot 悦行行李箱 shot_video 与 AudioPlan 中已成功的 voiceover_audio、bgm_audio 合成为 8 秒 9:16 最终 MP4；保留产品图、文字节奏和 CTA，混入旁白和 BGM，禁止调用 Seedance。",
 			"template_key":"simple_concat"
 		}`), nil
 	}
 	if e2eProducerContextHasToolResult(producerContext, "dispatch_composer") {
 		return agentproducer.ProducerTurnOutput{
 			AssistantText: "已派发最终合成任务；等待 Composer 异步完成，不再在同一轮追加素材生成。",
-			Metadata:      map[string]any{"e2e_fixture": "template_only_video", "composer_dispatched": true},
+			Metadata:      map[string]any{"e2e_fixture": "motion_shot_video", "composer_dispatched": true},
 		}, nil
 	}
-	if toolResultCount == 0 && e2eProducerContextWantsTemplateVideo(producerContext) {
-		return e2eToolCallOutput("e2e-template-dispatch-craftsman", "dispatch_craftsman", `{
-			"brief":"Seedream 主视觉图片已完成，继续生成悦行行李箱 HyperFrames 模板视频；禁止调用 Seedance。",
+	if toolResultCount == 0 && e2eProducerContextWantsMotionShotVideo(producerContext) {
+		return e2eToolCallOutput("e2e-motion-dispatch-craftsman", "dispatch_craftsman", `{
+			"brief":"Seedream 主视觉图片已完成，继续生成悦行行李箱 Remotion motion shot；禁止调用 Seedance。",
 			"scope":{"type":"shot"},
 			"target_phase":"shot_video",
 			"execution_policy":"execute_immediately",
-			"video_route_policy":"template_only",
-			"shot_refs":["shot_01_template_ad"],
-			"input_node_refs":["shot_01_template_ad preview image"],
+			"video_route_policy":"motion_only",
+			"shot_refs":["shot_01_motion_ad"],
+			"input_node_refs":["shot_01_motion_ad preview image"],
 			"force":true,
 			"max_attempts":1
 		}`), nil
 	}
 	switch toolResultCount {
 	case 0:
-		return e2eToolCallOutput("e2e-template-upsert-brief", "upsert_project_brief", `{
-			"brief":"基于用户上传的 box.png，为悦行行李箱创建 8 秒 9:16 口播广告，硬性要求不调用 Seedance 视频；图片可以使用 Seedream，音频使用火山 TTS/BGM，视频只使用 HyperFrames/template video。",
+		return e2eToolCallOutput("e2e-motion-upsert-brief", "upsert_project_brief", `{
+			"brief":"基于用户上传的 box.png，为悦行行李箱创建 8 秒 9:16 口播广告，硬性要求不调用 Seedance 视频；图片可以使用 Seedream，音频使用火山 TTS/BGM，视频只使用 Remotion motion shot。",
 			"mode":"create",
-			"title":"悦行行李箱 HyperFrames 口播广告",
+			"title":"悦行行李箱 Remotion Motion Shot 口播广告",
 			"video_type":"marketing_ad",
 			"target_audience":"短途出行和商务通勤用户",
 			"tone":"轻快、可信、现代",
-			"visual_style":"Seedream 先生成商业广告主视觉/背景图，HyperFrames 再做 4 段模板广告：开场痛点、产品展示、卖点卡、CTA；产品图轻微推进，清爽字幕，明确口播节奏",
+			"visual_style":"Seedream 先生成商业广告主视觉/背景图，Remotion 再做 4 段 motion shot：开场痛点、产品展示、卖点卡、CTA；产品图轻微推进，文字分段入场，明确口播节奏",
 			"duration_sec":8,
 			"aspect_ratio":"9:16",
 			"language":"zh-CN",
-			"objective":"用低成本模板视频突出悦行行李箱轻便、顺滑万向轮、短途出行和安心托运，并合成旁白音频。",
-			"concept":"以用户上传的行李箱图片为商品参考，先用 Seedream 生成商业主视觉图片，再通过 4 段模板场景、字幕卖点、TTS 旁白和轻快 BGM 完成短广告。",
+			"objective":"用低成本 motion shot 突出悦行行李箱轻便、顺滑万向轮、短途出行和安心托运，并合成旁白音频。",
+			"concept":"以用户上传的行李箱图片为商品参考，先用 Seedream 生成商业主视觉图片，再通过 Remotion 图片动效、文字卖点、TTS 旁白和轻快 BGM 完成短广告。",
 			"constraints":[
 				{"text":"禁止调用 Seedance 或任何 volcengine/seedance 视频模型。","severity":"blocking"},
-				{"text":"视频必须使用 HyperFrames/internal_template_video/template_video。","severity":"blocking"},
+				{"text":"视频必须使用 Remotion/internal_motion_video/motion_shot_video。","severity":"blocking"},
 				{"text":"必须使用用户上传的 box.png 作为产品参考。","severity":"blocking"},
 				{"text":"允许并鼓励使用 Seedream 生成图片资产，允许使用火山音频模型生成旁白和 BGM。","severity":"high"}
 			],
-			"reason":"E2E fixture 验证 Agent no-Seedance template video policy。"
+			"reason":"E2E fixture 验证 Agent no-Seedance motion shot policy。"
 		}`), nil
 	case 1:
-		return e2eToolCallOutput("e2e-template-update-memory", "update_project_memory", `{
-			"brief":"记录悦行行李箱 template-only 广告约束。",
+		return e2eToolCallOutput("e2e-motion-update-memory", "update_project_memory", `{
+			"brief":"记录悦行行李箱 motion-only 广告约束。",
 			"mode":"create",
-			"core_intent":"用低成本模板视频快速生成悦行行李箱口播广告。",
+			"core_intent":"用低成本 Remotion motion shot 快速生成悦行行李箱口播广告。",
 			"soul":"轻装出发、顺滑好推、安心托运。",
 			"brand_facts":[
 				{"key":"product_name","value":"悦行行李箱"},
-				{"key":"route_policy","value":"template_video_no_seedance_video"},
+				{"key":"route_policy","value":"motion_shot_video_no_seedance_video"},
 				{"key":"image_policy","value":"seedream_allowed"},
 				{"key":"audio_policy","value":"volcengine_tts_required"}
 			],
 			"non_negotiables":[
 				{"rule":"禁止调用 Seedance 或 volcengine/seedance 视频模型。","severity":"blocking"},
-				{"rule":"shot_video 只能使用 template_video / internal_template_video / hyperframes-html。","severity":"blocking"},
+				{"rule":"shot_video 只能使用 motion_shot_video / internal_motion_video / remotion-motion-shot-v1。","severity":"blocking"},
 				{"rule":"使用 box.png 作为商品参考，并先生成 Seedream 主视觉图片。","severity":"blocking"},
 				{"rule":"旁白和 BGM 必须使用火山音频模型，不能把 mock 音频当作真实通过。","severity":"blocking"}
 			],
 			"visual_anchors":[
 				{"key":"product_image","value":"用户上传的 box.png 行李箱产品图。"},
 				{"key":"seedream_hero_image","value":"用 box.png 生成商业主视觉：清爽旅行广告背景，商品居中，留出字幕空间。"},
-				{"key":"template_style","value":"9:16 竖版，Seedream 主视觉轻微推进，清爽字幕卖点和 CTA。"}
+				{"key":"motion_style","value":"9:16 竖版，Seedream 主视觉轻微推进，清爽字幕卖点和 CTA。"}
 			],
 			"allowed":[
 				{"rule":"可以使用 Seedream 生成图片资产和火山音频模型生成口播/BGM。","severity":"low"}
@@ -123,53 +123,53 @@ func (e2eTemplateOnlyVideoProducerResponder) Respond(_ context.Context, producer
 			],
 			"prompt_injection_hints":[
 				"Seedream images allowed",
-				"template_video only for video",
-				"HyperFrames internal_template_video",
+				"motion_shot_video only for video",
+				"Remotion internal_motion_video",
 				"不要调用 Seedance"
 			],
 			"source_refs":[
 				{"type":"user_attachment","note":"box.png"},
-				{"type":"user_message","note":"用户要求 no-Seedance HyperFrames 口播广告"}
+				{"type":"user_message","note":"用户要求 no-Seedance Remotion 口播广告"}
 			],
 			"requires_user_approval":false,
-			"reason":"E2E fixture 记录 template_only policy。"
+			"reason":"E2E fixture 记录 motion_only policy。"
 		}`), nil
 	case 2:
-		return e2eToolCallOutput("e2e-template-storyboard", "upsert_storyboard", `{
-			"brief":"创建单分镜悦行行李箱 HyperFrames 口播广告 storyboard。",
+		return e2eToolCallOutput("e2e-motion-storyboard", "upsert_storyboard", `{
+			"brief":"创建单分镜悦行行李箱 Remotion motion shot 口播广告 storyboard。",
 			"mode":"create",
 			"scope":{"type":"workspace"},
 			"scenes":[
 				{
-					"client_key":"scene_template_ad",
+					"client_key":"scene_motion_ad",
 					"sort_order":1,
-					"title":"悦行行李箱模板广告",
-					"description":"以用户上传产品图为主视觉的 8 秒竖版模板广告，内部包含开场痛点、产品展示、卖点卡、CTA 四段。",
-					"location":"图文模板画面",
+					"title":"悦行行李箱 Motion Shot 广告",
+					"description":"以用户上传产品图为主视觉的 8 秒竖版 motion shot，内部包含开场痛点、产品展示、卖点卡、CTA 四段。",
+					"location":"Remotion 图文动效画面",
 					"mood":"清爽、轻快、可信"
 				}
 			],
 			"shots":[
 				{
-					"client_key":"shot_01_template_ad",
-					"scene_client_key":"scene_template_ad",
+					"client_key":"shot_01_motion_ad",
+					"scene_client_key":"scene_motion_ad",
 					"sort_order":1,
-					"title":"悦行行李箱 4 段口播模板广告",
+					"title":"悦行行李箱 4 段口播 Motion Shot",
 					"shot_kind":"product_card",
-					"creative_text":"4 段模板广告：开场痛点讲短途拖箱费力；产品展示突出 box.png 行李箱；卖点卡依次呈现轻便好推、顺滑万向轮、安心托运；结尾 CTA 现在出发。",
-					"narrative_purpose":"用低成本模板视频完成产品口播广告。",
+					"creative_text":"4 段 motion shot：开场痛点讲短途拖箱费力；产品展示突出 box.png 行李箱；卖点卡依次呈现轻便好推、顺滑万向轮、安心托运；结尾 CTA 现在出发。",
+					"narrative_purpose":"用低成本 Remotion motion shot 完成产品口播广告。",
 					"duration_sec":8,
 					"visual_intent":"突出行李箱产品图、轻便、顺滑万向轮、短途出行、安心托运。",
 					"action_text":"产品图轻微推进，文字层按开场痛点、产品展示、卖点卡、CTA 四段切换。",
-					"camera_intent":"模板 Ken Burns 轻推近，无真实复杂运动。",
+					"camera_intent":"Remotion Ken Burns 轻推近、文字分段入场，无真实复杂运动。",
 					"narration":"悦行行李箱，轻便好推，短途出行更省心。顺滑万向轮，安心托运，马上出发。"
 				}
 			],
-			"reason":"E2E fixture 创建可派发 shot_video 的 4 段模板分镜。"
+			"reason":"E2E fixture 创建可派发 shot_video 的 4 段 motion shot 分镜。"
 		}`), nil
 	case 3:
-		return e2eToolCallOutput("e2e-template-audio-plan", "upsert_audio_plan", `{
-			"brief":"创建悦行行李箱模板广告的旁白和 BGM AudioPlan。",
+		return e2eToolCallOutput("e2e-motion-audio-plan", "upsert_audio_plan", `{
+			"brief":"创建悦行行李箱 motion shot 广告的旁白和 BGM AudioPlan。",
 			"mode":"replace_draft",
 			"title":"悦行行李箱 8 秒口播音频",
 			"language":"zh-CN",
@@ -178,50 +178,50 @@ func (e2eTemplateOnlyVideoProducerResponder) Respond(_ context.Context, producer
 			"voice_profile":{"source":"generated","speaker":"warm_female","style":"清爽、可信、轻快"},
 			"bgm_plan":{"source":"generated","provider":"volcengine","model":"seed-audio-1.0","style":"轻快电子流行，无人声，弱鼓点，适合旅行广告"},
 			"cue_plan":[
-				{"shot_ref":"shot_01_template_ad","start_sec":0,"end_sec":2,"text":"短途出行，行李箱别再拖后腿。"},
-				{"shot_ref":"shot_01_template_ad","start_sec":2,"end_sec":4,"text":"悦行行李箱，轻便好推。"},
-				{"shot_ref":"shot_01_template_ad","start_sec":4,"end_sec":6,"text":"顺滑万向轮，转向更稳。"},
-				{"shot_ref":"shot_01_template_ad","start_sec":6,"end_sec":8,"text":"安心托运，现在出发。"}
+				{"shot_ref":"shot_01_motion_ad","start_sec":0,"end_sec":2,"text":"短途出行，行李箱别再拖后腿。"},
+				{"shot_ref":"shot_01_motion_ad","start_sec":2,"end_sec":4,"text":"悦行行李箱，轻便好推。"},
+				{"shot_ref":"shot_01_motion_ad","start_sec":4,"end_sec":6,"text":"顺滑万向轮，转向更稳。"},
+				{"shot_ref":"shot_01_motion_ad","start_sec":6,"end_sec":8,"text":"安心托运，现在出发。"}
 			],
 			"generation_params":{"format":"mp3","sample_rate":48000,"speech_rate":1.04}
 		}`), nil
 	case 4:
-		return e2eToolCallOutput("e2e-template-audio-approve", "upsert_audio_plan", `{
+		return e2eToolCallOutput("e2e-motion-audio-approve", "upsert_audio_plan", `{
 			"brief":"E2E 自动批准 AudioPlan，继续生成旁白和 BGM。",
 			"mode":"approve"
 		}`), nil
 	case 5:
-		return e2eToolCallOutput("e2e-template-dispatch-preview-image", "dispatch_craftsman", `{
-			"brief":"先用 Seedream 基于 box.png 生成悦行行李箱商业广告主视觉图片，供 HyperFrames 模板视频使用。",
+		return e2eToolCallOutput("e2e-motion-dispatch-preview-image", "dispatch_craftsman", `{
+			"brief":"先用 Seedream 基于 box.png 生成悦行行李箱商业广告主视觉图片，供 Remotion motion shot 使用。",
 			"scope":{"type":"shot"},
 			"target_phase":"preview_image",
 			"execution_policy":"execute_immediately",
-			"shot_refs":["shot_01_template_ad"],
+			"shot_refs":["shot_01_motion_ad"],
 			"input_node_refs":["box.png"],
 			"force":true,
 			"max_attempts":1
 		}`), nil
 	case 6:
-		return e2eToolCallOutput("e2e-template-dispatch-craftsman", "dispatch_craftsman", `{
-			"brief":"生成悦行行李箱口播广告，不要调用 Seedance，只使用 HyperFrames template video。",
+		return e2eToolCallOutput("e2e-motion-dispatch-craftsman", "dispatch_craftsman", `{
+			"brief":"生成悦行行李箱口播广告，不要调用 Seedance，只使用 Remotion motion shot。",
 			"scope":{"type":"shot"},
 			"target_phase":"shot_video",
 			"execution_policy":"execute_immediately",
-			"video_route_policy":"template_only",
-			"shot_refs":["shot_01_template_ad"],
-			"input_node_refs":["shot_01_template_ad preview image"],
+			"video_route_policy":"motion_only",
+			"shot_refs":["shot_01_motion_ad"],
+			"input_node_refs":["shot_01_motion_ad preview image"],
 			"force":true,
 			"max_attempts":1
 		}`), nil
 	case 7:
 		return agentproducer.ProducerTurnOutput{
-			AssistantText: "已按 template_only/no-Seedance 策略派发悦行行李箱 4 段模板广告。由于异步派发会结束当前 Producer turn，请后续发送“继续生成旁白音频”和“继续生成 BGM 音频”来派发音频素材。",
-			Metadata:      map[string]any{"e2e_fixture": "template_only_video"},
+			AssistantText: "已按 motion_only/no-Seedance 策略派发悦行行李箱 4 段 motion shot。由于异步派发会结束当前 Producer turn，请后续发送“继续生成旁白音频”和“继续生成 BGM 音频”来派发音频素材。",
+			Metadata:      map[string]any{"e2e_fixture": "motion_shot_video"},
 		}, nil
 	default:
 		return agentproducer.ProducerTurnOutput{
-			AssistantText: "template_only/no-Seedance E2E fixture 已完成当前轮可同步执行的步骤。",
-			Metadata:      map[string]any{"e2e_fixture": "template_only_video"},
+			AssistantText: "motion_only/no-Seedance E2E fixture 已完成当前轮可同步执行的步骤。",
+			Metadata:      map[string]any{"e2e_fixture": "motion_shot_video"},
 		}, nil
 	}
 }
@@ -270,11 +270,10 @@ func e2eProducerContextWantsBGM(producerContext agentproducer.ProducerContext) b
 		strings.Contains(text, "继续生成背景音乐")
 }
 
-func e2eProducerContextWantsTemplateVideo(producerContext agentproducer.ProducerContext) bool {
+func e2eProducerContextWantsMotionShotVideo(producerContext agentproducer.ProducerContext) bool {
 	text := strings.ToLower(strings.TrimSpace(producerContext.LatestUserText))
 	return strings.Contains(text, "shot_video") ||
-		strings.Contains(text, "template video") ||
-		strings.Contains(text, "继续生成模板视频") ||
+		strings.Contains(text, "继续生成动效视频") ||
 		strings.Contains(text, "继续生成视频")
 }
 
@@ -588,6 +587,10 @@ func e2eToolResultCount(messages []agentproducer.ProducerSameTurnMessage) int {
 }
 
 func e2eToolCallOutput(id string, name string, arguments string) agentproducer.ProducerTurnOutput {
+	fixture := "m1_creative_state"
+	if strings.HasPrefix(id, "e2e-motion-") {
+		fixture = "motion_shot_video"
+	}
 	return agentproducer.ProducerTurnOutput{
 		ModelMessage: &schema.Message{
 			Role: schema.Assistant,
@@ -600,6 +603,6 @@ func e2eToolCallOutput(id string, name string, arguments string) agentproducer.P
 				},
 			}},
 		},
-		Metadata: map[string]any{"e2e_fixture": "m1_creative_state"},
+		Metadata: map[string]any{"e2e_fixture": fixture},
 	}
 }

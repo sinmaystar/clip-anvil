@@ -22,13 +22,17 @@ RUN apt-get -o Acquire::Retries=5 update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY policy.xml /etc/ImageMagick-6/policy.xml
+COPY remotion-motion-shot/package*.json /opt/clipanvil/remotion-motion-shot/
 
 RUN npm config set fetch-retries 5 \
     && npm config set fetch-retry-mintimeout 20000 \
     && npm config set fetch-retry-maxtimeout 120000 \
+    && npm --prefix /opt/clipanvil/remotion-motion-shot ci --omit=dev \
     && npm cache clean --force \
     && mkdir -p "$PUPPETEER_CACHE_DIR" \
     && chmod -R 777 "$PUPPETEER_CACHE_DIR"
+
+COPY remotion-motion-shot/src /opt/clipanvil/remotion-motion-shot/src
 
 RUN mkdir -p /workspace/assets /workspace/scripts /workspace/tmp /workspace/output
 

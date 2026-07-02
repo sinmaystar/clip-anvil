@@ -50,9 +50,10 @@ func NewProviderRegistry(cfg ProviderConfig) *ProviderRegistry {
 	return &ProviderRegistry{
 		cfg: cfg,
 		providers: map[string]ProviderBridge{
-			"mock":            MockProvider{},
-			"volcengine":      NewVolcengineProvider(cfg.Volcengine),
-			"internal_ffmpeg": NewInternalFFmpegProvider(nil),
+			"mock":                  MockProvider{},
+			"volcengine":            NewVolcengineProvider(cfg.Volcengine),
+			"internal_ffmpeg":       NewInternalFFmpegProvider(nil),
+			"internal_motion_video": NewMotionShotProvider(nil),
 		},
 	}
 }

@@ -108,22 +108,22 @@ func TestM82DefaultRegistryContainsCommerceSkillPack(t *testing.T) {
 			"audio-plan-producer",
 			"commerce-ad-producer",
 			"hitl-checkpoint-producer",
+			"motion-shot-producer",
 			"reference-video-analysis-producer",
-			"template-video-producer",
 		},
 		RoleCraftsman: {
 			"audio-renderplan-craftsman",
+			"motion-shot-craftsman",
 			"renderplan-repair-craftsman",
 			"seedance-renderplan-craftsman",
 			"seedream-renderplan-craftsman",
-			"template-video-craftsman",
 		},
 		RoleReviewer: {
 			"commerce-delivery-promise-reviewer",
 			"final-video-audio-reviewer",
+			"motion-shot-reviewer",
 			"reference-consistency-reviewer",
 			"reviewer-quality-gate",
-			"template-video-reviewer",
 		},
 		RoleComposer: {
 			"composer-blocker-escalation",
@@ -213,26 +213,26 @@ func TestFinalVideoAudioReviewerSkillNamesAllFinalRequiredAxes(t *testing.T) {
 	}
 }
 
-func TestTemplateVideoSkillsCarryHyperFramesBlueprintGuidance(t *testing.T) {
+func TestMotionShotSkillsCarryRemotionGuidance(t *testing.T) {
 	tests := []struct {
 		name string
 		role Role
 		want []string
 	}{
 		{
-			name: "template-video-producer",
+			name: "motion-shot-producer",
 			role: RoleProducer,
-			want: []string{"internal_template_video", "template_video", "product_hero_v2", "benefit_grid_assemble", "comparison_split", "kinetic_type_beats", "cta_morph_press"},
+			want: []string{"internal_motion_video", "motion_shot_video", "remotion-motion-shot-v1", "video_route_policy: motion_only", "Composer owns captions"},
 		},
 		{
-			name: "template-video-craftsman",
+			name: "motion-shot-craftsman",
 			role: RoleCraftsman,
-			want: []string{"model_prompt_profile: template_video", "image_to_template_video", "template_key", "product_hero_v2", "benefit_grid_assemble", "comparison_split", "kinetic_type_beats", "cta_morph_press"},
+			want: []string{"model_prompt_profile: motion_shot_video", "image_to_motion_video", "text_layers", "visual_layers", "motion_style", "Do not write raw Remotion"},
 		},
 		{
-			name: "template-video-reviewer",
+			name: "motion-shot-reviewer",
 			role: RoleReviewer,
-			want: []string{"scene_timing", "text_safety", "product_visibility", "audio_readiness", "seedance_policy", "pre_render_plan_review", "faithfulness", "subject_consistency", "continuity", "Do not invent rubric axis names"},
+			want: []string{"scene_timing", "text_safety", "product_visibility", "motion_rhythm", "audio_readiness", "seedance_policy", "pre_render_plan_review", "faithfulness", "subject_consistency", "continuity", "Do not invent rubric axis names"},
 		},
 	}
 	for _, tt := range tests {

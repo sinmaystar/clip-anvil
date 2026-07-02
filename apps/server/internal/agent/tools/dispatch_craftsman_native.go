@@ -20,7 +20,7 @@ type DispatchCraftsmanToolInput struct {
 	TargetPhase      string                 `json:"target_phase" jsonschema:"required,enum=reference_image,enum=preview_image,enum=shot_video,enum=voiceover_audio,enum=bgm_audio" jsonschema_description:"生成阶段。reference_image 生成 KeyElementState 统一参考图；preview_image 生成分镜预览图；shot_video 基于已确认预览图生成分镜视频；voiceover_audio / bgm_audio 基于已批准 AudioPlan 生成音频 RenderPlan。"`
 	Mode             string                 `json:"mode" jsonschema:"enum=preview_image,enum=shot_video" jsonschema_description:"兼容旧参数；新调用请使用 target_phase。"`
 	ExecutionPolicy  string                 `json:"execution_policy" jsonschema:"required,enum=execute_immediately,enum=wait_for_producer" jsonschema_description:"执行策略。execute_immediately 表示 Craftsman 编译 RenderPlan 后工程自动提交 Worker；wait_for_producer 表示只编译并等待 Producer 后续 accept/reject。"`
-	VideoRoutePolicy string                 `json:"video_route_policy" jsonschema:"enum=default,enum=template_only" jsonschema_description:"分镜视频路由策略。用户明确要求不要调用 Seedance 或只使用 HyperFrames/template video 时必须填写 template_only；默认 default。"`
+	VideoRoutePolicy string                 `json:"video_route_policy" jsonschema:"enum=default,enum=motion_only" jsonschema_description:"分镜视频路由策略。用户明确要求不要调用 Seedance 或只使用 Remotion motion shot 时必须填写 motion_only；默认 default。"`
 	Force            bool                   `json:"force" jsonschema_description:"为 true 时即使已有完成结果也创建新尝试；默认 false。不能用于绕过正在排队或运行中的同 scope/target_phase Craftsman 任务。"`
 	MaxAttempts      int32                  `json:"max_attempts" jsonschema_description:"Craftsman 最大尝试次数，范围 1 到 3；为空时默认 3。"`
 	Critique         string                 `json:"critique" jsonschema_description:"可选的评审意见或用户修改意见，Craftsman 必须在 RenderPlan 中回应。"`
@@ -119,7 +119,7 @@ func validateDispatchCraftsmanInput(input DispatchCraftsmanToolInput) error {
 		return err
 	}
 	if strings.TrimSpace(input.VideoRoutePolicy) != "" {
-		if err := requireMode(input.VideoRoutePolicy, "default", "template_only"); err != nil {
+		if err := requireMode(input.VideoRoutePolicy, "default", "motion_only"); err != nil {
 			return err
 		}
 	}

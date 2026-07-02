@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/motionshot"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -227,6 +229,73 @@ func TestJobServiceComposeVideosMixesAudioTracks(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected compose audio command containing %q, got %q", want, joined)
 		}
+	}
+}
+
+func TestJobServiceRenderMotionShotRunsRemotionAndUploadsMP4(t *testing.T) {
+	repo := newFakeSandboxJobRepository()
+	client := &jobServiceFakeClient{
+		result: ExecResult{ExitCode: 0, Stdout: "rendered", DurationMS: 88},
+		inspect: FileInfo{
+			Path:      "/workspace/output/motion-node-1.mp4",
+			SizeBytes: 456,
+			Mime:      "video/mp4",
+		},
+	}
+	manager := NewManager(client, testSandboxConfig(), newFakeBindingStore(Binding{
+		Status:     StatusRunning,
+		SandboxID:  "sandbox-1",
+		VolumeName: "sandbox-ws-aabbccdd-0000-0000-0000-000000000000",
+	}))
+	storage := &fakeSandboxJobStorage{}
+	service := NewJobService(manager, client, repo, storage)
+
+	result, err := service.RenderMotionShot(context.Background(), RenderMotionShotInput{
+		WorkspaceID:  testWorkspaceID(),
+		TargetNodeID: testNodeID(),
+		Plan: motionshot.Plan{
+			DurationSec:    5,
+			Width:          1080,
+			Height:         1920,
+			FPS:            30,
+			DurationFrames: 150,
+			MotionStyle:    "premium_product_ad",
+			VisualLayers:   []motionshot.VisualLayer{{Role: "product", InputRef: "assets/product.png", Fit: "contain", Motion: "slow_push_in", StartSec: 0, EndSec: 5}},
+		},
+		Meta:   MotionShotMeta{DurationSec: 5, Width: 1080, Height: 1920, FPS: 30},
+		Assets: []RenderMotionAssetInput{{AssetID: "product", StorageURL: "workspace-aabbccdd-0000-0000-0000-000000000000/source/product.png", Mime: "image/png", FileName: "product.png", WorkspacePath: "assets/product.png"}},
+	})
+	if err != nil {
+		t.Fatalf("RenderMotionShot error = %v", err)
+	}
+	if result.Job.Status != db.JobStatusSucceeded || result.Job.OperationType != "image_to_motion_video" || result.MIME != "video/mp4" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(storage.putKeys) != 1 || !strings.HasSuffix(storage.putKeys[0], ".mp4") {
+		t.Fatalf("put keys = %#v", storage.putKeys)
+	}
+	joined := strings.Join(client.commands, "\n")
+	for _, want := range []string{"curl -sS -f -L -o", "motion-plan.json", "remotion render", "/workspace/output/motion-"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected motion render command containing %q, got %q", want, joined)
+		}
+	}
+	if !strings.Contains(result.Job.Cwd, "/workspace/motion-shot/") {
+		t.Fatalf("cwd = %q", result.Job.Cwd)
+	}
+	var uploadedPlan motionshot.Plan
+	for uploadPath, body := range client.uploadBodies {
+		if strings.HasSuffix(uploadPath, "motion-plan.json") {
+			if err := json.Unmarshal([]byte(body), &uploadedPlan); err != nil {
+				t.Fatalf("uploaded plan JSON error = %v", err)
+			}
+		}
+	}
+	if len(uploadedPlan.VisualLayers) != 1 {
+		t.Fatalf("uploaded visual layers = %#v", uploadedPlan.VisualLayers)
+	}
+	if got, want := uploadedPlan.VisualLayers[0].InputRef, "assets/product.png"; got != want {
+		t.Fatalf("uploaded visual input_ref = %q, want %q", got, want)
 	}
 }
 
@@ -483,10 +552,11 @@ func (r *fakeSandboxJobRepository) MarkSandboxJobFailed(ctx context.Context, arg
 }
 
 type jobServiceFakeClient struct {
-	result   ExecResult
-	inspect  FileInfo
-	commands []string
-	uploads  []string
+	result       ExecResult
+	inspect      FileInfo
+	commands     []string
+	uploads      []string
+	uploadBodies map[string]string
 }
 
 func (f *jobServiceFakeClient) Create(ctx context.Context, req CreateRequest) (SandboxInfo, error) {
@@ -517,6 +587,14 @@ func (f *jobServiceFakeClient) Exec(ctx context.Context, sandboxID string, req E
 
 func (f *jobServiceFakeClient) Upload(ctx context.Context, sandboxID string, path string, r io.Reader) error {
 	f.uploads = append(f.uploads, path)
+	if f.uploadBodies == nil {
+		f.uploadBodies = map[string]string{}
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	f.uploadBodies[path] = string(data)
 	return nil
 }
 

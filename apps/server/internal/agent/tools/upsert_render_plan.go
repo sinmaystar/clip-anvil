@@ -482,15 +482,6 @@ func isMotionVideoOperation(operation string) bool {
 	}
 }
 
-func isMotionOnlyVideoPolicy(value string) bool {
-	switch strings.TrimSpace(value) {
-	case "motion_only", "no_seedance", "no-seedance":
-		return true
-	default:
-		return isTemplateOnlyVideoPolicy(value)
-	}
-}
-
 func inferRenderPlanProfile(targetPhase string) string {
 	switch strings.TrimSpace(targetPhase) {
 	case renderplan.PhaseVoiceoverAudio, renderplan.PhaseBGMAudio:

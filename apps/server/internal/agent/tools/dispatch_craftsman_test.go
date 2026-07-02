@@ -220,7 +220,7 @@ func TestDispatchCraftsmanNativeLimitsDispatchToShotRefs(t *testing.T) {
 	}
 }
 
-func TestDispatchCraftsmanRecommendsTemplateRouteForNonHeroShotVideos(t *testing.T) {
+func TestDispatchCraftsmanRecommendsMotionRouteForNonHeroShotVideos(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
 		shots: []db.Shot{
@@ -266,15 +266,15 @@ func TestDispatchCraftsmanRecommendsTemplateRouteForNonHeroShotVideos(t *testing
 			t.Fatalf("missing route reason: %#v", input)
 		}
 	}
-	if strings.Join(profiles, ",") != "seedance_2_video,template_video,template_video" {
+	if strings.Join(profiles, ",") != "seedance_2_video,motion_shot_video,motion_shot_video" {
 		t.Fatalf("profiles = %#v", profiles)
 	}
-	if strings.Join(operations, ",") != "image_to_video_first_frame,image_to_template_video,image_to_template_video" {
+	if strings.Join(operations, ",") != "image_to_video_first_frame,image_to_motion_video,image_to_motion_video" {
 		t.Fatalf("operations = %#v", operations)
 	}
 }
 
-func TestDispatchCraftsmanTemplateOnlyPolicyAvoidsSeedanceForAllShotVideos(t *testing.T) {
+func TestDispatchCraftsmanMotionOnlyPolicyAvoidsSeedanceForAllShotVideos(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
 		shots: []db.Shot{
@@ -290,11 +290,11 @@ func TestDispatchCraftsmanTemplateOnlyPolicyAvoidsSeedanceForAllShotVideos(t *te
 		ThreadID:    uuidWithByte(2),
 		TaskID:      uuidWithByte(3),
 		Arguments: map[string]any{
-			"brief":              "生成悦行行李箱口播广告，不要调用 Seedance，只使用 HyperFrames template video。",
+			"brief":              "生成悦行行李箱口播广告，不要调用 Seedance，只使用 Remotion motion shot。",
 			"target_phase":       "shot_video",
 			"execution_policy":   "execute_immediately",
 			"scope":              map[string]any{"type": "shot"},
-			"video_route_policy": "template_only",
+			"video_route_policy": "motion_only",
 			"force":              true,
 		},
 	})
@@ -312,12 +312,12 @@ func TestDispatchCraftsmanTemplateOnlyPolicyAvoidsSeedanceForAllShotVideos(t *te
 		if err := json.Unmarshal(task.Input, &input); err != nil {
 			t.Fatal(err)
 		}
-		if input["video_route_policy"] != "template_only" {
+		if input["video_route_policy"] != "motion_only" {
 			t.Fatalf("missing video_route_policy: %#v", input)
 		}
-		if input["recommended_model_prompt_profile"] != "template_video" ||
-			input["recommended_operation"] != "image_to_template_video" {
-			t.Fatalf("policy did not force template route: %#v", input)
+		if input["recommended_model_prompt_profile"] != "motion_shot_video" ||
+			input["recommended_operation"] != "image_to_motion_video" {
+			t.Fatalf("policy did not force motion route: %#v", input)
 		}
 		if strings.Contains(strings.ToLower(input["recommended_route_reason"].(string)), "seedance") &&
 			!strings.Contains(strings.ToLower(input["recommended_route_reason"].(string)), "no-seedance") {
@@ -326,7 +326,7 @@ func TestDispatchCraftsmanTemplateOnlyPolicyAvoidsSeedanceForAllShotVideos(t *te
 	}
 }
 
-func TestDispatchCraftsmanTemplateOnlyPolicyAllowsPlannedShotVideo(t *testing.T) {
+func TestDispatchCraftsmanMotionOnlyPolicyAllowsPlannedShotVideo(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
 		shots: []db.Shot{
@@ -341,13 +341,13 @@ func TestDispatchCraftsmanTemplateOnlyPolicyAllowsPlannedShotVideo(t *testing.T)
 		ThreadID:    uuidWithByte(2),
 		TaskID:      uuidWithByte(3),
 		Arguments: map[string]any{
-			"brief":              "用上传产品图生成模板口播广告，不要调用 Seedance。",
+			"brief":              "用上传产品图生成 Remotion 图片动效口播广告，不要调用 Seedance。",
 			"target_phase":       "shot_video",
 			"execution_policy":   "execute_immediately",
 			"scope":              map[string]any{"type": "shot"},
 			"shot_refs":          []string{"shot_01"},
 			"input_node_refs":    []string{"box.png"},
-			"video_route_policy": "template_only",
+			"video_route_policy": "motion_only",
 			"force":              true,
 		},
 	})
@@ -361,7 +361,7 @@ func TestDispatchCraftsmanTemplateOnlyPolicyAllowsPlannedShotVideo(t *testing.T)
 	if err := json.Unmarshal(runtime.createdTasks[0].Input, &input); err != nil {
 		t.Fatal(err)
 	}
-	if input["recommended_model_prompt_profile"] != "template_video" || input["video_route_policy"] != "template_only" {
+	if input["recommended_model_prompt_profile"] != "motion_shot_video" || input["video_route_policy"] != "motion_only" {
 		t.Fatalf("task input = %#v", input)
 	}
 	if got := input["input_node_refs"].([]any); len(got) != 1 || got[0] != "box.png" {
