@@ -744,44 +744,44 @@ func TestMaxAttemptsDefaultsToOne(t *testing.T) {
 	}
 }
 
-func TestIntentForNodeRestoresTemplateVideoConfig(t *testing.T) {
+func TestIntentForNodeRestoresMotionShotConfig(t *testing.T) {
 	node := db.MediaNode{
 		ID:             pgtype.UUID{Bytes: [16]byte{0x31}, Valid: true},
 		WorkspaceID:    pgtype.UUID{Bytes: [16]byte{0x32}, Valid: true},
 		NodeType:       db.NodeTypeVideo,
-		OperationType:  "image_to_template_video",
-		PromptTemplate: "Template fallback shot",
-		ModelProvider:  pgtype.Text{String: "internal_template_video", Valid: true},
-		ModelID:        pgtype.Text{String: "hyperframes-html", Valid: true},
+		OperationType:  "image_to_motion_video",
+		PromptTemplate: "Motion shot",
+		ModelProvider:  pgtype.Text{String: "internal_motion_video", Valid: true},
+		ModelID:        pgtype.Text{String: "remotion-motion-shot-v1", Valid: true},
 		ModelParams: []byte(`{
-			"template_key":"static_fallback_ken_burns_v1",
+			"motion_style":"premium_product_ad",
 			"duration_sec":5,
-			"fps":24,
-			"variables":{"headline":"Travel lighter","cta":"Shop now"}
+			"fps":30,
+			"text_layers":[{"role":"hook","text":"Travel lighter","start_sec":0.2,"end_sec":2.4}]
 		}`),
 	}
 	intent := intentForNode(node, RequestedBy{Type: "system"})
-	if intent.Model.Provider != "internal_template_video" ||
-		intent.Model.ModelID != "hyperframes-html" ||
-		intent.OperationType != "image_to_template_video" {
+	if intent.Model.Provider != "internal_motion_video" ||
+		intent.Model.ModelID != "remotion-motion-shot-v1" ||
+		intent.OperationType != "image_to_motion_video" {
 		t.Fatalf("intent = %#v", intent)
 	}
-	if intent.Params["template_key"] != "static_fallback_ken_burns_v1" {
+	if intent.Params["motion_style"] != "premium_product_ad" {
 		t.Fatalf("params = %#v", intent.Params)
 	}
-	variables, ok := intent.Params["variables"].(map[string]any)
-	if !ok || variables["headline"] != "Travel lighter" {
-		t.Fatalf("variables = %#v", intent.Params["variables"])
+	textLayers, ok := intent.Params["text_layers"].([]any)
+	if !ok || len(textLayers) != 1 {
+		t.Fatalf("text_layers = %#v", intent.Params["text_layers"])
 	}
 	before, err := ComputeInputHash(InputHashFactsForNode(node, intent, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	node.ModelParams = []byte(`{
-		"template_key":"static_fallback_ken_burns_v1",
+		"motion_style":"premium_product_ad",
 		"duration_sec":5,
-		"fps":24,
-		"variables":{"headline":"New headline","cta":"Shop now"}
+		"fps":30,
+		"text_layers":[{"role":"hook","text":"New headline","start_sec":0.2,"end_sec":2.4}]
 	}`)
 	afterIntent := intentForNode(node, RequestedBy{Type: "system"})
 	after, err := ComputeInputHash(InputHashFactsForNode(node, afterIntent, nil, nil))
@@ -789,7 +789,7 @@ func TestIntentForNodeRestoresTemplateVideoConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if before == after {
-		t.Fatal("hash did not change after persisted template variables changed")
+		t.Fatal("hash did not change after persisted motion text layers changed")
 	}
 }
 

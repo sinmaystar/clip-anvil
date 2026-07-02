@@ -17,7 +17,7 @@ Each phase must pass its acceptance commands before the next phase starts. Do no
 | Phase | Deliverable | Acceptance |
 |---|---|---|
 | M11.0 | Milestone and implementation plan | `git diff --check`; no placeholders in plan/spec |
-| M11.1 | HyperFrames cleanup and motion route foundation | focused Go tests for renderplan/tools/production pass; `rg` shows no active HyperFrames route |
+| M11.1 | HyperFrames cleanup and motion route foundation | focused Go tests for renderplan/tools/production pass; `rg` shows no active HyperFrames route in production/provider/renderplan layers |
 | M11.2 | Remotion provider and sandbox vertical slice | provider unit tests plus real sandbox smoke MP4 |
 | M11.3 | Agent skills and routing | Agent fixture tests show motion skills and no Seedance/template video route |
 | M11.4 | Composer audio/caption sync | Composer tests and `ffprobe` final timing checks pass |
@@ -29,7 +29,7 @@ Each phase must pass its acceptance commands before the next phase starts. Do no
 
 - `docs/milestones/m11-remotion-motion-shot-video.md`: human-readable phase milestone and acceptance gates.
 - `docs/superpowers/plans/2026-07-02-remotion-motion-shot-video-implementation.md`: this implementation plan.
-- `apps/server/migrations/041_m11_remotion_motion_video_capability.sql`: cleanup old template capability and register motion capability.
+- `apps/server/migrations/039_m11_remotion_motion_video_capability.sql`: register motion capability for fresh checkouts and delete stale template capability rows when present.
 - `apps/server/internal/production/motion_shot_provider.go`: provider adapter for `internal_motion_video`.
 - `apps/server/internal/production/motion_shot_provider_test.go`: provider validation and sandbox handoff tests.
 - `apps/server/internal/motionshot/plan.go`: typed motion plan normalization and validation.
@@ -138,7 +138,7 @@ Expected: commit succeeds. Do not stage local E2E screenshots.
 ## Task M11.1: HyperFrames Cleanup And Motion Route Foundation
 
 **Files:**
-- Create: `apps/server/migrations/041_m11_remotion_motion_video_capability.sql`
+- Create: `apps/server/migrations/039_m11_remotion_motion_video_capability.sql`
 - Modify: `apps/server/internal/agent/renderplan/types.go`
 - Modify: `apps/server/internal/agent/renderplan/profiles.go`
 - Modify: `apps/server/internal/agent/renderplan/service.go`
@@ -176,7 +176,7 @@ if _, ok := ProfileByID("template_video"); ok {
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/agent/renderplan -run 'TestProfileByID' -count=1
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/renderplan -run 'TestProfileByID' -count=1
 ```
 
 Expected: FAIL because `ProfileMotionShotVideo` is undefined or profile lookup does not return it.
@@ -248,7 +248,7 @@ func TestServiceRejectsMotionShotVideoForNonShotPhase(t *testing.T) {
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/agent/renderplan -run 'TestServiceAcceptsMotionShotVideoRenderPlan|TestServiceRejectsMotionShotVideoForNonShotPhase' -count=1
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/renderplan -run 'TestServiceAcceptsMotionShotVideoRenderPlan|TestServiceRejectsMotionShotVideoForNonShotPhase' -count=1
 ```
 
 Expected: FAIL because service still allows/rejects using template profile rules.
@@ -291,7 +291,7 @@ The runtime policy error for no-Seedance must say:
 
 - [ ] **Step 9: Add migration**
 
-Create `apps/server/migrations/041_m11_remotion_motion_video_capability.sql` with Up actions:
+Create `apps/server/migrations/039_m11_remotion_motion_video_capability.sql` by replacing the previous unmerged HyperFrames 039 migration. Include Up actions:
 
 ```sql
 DELETE FROM model_capability
@@ -360,15 +360,15 @@ Use `apply_patch` for deletions when working manually.
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/agent/renderplan ./apps/server/internal/agent/tools ./apps/server/internal/production -run 'Motion|motion|Template|template|RenderPlanTool|ProfileByID|Compile' -count=1
-rg -n "internal_template_video|hyperframes-html|template_video|TemplateVideo|template_to_video|image_to_template_video" apps/server/internal apps/server/cmd/server apps/server/migrations sandbox-image scripts
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/renderplan ./apps/server/internal/agent/tools ./apps/server/internal/production -run 'Motion|motion|Template|template|RenderPlanTool|ProfileByID|Compile' -count=1
+rg -n "internal_template_video|hyperframes-html|template_video|TemplateVideo|template_to_video|image_to_template_video" apps/server/internal/production apps/server/internal/agent/renderplan apps/server/internal/sandbox sandbox-image
 git diff --check
 ```
 
 Expected:
 
 - Go tests pass.
-- `rg` has no active code hits, except deleted-file diff context is not counted.
+- `rg` has no production/provider/renderplan/sandbox route hits. Migration cleanup SQL may mention old IDs only to delete stale DB rows; Agent prompt, skill, and fixture cleanup happens in M11.3.
 - `git diff --check` passes.
 
 - [ ] **Step 12: Commit M11.1**
@@ -432,7 +432,7 @@ func TestNormalizeClampsSupportedMotionMeta(t *testing.T) {
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/motionshot -count=1
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/motionshot -count=1
 ```
 
 Expected: FAIL because package does not exist.
@@ -455,7 +455,7 @@ Create `apps/server/internal/production/motion_shot_provider_test.go` with tests
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/production -run 'TestMotionShotProvider' -count=1
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/production -run 'TestMotionShotProvider' -count=1
 ```
 
 Expected: FAIL because `NewMotionShotProvider` does not exist.
@@ -536,7 +536,7 @@ Run:
 
 ```bash
 bash -n scripts/smoke-m11-2-remotion-motion-shot-provider.sh
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/motionshot ./apps/server/internal/production ./apps/server/internal/sandbox -run 'Motion|motion' -count=1
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/motionshot ./apps/server/internal/production ./apps/server/internal/sandbox -run 'Motion|motion' -count=1
 ./scripts/smoke-m11-2-remotion-motion-shot-provider.sh
 git diff --check
 ```
@@ -585,7 +585,7 @@ and assert no returned context includes `template_video`, `hyperframes`, or `int
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/agent/tools -run 'DispatchCraftsman|Template|Motion' -count=1
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/tools -run 'DispatchCraftsman|Template|Motion' -count=1
 ```
 
 Expected: FAIL because current route still recommends template video.
@@ -644,7 +644,7 @@ Replace prompt text in Producer/Craftsman/Reviewer and `e2e_producer_fixture.go`
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/agent/tools ./apps/server/internal/agent/producer ./apps/server/internal/agent/craftsman ./apps/server/internal/agent/reviewer ./apps/server/cmd/server -run 'Skill|Dispatch|Fixture|Motion|Template' -count=1
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/tools ./apps/server/internal/agent/producer ./apps/server/internal/agent/craftsman ./apps/server/internal/agent/reviewer ./apps/server/cmd/server -run 'Skill|Dispatch|Fixture|Motion|Template' -count=1
 rg -n "hyperframes|HyperFrames|internal_template_video|hyperframes-html|template_video|image_to_template_video|template_only" apps/server/internal/agent apps/server/cmd/server
 git diff --check
 ```
@@ -687,7 +687,7 @@ Add tests proving final composition:
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/agent/composer ./apps/server/internal/production ./apps/server/internal/sandbox -run 'Caption|Audio|Compose|Timeline' -count=1
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/composer ./apps/server/internal/production ./apps/server/internal/sandbox -run 'Caption|Audio|Compose|Timeline' -count=1
 ```
 
 Expected: FAIL for missing caption/timing handling if not already implemented.
@@ -721,7 +721,7 @@ Final composition should validate:
 Run:
 
 ```bash
-GOCACHE=/private/tmp/clipanvil-go-build go test ./apps/server/internal/agent/composer ./apps/server/internal/production ./apps/server/internal/sandbox -run 'Caption|Audio|Compose|Timeline' -count=1
+cd apps/server && GOCACHE=/private/tmp/clipanvil-go-build go test ./internal/agent/composer ./apps/server/internal/production ./apps/server/internal/sandbox -run 'Caption|Audio|Compose|Timeline' -count=1
 git diff --check
 ```
 

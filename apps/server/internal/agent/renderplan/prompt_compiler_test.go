@@ -46,18 +46,18 @@ func TestCompileSeedanceShotVideoRequiresActionOrSequence(t *testing.T) {
 	}
 }
 
-func TestCompileTemplateShotVideoPromptIncludesInternalProvider(t *testing.T) {
+func TestCompileMotionShotVideoPromptIncludesInternalProvider(t *testing.T) {
 	compiler := NewPromptCompiler()
 	out, err := compiler.Compile(context.Background(), UpsertInput{
 		TargetPhase:        PhaseShotVideo,
-		ModelPromptProfile: ProfileTemplateVideo,
-		Operation:          "template_to_video",
+		ModelPromptProfile: ProfileMotionShotVideo,
+		Operation:          "image_to_motion_video",
 		PromptParts: PromptParts{
-			Objective:     "生成低成本模板视频：商品卖点卡片、产品图轻微推进、价格利益点、结尾 CTA。",
+			Objective:     "生成低成本 Remotion motion shot：商品卖点卡片、产品图轻微推进、价格利益点、结尾 CTA。",
 			Subject:       "银灰色硬壳行李箱。",
 			TextRendering: "轻松登机｜现在出发",
 		},
-		Params: Params{DurationSec: 5, Ratio: "9:16", Resolution: "1080p"},
+		Params: Params{DurationSec: 5, Ratio: "9:16", Resolution: "1080p", FPS: 30},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,10 +70,10 @@ func TestCompileTemplateShotVideoPromptIncludesInternalProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key, want := range map[string]string{
-		"provider":  "internal_template_video",
-		"model":     "hyperframes-html",
-		"profile":   ProfileTemplateVideo,
-		"operation": "template_to_video",
+		"provider":  "internal_motion_video",
+		"model":     "remotion-motion-shot-v1",
+		"profile":   ProfileMotionShotVideo,
+		"operation": "image_to_motion_video",
 	} {
 		if request[key] != want {
 			t.Fatalf("request[%s] = %#v, want %q; request=%s", key, request[key], want, string(out.CompiledRequest))

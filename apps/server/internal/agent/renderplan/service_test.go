@@ -62,7 +62,7 @@ func TestServiceRejectsShotVideoWithSeedreamProfile(t *testing.T) {
 	input.Operation = "image_to_video_first_frame"
 	input.PromptParts.Action = "旅客拉着行李箱穿过机场大厅。"
 	_, err := service.Upsert(context.Background(), input)
-	if err == nil || !strings.Contains(err.Error(), "shot_video 必须使用 seedance_2_video 或 template_video") {
+	if err == nil || !strings.Contains(err.Error(), "shot_video 必须使用 seedance_2_video 或 motion_shot_video") {
 		t.Fatalf("error = %v", err)
 	}
 	if len(store.plans) != 0 {
@@ -70,26 +70,26 @@ func TestServiceRejectsShotVideoWithSeedreamProfile(t *testing.T) {
 	}
 }
 
-func TestServiceAcceptsTemplateShotVideoRenderPlan(t *testing.T) {
+func TestServiceAcceptsMotionShotVideoRenderPlan(t *testing.T) {
 	store := newFakeStore()
 	service := NewService(store, NewPromptCompiler())
 	input := validReferenceInput()
 	input.Scope.Type = ScopeShot
 	input.Scope.Key = "scene_main.shot_02"
 	input.TargetPhase = PhaseShotVideo
-	input.ModelPromptProfile = ProfileTemplateVideo
-	input.Operation = "template_to_video"
-	input.PromptParts.Objective = "生成 5 秒低成本模板视频：商品卖点卡片、产品图轻微推进、结尾 CTA。"
+	input.ModelPromptProfile = ProfileMotionShotVideo
+	input.Operation = "image_to_motion_video"
+	input.PromptParts.Objective = "生成 5 秒低成本 Remotion motion shot：商品图轻微推进、大字标题、结尾 CTA。"
 	input.PromptParts.Action = ""
 	input.PromptParts.Sequence = nil
-	input.Params = Params{Ratio: "9:16", DurationSec: 5, Resolution: "1080p"}
-	input.Rationale = "该分镜是文字和产品静帧驱动，适合模板视频降低 Seedance 成本。"
+	input.Params = Params{Ratio: "9:16", DurationSec: 5, Resolution: "1080p", FPS: 30}
+	input.Rationale = "该分镜是图片和文字驱动，适合 motion shot 降低 Seedance 成本。"
 
 	plan, err := service.Upsert(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.TargetPhase != PhaseShotVideo || plan.ModelPromptProfile != ProfileTemplateVideo || plan.Operation != "template_to_video" {
+	if plan.TargetPhase != PhaseShotVideo || plan.ModelPromptProfile != ProfileMotionShotVideo || plan.Operation != "image_to_motion_video" {
 		t.Fatalf("plan = %#v", plan)
 	}
 	if plan.Status != StatusCompiled {
@@ -100,16 +100,16 @@ func TestServiceAcceptsTemplateShotVideoRenderPlan(t *testing.T) {
 	}
 }
 
-func TestServiceRejectsTemplateVideoForNonShotPhase(t *testing.T) {
+func TestServiceRejectsMotionShotVideoForNonShotPhase(t *testing.T) {
 	store := newFakeStore()
 	service := NewService(store, NewPromptCompiler())
 	input := validReferenceInput()
-	input.ModelPromptProfile = ProfileTemplateVideo
-	input.Operation = "template_to_video"
+	input.ModelPromptProfile = ProfileMotionShotVideo
+	input.Operation = "image_to_motion_video"
 
 	_, err := service.Upsert(context.Background(), input)
 
-	if err == nil || !strings.Contains(err.Error(), "template_video 只能用于 shot_video") {
+	if err == nil || !strings.Contains(err.Error(), "motion_shot_video 只能用于 shot_video") {
 		t.Fatalf("error = %v", err)
 	}
 	if len(store.plans) != 0 {

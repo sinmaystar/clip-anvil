@@ -130,102 +130,99 @@ func TestComputeInputHashChangesWhenReferencePackMemberWinnerChanges(t *testing.
 	}
 }
 
-func TestComputeInputHashChangesWhenTemplateKeyChanges(t *testing.T) {
-	intent := templateVariantIntent()
-	before := computeTemplateHashForIntent(t, intent)
-	intent.Params["template_key"] = "benefit_cards_v1"
-	after := computeTemplateHashForIntent(t, intent)
+func TestComputeInputHashChangesWhenMotionStyleChanges(t *testing.T) {
+	intent := motionVariantIntent()
+	before := computeMotionHashForIntent(t, intent)
+	intent.Params["motion_style"] = "social_fast"
+	after := computeMotionHashForIntent(t, intent)
 	if before == after {
-		t.Fatal("hash did not change after template key changed")
+		t.Fatal("hash did not change after motion style changed")
 	}
 }
 
-func TestComputeInputHashChangesWhenTemplateVariablesChange(t *testing.T) {
-	intent := templateVariantIntent()
-	before := computeTemplateHashForIntent(t, intent)
-	intent.Params["variables"].(map[string]any)["headline"] = "New headline"
-	after := computeTemplateHashForIntent(t, intent)
+func TestComputeInputHashChangesWhenMotionTextLayersChange(t *testing.T) {
+	intent := motionVariantIntent()
+	before := computeMotionHashForIntent(t, intent)
+	intent.Params["text_layers"].([]any)[0].(map[string]any)["text"] = "New headline"
+	after := computeMotionHashForIntent(t, intent)
 	if before == after {
-		t.Fatal("hash did not change after template variables changed")
+		t.Fatal("hash did not change after motion text layers changed")
 	}
 }
 
-func TestComputeInputHashStableForTemplateVariableOrdering(t *testing.T) {
-	left := templateVariantIntent()
-	right := templateVariantIntent()
-	left.Params["variables"] = map[string]any{
-		"headline":     "Travel lighter",
-		"cta":          "Shop now",
-		"brand_colors": []any{"#111111", "#F7D046"},
+func TestComputeInputHashStableForMotionTransitionOrdering(t *testing.T) {
+	left := motionVariantIntent()
+	right := motionVariantIntent()
+	left.Params["transitions"] = map[string]any{
+		"in":  "soft_zoom",
+		"out": "swipe_up",
 	}
-	right.Params["variables"] = map[string]any{
-		"brand_colors": []any{"#111111", "#F7D046"},
-		"cta":          "Shop now",
-		"headline":     "Travel lighter",
+	right.Params["transitions"] = map[string]any{
+		"out": "swipe_up",
+		"in":  "soft_zoom",
 	}
-	if got, want := computeTemplateHashForIntent(t, left), computeTemplateHashForIntent(t, right); got != want {
-		t.Fatalf("hash changed with variable map ordering: %q != %q", got, want)
+	if got, want := computeMotionHashForIntent(t, left), computeMotionHashForIntent(t, right); got != want {
+		t.Fatalf("hash changed with transition map ordering: %q != %q", got, want)
 	}
 }
 
-func TestComputeInputHashChangesWhenTemplateInputRefRoleChanges(t *testing.T) {
-	intent := templateVariantIntent()
-	intent.InputRefs = []InputRef{templateInputRef(0x21, "product_image")}
-	before := computeTemplateHashForIntent(t, intent)
+func TestComputeInputHashChangesWhenMotionInputRefRoleChanges(t *testing.T) {
+	intent := motionVariantIntent()
+	intent.InputRefs = []InputRef{motionInputRef(0x21, "product_image")}
+	before := computeMotionHashForIntent(t, intent)
 	intent.InputRefs[0].ModelRole = "logo"
-	after := computeTemplateHashForIntent(t, intent)
+	after := computeMotionHashForIntent(t, intent)
 	if before == after {
-		t.Fatal("hash did not change after template input ref role changed")
+		t.Fatal("hash did not change after motion input ref role changed")
 	}
 }
 
-func TestComputeInputHashChangesWhenTemplateInputRefOrderChanges(t *testing.T) {
-	intent := templateVariantIntent()
+func TestComputeInputHashChangesWhenMotionInputRefOrderChanges(t *testing.T) {
+	intent := motionVariantIntent()
 	intent.InputRefs = []InputRef{
-		templateInputRef(0x21, "product_image"),
-		templateInputRef(0x22, "background_image"),
+		motionInputRef(0x21, "product_image"),
+		motionInputRef(0x22, "background_image"),
 	}
-	before := computeTemplateHashForIntent(t, intent)
+	before := computeMotionHashForIntent(t, intent)
 	intent.InputRefs[0], intent.InputRefs[1] = intent.InputRefs[1], intent.InputRefs[0]
-	after := computeTemplateHashForIntent(t, intent)
+	after := computeMotionHashForIntent(t, intent)
 	if before == after {
-		t.Fatal("hash did not change after template input ref order changed")
+		t.Fatal("hash did not change after motion input ref order changed")
 	}
 }
 
-func TestComputeInputHashChangesWhenTemplateInputRefWinnerChanges(t *testing.T) {
-	intent := templateVariantIntent()
-	intent.InputRefs = []InputRef{templateInputRef(0x21, "product_image")}
-	before := computeTemplateHashForIntent(t, intent)
+func TestComputeInputHashChangesWhenMotionInputRefWinnerChanges(t *testing.T) {
+	intent := motionVariantIntent()
+	intent.InputRefs = []InputRef{motionInputRef(0x21, "product_image")}
+	before := computeMotionHashForIntent(t, intent)
 	intent.InputRefs[0].CurrentVersionID = "version-2"
 	intent.InputRefs[0].InputHash = "sha256:source-v2"
-	after := computeTemplateHashForIntent(t, intent)
+	after := computeMotionHashForIntent(t, intent)
 	if before == after {
-		t.Fatal("hash did not change after template input ref winner changed")
+		t.Fatal("hash did not change after motion input ref winner changed")
 	}
 }
 
-func templateVariantIntent() GenerationIntent {
+func motionVariantIntent() GenerationIntent {
 	return GenerationIntent{
 		OutputType:     "video",
-		OperationType:  "image_to_template_video",
-		PromptTemplate: "Create a template fallback shot",
-		Model:          ModelSpec{Provider: "internal_template_video", ModelID: "hyperframes-html"},
+		OperationType:  "image_to_motion_video",
+		PromptTemplate: "Create a motion shot",
+		Model:          ModelSpec{Provider: "internal_motion_video", ModelID: "remotion-motion-shot-v1"},
 		Params: map[string]any{
-			"template_key": "static_fallback_ken_burns_v1",
+			"motion_style": "premium_product_ad",
 			"duration_sec": float64(5),
 			"ratio":        "9:16",
-			"fps":          float64(24),
-			"variables": map[string]any{
-				"headline":     "Travel lighter",
-				"cta":          "Shop now",
-				"brand_colors": []any{"#111111", "#F7D046"},
+			"fps":          float64(30),
+			"text_layers": []any{
+				map[string]any{"role": "hook", "text": "Travel lighter", "start_sec": float64(0.2), "end_sec": float64(2.4)},
 			},
+			"transitions": map[string]any{"in": "soft_zoom", "out": "swipe_up"},
 		},
 	}
 }
 
-func computeTemplateHashForIntent(t *testing.T, intent GenerationIntent) string {
+func computeMotionHashForIntent(t *testing.T, intent GenerationIntent) string {
 	t.Helper()
 	hash, err := ComputeInputHash(InputHashFactsForNode(
 		db.MediaNode{NodeType: db.NodeTypeVideo, PromptRefs: []byte(`[]`)},
@@ -239,7 +236,7 @@ func computeTemplateHashForIntent(t *testing.T, intent GenerationIntent) string 
 	return hash
 }
 
-func templateInputRef(id byte, role string) InputRef {
+func motionInputRef(id byte, role string) InputRef {
 	return InputRef{
 		NodeID:           pgtype.UUID{Bytes: [16]byte{id}, Valid: true},
 		Kind:             InputKindExplicit,

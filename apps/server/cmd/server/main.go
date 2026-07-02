@@ -158,7 +158,6 @@ func main() {
 	})
 	sandboxJobService := sandbox.NewJobService(sandboxManager, sandboxClient, queries, storageService)
 	providerRegistry.Register("internal_ffmpeg", production.NewInternalFFmpegProvider(sandboxJobService))
-	providerRegistry.Register("internal_template_video", production.NewTemplateVideoProvider(sandboxJobService))
 	productionService := production.NewService(pgPool, queries, providerRegistry, storageService)
 	productionService.SetRemoteAssetImporter(sandboxJobService)
 	legacyProductionRuntime := production.NewLegacyProviderRuntime(providerRegistry)

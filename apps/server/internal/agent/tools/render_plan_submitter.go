@@ -231,12 +231,12 @@ func modelForRenderPlan(plan db.RenderPlan) agentworker.ModelSpec {
 			modelID = "seed-audio-1.0"
 		}
 	}
-	if plan.ModelPromptProfile == "template_video" {
+	if plan.ModelPromptProfile == "motion_shot_video" {
 		if provider == "" {
-			provider = "internal_template_video"
+			provider = "internal_motion_video"
 		}
 		if modelID == "" {
-			modelID = "hyperframes-html"
+			modelID = "remotion-motion-shot-v1"
 		}
 	}
 	return agentworker.ModelSpec{Provider: provider, ModelID: modelID}

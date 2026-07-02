@@ -29,7 +29,7 @@ func TestRenderPlanToolInfosUseTypedSchemasAndChineseDescriptions(t *testing.T) 
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(schema)
-	for _, want := range []string{"generation_text", "model_prompt_profile", "reference_bindings", "prompt_parts", "template_video", "template_to_video"} {
+	for _, want := range []string{"generation_text", "model_prompt_profile", "reference_bindings", "prompt_parts", "motion_shot_video", "image_to_motion_video"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("schema missing %s: %s", want, string(raw))
 		}
@@ -147,11 +147,11 @@ func TestUpsertRenderPlanRuntimeDefaultsInferVideoOperationFromFirstFrame(t *tes
 	}
 }
 
-func TestUpsertRenderPlanRuntimeDefaultsUseRecommendedTemplateRoute(t *testing.T) {
+func TestUpsertRenderPlanRuntimeDefaultsUseRecommendedMotionRoute(t *testing.T) {
 	input := UpsertRenderPlanToolInput{
-		Brief:          "为 shot_03 创建低成本模板视频计划。",
+		Brief:          "为 shot_03 创建低成本 motion shot 计划。",
 		Mode:           "create",
-		GenerationText: "生成 5 秒 9:16 模板视频：商品图轻微推进，三张卖点卡依次出现，末尾出现 CTA。",
+		GenerationText: "生成 5 秒 9:16 Remotion motion shot：商品图轻微推进，三张卖点卡依次出现，末尾出现 CTA。",
 	}
 
 	got := applyUpsertRenderPlanRuntimeDefaults(input, NativeRuntimeContext{
@@ -159,19 +159,19 @@ func TestUpsertRenderPlanRuntimeDefaultsUseRecommendedTemplateRoute(t *testing.T
 		ScopeID:                       uuidWithByte(9),
 		ScopeKey:                      "scene_main.shot_03",
 		TargetPhase:                   "shot_video",
-		RecommendedModelPromptProfile: "template_video",
-		RecommendedOperation:          "image_to_template_video",
+		RecommendedModelPromptProfile: "motion_shot_video",
+		RecommendedOperation:          "image_to_motion_video",
 		RecommendedParams: map[string]any{
-			"template_key": "static_fallback_ken_burns_v1",
-			"fps":          float64(24),
+			"motion_style": "premium_product_ad",
+			"fps":          float64(30),
 		},
 		InputNodeRefs: []string{"shot_03 preview image"},
 	})
 
-	if got.ModelPromptProfile != "template_video" || got.Operation != "image_to_template_video" {
+	if got.ModelPromptProfile != "motion_shot_video" || got.Operation != "image_to_motion_video" {
 		t.Fatalf("recommended route not inherited: profile=%q operation=%q", got.ModelPromptProfile, got.Operation)
 	}
-	if got.Params.TemplateKey != "static_fallback_ken_burns_v1" || got.Params.FPS != 24 {
+	if got.Params.MotionStyle != "premium_product_ad" || got.Params.FPS != 30 {
 		t.Fatalf("recommended params = %#v", got.Params)
 	}
 	if len(got.ReferenceBindings) != 1 {
@@ -183,11 +183,11 @@ func TestUpsertRenderPlanRuntimeDefaultsUseRecommendedTemplateRoute(t *testing.T
 	}
 }
 
-func TestUpsertRenderPlanTemplateOnlyPolicyDefaultsToTemplateRoute(t *testing.T) {
+func TestUpsertRenderPlanMotionOnlyPolicyDefaultsToMotionRoute(t *testing.T) {
 	input := UpsertRenderPlanToolInput{
-		Brief:          "为 shot_01 创建不调用 Seedance 的模板视频计划。",
+		Brief:          "为 shot_01 创建不调用 Seedance 的 motion shot 计划。",
 		Mode:           "create",
-		GenerationText: "生成 5 秒 9:16 悦行行李箱口播广告模板视频：使用商品图轻微推进，叠加卖点字幕和 CTA。",
+		GenerationText: "生成 5 秒 9:16 悦行行李箱 motion shot：使用商品图轻微推进，叠加卖点字幕和 CTA。",
 	}
 
 	got := applyUpsertRenderPlanRuntimeDefaults(input, NativeRuntimeContext{
@@ -195,19 +195,19 @@ func TestUpsertRenderPlanTemplateOnlyPolicyDefaultsToTemplateRoute(t *testing.T)
 		ScopeID:          uuidWithByte(8),
 		ScopeKey:         "scene_main.shot_01",
 		TargetPhase:      "shot_video",
-		VideoRoutePolicy: "template_only",
+		VideoRoutePolicy: "motion_only",
 		InputNodeRefs:    []string{"source.material.box.node"},
 	})
 
-	if got.ModelPromptProfile != "template_video" || got.Operation != "image_to_template_video" {
-		t.Fatalf("template_only route = profile=%q operation=%q", got.ModelPromptProfile, got.Operation)
+	if got.ModelPromptProfile != "motion_shot_video" || got.Operation != "image_to_motion_video" {
+		t.Fatalf("motion_only route = profile=%q operation=%q", got.ModelPromptProfile, got.Operation)
 	}
 	if len(got.ReferenceBindings) != 1 || got.ReferenceBindings[0].ModelRole != "reference_image" {
-		t.Fatalf("template refs = %#v", got.ReferenceBindings)
+		t.Fatalf("motion refs = %#v", got.ReferenceBindings)
 	}
 }
 
-func TestUpsertRenderPlanTemplateOnlyPolicyRejectsSeedance(t *testing.T) {
+func TestUpsertRenderPlanMotionOnlyPolicyRejectsSeedance(t *testing.T) {
 	tool := NewUpsertRenderPlanNativeTool(nil)
 	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
 		WorkspaceID:      uuidWithByte(1),
@@ -216,7 +216,7 @@ func TestUpsertRenderPlanTemplateOnlyPolicyRejectsSeedance(t *testing.T) {
 		ScopeType:        "shot",
 		ScopeID:          uuidWithByte(4),
 		TargetPhase:      "shot_video",
-		VideoRoutePolicy: "template_only",
+		VideoRoutePolicy: "motion_only",
 		ToolCallID:       "call_render_plan",
 	})
 
@@ -230,7 +230,7 @@ func TestUpsertRenderPlanTemplateOnlyPolicyRejectsSeedance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"video_route_policy=template_only", "禁止 Seedance", "template_video"} {
+	for _, want := range []string{"video_route_policy=motion_only", "禁止 Seedance", "motion_shot_video"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("result missing %q: %s", want, got)
 		}
@@ -240,33 +240,33 @@ func TestUpsertRenderPlanTemplateOnlyPolicyRejectsSeedance(t *testing.T) {
 	}
 }
 
-func TestUpsertRenderPlanToolValidatesExplicitTemplateVideoPlan(t *testing.T) {
+func TestUpsertRenderPlanToolValidatesExplicitMotionShotPlan(t *testing.T) {
 	input := UpsertRenderPlanToolInput{
-		Brief:              "为 shot_03 创建低成本模板视频计划。",
+		Brief:              "为 shot_03 创建低成本 motion shot 计划。",
 		Mode:               "create",
-		GenerationText:     "生成 5 秒 9:16 模板视频：商品图轻微推进，三张卖点卡依次出现，末尾出现 CTA，不使用真实动态生成。",
+		GenerationText:     "生成 5 秒 9:16 motion shot：商品图轻微推进，三张卖点卡依次出现，末尾出现 CTA，不使用真实动态生成。",
 		Scope:              RenderPlanScopeInput{Type: "shot", ID: "09000000-0000-0000-0000-000000000000", Key: "shot_03"},
 		TargetPhase:        "shot_video",
 		TaskType:           "generate",
-		ModelPromptProfile: "template_video",
-		Operation:          "template_to_video",
-		Params:             RenderPlanParamsInput{DurationSec: 5, Ratio: "9:16", Resolution: "1080p"},
-		Rationale:          "该分镜是卖点卡片和 CTA，适合模板视频降低 Seedance 成本。",
+		ModelPromptProfile: "motion_shot_video",
+		Operation:          "image_to_motion_video",
+		Params:             RenderPlanParamsInput{DurationSec: 5, Ratio: "9:16", Resolution: "1080p", FPS: 30, MotionStyle: "premium_product_ad"},
+		Rationale:          "该分镜是卖点卡片和 CTA，适合 motion shot 降低 Seedance 成本。",
 	}
 
 	if err := validateUpsertRenderPlanInput(input); err != nil {
-		t.Fatalf("validate template video input: %v", err)
+		t.Fatalf("validate motion shot input: %v", err)
 	}
 }
 
-func TestModelForRenderPlanUsesInternalTemplateVideoProvider(t *testing.T) {
+func TestModelForRenderPlanUsesInternalMotionVideoProvider(t *testing.T) {
 	got := modelForRenderPlan(db.RenderPlan{
 		TargetPhase:        "shot_video",
-		ModelPromptProfile: "template_video",
-		Params:             []byte(`{"template_key":"static_fallback_ken_burns_v1"}`),
+		ModelPromptProfile: "motion_shot_video",
+		Params:             []byte(`{"motion_style":"premium_product_ad"}`),
 	})
 
-	if got.Provider != "internal_template_video" || got.ModelID != "hyperframes-html" {
+	if got.Provider != "internal_motion_video" || got.ModelID != "remotion-motion-shot-v1" {
 		t.Fatalf("model = %#v", got)
 	}
 }
