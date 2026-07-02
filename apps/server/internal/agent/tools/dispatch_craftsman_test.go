@@ -326,6 +326,73 @@ func TestDispatchCraftsmanMotionOnlyPolicyAvoidsSeedanceForAllShotVideos(t *test
 	}
 }
 
+func TestDispatchCraftsmanMotionOnlyPolicyDispatchesEveryDynamicShotWithFacts(t *testing.T) {
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		shots: []db.Shot{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_01_hook", SemanticKey: "scene_intro.shot_01_hook", Title: "开场钩子", Status: "preview_ready", DurationSec: pgtype.Float8{Float64: 6, Valid: true}, NarrativePurpose: "用短途出行痛点吸引注意", VisualIntent: "行李箱居中，背景留白", ActionText: "产品图轻推近", CameraIntent: "缓慢推进", Narration: "短途出行，行李箱别再拖后腿。"},
+			{ID: uuidWithByte(12), WorkspaceID: uuidWithByte(1), ClientKey: "shot_02_product", SemanticKey: "scene_intro.shot_02_product", Title: "产品展示", Status: "preview_ready", DurationSec: pgtype.Float8{Float64: 8, Valid: true}, NarrativePurpose: "建立悦行行李箱主体", VisualIntent: "展示银灰硬壳和轮子", ActionText: "商品细节分层出现", CameraIntent: "轻微视差", Narration: "悦行行李箱，轻便好推。"},
+			{ID: uuidWithByte(13), WorkspaceID: uuidWithByte(1), ClientKey: "shot_03_benefits", SemanticKey: "scene_benefit.shot_03_benefits", Title: "卖点卡", Status: "preview_ready", DurationSec: pgtype.Float8{Float64: 8, Valid: true}, NarrativePurpose: "解释万向轮和托运安心", VisualIntent: "卖点文字分组", ActionText: "三点卖点依次入场", CameraIntent: "稳定信息卡", Narration: "顺滑万向轮，转向更稳，安心托运。"},
+			{ID: uuidWithByte(14), WorkspaceID: uuidWithByte(1), ClientKey: "shot_04_cta", SemanticKey: "scene_outro.shot_04_cta", Title: "CTA", Status: "preview_ready", DurationSec: pgtype.Float8{Float64: 6, Valid: true}, NarrativePurpose: "收束购买行动", VisualIntent: "按钮和品牌口号清晰", ActionText: "CTA 弹出", CameraIntent: "轻微拉远", Narration: "现在出发。"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanTool(store, runtime, &fakeCraftsmanEnqueuer{})
+
+	out, err := tool.Execute(context.Background(), ExecuteInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		Arguments: map[string]any{
+			"brief":              "生成 30 秒悦行行李箱广告的所有 Remotion 分镜视频，不调用 Seedance。",
+			"target_phase":       "shot_video",
+			"execution_policy":   "execute_immediately",
+			"scope":              map[string]any{"type": "shot"},
+			"shot_refs":          []string{"scene_intro.shot_01_hook", "scene_intro.shot_02_product", "scene_benefit.shot_03_benefits", "scene_outro.shot_04_cta"},
+			"video_route_policy": "motion_only",
+			"force":              true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Result["status"] != "queued" {
+		t.Fatalf("result = %#v", out.Result)
+	}
+	if len(runtime.createdTasks) != 4 {
+		t.Fatalf("created tasks = %d, want 4", len(runtime.createdTasks))
+	}
+	for _, task := range runtime.createdTasks {
+		var input map[string]any
+		if err := json.Unmarshal(task.Input, &input); err != nil {
+			t.Fatal(err)
+		}
+		if input["recommended_model_prompt_profile"] != "motion_shot_video" || input["recommended_operation"] != "image_to_motion_video" {
+			t.Fatalf("task did not force motion route: %#v", input)
+		}
+		if input["video_route_policy"] != "motion_only" {
+			t.Fatalf("task missing motion_only: %#v", input)
+		}
+		facts, ok := input["shot_facts"].(map[string]any)
+		if !ok {
+			t.Fatalf("shot_facts missing: %#v", input)
+		}
+		for _, key := range []string{"duration_sec", "narrative_purpose", "visual_intent", "action_text", "camera_intent", "narration"} {
+			if facts[key] == nil || facts[key] == "" {
+				t.Fatalf("shot_facts missing %s: %#v", key, facts)
+			}
+		}
+		params := input["recommended_params"].(map[string]any)
+		if params["duration_sec"] != facts["duration_sec"] {
+			t.Fatalf("recommended duration does not inherit shot duration: params=%#v facts=%#v", params, facts)
+		}
+		if strings.Contains(strings.ToLower(mustString(input["recommended_route_reason"])), "seedance") &&
+			!strings.Contains(strings.ToLower(mustString(input["recommended_route_reason"])), "no-seedance") {
+			t.Fatalf("route reason should only mention Seedance as prohibited policy: %#v", input)
+		}
+	}
+}
+
 func TestDispatchCraftsmanMotionOnlyPolicyAllowsPlannedShotVideo(t *testing.T) {
 	store := &fakeCraftsmanDispatchStore{
 		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
@@ -367,6 +434,13 @@ func TestDispatchCraftsmanMotionOnlyPolicyAllowsPlannedShotVideo(t *testing.T) {
 	if got := input["input_node_refs"].([]any); len(got) != 1 || got[0] != "box.png" {
 		t.Fatalf("input_node_refs = %#v", input["input_node_refs"])
 	}
+}
+
+func mustString(value any) string {
+	if value == nil {
+		return ""
+	}
+	return value.(string)
 }
 
 func TestDispatchCraftsmanNativeLimitsDispatchToExplicitShotScopeRef(t *testing.T) {

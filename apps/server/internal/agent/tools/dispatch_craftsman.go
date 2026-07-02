@@ -222,6 +222,15 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		if scope.ScopeType == "shot" {
 			taskInput["shot_id"] = uuidString(scope.ScopeID)
 			taskInput["shot_client_key"] = scope.ClientKey
+			taskInput["shot_facts"] = map[string]any{
+				"title":             scope.Title,
+				"duration_sec":      scope.DurationSec,
+				"narrative_purpose": scope.NarrativePurpose,
+				"visual_intent":     scope.VisualIntent,
+				"action_text":       scope.ActionText,
+				"camera_intent":     scope.CameraIntent,
+				"narration":         scope.Narration,
+			}
 		}
 		if scope.ScopeType == "key_element_state" {
 			taskInput["key_element_state_id"] = uuidString(scope.ScopeID)
@@ -516,11 +525,17 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 }
 
 type craftsmanDispatchScope struct {
-	ScopeType string
-	ScopeID   pgtype.UUID
-	ScopeKey  string
-	ClientKey string
-	Title     string
+	ScopeType        string
+	ScopeID          pgtype.UUID
+	ScopeKey         string
+	ClientKey        string
+	Title            string
+	DurationSec      float64
+	NarrativePurpose string
+	VisualIntent     string
+	ActionText       string
+	CameraIntent     string
+	Narration        string
 }
 
 func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) ([]craftsmanDispatchScope, error) {
@@ -556,9 +571,28 @@ func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pg
 	}
 	out := make([]craftsmanDispatchScope, 0, len(shots))
 	for _, shot := range shots {
-		out = append(out, craftsmanDispatchScope{ScopeType: "shot", ScopeID: shot.ID, ScopeKey: semanticScopeKey(shot.SemanticKey, "shot", shot.ClientKey), ClientKey: shot.ClientKey, Title: shot.Title})
+		out = append(out, craftsmanDispatchScope{
+			ScopeType:        "shot",
+			ScopeID:          shot.ID,
+			ScopeKey:         semanticScopeKey(shot.SemanticKey, "shot", shot.ClientKey),
+			ClientKey:        shot.ClientKey,
+			Title:            shot.Title,
+			DurationSec:      shotDurationSeconds(shot.DurationSec),
+			NarrativePurpose: shot.NarrativePurpose,
+			VisualIntent:     shot.VisualIntent,
+			ActionText:       shot.ActionText,
+			CameraIntent:     shot.CameraIntent,
+			Narration:        shot.Narration,
+		})
 	}
 	return out, nil
+}
+
+func shotDurationSeconds(value pgtype.Float8) float64 {
+	if !value.Valid || value.Float64 <= 0 {
+		return 0
+	}
+	return value.Float64
 }
 
 type recommendedRoute struct {
@@ -595,12 +629,13 @@ func recommendedVideoRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDisp
 }
 
 func motionRecommendedRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDispatchScope, reason string) recommendedRoute {
+	durationSec := motionShotDuration(scope.DurationSec)
 	return recommendedRoute{
 		Profile:   "motion_shot_video",
 		Operation: "image_to_motion_video",
 		Params: map[string]any{
 			"ratio":        "9:16",
-			"duration_sec": 5,
+			"duration_sec": durationSec,
 			"resolution":   "1080p",
 			"fps":          30,
 			"motion_style": "premium_product_ad",
@@ -611,6 +646,27 @@ func motionRecommendedRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDis
 			},
 		},
 		Reason: reason,
+	}
+}
+
+func motionShotDuration(value float64) int {
+	rounded := int(value + 0.5)
+	switch rounded {
+	case 3, 4, 5, 6, 8:
+		return rounded
+	case 7:
+		return 8
+	default:
+		if rounded <= 0 {
+			return 5
+		}
+		if rounded < 3 {
+			return 3
+		}
+		if rounded > 8 {
+			return 8
+		}
+		return 5
 	}
 }
 
