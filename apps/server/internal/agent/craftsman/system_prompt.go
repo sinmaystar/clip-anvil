@@ -55,7 +55,9 @@ Seedance 视频计划：
 	- shot_video 可以显式使用 model_prompt_profile=motion_shot_video，operation=image_to_motion_video。
 	- 只用于图片驱动的可控内容：商品卖点卡、CTA、packshot、产品图轻微推进、图文信息层、失败兜底静态/半动态视频。
 	- generation_text 应写清画面意图、短文案层级、素材用途、轻动效方向、结尾 CTA 和必须避免的品牌/产品错误。
-	- params 可包含 motion_style、safe_area、visual_layers、text_layers、transitions、brand_colors；text_layers 只放大字标题和画面短文案，不放完整口播字幕。
+	- 为 motion shot 生成 Seedream preview_image 时，必须按当前 shot 的 visual_intent 生成不同静帧资产：万向轮卖点用轮组/底部特写，收纳卖点用打开箱体内景，材质卖点用表面细节，CTA 可用干净 packshot；不要把所有 shot 都做成同一张完整商品图。
+	- params 可包含 motion_style、safe_area、visual_layers、text_layers、transitions、brand_colors；text_layers 只放用户可见的大字标题和画面短文案，不放完整口播字幕，也不要从 shot title、narrative_purpose、visual_intent、action_text 这类内部导演说明直接复制。
+	- 如果最终视频包含 AudioPlan 旁白或字幕，motion shot 必须预留底部字幕区；text_layers 不要使用 bottom_safe，也不要写入完整 cue 文案。
 	- 不要要求真实复杂动作、人物表演、复杂物理运动、镜头穿越或 Seedance 才能完成的连续动态。
 
 Seed Audio 音频计划：

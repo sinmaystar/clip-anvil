@@ -153,6 +153,7 @@ func (p ToolContextProvider) audioPlanAssets(ctx context.Context, workspaceID pg
 		return nil, nil
 	}
 	out := []map[string]any{}
+	seenRoles := map[string]bool{}
 	for _, item := range []struct {
 		role   string
 		nodeID pgtype.UUID
@@ -169,9 +170,51 @@ func (p ToolContextProvider) audioPlanAssets(ctx context.Context, workspaceID pg
 		}
 		if ok {
 			out = append(out, asset)
+			seenRoles[item.role] = true
+		}
+	}
+	if seenRoles["voiceover"] && seenRoles["bgm"] {
+		return out, nil
+	}
+	nodes, err := p.store.ListMediaNodesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, role := range []string{"voiceover", "bgm"} {
+		if seenRoles[role] {
+			continue
+		}
+		node, ok := composerFallbackAudioNode(nodes, role)
+		if !ok {
+			continue
+		}
+		asset, ok, err := p.audioNodeAsset(ctx, workspaceID, audioPlan, role, node.ID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, asset)
 		}
 	}
 	return out, nil
+}
+
+func composerFallbackAudioNode(nodes []db.MediaNode, role string) (db.MediaNode, bool) {
+	artifactKind := role + "_audio"
+	prefix := "audio_plan.active." + artifactKind
+	for i := len(nodes) - 1; i >= 0; i-- {
+		node := nodes[i]
+		if node.NodeType != db.NodeTypeAudio || !node.CurrentVersionID.Valid {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(node.SemanticKey), prefix) {
+			return node, true
+		}
+		if composerArtifactKind(node.Metadata) == artifactKind {
+			return node, true
+		}
+	}
+	return db.MediaNode{}, false
 }
 
 func (p ToolContextProvider) audioNodeAsset(ctx context.Context, workspaceID pgtype.UUID, audioPlan db.AudioPlan, role string, nodeID pgtype.UUID) (map[string]any, bool, error) {
@@ -208,6 +251,7 @@ func (p ToolContextProvider) audioNodeAsset(ctx context.Context, workspaceID pgt
 		"source_url":          asset.StorageUrl.String,
 		"mime_type":           asset.Mime,
 		"file_name":           composerAudioAssetFileName(role, asset.Mime),
+		"metadata":            composerJSONValue(asset.Metadata),
 	}, true, nil
 }
 

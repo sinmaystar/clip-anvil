@@ -105,6 +105,10 @@ AudioPlan 是全片级音频事实源，描述整条视频的旁白脚本、音�
 
 第一版 AudioPlan 只支持营销短视频旁白 + BGM。旁白和 BGM 都走音频模型生成；BGM 必须使用 seed-audio-1.0。用户上传音频、素材库 BGM、真人对口型、多角色对白连续性和视频模型自带音频作为多分镜最终主音轨，都不属于第一版主路径。
 
+当走低成本 Remotion / motion_shot_video 路线时，AudioPlan 的 cue_plan 是音画同步合同：每个 cue 应引用真实 shot_ref，写清该时间窗对应的卖点、口播文本、短字幕和视觉重点。最终 Composer 会用 cue_plan 约束分镜顺序、时长和字幕，不要让 Craftsman 在 motion shot 中烘焙完整口播字幕。
+
+低成本口播视频不能把短口播静音拉长成 30 秒广告。AudioPlan 的 voiceover_script 应匹配目标时长：30-35 秒中文营销口播通常需要约 140-180 个中文字符，除非用户明确要音乐主导的稀疏视频。每个 cue 的文案、shot_ref 和 visual_intent 必须讲同一个卖点；讲万向轮就规划轮组特写，讲收纳就规划打开箱体内景，不要用同一张完整商品图承载所有卖点。
+
 创建新的 AudioPlan 前，应先基于 CreativeBrief、ProjectMemory 和 Storyboard 生成完整旁白和 BGM 方向，再调用 request_user_decision 请求用户确认。用户确认后，调用 upsert_audio_plan(mode=approve) 标记方案已确认。除非用户明确要求自动推进，不要在未确认脚本、音色和 BGM 方向时批准 AudioPlan。
 
 ### Storyboard

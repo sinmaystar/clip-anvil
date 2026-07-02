@@ -30,6 +30,9 @@ func TestNormalizeClampsSupportedMotionMeta(t *testing.T) {
 	if plan.MotionStyle != "premium_product_ad" || plan.VisualLayers[0].InputRef != "assets/product.png" {
 		t.Fatalf("unexpected motion plan: %+v", plan)
 	}
+	if len(plan.TextLayers) != 0 {
+		t.Fatalf("default motion shot should not invent screen text: %#v", plan.TextLayers)
+	}
 }
 
 func TestNormalizeRejectsUnsupportedRatio(t *testing.T) {
@@ -42,6 +45,40 @@ func TestNormalizeRejectsUnsupportedRatio(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "ratio") {
 		t.Fatalf("expected ratio error, got %v", err)
+	}
+}
+
+func TestNormalizeExplicitEmptyTextLayersDisablesScreenText(t *testing.T) {
+	plan, err := Normalize(RenderInput{
+		DurationSec: 5,
+		Ratio:       "9:16",
+		Resolution:  "1080p",
+		FPS:         30,
+		Assets:      []Asset{{WorkspacePath: "assets/product.png"}},
+		Params:      map[string]any{"text_layers": []any{}},
+	})
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(plan.TextLayers) != 0 {
+		t.Fatalf("explicit empty text_layers should stay empty: %#v", plan.TextLayers)
+	}
+}
+
+func TestNormalizeUsesExplicitHeadlineAsScreenText(t *testing.T) {
+	plan, err := Normalize(RenderInput{
+		DurationSec: 5,
+		Ratio:       "9:16",
+		Resolution:  "1080p",
+		FPS:         30,
+		Assets:      []Asset{{WorkspacePath: "assets/product.png"}},
+		Params:      map[string]any{"headline": "轻装出发"},
+	})
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(plan.TextLayers) != 1 || plan.TextLayers[0].Text != "轻装出发" {
+		t.Fatalf("headline text layer not applied: %#v", plan.TextLayers)
 	}
 }
 

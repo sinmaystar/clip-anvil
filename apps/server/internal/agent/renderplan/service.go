@@ -64,6 +64,18 @@ func (s *Service) Upsert(ctx context.Context, input UpsertInput) (db.RenderPlan,
 		}
 		return s.compileIfReady(ctx, input, updated)
 	}
+	if input.Mode == "fork_from" {
+		source, err := s.store.GetRenderPlanByID(ctx, db.GetRenderPlanByIDParams{ID: input.ForkFromRenderPlanID, WorkspaceID: input.WorkspaceID})
+		if err != nil {
+			return db.RenderPlan{}, err
+		}
+		revision := source.Revision + 1
+		created, err := s.store.CreateRenderPlan(ctx, createParams(input, revision))
+		if err != nil {
+			return db.RenderPlan{}, err
+		}
+		return s.compileIfReady(ctx, input, created)
+	}
 	revision, err := s.store.NextRenderPlanRevision(ctx, db.NextRenderPlanRevisionParams{
 		WorkspaceID: input.WorkspaceID,
 		ScopeType:   input.Scope.Type,

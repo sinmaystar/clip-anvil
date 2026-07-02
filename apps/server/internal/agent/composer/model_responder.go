@@ -359,9 +359,9 @@ func deterministicComposerTimelinePlan(composerContext Context, templateKey stri
 	}
 	pathsByAsset := composerStagedPaths(staged)
 	rawAssets, _ := compositionContext["available_composition_assets"].([]any)
-	segments := []any{}
+	segments := deterministicComposerCueSegments(compositionContext, rawAssets, pathsByAsset)
 	audioTracks := []any{}
-	targetDuration := composerAudioTargetDuration(compositionContext)
+	targetDuration := composerBestAudioTargetDuration(compositionContext, rawAssets)
 	for _, raw := range rawAssets {
 		asset, ok := raw.(map[string]any)
 		if !ok {
@@ -375,6 +375,9 @@ func deterministicComposerTimelinePlan(composerContext Context, templateKey stri
 		}
 		switch role {
 		case "clip", "still":
+			if len(segments) > 0 {
+				continue
+			}
 			segment := map[string]any{
 				"id":             firstNonEmpty(strings.TrimSpace(composerString(asset["shot_ref"])), assetID),
 				"asset_id":       assetID,
@@ -437,6 +440,156 @@ func deterministicComposerTimelinePlan(composerContext Context, templateKey stri
 	return plan, nil
 }
 
+func deterministicComposerCueSegments(compositionContext map[string]any, rawAssets []any, pathsByAsset map[string]string) []any {
+	cues := composerAudioCues(compositionContext)
+	if len(cues) == 0 {
+		return nil
+	}
+	assetsByShot := map[string]map[string]any{}
+	for _, raw := range rawAssets {
+		asset, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		role := strings.TrimSpace(composerString(asset["role"]))
+		if role != "clip" && role != "still" {
+			continue
+		}
+		shotRef := strings.TrimSpace(composerString(asset["shot_ref"]))
+		if shotRef == "" {
+			continue
+		}
+		assetID := strings.TrimSpace(composerString(asset["asset_id"]))
+		if pathsByAsset[assetID] == "" {
+			continue
+		}
+		assetsByShot[shotRef] = asset
+	}
+	if len(assetsByShot) == 0 {
+		return nil
+	}
+	scale := composerCueDurationScale(cues, composerBestAudioTargetDuration(compositionContext, rawAssets))
+	segments := []any{}
+	for _, cue := range cues {
+		asset := assetsByShot[cue.ShotRef]
+		if asset == nil {
+			continue
+		}
+		assetID := strings.TrimSpace(composerString(asset["asset_id"]))
+		duration := (cue.EndSec - cue.StartSec) * scale
+		if duration <= 0 {
+			continue
+		}
+		segment := map[string]any{
+			"id":             cue.ShotRef,
+			"asset_id":       assetID,
+			"workspace_path": pathsByAsset[assetID],
+			"role":           strings.TrimSpace(composerString(asset["role"])),
+			"mime_type":      strings.TrimSpace(composerString(asset["mime_type"])),
+			"duration_sec":   duration,
+			"cue_start_sec":  cue.StartSec * scale,
+			"cue_end_sec":    cue.EndSec * scale,
+		}
+		if cue.Caption != "" {
+			segment["caption"] = cue.Caption
+		}
+		if cue.Text != "" {
+			segment["cue_text"] = cue.Text
+		}
+		segments = append(segments, segment)
+	}
+	return segments
+}
+
+type composerAudioCue struct {
+	ShotRef  string
+	StartSec float64
+	EndSec   float64
+	Text     string
+	Caption  string
+}
+
+func composerAudioCues(compositionContext map[string]any) []composerAudioCue {
+	audioPlan, _ := compositionContext["audio_plan"].(map[string]any)
+	rawCues, _ := audioPlan["cue_plan"].([]any)
+	cues := make([]composerAudioCue, 0, len(rawCues))
+	for _, raw := range rawCues {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		shotRef := strings.TrimSpace(composerString(item["shot_ref"]))
+		text := strings.TrimSpace(composerString(item["text"]))
+		start := composerFloat(item["start_sec"], 0)
+		end := composerFloat(item["end_sec"], 0)
+		if shotRef == "" || end <= start {
+			continue
+		}
+		caption := strings.TrimSpace(composerString(item["caption"]))
+		if caption == "" {
+			caption = text
+		}
+		cues = append(cues, composerAudioCue{ShotRef: shotRef, StartSec: start, EndSec: end, Text: text, Caption: caption})
+	}
+	return cues
+}
+
+func composerCueDurationScale(cues []composerAudioCue, targetDuration float64) float64 {
+	if targetDuration <= 0 {
+		return 1
+	}
+	maxEnd := 0.0
+	for _, cue := range cues {
+		if cue.EndSec > maxEnd {
+			maxEnd = cue.EndSec
+		}
+	}
+	if maxEnd <= 0 {
+		return 1
+	}
+	return targetDuration / maxEnd
+}
+
+func composerBestAudioTargetDuration(compositionContext map[string]any, rawAssets []any) float64 {
+	if duration := composerVoiceoverDuration(rawAssets); duration > 0 {
+		return duration
+	}
+	return composerAudioTargetDuration(compositionContext)
+}
+
+func composerVoiceoverDuration(rawAssets []any) float64 {
+	for _, raw := range rawAssets {
+		asset, ok := raw.(map[string]any)
+		if !ok || strings.TrimSpace(composerString(asset["role"])) != "voiceover" {
+			continue
+		}
+		metadata, _ := asset["metadata"].(map[string]any)
+		if duration := composerFloat(metadata["duration_sec"], 0); duration > 0 {
+			return duration
+		}
+		alignment, _ := metadata["alignment"].(map[string]any)
+		if duration := composerAlignmentDuration(alignment); duration > 0 {
+			return duration
+		}
+	}
+	return 0
+}
+
+func composerAlignmentDuration(alignment map[string]any) float64 {
+	rawSegments, _ := alignment["segments"].([]any)
+	maxEnd := 0.0
+	for _, raw := range rawSegments {
+		segment, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if end := composerFloat(segment["end_sec"], 0); end > maxEnd {
+			maxEnd = end
+		}
+	}
+	return maxEnd
+}
+
 func composerStagedPaths(staged map[string]any) map[string]string {
 	out := map[string]string{}
 	rawFiles, _ := staged["files"].([]any)
@@ -477,6 +630,23 @@ func composerString(value any) string {
 		return typed.String()
 	default:
 		return ""
+	}
+}
+
+func composerFloat(value any, defaultValue float64) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return defaultValue
 	}
 }
 

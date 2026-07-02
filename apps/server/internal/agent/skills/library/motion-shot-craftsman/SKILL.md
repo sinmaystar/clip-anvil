@@ -25,10 +25,13 @@ Load this skill before creating or repairing a RenderPlan whose video must be re
 - Bind input media through `reference_bindings` or inherited `input_node_refs`; do not invent local file paths.
 - Put controlled motion instructions in `params`: `duration_sec`, `ratio`, `resolution`, `fps`, `motion_style`, `safe_area`, `visual_layers`, `text_layers`, `transitions`, and `brand_colors`.
 - Always inherit the current shot duration_sec when it is one of the supported short motion-shot durations; otherwise choose the closest supported short duration and explain the adjustment in audit_hints.
-- Use visual_intent, action_text, camera_intent, narration, recommended_params, and input_node_refs from the task before inventing copy or motion.
+- Use visual_intent, action_text, camera_intent, narration, recommended_params, and input_node_refs from the task before inventing motion; for visible copy, use explicit user-facing copy or extract a short selling phrase from narration only.
+- When creating a Seedream `preview_image` for a later motion shot, generate the asset described by that shot, not a generic product hero. Wheel claims need wheel/detail close-ups, storage claims need open-interior or packed-capacity stills, material claims need surface/detail stills, and CTA shots can use clean packshots.
+- If the shot visual_intent asks for a close-up, state that the full product should not dominate the image. If the shot asks for interior/storage, state that wheels/detail close-ups should not dominate the image.
 - vary layout, motion_style, transitions, and text positions by shot purpose so a multi-shot ad does not look like the same card repeated.
 - block the task when no usable image input is available; ask Producer to generate or select a preview/reference image first.
-- Keep `text_layers` short. Use them for hook, benefit, label, or CTA text; full voiceover subtitles belong to Composer/final captioning.
+- Keep `text_layers` short and user-facing. Use them for hook, benefit, label, or CTA text; full voiceover subtitles belong to Composer/final captioning.
+- Leave the bottom subtitle lane empty when final voiceover captions are expected; prefer upper_third, side_label, or small CTA positions for baked-in motion-shot text.
 - Write `generation_text` as a compact shot contract: product role, image source, copy hierarchy, visual layer order, motion level, and forbidden video models.
 - Include audit hints that the video route is motion-only and Seedance is not allowed when the user requested no-Seedance.
 
@@ -37,8 +40,10 @@ Load this skill before creating or repairing a RenderPlan whose video must be re
 - Do not choose `seedance_2_video`, `text_to_video`, or any video generation model when the requested route is motion-only.
 - Do not write raw Remotion/React code in RenderPlan fields.
 - Do not add complex real-world actions, people, lip sync, physics, or camera moves that require video generation.
+- Do not copy shot title, narrative_purpose, visual_intent, action_text, camera_intent, or other internal planning text into `text_layers`.
 - Do not bake voiceover audio or full subtitle tracks into motion-shot params.
 - do not bake full voiceover subtitles into the motion shot; Composer owns final subtitles, audio mixing, and shot timing.
+- Do not put long captions or AudioPlan cue text in `bottom_safe`; that area is reserved for Composer subtitles.
 - Do not use motion shot for phases other than `shot_video`.
 
 ## Tool Protocol

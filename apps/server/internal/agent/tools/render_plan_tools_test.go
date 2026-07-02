@@ -452,6 +452,32 @@ func TestUpsertRenderPlanToolRejectsMissingMediaNodeReferenceBeforeService(t *te
 	}
 }
 
+func TestNormalizeMediaNodeReferenceBindingsAcceptsSemanticKey(t *testing.T) {
+	input := UpsertRenderPlanToolInput{
+		ReferenceBindings: []ReferenceBindingInput{{
+			SourceType:  "media_node",
+			SourceID:    "shot_03_wheels.preview_image.r1.node",
+			ContentType: "image_url",
+			ModelRole:   "reference_image",
+		}},
+	}
+	nodes := []db.MediaNode{{
+		ID:          uuidWithByte(9),
+		WorkspaceID: uuidWithByte(1),
+		Title:       "shot_03_wheels preview image",
+		SemanticKey: "shot_03_wheels.preview_image.r1.node",
+		NodeType:    db.NodeTypeImage,
+	}}
+
+	got, problem, ok := normalizeMediaNodeReferenceBindings(input, nodes)
+	if !ok || problem != "" {
+		t.Fatalf("normalize failed ok=%v problem=%q", ok, problem)
+	}
+	if got.ReferenceBindings[0].SourceID != "09000000-0000-0000-0000-000000000000" {
+		t.Fatalf("source id = %q", got.ReferenceBindings[0].SourceID)
+	}
+}
+
 func TestReadProjectContextSummarizesRenderPlansByTargetPhase(t *testing.T) {
 	got := summarizeRenderPlans([]db.RenderPlan{
 		{ID: uuidWithByte(11), ScopeType: "shot", ScopeID: uuidWithByte(21), TargetPhase: "preview_image", Operation: "text_to_image", Status: "succeeded"},

@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveRenderPlansBySemanticKey = `-- name: ArchiveRenderPlansBySemanticKey :exec
+UPDATE render_plan
+SET archived_at = now(),
+    updated_at = now()
+WHERE workspace_id = $1
+  AND semantic_key = $2
+  AND archived_at IS NULL
+`
+
+type ArchiveRenderPlansBySemanticKeyParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	SemanticKey string      `json:"semantic_key"`
+}
+
+func (q *Queries) ArchiveRenderPlansBySemanticKey(ctx context.Context, arg ArchiveRenderPlansBySemanticKeyParams) error {
+	_, err := q.db.Exec(ctx, archiveRenderPlansBySemanticKey, arg.WorkspaceID, arg.SemanticKey)
+	return err
+}
+
 const createRenderPlan = `-- name: CreateRenderPlan :one
 INSERT INTO render_plan (
     workspace_id, scope_type, scope_id, target_phase, task_type,

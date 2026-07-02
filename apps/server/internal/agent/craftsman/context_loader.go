@@ -19,6 +19,7 @@ type ContextStore interface {
 	GetActiveAudioPlanByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (db.AudioPlan, error)
 	ListActiveShotsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.Shot, error)
 	ListRenderPlansByScope(ctx context.Context, params db.ListRenderPlansByScopeParams) ([]db.RenderPlan, error)
+	ListRenderPlansByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.RenderPlan, error)
 	ListMediaNodesByShot(ctx context.Context, params db.ListMediaNodesByShotParams) ([]db.MediaNode, error)
 	ListSourceMaterialNodesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.MediaNode, error)
 	ListShotDependenciesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.ShotDependency, error)
@@ -209,6 +210,13 @@ func (l ContextLoader) loadAudioPlanContext(ctx context.Context, input GraphInpu
 	if err != nil {
 		return Context{}, err
 	}
+	if strings.TrimSpace(input.ScopeKey) == "audio_plan.active" {
+		workspacePlans, err := l.Store.ListRenderPlansByWorkspace(ctx, input.WorkspaceID)
+		if err != nil {
+			return Context{}, err
+		}
+		renderPlans = appendMissingAudioPlanActiveRenderPlans(renderPlans, workspacePlans)
+	}
 	structured := map[string]any{
 		"task": map[string]any{
 			"target_phase":     input.Mode,
@@ -249,6 +257,27 @@ func (l ContextLoader) resolveAudioPlan(ctx context.Context, input GraphInput) (
 		return l.Store.GetAudioPlan(ctx, db.GetAudioPlanParams{ID: input.ScopeID, WorkspaceID: input.WorkspaceID})
 	}
 	return l.Store.GetActiveAudioPlanByWorkspace(ctx, input.WorkspaceID)
+}
+
+func appendMissingAudioPlanActiveRenderPlans(current []db.RenderPlan, workspacePlans []db.RenderPlan) []db.RenderPlan {
+	seen := map[string]bool{}
+	for _, plan := range current {
+		if id := uuidString(plan.ID); id != "" {
+			seen[id] = true
+		}
+	}
+	for _, plan := range workspacePlans {
+		if !strings.HasPrefix(strings.TrimSpace(plan.SemanticKey), "audio_plan.active.") {
+			continue
+		}
+		id := uuidString(plan.ID)
+		if id == "" || seen[id] {
+			continue
+		}
+		current = append(current, plan)
+		seen[id] = true
+	}
+	return current
 }
 
 func (l ContextLoader) loadNodeState(ctx context.Context, node db.MediaNode) (NodeState, error) {

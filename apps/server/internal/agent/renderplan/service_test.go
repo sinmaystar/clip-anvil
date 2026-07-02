@@ -286,6 +286,16 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{plans: []db.RenderPlan{}}
 }
 
+func (f *fakeStore) ArchiveRenderPlansBySemanticKey(_ context.Context, arg db.ArchiveRenderPlansBySemanticKeyParams) error {
+	for i, plan := range f.plans {
+		if plan.WorkspaceID == arg.WorkspaceID && plan.SemanticKey == arg.SemanticKey {
+			plan.ArchivedAt = pgtype.Timestamptz{Valid: true}
+			f.plans[i] = plan
+		}
+	}
+	return nil
+}
+
 func (f *fakeStore) CreateRenderPlan(_ context.Context, arg db.CreateRenderPlanParams) (db.RenderPlan, error) {
 	plan := db.RenderPlan{
 		ID:                     uuidWithByte(byte(len(f.plans) + 10)),

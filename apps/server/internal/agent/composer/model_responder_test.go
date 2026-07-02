@@ -2,6 +2,7 @@ package composer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -186,6 +187,63 @@ func TestComposerResponderUsesDeterministicTemplatePathBeforeModel(t *testing.T)
 	if out.Metadata["provider"] != "deterministic_template" {
 		t.Fatalf("metadata provider = %v", out.Metadata["provider"])
 	}
+}
+
+func TestDeterministicComposerTimelinePlanUsesAudioCuesForSegmentTimingAndCaptions(t *testing.T) {
+	compositionContext := map[string]any{
+		"audio_plan": map[string]any{
+			"target_duration_sec": float64(12),
+			"cue_plan": []any{
+				map[string]any{"shot_ref": "shot_capacity", "start_sec": float64(0), "end_sec": float64(6), "text": "两三天短途，分区收纳。", "caption": "分区收纳"},
+				map[string]any{"shot_ref": "shot_wheels", "start_sec": float64(6), "end_sec": float64(12), "text": "顺滑万向轮，推着走更轻松。", "caption": "顺滑万向轮"},
+			},
+		},
+		"available_composition_assets": []any{
+			map[string]any{"role": "clip", "shot_ref": "shot_wheels", "asset_id": "asset-wheels", "mime_type": "video/mp4"},
+			map[string]any{"role": "clip", "shot_ref": "shot_capacity", "asset_id": "asset-capacity", "mime_type": "video/mp4"},
+			map[string]any{"role": "voiceover", "asset_id": "asset-voice", "mime_type": "audio/mpeg", "metadata": map[string]any{"duration_sec": float64(10)}},
+		},
+	}
+	staged := map[string]any{
+		"files": []any{
+			map[string]any{"asset_id": "asset-wheels", "workspace_path": "/workspace/input/wheels.mp4"},
+			map[string]any{"asset_id": "asset-capacity", "workspace_path": "/workspace/input/capacity.mp4"},
+			map[string]any{"asset_id": "asset-voice", "workspace_path": "/workspace/input/voiceover.mp3"},
+		},
+	}
+	context := Context{SameTurnMessages: []ComposerSameTurnMessage{
+		composerToolResultMessage(t, "get_composition_context", compositionContext),
+		composerToolResultMessage(t, "stage_media_inputs", staged),
+	}}
+
+	plan, err := deterministicComposerTimelinePlan(context, "concat_with_fades")
+	if err != nil {
+		t.Fatal(err)
+	}
+	segments, ok := plan["segments"].([]any)
+	if !ok || len(segments) != 2 {
+		t.Fatalf("segments = %#v", plan["segments"])
+	}
+	first := segments[0].(map[string]any)
+	second := segments[1].(map[string]any)
+	if first["id"] != "shot_capacity" || first["caption"] != "分区收纳" || first["workspace_path"] != "/workspace/input/capacity.mp4" {
+		t.Fatalf("first segment not cue-ordered/captioned: %#v", first)
+	}
+	if second["id"] != "shot_wheels" || second["caption"] != "顺滑万向轮" || second["workspace_path"] != "/workspace/input/wheels.mp4" {
+		t.Fatalf("second segment not cue-ordered/captioned: %#v", second)
+	}
+	if first["duration_sec"] != float64(5) || second["duration_sec"] != float64(5) {
+		t.Fatalf("cue durations should be scaled to 10s voiceover duration: %#v / %#v", first["duration_sec"], second["duration_sec"])
+	}
+}
+
+func composerToolResultMessage(t *testing.T, name string, value any) ComposerSameTurnMessage {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ComposerSameTurnMessage{Role: "tool", MessageType: "tool_result", ToolName: name, Content: string(raw)}
 }
 
 type fakeComposerArkModel struct {

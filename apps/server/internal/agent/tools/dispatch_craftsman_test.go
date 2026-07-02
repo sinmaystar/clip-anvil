@@ -349,6 +349,7 @@ func TestDispatchCraftsmanMotionOnlyPolicyDispatchesEveryDynamicShotWithFacts(t 
 			"execution_policy":   "execute_immediately",
 			"scope":              map[string]any{"type": "shot"},
 			"shot_refs":          []string{"scene_intro.shot_01_hook", "scene_intro.shot_02_product", "scene_benefit.shot_03_benefits", "scene_outro.shot_04_cta"},
+			"input_node_refs":    []string{"shot_01_hook.preview_image.r1.node", "shot_02_product.preview_image.r1.node", "shot_03_benefits.preview_image.r1.node", "shot_04_cta.preview_image.r1.node"},
 			"video_route_policy": "motion_only",
 			"force":              true,
 		},
@@ -373,6 +374,10 @@ func TestDispatchCraftsmanMotionOnlyPolicyDispatchesEveryDynamicShotWithFacts(t 
 		if input["video_route_policy"] != "motion_only" {
 			t.Fatalf("task missing motion_only: %#v", input)
 		}
+		refs, ok := input["input_node_refs"].([]any)
+		if !ok || len(refs) != 1 || !strings.Contains(mustString(refs[0]), mustString(input["shot_client_key"])) {
+			t.Fatalf("task should receive only its own preview image ref: %#v", input)
+		}
 		facts, ok := input["shot_facts"].(map[string]any)
 		if !ok {
 			t.Fatalf("shot_facts missing: %#v", input)
@@ -385,6 +390,16 @@ func TestDispatchCraftsmanMotionOnlyPolicyDispatchesEveryDynamicShotWithFacts(t 
 		params := input["recommended_params"].(map[string]any)
 		if params["duration_sec"] != facts["duration_sec"] {
 			t.Fatalf("recommended duration does not inherit shot duration: params=%#v facts=%#v", params, facts)
+		}
+		textLayers := params["text_layers"].([]any)
+		if len(textLayers) != 0 {
+			t.Fatalf("motion shot recommended route must not invent screen text from internal shot facts: %#v", textLayers)
+		}
+		for _, rawLayer := range textLayers {
+			layer, _ := rawLayer.(map[string]any)
+			if layer["position"] == "bottom_safe" {
+				t.Fatalf("motion shot default text must not occupy Composer subtitle area: %#v", params["text_layers"])
+			}
 		}
 		if strings.Contains(strings.ToLower(mustString(input["recommended_route_reason"])), "seedance") &&
 			!strings.Contains(strings.ToLower(mustString(input["recommended_route_reason"])), "no-seedance") {

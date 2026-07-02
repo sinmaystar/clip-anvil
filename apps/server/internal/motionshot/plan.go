@@ -126,15 +126,7 @@ func dimensions(ratio string, resolution string) (int, int, bool) {
 }
 
 func textLayers(params map[string]any, duration int) []TextLayer {
-	layers := []TextLayer{{
-		Role:      "hook",
-		Text:      stringParam(params, "headline", "轻松出发"),
-		StartSec:  0.2,
-		EndSec:    minFloat(float64(duration), 2.4),
-		Animation: "pop_slide_up",
-		Position:  "upper_third",
-	}}
-	if raw, ok := params["text_layers"].([]any); ok && len(raw) > 0 {
+	if raw, ok := params["text_layers"].([]any); ok {
 		out := make([]TextLayer, 0, len(raw))
 		for _, item := range raw {
 			values, ok := item.(map[string]any)
@@ -154,11 +146,20 @@ func textLayers(params map[string]any, duration int) []TextLayer {
 				Position:  stringParam(values, "position", "middle_safe"),
 			})
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return out
 	}
-	return layers
+	headline := strings.TrimSpace(stringParam(params, "headline", ""))
+	if headline == "" {
+		return nil
+	}
+	return []TextLayer{{
+		Role:      "hook",
+		Text:      headline,
+		StartSec:  0.2,
+		EndSec:    minFloat(float64(duration), 2.4),
+		Animation: "pop_slide_up",
+		Position:  "upper_third",
+	}}
 }
 
 func visualLayers(params map[string]any, assets []Asset, duration int) []VisualLayer {

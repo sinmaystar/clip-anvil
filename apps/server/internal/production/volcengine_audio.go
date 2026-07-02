@@ -157,6 +157,15 @@ func audioOutputFromResponse(raw []byte, requestedFormat string) (ProductionOutp
 		AssetMIME:     mime,
 		AssetMetadata: map[string]any{"provider": "volcengine", "source": "response"},
 	}
+	if duration, ok := audioResponseFloat(response, "duration"); ok {
+		output.AssetMetadata["duration_sec"] = duration
+	}
+	if originalDuration, ok := audioResponseFloat(response, "original_duration"); ok {
+		output.AssetMetadata["original_duration_sec"] = originalDuration
+	}
+	if alignment := audioAlignmentFromResponse(response); alignment != nil {
+		output.AssetMetadata["alignment"] = alignment
+	}
 	if audioBase64 != "" {
 		content, err := base64.StdEncoding.DecodeString(audioBase64)
 		if err != nil {
@@ -170,6 +179,80 @@ func audioOutputFromResponse(raw []byte, requestedFormat string) (ProductionOutp
 		return output, response, nil
 	}
 	return ProductionOutput{}, response, fmt.Errorf("%w: volcengine audio response returned no audio content", ErrProviderExecution)
+}
+
+func audioAlignmentFromResponse(response map[string]any) map[string]any {
+	for _, key := range []string{"subtitles", "subtitle", "captions", "sentences", "utterances", "words"} {
+		segments := audioAlignmentSegments(response[key])
+		if len(segments) > 0 {
+			return map[string]any{
+				"provider": "volcengine_tts_subtitle",
+				"source":   key,
+				"segments": segments,
+			}
+		}
+	}
+	return nil
+}
+
+func audioAlignmentSegments(value any) []map[string]any {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	segments := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		text := firstNonEmptyAudio(audioString(entry["text"]), audioString(entry["word"]), audioString(entry["sentence"]))
+		start, startOK := firstAudioFloat(entry, "start_sec", "start", "begin_sec", "begin_time", "start_time")
+		end, endOK := firstAudioFloat(entry, "end_sec", "end", "end_time", "stop_time")
+		if text == "" || !startOK || !endOK || end <= start {
+			continue
+		}
+		segments = append(segments, map[string]any{"text": text, "start_sec": start, "end_sec": end})
+	}
+	return segments
+}
+
+func firstAudioFloat(values map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		if value, ok := audioAnyFloat(values[key]); ok {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+func audioResponseFloat(response map[string]any, key string) (float64, bool) {
+	return audioAnyFloat(response[key])
+}
+
+func audioAnyFloat(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func audioString(value any) string {
+	if typed, ok := value.(string); ok {
+		return strings.TrimSpace(typed)
+	}
+	return ""
 }
 
 func firstResponseString(response map[string]any, keys ...string) string {

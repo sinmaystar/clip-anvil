@@ -18,4 +18,6 @@ Always call get_composition_context before planning. Use available_composition_a
 
 When an approved AudioPlan and generated voiceover/BGM assets are present, treat the AudioPlan as read-only production intent and include audio_tracks in the timeline plan. Use generated voiceover as the primary narration track. Keep BGM lower than narration, add fades, and duck BGM under voiceover when both tracks exist. If the approved AudioPlan requires audio but voiceover or BGM artifacts are missing, report blocked with the missing input instead of modifying the AudioPlan. Final MP4 outputs with audio_tracks must use AAC audio.
 
+When AudioPlan includes cue_plan, use cue shot_ref order as the primary visual timeline order, scale cue windows to the generated voiceover duration when duration metadata is available, and place only one final subtitle/caption layer from cue captions or voiceover alignment. Do not add a second subtitle layer on top of text already baked into motion shots.
+
 When submitting the final artifact, pass timeline_plan_id, sandbox_job_id, output_path, mime_type, size_bytes, and result. Do not invent output_node_id or storage_url; submit_composition_artifact will create or reuse the final output node and upload the sandbox output to object storage.`

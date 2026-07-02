@@ -251,8 +251,8 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		if len(args.FixHints) > 0 {
 			taskInput["review_fix_hints"] = args.FixHints
 		}
-		if len(args.InputNodeRefs) > 0 {
-			taskInput["input_node_refs"] = args.InputNodeRefs
+		if refs := inputNodeRefsForScope(args, scope); len(refs) > 0 {
+			taskInput["input_node_refs"] = refs
 		} else if args.TargetPhase == "shot_video" && strings.TrimSpace(scope.ClientKey) != "" {
 			taskInput["input_node_refs"] = []string{scope.ClientKey + " preview image"}
 		}
@@ -310,6 +310,22 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		"dispatched":   dispatched,
 		"skipped":      skipped,
 	}}, nil
+}
+
+func inputNodeRefsForScope(args parsedDispatchCraftsmanArgs, scope craftsmanDispatchScope) []string {
+	if len(args.InputNodeRefs) == 0 {
+		return nil
+	}
+	if args.TargetPhase != "shot_video" || strings.TrimSpace(scope.ClientKey) == "" {
+		return args.InputNodeRefs
+	}
+	clientKey := strings.TrimSpace(scope.ClientKey)
+	for _, ref := range args.InputNodeRefs {
+		if strings.Contains(strings.TrimSpace(ref), clientKey) {
+			return []string{strings.TrimSpace(ref)}
+		}
+	}
+	return args.InputNodeRefs
 }
 
 func dispatchStatus(dispatched int, skipped int) string {
@@ -639,11 +655,8 @@ func motionRecommendedRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDis
 			"resolution":   "1080p",
 			"fps":          30,
 			"motion_style": "premium_product_ad",
-			"safe_area":    "caption_safe_bottom",
-			"text_layers": []map[string]any{
-				{"role": "hook", "text": firstNonEmptyString(scope.Title, scope.ClientKey, "产品卖点"), "start_sec": 0.2, "end_sec": 2.4, "animation": "pop_slide_up", "position": "upper_third"},
-				{"role": "caption", "text": firstNonEmptyString(args.Brief, "低成本图片动效视频"), "start_sec": 1.0, "end_sec": 4.4, "animation": "fade_rise", "position": "bottom_safe"},
-			},
+			"safe_area":    "caption_reserved_bottom",
+			"text_layers":  []map[string]any{},
 		},
 		Reason: reason,
 	}

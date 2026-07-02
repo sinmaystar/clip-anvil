@@ -39,8 +39,6 @@ func TestCompositionContextIncludesApprovedAudioPlanAndAudioArtifacts(t *testing
 			VoiceProfile:      voiceProfile,
 			BgmPlan:           bgmPlan,
 			CuePlan:           cuePlan,
-			VoiceoverNodeID:   voiceNodeID,
-			BgmNodeID:         bgmNodeID,
 			SemanticKey:       "audio_plan.active",
 			DisplayName:       "AudioPlan active",
 		},
@@ -85,7 +83,7 @@ func TestCompositionContextIncludesApprovedAudioPlanAndAudioArtifacts(t *testing
 		},
 		assets: map[pgtype.UUID]db.MediaAsset{
 			shotAssetID:  {ID: shotAssetID, WorkspaceID: workspaceID, Mime: "video/mp4", StorageUrl: textValue("workspace/shot-01.mp4")},
-			voiceAssetID: {ID: voiceAssetID, WorkspaceID: workspaceID, Mime: "audio/mpeg", StorageUrl: textValue("workspace/voiceover.mp3")},
+			voiceAssetID: {ID: voiceAssetID, WorkspaceID: workspaceID, Mime: "audio/mpeg", StorageUrl: textValue("workspace/voiceover.mp3"), Metadata: mustComposerJSON(t, map[string]any{"duration_sec": 12.4, "alignment": map[string]any{"segments": []map[string]any{{"text": "新品上线", "start_sec": 0, "end_sec": 2.1}}}})},
 			bgmAssetID:   {ID: bgmAssetID, WorkspaceID: workspaceID, Mime: "audio/mpeg", StorageUrl: textValue("workspace/bgm.mp3")},
 		},
 	}
@@ -108,6 +106,15 @@ func TestCompositionContextIncludesApprovedAudioPlanAndAudioArtifacts(t *testing
 	}
 	if !composerContextHasRole(assets, "voiceover") || !composerContextHasRole(assets, "bgm") {
 		t.Fatalf("audio assets missing: %#v", assets)
+	}
+	voiceAsset := composerContextAssetByRole(assets, "voiceover")
+	metadata, _ := voiceAsset["metadata"].(map[string]any)
+	if metadata["duration_sec"] != 12.4 {
+		t.Fatalf("voiceover metadata missing duration: %#v", voiceAsset)
+	}
+	alignment, _ := metadata["alignment"].(map[string]any)
+	if len(alignment) == 0 {
+		t.Fatalf("voiceover metadata missing alignment: %#v", voiceAsset)
 	}
 	schema, _ := ctx["timeline_plan_schema"].(map[string]any)
 	if _, ok := schema["audio_tracks"]; !ok {
@@ -225,6 +232,15 @@ func composerContextHasRole(assets []map[string]any, role string) bool {
 		}
 	}
 	return false
+}
+
+func composerContextAssetByRole(assets []map[string]any, role string) map[string]any {
+	for _, asset := range assets {
+		if asset["role"] == role {
+			return asset
+		}
+	}
+	return nil
 }
 
 func composerContextAssetByNodeRef(assets []map[string]any, nodeRef string) (map[string]any, bool) {

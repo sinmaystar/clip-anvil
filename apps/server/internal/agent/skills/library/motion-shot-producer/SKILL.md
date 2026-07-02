@@ -25,6 +25,10 @@ Load this skill when the user wants a low-cost marketing video, explicitly forbi
 - Route policy only: do not create a fixed storyboard, do not replace dynamic shot planning, and do not choose a canned 30 second template.
 - Keep motion shots scoped to one communication job: product hero, benefit, comparison, and CTA should usually be separate shots for better pacing.
 - Create or update AudioPlan before final composition when voiceover/BGM is part of the deliverable. Composer owns captions, audio mixing, and final sync.
+- For voiceover-led motion videos, make AudioPlan cue timing the sync contract: each cue must name the matching `shot_ref`, selling point, short caption, and intended cue window before Composer assembles the final timeline.
+- Size the voiceover script to the target duration. For a 30-35s Chinese commerce ad, write a real 140-180 Chinese-character narration unless the user asks for a sparse music-led video; do not stretch a 10-15s script over a 30s timeline.
+- Align every claim in the cue to a visual asset strategy. If the cue says wheels, the shot should request a wheel close-up; if it says storage, the shot should request an open-interior/storage still; do not reuse the same full-product hero for every benefit.
+- Put the expected still-image intent into `visual_intent` and `creative_text` so Craftsman can generate different Seedream assets before Remotion motion.
 - Dispatch Craftsman with `video_route_policy: motion_only` when Seedance is forbidden.
 - For no-Seedance requests, dispatch every ready shot_video with video_route_policy: motion_only.
 - Preserve real shot_refs from the dynamic storyboard; do not dispatch only one synthetic shot unless the dynamic storyboard truly has one shot.
@@ -43,8 +47,8 @@ Load this skill when the user wants a low-cost marketing video, explicitly forbi
 1. `read_project_context` with object index, production state, and available media when route or current assets are uncertain.
 2. `upsert_project_brief` and `update_project_memory` to record product promise, route policy, forbidden providers, allowed model asset types, motion-shot style, and target format.
 3. `upsert_storyboard` with shots whose `shot_kind`, `creative_text`, and `visual_intent` identify the product image, short on-screen copy, and motion intent.
-4. `upsert_audio_plan` when voiceover/BGM is part of the deliverable.
-5. `dispatch_craftsman` first for Seedream preview/reference images when needed, then for `shot_video` with `video_route_policy: motion_only` when no Seedance is allowed.
+4. `upsert_audio_plan` when voiceover/BGM is part of the deliverable; align `cue_plan` to real storyboard `shot_ref` values before dispatching final shot videos.
+5. `dispatch_craftsman` first for Seedream preview/reference images when needed, then dispatch `voiceover_audio`/`bgm_audio` for the approved AudioPlan when required, then dispatch `shot_video` with `video_route_policy: motion_only` when no Seedance is allowed.
 6. `dispatch_reviewer` before accepting motion-shot video if it is a user-visible shot or fallback.
 7. `dispatch_composer` only after successful shot videos and required audio assets exist.
 
@@ -52,5 +56,6 @@ Load this skill when the user wants a low-cost marketing video, explicitly forbi
 
 - The route is auditable in durable facts: no one has to infer whether Seedance is allowed.
 - Each motion shot has an explicit input asset strategy, short copy role, and motion role.
+- Cue text, shot_ref, and visual_intent agree on the same feature or scene, so Composer does not show one benefit while the voiceover says another.
 - Craftsman can write a valid `motion_shot_video` RenderPlan without inventing product facts, provider choice, or local file paths.
 - Reviewer can evaluate readability, product visibility, motion rhythm, and Seedance policy compliance from project facts.

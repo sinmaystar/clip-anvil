@@ -18,6 +18,7 @@ Load this skill before building or repairing a final video TimelinePlan.
 ## Do
 
 - Treat approved AudioPlan as read-only production intent.
+- When AudioPlan includes `cue_plan`, order visual segments by cue `shot_ref`, scale cue windows to the generated voiceover duration when available, and use cue captions as the only final subtitle source unless a richer alignment track exists.
 - Stage media before probing or rendering, and probe only the workspace_path values returned by the staging manifest.
 - Keep narration clear above BGM and use AAC audio for final MP4 outputs.
 - Report blocked status when required media is missing or unusable.
@@ -25,6 +26,7 @@ Load this skill before building or repairing a final video TimelinePlan.
 ## Do Not
 
 - Do not rewrite Storyboard or AudioPlan.
+- Do not duplicate subtitles already baked into motion shots; prefer one Composer-owned caption layer aligned to AudioPlan or voiceover alignment.
 - Do not invent output storage URLs or node ids.
 - Do not silently drop approved audio or shot winners.
 

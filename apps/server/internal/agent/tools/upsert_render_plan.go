@@ -628,7 +628,7 @@ func (t *UpsertRenderPlanNativeTool) validateAndNormalizeReferenceBindings(ctx c
 	}
 	normalized, problem, ok := normalizeMediaNodeReferenceBindings(input, nodes)
 	if !ok {
-		return input, NaturalToolError(toolUpsertRenderPlan, problem, "请先读取项目上下文，使用当前 workspace 中真实存在的 media_node semantic_key；如果只知道素材标题，必须填写唯一标题，不要编造内部 ID。"), false
+		return input, NaturalToolError(toolUpsertRenderPlan, problem, "请先读取项目上下文，使用当前 workspace 中真实存在的 media_node id 或 semantic_key；如果只知道素材标题，必须填写唯一标题，不要编造内部 ID。"), false
 	}
 	return normalized, "", true
 }
@@ -668,6 +668,11 @@ func resolveRenderPlanMediaNodeReference(nodes []db.MediaNode, sourceID string) 
 			}
 		}
 		return db.MediaNode{}, "指向的 media_node 不存在"
+	}
+	for _, node := range nodes {
+		if strings.EqualFold(strings.TrimSpace(node.SemanticKey), sourceID) {
+			return node, ""
+		}
 	}
 	var matches []db.MediaNode
 	for _, node := range nodes {

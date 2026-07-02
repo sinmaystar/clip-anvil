@@ -32,6 +32,7 @@ const (
 	composerTimelineWidth          = 1080
 	composerTimelineHeight         = 1920
 	composerTimelineFPS            = 30
+	composerCaptionMaxRunes        = 16
 )
 
 type CompositionContextProvider interface {
@@ -635,6 +636,7 @@ type timelineSegmentInput struct {
 	DurationSec   float64
 	Role          string
 	MimeType      string
+	Caption       string
 }
 
 type timelineAudioInput struct {
@@ -679,6 +681,7 @@ func timelineSegments(plan map[string]any) ([]timelineSegmentInput, error) {
 			DurationSec:   compositionFloatValue(segment["duration_sec"], 0),
 			Role:          strings.TrimSpace(compositionStringValue(segment["role"])),
 			MimeType:      strings.TrimSpace(compositionStringValue(segment["mime_type"])),
+			Caption:       strings.TrimSpace(compositionStringValue(segment["caption"])),
 		})
 	}
 	return segments, nil
@@ -859,6 +862,9 @@ func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timeline
 			}
 			filter += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", start, track.FadeOutSec)
 		}
+		if track.DurationSec > 0 {
+			filter += fmt.Sprintf(",apad=whole_dur=%.3f", track.DurationSec)
+		}
 		if track.Role == "voiceover" && needsVoiceoverSidechain {
 			outputLabel = label + "raw"
 		}
@@ -894,7 +900,7 @@ func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timeline
 		for _, label := range audioLabels {
 			inputs = append(inputs, fmt.Sprintf("[%s]", label))
 		}
-		parts = append(parts, strings.Join(inputs, "")+fmt.Sprintf("amix=inputs=%d:duration=shortest:dropout_transition=0[aout]", len(audioLabels)))
+		parts = append(parts, strings.Join(inputs, "")+fmt.Sprintf("amix=inputs=%d:duration=longest:dropout_transition=0[aout]", len(audioLabels)))
 	}
 	return strings.Join(parts, ";")
 }
@@ -917,15 +923,174 @@ func timelineVideoFilterParts(segments []timelineSegmentInput, outputLabel strin
 		))
 	}
 	if len(labels) == 1 {
-		parts = append(parts, fmt.Sprintf("[%s]null[%s]", labels[0], outputLabel))
+		parts = append(parts, timelineCaptionFilterParts(segments, labels[0], outputLabel)...)
 		return parts
 	}
 	videoInputs := make([]string, 0, len(labels))
 	for _, label := range labels {
 		videoInputs = append(videoInputs, fmt.Sprintf("[%s]", label))
 	}
-	parts = append(parts, strings.Join(videoInputs, "")+fmt.Sprintf("concat=n=%d:v=1:a=0[%s]", len(labels), outputLabel))
+	concatLabel := outputLabel
+	if timelineHasCaptions(segments) {
+		concatLabel = "vcat"
+	}
+	parts = append(parts, strings.Join(videoInputs, "")+fmt.Sprintf("concat=n=%d:v=1:a=0[%s]", len(labels), concatLabel))
+	if concatLabel != outputLabel {
+		parts = append(parts, timelineCaptionFilterParts(segments, concatLabel, outputLabel)...)
+	}
 	return parts
+}
+
+func timelineCaptionFilterParts(segments []timelineSegmentInput, inputLabel string, outputLabel string) []string {
+	if !timelineHasCaptions(segments) {
+		return []string{fmt.Sprintf("[%s]null[%s]", inputLabel, outputLabel)}
+	}
+	parts := []string{}
+	currentLabel := inputLabel
+	currentTime := 0.0
+	captionCues := timelineCaptionCues(segments)
+	captionIndex := 0
+	for segmentIndex, segment := range segments {
+		duration := segment.DurationSec
+		if duration <= 0 {
+			duration = 5
+		}
+		for _, caption := range captionCues[segmentIndex] {
+			nextLabel := outputLabel
+			if captionIndex < timelineCaptionCueCount(captionCues)-1 {
+				nextLabel = fmt.Sprintf("vcap%d", captionIndex)
+			}
+			parts = append(parts, fmt.Sprintf(
+				"[%s]drawtext=fontfile=/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc:text='%s':x=(w-text_w)/2:y=h-320:fontsize=50:fontcolor=white:borderw=3:bordercolor=black@0.55:box=1:boxcolor=black@0.35:boxborderw=20:enable='between(t\\,%.3f\\,%.3f)'[%s]",
+				currentLabel,
+				escapeDrawText(caption.Text),
+				currentTime+caption.StartSec,
+				currentTime+caption.EndSec,
+				nextLabel,
+			))
+			currentLabel = nextLabel
+			captionIndex++
+		}
+		currentTime += duration
+	}
+	if currentLabel != outputLabel {
+		parts = append(parts, fmt.Sprintf("[%s]null[%s]", currentLabel, outputLabel))
+	}
+	return parts
+}
+
+type timelineCaptionCue struct {
+	Text     string
+	StartSec float64
+	EndSec   float64
+}
+
+func timelineCaptionCues(segments []timelineSegmentInput) [][]timelineCaptionCue {
+	out := make([][]timelineCaptionCue, len(segments))
+	for segmentIndex, segment := range segments {
+		caption := strings.TrimSpace(segment.Caption)
+		if caption == "" {
+			continue
+		}
+		duration := segment.DurationSec
+		if duration <= 0 {
+			duration = 5
+		}
+		chunks := splitTimelineCaption(caption, composerCaptionMaxRunes)
+		if len(chunks) == 0 {
+			continue
+		}
+		chunkDuration := duration / float64(len(chunks))
+		cues := make([]timelineCaptionCue, 0, len(chunks))
+		for index, chunk := range chunks {
+			start := float64(index) * chunkDuration
+			end := start + chunkDuration
+			if index == len(chunks)-1 {
+				end = duration
+			}
+			cues = append(cues, timelineCaptionCue{Text: chunk, StartSec: start, EndSec: end})
+		}
+		out[segmentIndex] = cues
+	}
+	return out
+}
+
+func splitTimelineCaption(value string, maxRunes int) []string {
+	if maxRunes <= 0 {
+		maxRunes = composerCaptionMaxRunes
+	}
+	normalized := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if normalized == "" {
+		return nil
+	}
+	runes := []rune(normalized)
+	if len(runes) <= maxRunes {
+		return []string{normalized}
+	}
+	chunks := make([]string, 0, (len(runes)/maxRunes)+1)
+	for start := 0; start < len(runes); {
+		end := start + maxRunes
+		if end >= len(runes) {
+			chunks = append(chunks, strings.TrimSpace(string(runes[start:])))
+			break
+		}
+		breakAt := end
+		for index := end; index > start; index-- {
+			if isTimelineCaptionBreakRune(runes[index-1]) {
+				breakAt = index
+				break
+			}
+		}
+		chunk := strings.TrimSpace(string(runes[start:breakAt]))
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+		start = breakAt
+	}
+	return chunks
+}
+
+func isTimelineCaptionBreakRune(value rune) bool {
+	switch value {
+	case ' ', '，', '。', '；', '、', ',', '.', ';', '!', '！', '?', '？':
+		return true
+	default:
+		return false
+	}
+}
+
+func timelineCaptionCueCount(cues [][]timelineCaptionCue) int {
+	count := 0
+	for _, items := range cues {
+		count += len(items)
+	}
+	return count
+}
+
+func timelineHasCaptions(segments []timelineSegmentInput) bool {
+	return timelineCaptionCount(segments) > 0
+}
+
+func timelineCaptionCount(segments []timelineSegmentInput) int {
+	count := 0
+	for _, segment := range segments {
+		if strings.TrimSpace(segment.Caption) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func escapeDrawText(value string) string {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\",
+		"'", "\\'",
+		":", "\\:",
+		"%", "\\%",
+		"\n", " ",
+		"\r", " ",
+	)
+	return replacer.Replace(value)
 }
 
 func timelineNeedsVoiceoverSidechain(audioTracks []timelineAudioInput) bool {

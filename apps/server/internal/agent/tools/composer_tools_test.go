@@ -112,8 +112,8 @@ func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
 		"template_key":"concat_with_fades",
 		"plan":{
 			"segments":[
-				{"id":"shot-01","workspace_path":"/workspace/input/a.mp4","duration_sec":4.2},
-				{"id":"shot-02","workspace_path":"/workspace/input/b.mp4","duration_sec":4.0}
+				{"id":"shot-01","workspace_path":"/workspace/input/a.mp4","duration_sec":4.2,"caption":"轻商务出行"},
+				{"id":"shot-02","workspace_path":"/workspace/input/b.mp4","duration_sec":4.0,"caption":"顺滑万向轮"}
 			],
 			"audio_tracks":[
 				{"id":"voiceover-main","role":"voiceover","workspace_path":"/workspace/input/voiceover.mp3","start_sec":0,"duration_sec":8.2,"volume":1,"fade_in_sec":0.05,"fade_out_sec":0.1},
@@ -137,12 +137,19 @@ func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
 		"concat=n=2:v=1:a=0",
 		"scale=1080:1920:force_original_aspect_ratio=decrease",
 		"pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+		"drawtext=",
+		"fontfile=/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+		"轻商务出行",
+		"顺滑万向轮",
+		"between(t\\,0.000\\,4.200)",
 		"atrim",
 		"volume=1.000",
 		"volume=0.280",
 		"afade=t=in:st=0:d=0.500",
+		"apad=whole_dur=8.200",
 		"asplit=2",
 		"sidechaincompress",
+		"amix=inputs=2:duration=longest",
 		"-map [vout]",
 		"-map [aout]",
 		"-c:a aac",
@@ -152,6 +159,33 @@ func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
 		if !strings.Contains(args, want) {
 			t.Fatalf("ffmpeg args %q missing %q", args, want)
 		}
+	}
+}
+
+func TestTimelineCaptionFilterSplitsLongChineseCaptions(t *testing.T) {
+	longCaption := "底部万向轮顺滑转向，转弯不抢手，狭窄通道也能轻松掉头，赶车换乘更省力。"
+	segments := []timelineSegmentInput{
+		{WorkspacePath: "/workspace/input/a.mp4", DurationSec: 8, Caption: longCaption},
+	}
+
+	parts := strings.Join(timelineVideoFilterParts(segments, "vout"), ";")
+
+	if strings.Contains(parts, "text='"+escapeDrawText(longCaption)+"'") {
+		t.Fatalf("long caption should be split before drawtext: %s", parts)
+	}
+	for _, want := range []string{
+		"底部万向轮顺滑转向，转弯不抢手，",
+		"狭窄通道也能轻松掉头，",
+		"赶车换乘更省力。",
+		"y=h-320",
+		"fontsize=50",
+	} {
+		if !strings.Contains(parts, want) {
+			t.Fatalf("caption filter %q missing %q", parts, want)
+		}
+	}
+	if got := strings.Count(parts, "drawtext="); got < 2 {
+		t.Fatalf("expected multiple caption drawtext filters, got %d in %s", got, parts)
 	}
 }
 

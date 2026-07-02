@@ -244,6 +244,16 @@ func (f *fakeContextStore) ListRenderPlansByScope(_ context.Context, params db.L
 	return out, nil
 }
 
+func (f *fakeContextStore) ListRenderPlansByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.RenderPlan, error) {
+	out := []db.RenderPlan{}
+	for _, plan := range f.renderPlans {
+		if plan.WorkspaceID == workspaceID {
+			out = append(out, plan)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeContextStore) ListMediaNodesByShot(_ context.Context, params db.ListMediaNodesByShotParams) ([]db.MediaNode, error) {
 	out := []db.MediaNode{}
 	for _, node := range f.nodes {

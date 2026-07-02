@@ -101,16 +101,28 @@ func e2eComposerBlockedOutput(message string) agentcomposer.ComposerTurnOutput {
 }
 
 type e2eCompositionContextResult struct {
-	AvailableCompositionAssets []e2eCompositionAsset `json:"available_composition_assets"`
-	SourceStoryboardNodeID     string                `json:"source_storyboard_node_id"`
+	AvailableCompositionAssets []e2eCompositionAsset   `json:"available_composition_assets"`
+	SourceStoryboardNodeID     string                  `json:"source_storyboard_node_id"`
+	AudioPlan                  e2eCompositionAudioPlan `json:"audio_plan"`
+}
+
+type e2eCompositionAudioPlan struct {
+	CuePlan []e2eCompositionAudioCue `json:"cue_plan"`
+}
+
+type e2eCompositionAudioCue struct {
+	ShotRef string `json:"shot_ref"`
+	Text    string `json:"text"`
+	Caption string `json:"caption"`
 }
 
 type e2eCompositionAsset struct {
-	Role      string `json:"role"`
-	AssetID   string `json:"asset_id"`
-	SourceURL string `json:"source_url"`
-	FileName  string `json:"file_name"`
-	MimeType  string `json:"mime_type"`
+	Role      string         `json:"role"`
+	AssetID   string         `json:"asset_id"`
+	SourceURL string         `json:"source_url"`
+	FileName  string         `json:"file_name"`
+	MimeType  string         `json:"mime_type"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
 type e2eStageMediaResult struct {
@@ -250,9 +262,12 @@ func e2eTimelinePlan(context agentcomposer.Context) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("staged bgm asset missing")
 	}
-	segments, totalDuration, err := e2eMotionSegments(clipByShot)
+	segments, totalDuration, err := e2eMotionSegments(clipByShot, e2eCueCaptionsByShot(composition.AudioPlan))
 	if err != nil {
 		return nil, err
+	}
+	if voiceoverDuration := e2eVoiceoverDuration(composition.AvailableCompositionAssets); voiceoverDuration > 0 && voiceoverDuration < float64(totalDuration)*0.85 {
+		return nil, fmt.Errorf("voiceover duration %.1fs is too short for %.1fs timeline; regenerate a longer AudioPlan/voiceover before composing", voiceoverDuration, float64(totalDuration))
 	}
 	return map[string]any{
 		"segments": segments,
@@ -298,13 +313,13 @@ func e2eTimelinePlan(context agentcomposer.Context) (map[string]any, error) {
 	}, nil
 }
 
-func e2eMotionSegments(clipByShot map[string]e2eStageMediaFile) ([]map[string]any, int, error) {
-	shotOrder := []string{"shot_01_hook", "shot_02_product", "shot_03_wheels", "shot_04_travel", "shot_05_cta"}
+func e2eMotionSegments(clipByShot map[string]e2eStageMediaFile, captionsByShot map[string]string) ([]map[string]any, int, error) {
+	shotOrder := []string{"shot_01_hook", "shot_02_product", "shot_03_wheels", "shot_04_storage", "shot_05_cta"}
 	shotDurations := map[string]int{
 		"shot_01_hook":    6,
 		"shot_02_product": 8,
 		"shot_03_wheels":  8,
-		"shot_04_travel":  6,
+		"shot_04_storage": 6,
 		"shot_05_cta":     6,
 	}
 	segments := make([]map[string]any, 0, len(shotOrder))
@@ -315,26 +330,60 @@ func e2eMotionSegments(clipByShot map[string]e2eStageMediaFile) ([]map[string]an
 			return nil, 0, fmt.Errorf("staged clip for %s missing", shotKey)
 		}
 		duration := shotDurations[shotKey]
-		segments = append(segments, map[string]any{
+		segment := map[string]any{
 			"id":             shotKey,
 			"asset_id":       clip.AssetID,
 			"workspace_path": clip.WorkspacePath,
 			"start_sec":      startSec,
 			"duration_sec":   duration,
-		})
+		}
+		if caption := strings.TrimSpace(captionsByShot[shotKey]); caption != "" {
+			segment["caption"] = caption
+		}
+		segments = append(segments, segment)
 		startSec += duration
 	}
 	return segments, startSec, nil
 }
 
+func e2eCueCaptionsByShot(audioPlan e2eCompositionAudioPlan) map[string]string {
+	out := map[string]string{}
+	for _, cue := range audioPlan.CuePlan {
+		shotRef := strings.TrimSpace(cue.ShotRef)
+		if shotRef == "" {
+			continue
+		}
+		caption := firstNonEmptyString(strings.TrimSpace(cue.Caption), strings.TrimSpace(cue.Text))
+		if caption != "" {
+			out[shotRef] = caption
+		}
+	}
+	return out
+}
+
 func e2eShotKeyForStageFile(file e2eStageMediaFile) string {
 	text := strings.Join([]string{file.AssetID, file.WorkspacePath, file.FileName}, " ")
-	for _, shotKey := range []string{"shot_01_hook", "shot_02_product", "shot_03_wheels", "shot_04_travel", "shot_05_cta"} {
+	for _, shotKey := range []string{"shot_01_hook", "shot_02_product", "shot_03_wheels", "shot_04_storage", "shot_05_cta"} {
 		if strings.Contains(text, shotKey) {
 			return shotKey
 		}
 	}
 	return ""
+}
+
+func e2eVoiceoverDuration(assets []e2eCompositionAsset) float64 {
+	for _, asset := range assets {
+		if strings.TrimSpace(asset.Role) != "voiceover" {
+			continue
+		}
+		if duration, ok := asset.Metadata["duration_sec"].(float64); ok {
+			return duration
+		}
+		if duration, ok := asset.Metadata["original_duration_sec"].(float64); ok {
+			return duration
+		}
+	}
+	return 0
 }
 
 func e2eCompositionContext(context agentcomposer.Context) (e2eCompositionContextResult, error) {
