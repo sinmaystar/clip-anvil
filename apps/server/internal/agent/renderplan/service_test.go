@@ -62,7 +62,54 @@ func TestServiceRejectsShotVideoWithSeedreamProfile(t *testing.T) {
 	input.Operation = "image_to_video_first_frame"
 	input.PromptParts.Action = "旅客拉着行李箱穿过机场大厅。"
 	_, err := service.Upsert(context.Background(), input)
-	if err == nil || !strings.Contains(err.Error(), "shot_video 必须使用 seedance_2_video") {
+	if err == nil || !strings.Contains(err.Error(), "shot_video 必须使用 seedance_2_video 或 motion_shot_video") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(store.plans) != 0 {
+		t.Fatalf("store writes = %d, want 0", len(store.plans))
+	}
+}
+
+func TestServiceAcceptsMotionShotVideoRenderPlan(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validReferenceInput()
+	input.Scope.Type = ScopeShot
+	input.Scope.Key = "scene_main.shot_02"
+	input.TargetPhase = PhaseShotVideo
+	input.ModelPromptProfile = ProfileMotionShotVideo
+	input.Operation = "image_to_motion_video"
+	input.PromptParts.Objective = "生成 5 秒低成本 Remotion motion shot：商品图轻微推进、大字标题、结尾 CTA。"
+	input.PromptParts.Action = ""
+	input.PromptParts.Sequence = nil
+	input.Params = Params{Ratio: "9:16", DurationSec: 5, Resolution: "1080p", FPS: 30}
+	input.Rationale = "该分镜是图片和文字驱动，适合 motion shot 降低 Seedance 成本。"
+
+	plan, err := service.Upsert(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.TargetPhase != PhaseShotVideo || plan.ModelPromptProfile != ProfileMotionShotVideo || plan.Operation != "image_to_motion_video" {
+		t.Fatalf("plan = %#v", plan)
+	}
+	if plan.Status != StatusCompiled {
+		t.Fatalf("status = %q, want compiled", plan.Status)
+	}
+	if plan.SemanticKey != "scene_main.shot_02.shot_video.r1" {
+		t.Fatalf("semantic key = %q", plan.SemanticKey)
+	}
+}
+
+func TestServiceRejectsMotionShotVideoForNonShotPhase(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, NewPromptCompiler())
+	input := validReferenceInput()
+	input.ModelPromptProfile = ProfileMotionShotVideo
+	input.Operation = "image_to_motion_video"
+
+	_, err := service.Upsert(context.Background(), input)
+
+	if err == nil || !strings.Contains(err.Error(), "motion_shot_video 只能用于 shot_video") {
 		t.Fatalf("error = %v", err)
 	}
 	if len(store.plans) != 0 {
@@ -237,6 +284,16 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{plans: []db.RenderPlan{}}
+}
+
+func (f *fakeStore) ArchiveRenderPlansBySemanticKey(_ context.Context, arg db.ArchiveRenderPlansBySemanticKeyParams) error {
+	for i, plan := range f.plans {
+		if plan.WorkspaceID == arg.WorkspaceID && plan.SemanticKey == arg.SemanticKey {
+			plan.ArchivedAt = pgtype.Timestamptz{Valid: true}
+			f.plans[i] = plan
+		}
+	}
+	return nil
 }
 
 func (f *fakeStore) CreateRenderPlan(_ context.Context, arg db.CreateRenderPlanParams) (db.RenderPlan, error) {

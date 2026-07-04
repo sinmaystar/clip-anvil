@@ -192,6 +192,22 @@ func TestProviderRegistryDefaultsVolcengineAudioModel(t *testing.T) {
 	}
 }
 
+func TestProviderRegistryMockModeRoutesExternalProvidersToMock(t *testing.T) {
+	registry := NewProviderRegistry(ProviderConfig{ProviderMode: "mock"})
+
+	provider, err := registry.Resolve(GenerationIntent{
+		OutputType:    "audio",
+		OperationType: "text_to_audio",
+		Model:         ModelSpec{Provider: "volcengine", ModelID: "seed-audio-1.0"},
+	})
+	if err != nil {
+		t.Fatalf("resolve provider: %v", err)
+	}
+	if _, ok := provider.(MockProvider); !ok {
+		t.Fatalf("provider = %T, want MockProvider", provider)
+	}
+}
+
 func TestMockProviderReturnsAudioArtifact(t *testing.T) {
 	result, err := (MockProvider{}).Run(context.Background(), GenerationIntent{
 		OutputType:     "audio",
@@ -204,6 +220,9 @@ func TestMockProviderReturnsAudioArtifact(t *testing.T) {
 	}
 	if result.AssetMIME != "audio/wav" || len(result.AssetContent) == 0 {
 		t.Fatalf("audio artifact = %s/%d", result.AssetMIME, len(result.AssetContent))
+	}
+	if len(result.AssetContent) < 10000 {
+		t.Fatalf("audio artifact is too small: %d", len(result.AssetContent))
 	}
 }
 
@@ -722,6 +741,55 @@ func TestMaxAttemptsDefaultsToOne(t *testing.T) {
 	capability := Capability{Limits: CapabilityLimits{MaxAttempts: 3}}
 	if got := maxAttemptsForRun(options, capability); got != 1 {
 		t.Fatalf("max attempts = %d, want 1", got)
+	}
+}
+
+func TestIntentForNodeRestoresMotionShotConfig(t *testing.T) {
+	node := db.MediaNode{
+		ID:             pgtype.UUID{Bytes: [16]byte{0x31}, Valid: true},
+		WorkspaceID:    pgtype.UUID{Bytes: [16]byte{0x32}, Valid: true},
+		NodeType:       db.NodeTypeVideo,
+		OperationType:  "image_to_motion_video",
+		PromptTemplate: "Motion shot",
+		ModelProvider:  pgtype.Text{String: "internal_motion_video", Valid: true},
+		ModelID:        pgtype.Text{String: "remotion-motion-shot-v1", Valid: true},
+		ModelParams: []byte(`{
+			"motion_style":"premium_product_ad",
+			"duration_sec":5,
+			"fps":30,
+			"text_layers":[{"role":"hook","text":"Travel lighter","start_sec":0.2,"end_sec":2.4}]
+		}`),
+	}
+	intent := intentForNode(node, RequestedBy{Type: "system"})
+	if intent.Model.Provider != "internal_motion_video" ||
+		intent.Model.ModelID != "remotion-motion-shot-v1" ||
+		intent.OperationType != "image_to_motion_video" {
+		t.Fatalf("intent = %#v", intent)
+	}
+	if intent.Params["motion_style"] != "premium_product_ad" {
+		t.Fatalf("params = %#v", intent.Params)
+	}
+	textLayers, ok := intent.Params["text_layers"].([]any)
+	if !ok || len(textLayers) != 1 {
+		t.Fatalf("text_layers = %#v", intent.Params["text_layers"])
+	}
+	before, err := ComputeInputHash(InputHashFactsForNode(node, intent, nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.ModelParams = []byte(`{
+		"motion_style":"premium_product_ad",
+		"duration_sec":5,
+		"fps":30,
+		"text_layers":[{"role":"hook","text":"New headline","start_sec":0.2,"end_sec":2.4}]
+	}`)
+	afterIntent := intentForNode(node, RequestedBy{Type: "system"})
+	after, err := ComputeInputHash(InputHashFactsForNode(node, afterIntent, nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("hash did not change after persisted motion text layers changed")
 	}
 }
 

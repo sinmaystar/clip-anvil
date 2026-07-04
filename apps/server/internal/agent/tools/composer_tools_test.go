@@ -112,8 +112,8 @@ func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
 		"template_key":"concat_with_fades",
 		"plan":{
 			"segments":[
-				{"id":"shot-01","workspace_path":"/workspace/input/a.mp4","duration_sec":4.2},
-				{"id":"shot-02","workspace_path":"/workspace/input/b.mp4","duration_sec":4.0}
+				{"id":"shot-01","workspace_path":"/workspace/input/a.mp4","duration_sec":4.2,"caption":"轻商务出行"},
+				{"id":"shot-02","workspace_path":"/workspace/input/b.mp4","duration_sec":4.0,"caption":"顺滑万向轮"}
 			],
 			"audio_tracks":[
 				{"id":"voiceover-main","role":"voiceover","workspace_path":"/workspace/input/voiceover.mp3","start_sec":0,"duration_sec":8.2,"volume":1,"fade_in_sec":0.05,"fade_out_sec":0.1},
@@ -135,12 +135,21 @@ func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
 		"/workspace/input/voiceover.mp3",
 		"/workspace/input/bgm.mp3",
 		"concat=n=2:v=1:a=0",
+		"scale=1080:1920:force_original_aspect_ratio=decrease",
+		"pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+		"drawtext=",
+		"fontfile=/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+		"轻商务出行",
+		"顺滑万向轮",
+		"between(t\\,0.000\\,4.200)",
 		"atrim",
 		"volume=1.000",
 		"volume=0.280",
 		"afade=t=in:st=0:d=0.500",
+		"apad=whole_dur=8.200",
 		"asplit=2",
 		"sidechaincompress",
+		"amix=inputs=2:duration=longest",
 		"-map [vout]",
 		"-map [aout]",
 		"-c:a aac",
@@ -150,6 +159,131 @@ func TestRenderTimelineTemplateBuildsAudioMixCommand(t *testing.T) {
 		if !strings.Contains(args, want) {
 			t.Fatalf("ffmpeg args %q missing %q", args, want)
 		}
+	}
+}
+
+func TestTimelineCaptionFilterSplitsLongChineseCaptions(t *testing.T) {
+	longCaption := "底部万向轮顺滑转向，转弯不抢手，狭窄通道也能轻松掉头，赶车换乘更省力。"
+	segments := []timelineSegmentInput{
+		{WorkspacePath: "/workspace/input/a.mp4", DurationSec: 8, Caption: longCaption},
+	}
+
+	parts := strings.Join(timelineVideoFilterParts(segments, "vout"), ";")
+
+	if strings.Contains(parts, "text='"+escapeDrawText(longCaption)+"'") {
+		t.Fatalf("long caption should be split before drawtext: %s", parts)
+	}
+	for _, want := range []string{
+		"底部万向轮顺滑转向，转弯不抢手，",
+		"狭窄通道也能轻松掉头，",
+		"赶车换乘更省力。",
+		"y=h-320",
+		"fontsize=50",
+	} {
+		if !strings.Contains(parts, want) {
+			t.Fatalf("caption filter %q missing %q", parts, want)
+		}
+	}
+	if got := strings.Count(parts, "drawtext="); got < 2 {
+		t.Fatalf("expected multiple caption drawtext filters, got %d in %s", got, parts)
+	}
+}
+
+func TestRenderTimelineTemplateLoopsStillSegments(t *testing.T) {
+	sandbox := &fakeCompositionSandbox{}
+	tool := NewRenderTimelineTemplateNativeTool(NewSandboxTimelineTemplateRenderer(sandbox))
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		TaskID:      uuidWithByte(2),
+		ScopeType:   "final_output",
+		ScopeID:     uuidWithByte(3),
+	})
+	got, err := tool.InvokableRun(ctx, `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"template_key":"concat_with_fades",
+		"plan":{"segments":[
+			{"id":"shot-01","workspace_path":"/workspace/input/a.mp4"},
+			{"id":"shot-cta","role":"still","mime_type":"image/png","workspace_path":"/workspace/input/cta.png","duration_sec":5}
+		],"output":{"workspace_path":"/workspace/output/final-still.mp4","format":"mp4"}}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("render_timeline_template failed: %s", got)
+	}
+	args := strings.Join(sandbox.ffmpegInput.Args, " ")
+	for _, want := range []string{
+		"-loop 1 -t 5.000 -i /workspace/input/cta.png",
+		"scale=1080:1920:force_original_aspect_ratio=decrease",
+		"pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+		"concat=n=2:v=1:a=0",
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("ffmpeg args %q missing %q", args, want)
+		}
+	}
+}
+
+func TestRenderTimelineTemplateRoutesRemotionTimeline(t *testing.T) {
+	remotion := &fakeRemotionTimelineRenderer{}
+	ffmpegSandbox := &fakeCompositionSandbox{}
+	tool := NewRenderTimelineTemplateNativeTool(NewSandboxTimelineTemplateRenderer(ffmpegSandbox).WithRemotionRenderer(remotion))
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		TaskID:      uuidWithByte(2),
+		ScopeType:   "final_output",
+		ScopeID:     uuidWithByte(3),
+	})
+	got, err := tool.InvokableRun(ctx, `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"template_key":"remotion_timeline_v1",
+		"plan":{
+			"schema":"clipanvil.remotion_timeline.v1",
+			"composition":"MarketingTimeline",
+			"output":{"width":1080,"height":1920,"fps":30,"duration_sec":10,"codec":"h264","audio_codec":"aac"},
+			"segments":[{"id":"seg-1","shot_ref":"shot_01","start_sec":0,"end_sec":10,"layout":"hero_packshot","assets":[{"role":"primary","type":"image","workspace_path":"/workspace/input/product.png"}],"caption":{"source":"audio_cue","text":"轻松出发","start_sec":0,"end_sec":10}}],
+			"audio_tracks":[{"id":"voiceover","role":"voiceover","workspace_path":"/workspace/input/voiceover.mp3","volume":1}]
+		}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("render_timeline_template failed: %s", got)
+	}
+	if remotion.input.OutputPath != "/workspace/output/final-04000000.mp4" {
+		t.Fatalf("remotion output path = %q", remotion.input.OutputPath)
+	}
+	if remotion.input.Plan.Schema != "clipanvil.remotion_timeline.v1" || len(remotion.input.Plan.Segments) != 1 {
+		t.Fatalf("remotion input = %#v", remotion.input)
+	}
+	if len(ffmpegSandbox.ffmpegInput.Args) != 0 {
+		t.Fatalf("remotion route should not call ffmpeg path, got %#v", ffmpegSandbox.ffmpegInput.Args)
+	}
+	if !strings.Contains(got, `"sandbox_job_id":"06000000-0000-0000-0000-000000000000"`) {
+		t.Fatalf("result missing remotion sandbox job id: %s", got)
+	}
+}
+
+func TestRenderTimelineTemplateRejectsInvalidRemotionTimeline(t *testing.T) {
+	tool := NewRenderTimelineTemplateNativeTool(NewSandboxTimelineTemplateRenderer(&fakeCompositionSandbox{}).WithRemotionRenderer(&fakeRemotionTimelineRenderer{}))
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		TaskID:      uuidWithByte(2),
+		ScopeType:   "final_output",
+		ScopeID:     uuidWithByte(3),
+	})
+	got, err := tool.InvokableRun(ctx, `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"template_key":"remotion_timeline_v1",
+		"plan":{"segments":[]}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "工具调用失败") {
+		t.Fatalf("expected invalid plan failure, got %s", got)
 	}
 }
 
@@ -276,6 +410,15 @@ func (f *fakeCompositionSandbox) ProbeMedia(context.Context, sandbox.ProbeMediaI
 func (f *fakeCompositionSandbox) RunFFmpegCommand(_ context.Context, input sandbox.RunFFmpegCommandInput) (sandbox.SandboxJobResult, error) {
 	f.ffmpegInput = input
 	return sandbox.SandboxJobResult{Job: db.SandboxJob{ID: uuidWithByte(5)}}, nil
+}
+
+type fakeRemotionTimelineRenderer struct {
+	input sandbox.RenderRemotionTimelineInput
+}
+
+func (f *fakeRemotionTimelineRenderer) RenderRemotionTimeline(_ context.Context, input sandbox.RenderRemotionTimelineInput) (sandbox.SandboxJobResult, error) {
+	f.input = input
+	return sandbox.SandboxJobResult{Job: db.SandboxJob{ID: uuidWithByte(6)}, MIME: "video/mp4", Size: 123}, nil
 }
 
 type fakeCompositionArtifactStore struct {

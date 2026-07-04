@@ -287,7 +287,11 @@ function overviewNodeHeight(workbench: AgentWorkbenchProjection) {
   if (overview.audio_plan) {
     sections.push(overview.audio_plan.voiceover_script ? 104 : 72);
   }
-  if (overview.source_materials.length > 0) {
+  const sourceMaterials = overview.source_materials ?? [];
+  const keyElements = overview.key_elements ?? [];
+  const keyElementStates = overview.key_element_states ?? [];
+
+  if (sourceMaterials.length > 0) {
     sections.push(50);
   }
   const referenceVideoAnalyses = overview.reference_video_analyses ?? [];
@@ -300,15 +304,13 @@ function overviewNodeHeight(workbench: AgentWorkbenchProjection) {
   }
 
   sections.push(
-    overviewChipBlockHeight(
-      overview.key_elements.slice(0, 5).map((element) => element.name),
+      overviewChipBlockHeight(
+      keyElements.slice(0, 5).map((element) => element.name),
     ),
   );
   sections.push(
     overviewChipBlockHeight(
-      overview.key_element_states
-        .slice(0, 6)
-        .map((state) => state.label || state.client_key),
+      keyElementStates.slice(0, 6).map((state) => state.label || state.client_key),
     ),
   );
 

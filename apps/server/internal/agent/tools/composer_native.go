@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/production"
+	"github.com/sinmaystar/clip-anvil/internal/remotiontimeline"
 	"github.com/sinmaystar/clip-anvil/internal/sandbox"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -29,6 +30,11 @@ const (
 	toolSubmitCompositionArtifact  = "submit_composition_artifact"
 	composerTemplateSimpleConcat   = "simple_concat"
 	composerTemplateConcatWithFade = "concat_with_fades"
+	composerTemplateRemotionV1     = remotiontimeline.TemplateKeyV1
+	composerTimelineWidth          = 1080
+	composerTimelineHeight         = 1920
+	composerTimelineFPS            = 30
+	composerCaptionMaxRunes        = 16
 )
 
 type CompositionContextProvider interface {
@@ -39,6 +45,10 @@ type CompositionSandbox interface {
 	StageMediaInputs(ctx context.Context, input sandbox.StageMediaInputsInput) (sandbox.StageMediaInputsResult, error)
 	ProbeMedia(ctx context.Context, input sandbox.ProbeMediaInput) (sandbox.ProbeMediaResult, error)
 	RunFFmpegCommand(ctx context.Context, input sandbox.RunFFmpegCommandInput) (sandbox.SandboxJobResult, error)
+}
+
+type RemotionTimelineSandbox interface {
+	RenderRemotionTimeline(ctx context.Context, input sandbox.RenderRemotionTimelineInput) (sandbox.SandboxJobResult, error)
 }
 
 type CompositionTimelineStore interface {
@@ -80,7 +90,8 @@ type SubmitCompositionArtifactNativeTool struct {
 }
 
 type SandboxTimelineTemplateRenderer struct {
-	sandbox CompositionSandbox
+	sandbox  CompositionSandbox
+	remotion RemotionTimelineSandbox
 }
 
 type GetCompositionContextInput struct {
@@ -106,7 +117,7 @@ type ProbeMediaToolInput struct {
 
 type CreateTimelinePlanInput struct {
 	SourceStoryboardNodeID string         `json:"source_storyboard_node_id,omitempty" jsonschema_description:"来源媒体/故事板节点内部 ID。通常从当前 Composer task 或 get_composition_context 返回值原样复制。"`
-	TemplateKey            string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades" jsonschema_description:"Phase 1 timeline 模版。"`
+	TemplateKey            string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1" jsonschema_description:"Timeline 模版。simple_concat/concat_with_fades 使用 ffmpeg；remotion_timeline_v1 使用 Remotion final timeline renderer。"`
 	Plan                   map[string]any `json:"plan" jsonschema:"required" jsonschema_description:"TimelinePlan JSON。"`
 	RenderSettings         map[string]any `json:"render_settings,omitempty" jsonschema_description:"渲染设置。"`
 }
@@ -123,7 +134,7 @@ type UpdateTimelinePlanStatusInput struct {
 
 type RenderTimelineTemplateInput struct {
 	TimelinePlanID string         `json:"timeline_plan_id" jsonschema:"required" jsonschema_description:"timeline_plan 内部 ID。必须从 create_timeline_plan 返回结果原样复制。"`
-	TemplateKey    string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades" jsonschema_description:"Phase 1 模版。"`
+	TemplateKey    string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1" jsonschema_description:"Timeline 模版。"`
 	Plan           map[string]any `json:"plan" jsonschema:"required" jsonschema_description:"TimelinePlan JSON。"`
 }
 
@@ -180,7 +191,16 @@ func NewRunFFmpegCommandNativeTool(sandbox CompositionSandbox) RunFFmpegCommandN
 }
 
 func NewSandboxTimelineTemplateRenderer(sandbox CompositionSandbox) SandboxTimelineTemplateRenderer {
-	return SandboxTimelineTemplateRenderer{sandbox: sandbox}
+	renderer := SandboxTimelineTemplateRenderer{sandbox: sandbox}
+	if remotion, ok := sandbox.(RemotionTimelineSandbox); ok {
+		renderer.remotion = remotion
+	}
+	return renderer
+}
+
+func (r SandboxTimelineTemplateRenderer) WithRemotionRenderer(renderer RemotionTimelineSandbox) SandboxTimelineTemplateRenderer {
+	r.remotion = renderer
+	return r
 }
 
 func NewSubmitCompositionArtifactNativeTool(persister CompositionArtifactPersister, store ...CompositionArtifactStore) SubmitCompositionArtifactNativeTool {
@@ -358,7 +378,7 @@ func (t UpdateTimelinePlanStatusNativeTool) InvokableRun(ctx context.Context, ra
 }
 
 func (t RenderTimelineTemplateNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfoFor[RenderTimelineTemplateInput](toolRenderTimelineTemplate, "按 Phase 1 模版渲染 timeline plan，支持 simple_concat 和 concat_with_fades。")
+	return toolInfoFor[RenderTimelineTemplateInput](toolRenderTimelineTemplate, "按 timeline 模版渲染 timeline plan，支持 simple_concat、concat_with_fades 和 remotion_timeline_v1。")
 }
 
 func (t RenderTimelineTemplateNativeTool) InvokableRun(ctx context.Context, raw string, _ ...einotool.Option) (string, error) {
@@ -517,6 +537,9 @@ func (t SubmitCompositionArtifactNativeTool) InvokableRun(ctx context.Context, r
 }
 
 func (r SandboxTimelineTemplateRenderer) RenderTimelineTemplate(ctx context.Context, runtime NativeRuntimeContext, input RenderTimelineTemplateInput) (RenderTimelineTemplateResult, error) {
+	if input.TemplateKey == composerTemplateRemotionV1 {
+		return r.renderRemotionTimeline(ctx, runtime, input)
+	}
 	if r.sandbox == nil {
 		return RenderTimelineTemplateResult{}, errors.New("composition sandbox 未配置")
 	}
@@ -547,6 +570,43 @@ func (r SandboxTimelineTemplateRenderer) RenderTimelineTemplate(ctx context.Cont
 		OutputPath:   outputPath,
 		SandboxJobID: result.Job.ID,
 		Summary:      fmt.Sprintf("rendered %d segments with %s", len(segments), input.TemplateKey),
+	}, nil
+}
+
+func (r SandboxTimelineTemplateRenderer) renderRemotionTimeline(ctx context.Context, runtime NativeRuntimeContext, input RenderTimelineTemplateInput) (RenderTimelineTemplateResult, error) {
+	if r.remotion == nil {
+		return RenderTimelineTemplateResult{}, errors.New("remotion timeline renderer 未配置")
+	}
+	timelinePlanID, ok := pgUUIDFromString(input.TimelinePlanID)
+	if !ok {
+		return RenderTimelineTemplateResult{}, errors.New("timeline_plan_id 必须从 create_timeline_plan 返回结果原样复制")
+	}
+	plan, err := remotiontimeline.Decode(input.Plan)
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	if err := remotiontimeline.Validate(plan); err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	fallbackOutputPath := "/workspace/output/final-" + shortToolID(input.TimelinePlanID) + ".mp4"
+	outputPath, err := timelineOutputPath(input.Plan, fallbackOutputPath)
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	result, err := r.remotion.RenderRemotionTimeline(ctx, sandbox.RenderRemotionTimelineInput{
+		WorkspaceID:    runtime.WorkspaceID,
+		TargetNodeID:   runtime.ScopeID,
+		TimelinePlanID: timelinePlanID,
+		Plan:           plan,
+		OutputPath:     outputPath,
+	})
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	return RenderTimelineTemplateResult{
+		OutputPath:   outputPath,
+		SandboxJobID: result.Job.ID,
+		Summary:      fmt.Sprintf("rendered %d segments with %s", len(plan.Segments), input.TemplateKey),
 	}, nil
 }
 
@@ -630,6 +690,9 @@ func (t SubmitCompositionArtifactNativeTool) updateTimelineAfterSubmit(ctx conte
 type timelineSegmentInput struct {
 	WorkspacePath string
 	DurationSec   float64
+	Role          string
+	MimeType      string
+	Caption       string
 }
 
 type timelineAudioInput struct {
@@ -672,6 +735,9 @@ func timelineSegments(plan map[string]any) ([]timelineSegmentInput, error) {
 		segments = append(segments, timelineSegmentInput{
 			WorkspacePath: workspacePath,
 			DurationSec:   compositionFloatValue(segment["duration_sec"], 0),
+			Role:          strings.TrimSpace(compositionStringValue(segment["role"])),
+			MimeType:      strings.TrimSpace(compositionStringValue(segment["mime_type"])),
+			Caption:       strings.TrimSpace(compositionStringValue(segment["caption"])),
 		})
 	}
 	return segments, nil
@@ -750,16 +816,25 @@ func timelineFFmpegArgs(plan map[string]any, outputPath string) ([]string, error
 		return nil, err
 	}
 	if len(audioTracks) == 0 {
+		if timelineHasStillSegment(segments) {
+			args := timelineInputArgs(segments)
+			filterParts := timelineVideoFilterParts(segments, "v")
+			return append(args,
+				"-filter_complex", strings.Join(filterParts, ";"),
+				"-map", "[v]",
+				"-c:v", "libx264",
+				"-preset", "fast",
+				"-crf", "23",
+				outputPath,
+			), nil
+		}
 		paths := make([]string, 0, len(segments))
 		for _, segment := range segments {
 			paths = append(paths, segment.WorkspacePath)
 		}
 		return concatFFmpegArgs(paths, outputPath), nil
 	}
-	args := []string{"-y"}
-	for _, segment := range segments {
-		args = append(args, "-i", segment.WorkspacePath)
-	}
+	args := timelineInputArgs(segments)
 	for _, track := range audioTracks {
 		if track.Role == "bgm" {
 			args = append(args, "-stream_loop", "-1")
@@ -782,18 +857,37 @@ func timelineFFmpegArgs(plan map[string]any, outputPath string) ([]string, error
 	return args, nil
 }
 
-func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timelineAudioInput) string {
-	parts := []string{}
-	if len(segments) == 1 {
-		parts = append(parts, "[0:v]setpts=PTS-STARTPTS,format=yuv420p,setsar=1[vout]")
-	} else {
-		videoInputs := make([]string, 0, len(segments))
-		for index := range segments {
-			videoInputs = append(videoInputs, fmt.Sprintf("[%d:v]", index))
+func timelineInputArgs(segments []timelineSegmentInput) []string {
+	args := []string{"-y"}
+	for _, segment := range segments {
+		if timelineSegmentIsStill(segment) {
+			duration := segment.DurationSec
+			if duration <= 0 {
+				duration = 5
+			}
+			args = append(args, "-loop", "1", "-t", fmt.Sprintf("%.3f", duration), "-i", segment.WorkspacePath)
+			continue
 		}
-		parts = append(parts, strings.Join(videoInputs, "")+fmt.Sprintf("concat=n=%d:v=1:a=0[vcat]", len(segments)))
-		parts = append(parts, "[vcat]format=yuv420p,setsar=1[vout]")
+		args = append(args, "-i", segment.WorkspacePath)
 	}
+	return args
+}
+
+func timelineHasStillSegment(segments []timelineSegmentInput) bool {
+	for _, segment := range segments {
+		if timelineSegmentIsStill(segment) {
+			return true
+		}
+	}
+	return false
+}
+
+func timelineSegmentIsStill(segment timelineSegmentInput) bool {
+	return segment.Role == "still" || strings.HasPrefix(strings.ToLower(segment.MimeType), "image/")
+}
+
+func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timelineAudioInput) string {
+	parts := timelineVideoFilterParts(segments, "vout")
 
 	audioLabels := make([]string, 0, len(audioTracks))
 	voiceoverLabel := ""
@@ -823,6 +917,9 @@ func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timeline
 				start = 0
 			}
 			filter += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", start, track.FadeOutSec)
+		}
+		if track.DurationSec > 0 {
+			filter += fmt.Sprintf(",apad=whole_dur=%.3f", track.DurationSec)
 		}
 		if track.Role == "voiceover" && needsVoiceoverSidechain {
 			outputLabel = label + "raw"
@@ -859,9 +956,197 @@ func timelineFilterGraph(segments []timelineSegmentInput, audioTracks []timeline
 		for _, label := range audioLabels {
 			inputs = append(inputs, fmt.Sprintf("[%s]", label))
 		}
-		parts = append(parts, strings.Join(inputs, "")+fmt.Sprintf("amix=inputs=%d:duration=shortest:dropout_transition=0[aout]", len(audioLabels)))
+		parts = append(parts, strings.Join(inputs, "")+fmt.Sprintf("amix=inputs=%d:duration=longest:dropout_transition=0[aout]", len(audioLabels)))
 	}
 	return strings.Join(parts, ";")
+}
+
+func timelineVideoFilterParts(segments []timelineSegmentInput, outputLabel string) []string {
+	parts := make([]string, 0, len(segments)+1)
+	labels := make([]string, 0, len(segments))
+	for index := range segments {
+		label := fmt.Sprintf("vnorm%d", index)
+		labels = append(labels, label)
+		parts = append(parts, fmt.Sprintf(
+			"[%d:v]setpts=PTS-STARTPTS,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,fps=%d,format=yuv420p,setsar=1[%s]",
+			index,
+			composerTimelineWidth,
+			composerTimelineHeight,
+			composerTimelineWidth,
+			composerTimelineHeight,
+			composerTimelineFPS,
+			label,
+		))
+	}
+	if len(labels) == 1 {
+		parts = append(parts, timelineCaptionFilterParts(segments, labels[0], outputLabel)...)
+		return parts
+	}
+	videoInputs := make([]string, 0, len(labels))
+	for _, label := range labels {
+		videoInputs = append(videoInputs, fmt.Sprintf("[%s]", label))
+	}
+	concatLabel := outputLabel
+	if timelineHasCaptions(segments) {
+		concatLabel = "vcat"
+	}
+	parts = append(parts, strings.Join(videoInputs, "")+fmt.Sprintf("concat=n=%d:v=1:a=0[%s]", len(labels), concatLabel))
+	if concatLabel != outputLabel {
+		parts = append(parts, timelineCaptionFilterParts(segments, concatLabel, outputLabel)...)
+	}
+	return parts
+}
+
+func timelineCaptionFilterParts(segments []timelineSegmentInput, inputLabel string, outputLabel string) []string {
+	if !timelineHasCaptions(segments) {
+		return []string{fmt.Sprintf("[%s]null[%s]", inputLabel, outputLabel)}
+	}
+	parts := []string{}
+	currentLabel := inputLabel
+	currentTime := 0.0
+	captionCues := timelineCaptionCues(segments)
+	captionIndex := 0
+	for segmentIndex, segment := range segments {
+		duration := segment.DurationSec
+		if duration <= 0 {
+			duration = 5
+		}
+		for _, caption := range captionCues[segmentIndex] {
+			nextLabel := outputLabel
+			if captionIndex < timelineCaptionCueCount(captionCues)-1 {
+				nextLabel = fmt.Sprintf("vcap%d", captionIndex)
+			}
+			parts = append(parts, fmt.Sprintf(
+				"[%s]drawtext=fontfile=/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc:text='%s':x=(w-text_w)/2:y=h-320:fontsize=50:fontcolor=white:borderw=3:bordercolor=black@0.55:box=1:boxcolor=black@0.35:boxborderw=20:enable='between(t\\,%.3f\\,%.3f)'[%s]",
+				currentLabel,
+				escapeDrawText(caption.Text),
+				currentTime+caption.StartSec,
+				currentTime+caption.EndSec,
+				nextLabel,
+			))
+			currentLabel = nextLabel
+			captionIndex++
+		}
+		currentTime += duration
+	}
+	if currentLabel != outputLabel {
+		parts = append(parts, fmt.Sprintf("[%s]null[%s]", currentLabel, outputLabel))
+	}
+	return parts
+}
+
+type timelineCaptionCue struct {
+	Text     string
+	StartSec float64
+	EndSec   float64
+}
+
+func timelineCaptionCues(segments []timelineSegmentInput) [][]timelineCaptionCue {
+	out := make([][]timelineCaptionCue, len(segments))
+	for segmentIndex, segment := range segments {
+		caption := strings.TrimSpace(segment.Caption)
+		if caption == "" {
+			continue
+		}
+		duration := segment.DurationSec
+		if duration <= 0 {
+			duration = 5
+		}
+		chunks := splitTimelineCaption(caption, composerCaptionMaxRunes)
+		if len(chunks) == 0 {
+			continue
+		}
+		chunkDuration := duration / float64(len(chunks))
+		cues := make([]timelineCaptionCue, 0, len(chunks))
+		for index, chunk := range chunks {
+			start := float64(index) * chunkDuration
+			end := start + chunkDuration
+			if index == len(chunks)-1 {
+				end = duration
+			}
+			cues = append(cues, timelineCaptionCue{Text: chunk, StartSec: start, EndSec: end})
+		}
+		out[segmentIndex] = cues
+	}
+	return out
+}
+
+func splitTimelineCaption(value string, maxRunes int) []string {
+	if maxRunes <= 0 {
+		maxRunes = composerCaptionMaxRunes
+	}
+	normalized := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if normalized == "" {
+		return nil
+	}
+	runes := []rune(normalized)
+	if len(runes) <= maxRunes {
+		return []string{normalized}
+	}
+	chunks := make([]string, 0, (len(runes)/maxRunes)+1)
+	for start := 0; start < len(runes); {
+		end := start + maxRunes
+		if end >= len(runes) {
+			chunks = append(chunks, strings.TrimSpace(string(runes[start:])))
+			break
+		}
+		breakAt := end
+		for index := end; index > start; index-- {
+			if isTimelineCaptionBreakRune(runes[index-1]) {
+				breakAt = index
+				break
+			}
+		}
+		chunk := strings.TrimSpace(string(runes[start:breakAt]))
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+		start = breakAt
+	}
+	return chunks
+}
+
+func isTimelineCaptionBreakRune(value rune) bool {
+	switch value {
+	case ' ', '，', '。', '；', '、', ',', '.', ';', '!', '！', '?', '？':
+		return true
+	default:
+		return false
+	}
+}
+
+func timelineCaptionCueCount(cues [][]timelineCaptionCue) int {
+	count := 0
+	for _, items := range cues {
+		count += len(items)
+	}
+	return count
+}
+
+func timelineHasCaptions(segments []timelineSegmentInput) bool {
+	return timelineCaptionCount(segments) > 0
+}
+
+func timelineCaptionCount(segments []timelineSegmentInput) int {
+	count := 0
+	for _, segment := range segments {
+		if strings.TrimSpace(segment.Caption) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func escapeDrawText(value string) string {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\",
+		"'", "\\'",
+		":", "\\:",
+		"%", "\\%",
+		"\n", " ",
+		"\r", " ",
+	)
+	return replacer.Replace(value)
 }
 
 func timelineNeedsVoiceoverSidechain(audioTracks []timelineAudioInput) bool {
@@ -953,7 +1238,7 @@ func validateStageMediaInputs(input StageMediaInputsInput) error {
 }
 
 func validateCreateTimelinePlan(input CreateTimelinePlanInput) error {
-	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade); err != nil {
+	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1); err != nil {
 		return err
 	}
 	if input.SourceStoryboardNodeID != "" {
@@ -978,7 +1263,7 @@ func validateRenderTimelineTemplate(input RenderTimelineTemplateInput) error {
 	if _, ok := pgUUIDFromString(input.TimelinePlanID); !ok {
 		return errors.New("timeline_plan_id 必须从 create_timeline_plan 返回结果原样复制")
 	}
-	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade); err != nil {
+	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1); err != nil {
 		return err
 	}
 	if len(input.Plan) == 0 {

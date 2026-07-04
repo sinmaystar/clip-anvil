@@ -113,6 +113,48 @@ func TestVolcengineAudioRuntimeUsesTemporaryURLFallback(t *testing.T) {
 	}
 }
 
+func TestVolcengineAudioRuntimeCapturesDurationAndSubtitleAlignment(t *testing.T) {
+	audioBytes := []byte("fake-mp3-content")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"audio":    base64.StdEncoding.EncodeToString(audioBytes),
+			"duration": 3.4,
+			"subtitles": []map[string]any{
+				{"text": "顺滑万向轮", "start_sec": 1.2, "end_sec": 2.8},
+			},
+		})
+	}))
+	defer server.Close()
+
+	runtime := NewVolcengineAudioRuntime(VolcengineProviderConfig{
+		APIKey:       "test-key",
+		AudioBaseURL: server.URL,
+		AudioModel:   "seed-audio-1.0",
+	}, server.Client())
+	stream, err := runtime.Start(context.Background(), ProductionJob{}, GenerationIntent{
+		OutputType:     "audio",
+		OperationType:  "text_to_audio",
+		PromptTemplate: "生成旁白。",
+		Model:          ModelSpec{Provider: "volcengine"},
+		Params:         map[string]any{"format": "mp3"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := collectProductionEvents(stream)
+	last := events[len(events)-1]
+	if last.Output.AssetMetadata["duration_sec"] != 3.4 {
+		t.Fatalf("metadata missing duration: %#v", last.Output.AssetMetadata)
+	}
+	alignment, ok := last.Output.AssetMetadata["alignment"].(map[string]any)
+	if !ok || alignment["provider"] != "volcengine_tts_subtitle" {
+		t.Fatalf("metadata missing subtitle alignment: %#v", last.Output.AssetMetadata)
+	}
+	if last.Output.ResponseSummary["duration"] != 3.4 {
+		t.Fatalf("response summary missing duration: %#v", last.Output.ResponseSummary)
+	}
+}
+
 func TestVolcengineAudioRuntimeUsesAudioAPIKeyWhenConfigured(t *testing.T) {
 	var gotKey string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

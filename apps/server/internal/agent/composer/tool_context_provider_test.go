@@ -3,6 +3,7 @@ package composer
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -39,8 +40,6 @@ func TestCompositionContextIncludesApprovedAudioPlanAndAudioArtifacts(t *testing
 			VoiceProfile:      voiceProfile,
 			BgmPlan:           bgmPlan,
 			CuePlan:           cuePlan,
-			VoiceoverNodeID:   voiceNodeID,
-			BgmNodeID:         bgmNodeID,
 			SemanticKey:       "audio_plan.active",
 			DisplayName:       "AudioPlan active",
 		},
@@ -85,7 +84,7 @@ func TestCompositionContextIncludesApprovedAudioPlanAndAudioArtifacts(t *testing
 		},
 		assets: map[pgtype.UUID]db.MediaAsset{
 			shotAssetID:  {ID: shotAssetID, WorkspaceID: workspaceID, Mime: "video/mp4", StorageUrl: textValue("workspace/shot-01.mp4")},
-			voiceAssetID: {ID: voiceAssetID, WorkspaceID: workspaceID, Mime: "audio/mpeg", StorageUrl: textValue("workspace/voiceover.mp3")},
+			voiceAssetID: {ID: voiceAssetID, WorkspaceID: workspaceID, Mime: "audio/mpeg", StorageUrl: textValue("workspace/voiceover.mp3"), Metadata: mustComposerJSON(t, map[string]any{"duration_sec": 12.4, "alignment": map[string]any{"segments": []map[string]any{{"text": "新品上线", "start_sec": 0, "end_sec": 2.1}}}})},
 			bgmAssetID:   {ID: bgmAssetID, WorkspaceID: workspaceID, Mime: "audio/mpeg", StorageUrl: textValue("workspace/bgm.mp3")},
 		},
 	}
@@ -108,6 +107,15 @@ func TestCompositionContextIncludesApprovedAudioPlanAndAudioArtifacts(t *testing
 	}
 	if !composerContextHasRole(assets, "voiceover") || !composerContextHasRole(assets, "bgm") {
 		t.Fatalf("audio assets missing: %#v", assets)
+	}
+	voiceAsset := composerContextAssetByRole(assets, "voiceover")
+	metadata, _ := voiceAsset["metadata"].(map[string]any)
+	if metadata["duration_sec"] != 12.4 {
+		t.Fatalf("voiceover metadata missing duration: %#v", voiceAsset)
+	}
+	alignment, _ := metadata["alignment"].(map[string]any)
+	if len(alignment) == 0 {
+		t.Fatalf("voiceover metadata missing alignment: %#v", voiceAsset)
 	}
 	schema, _ := ctx["timeline_plan_schema"].(map[string]any)
 	if _, ok := schema["audio_tracks"]; !ok {
@@ -218,6 +226,135 @@ func TestCompositionContextIncludesPreviewImageFallbackWhenShotVideoMissing(t *t
 	}
 }
 
+func TestCompositionContextIncludesRemotionTimelineInputs(t *testing.T) {
+	workspaceID := uuidWithByte(1)
+	wheelsShotID := uuidWithByte(21)
+	storageShotID := uuidWithByte(22)
+	wheelsVersionID := uuidWithByte(31)
+	storageVersionID := uuidWithByte(32)
+	wheelsAssetID := uuidWithByte(41)
+	storageAssetID := uuidWithByte(42)
+	audioPlanID := uuidWithByte(50)
+
+	cuePlan := mustComposerJSON(t, []map[string]any{
+		{"shot_ref": "shot_wheels", "start_sec": 0, "end_sec": 5, "text": "顺滑万向轮，转弯不费力。", "caption": "顺滑万向轮"},
+		{"shot_ref": "shot_storage", "start_sec": 5, "end_sec": 10, "text": "打开就是分区收纳。", "caption": "分区收纳"},
+	})
+	store := &fakeComposerStore{
+		audioPlan: &db.AudioPlan{
+			ID:                audioPlanID,
+			WorkspaceID:       workspaceID,
+			Status:            "approved",
+			Title:             "悦行行李箱音频方案",
+			TargetDurationSec: float8Value(30),
+			CuePlan:           cuePlan,
+			SemanticKey:       "audio_plan.active",
+		},
+		shots: []db.Shot{
+			{
+				ID:               wheelsShotID,
+				WorkspaceID:      workspaceID,
+				ClientKey:        "shot_wheels",
+				SemanticKey:      "shot_wheels",
+				SortOrder:        2,
+				Title:            "万向轮特写",
+				DurationSec:      float8Value(5),
+				NarrativePurpose: "证明短途出行好推",
+				VisualIntent:     "轮组近景，展示顺滑转向",
+				ActionText:       "行李箱轻推转弯",
+				Narration:        "顺滑万向轮，转弯不费力。",
+			},
+			{
+				ID:               storageShotID,
+				WorkspaceID:      workspaceID,
+				ClientKey:        "shot_storage",
+				SemanticKey:      "shot_storage",
+				SortOrder:        3,
+				Title:            "打开收纳",
+				DurationSec:      float8Value(5),
+				NarrativePurpose: "展示容量和分区",
+				VisualIntent:     "打开箱体内景，衣物和电脑分区",
+				ActionText:       "箱体打开露出分层空间",
+				Narration:        "打开就是分区收纳。",
+			},
+		},
+		nodesByShot: map[pgtype.UUID][]db.MediaNode{
+			wheelsShotID: {{
+				ID:               uuidWithByte(61),
+				WorkspaceID:      workspaceID,
+				ShotID:           wheelsShotID,
+				NodeType:         db.NodeTypeImage,
+				Title:            "wheel detail image",
+				CurrentVersionID: wheelsVersionID,
+				ArtifactKind:     "preview_image",
+				SemanticKey:      "shot_wheels.preview_image.r1.node",
+			}},
+			storageShotID: {{
+				ID:               uuidWithByte(62),
+				WorkspaceID:      workspaceID,
+				ShotID:           storageShotID,
+				NodeType:         db.NodeTypeImage,
+				Title:            "storage interior image",
+				CurrentVersionID: storageVersionID,
+				ArtifactKind:     "preview_image",
+				SemanticKey:      "shot_storage.preview_image.r1.node",
+			}},
+		},
+		versions: map[pgtype.UUID]db.ArtifactVersion{
+			wheelsVersionID:  {ID: wheelsVersionID, AssetID: wheelsAssetID, Status: db.JobStatusSucceeded},
+			storageVersionID: {ID: storageVersionID, AssetID: storageAssetID, Status: db.JobStatusSucceeded},
+		},
+		assets: map[pgtype.UUID]db.MediaAsset{
+			wheelsAssetID:  {ID: wheelsAssetID, WorkspaceID: workspaceID, Mime: "image/png", StorageUrl: textValue("workspace/wheels.png")},
+			storageAssetID: {ID: storageAssetID, WorkspaceID: workspaceID, Mime: "image/png", StorageUrl: textValue("workspace/storage.png")},
+		},
+	}
+
+	ctx, err := NewToolContextProvider(store).GetCompositionContext(context.Background(), agenttools.NativeRuntimeContext{WorkspaceID: workspaceID}, pgtype.UUID{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets, _ := ctx["available_composition_assets"].([]map[string]any)
+	if len(assets) != 2 {
+		t.Fatalf("assets = %#v", assets)
+	}
+	wheels, ok := composerContextAssetByNodeRef(assets, "shot_wheels.preview_image.r1.node")
+	if !ok {
+		t.Fatalf("wheel still asset missing: %#v", assets)
+	}
+	for key, want := range map[string]any{
+		"role":              "still",
+		"shot_ref":          "shot_wheels",
+		"shot_title":        "万向轮特写",
+		"duration_sec":      float64(5),
+		"narrative_purpose": "证明短途出行好推",
+		"visual_intent":     "轮组近景，展示顺滑转向",
+		"sort_order":        int32(2),
+	} {
+		if wheels[key] != want {
+			t.Fatalf("wheels[%s] = %#v, want %#v; asset=%#v", key, wheels[key], want, wheels)
+		}
+	}
+	remotionSchema, ok := ctx["remotion_timeline_schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("remotion_timeline_schema missing: %#v", ctx)
+	}
+	if remotionSchema["schema"] != "clipanvil.remotion_timeline.v1" || remotionSchema["composition"] != "MarketingTimeline" {
+		t.Fatalf("remotion schema = %#v", remotionSchema)
+	}
+	layouts, _ := remotionSchema["layouts"].([]string)
+	if !hasComposerString(layouts, "detail_focus") || !hasComposerString(layouts, "open_storage") {
+		t.Fatalf("remotion layouts = %#v", layouts)
+	}
+	assetTypes, _ := remotionSchema["asset_types"].([]string)
+	if !hasComposerString(assetTypes, "image") || !hasComposerString(assetTypes, "video") {
+		t.Fatalf("remotion asset types = %#v", assetTypes)
+	}
+	if routePolicy := remotionSchema["route_policy"].(string); !strings.Contains(routePolicy, "mixed-cost") || !strings.Contains(routePolicy, "no-seedance") {
+		t.Fatalf("remotion route policy = %#v", routePolicy)
+	}
+}
+
 func composerContextHasRole(assets []map[string]any, role string) bool {
 	for _, asset := range assets {
 		if asset["role"] == role {
@@ -227,6 +364,15 @@ func composerContextHasRole(assets []map[string]any, role string) bool {
 	return false
 }
 
+func composerContextAssetByRole(assets []map[string]any, role string) map[string]any {
+	for _, asset := range assets {
+		if asset["role"] == role {
+			return asset
+		}
+	}
+	return nil
+}
+
 func composerContextAssetByNodeRef(assets []map[string]any, nodeRef string) (map[string]any, bool) {
 	for _, asset := range assets {
 		if asset["node_ref"] == nodeRef {
@@ -234,6 +380,15 @@ func composerContextAssetByNodeRef(assets []map[string]any, nodeRef string) (map
 		}
 	}
 	return nil, false
+}
+
+func hasComposerString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func mustComposerJSON(t *testing.T, value any) []byte {

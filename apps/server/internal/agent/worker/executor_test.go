@@ -850,6 +850,119 @@ func TestWorkerBroadcastsAndSignalsSynchronousSubmitFailure(t *testing.T) {
 	}
 }
 
+func TestWorkerSignalsSeedanceFailureFallbackGuidance(t *testing.T) {
+	store := &fakeWorkerStore{
+		existingNode: db.MediaNode{
+			ID:          uuidWithByte(20),
+			WorkspaceID: uuidWithByte(1),
+			NodeType:    db.NodeTypeVideo,
+			Status:      db.NodeStatusFailed,
+			ShotID:      uuidWithByte(2),
+		},
+		nodes: []db.MediaNode{
+			{
+				ID:               uuidWithByte(21),
+				WorkspaceID:      uuidWithByte(1),
+				NodeType:         db.NodeTypeImage,
+				Title:            "shot_01 preview image",
+				Status:           db.NodeStatusSucceeded,
+				CurrentVersionID: uuidWithByte(41),
+			},
+		},
+		versions: map[pgtype.UUID]db.ArtifactVersion{
+			uuidWithByte(41): {
+				ID:          uuidWithByte(41),
+				WorkspaceID: uuidWithByte(1),
+				NodeID:      uuidWithByte(21),
+				AssetID:     uuidWithByte(51),
+				Status:      db.JobStatusSucceeded,
+				InputHash:   "preview-hash",
+			},
+		},
+		assets: map[pgtype.UUID]db.MediaAsset{
+			uuidWithByte(51): {
+				ID:          uuidWithByte(51),
+				WorkspaceID: uuidWithByte(1),
+				Type:        db.AssetTypeImage,
+				Mime:        "image/png",
+				StorageUrl:  pgtype.Text{String: "workspace/preview.png", Valid: true},
+			},
+		},
+	}
+	runtime := &fakeWorkerRuntime{producerThread: db.AgentThread{ID: uuidWithByte(90), WorkspaceID: uuidWithByte(1), Role: "producer"}}
+	producerEnqueuer := &fakeWorkerProducerEnqueuer{}
+	productionService := &fakeProductionSubmitter{
+		failuresBeforeSuccess: 3,
+		failureResult: production.RunResult{
+			Node: db.MediaNode{ID: uuidWithByte(20), WorkspaceID: uuidWithByte(1), NodeType: db.NodeTypeVideo, Status: db.NodeStatusFailed, ShotID: uuidWithByte(2)},
+			Job: db.GenerationJob{
+				ID:            uuidWithByte(30),
+				TargetNodeID:  uuidWithByte(20),
+				OperationType: "image_to_video_first_frame",
+				Provider:      "volcengine",
+				ModelID:       "doubao-seedance-2-0-pro-260428",
+				Status:        db.JobStatusFailed,
+				ErrorCode:     pgtype.Text{String: "provider_error", Valid: true},
+				ErrorMessage:  pgtype.Text{String: "ark video task failed: safety rejection", Valid: true},
+			},
+			Version: db.ArtifactVersion{ID: uuidWithByte(40), NodeID: uuidWithByte(20), JobID: uuidWithByte(30), Status: db.JobStatusFailed},
+		},
+	}
+	executor := NewExecutor(ExecutorConfig{
+		Runtime:          runtime,
+		Store:            store,
+		Production:       productionService,
+		ProducerEnqueuer: producerEnqueuer,
+	})
+	task := workerTaskWithInput(t, GenerationInput{
+		Mode:          "shot_video",
+		TargetPhase:   "shot_video",
+		ScopeKey:      "scene_main.shot_01",
+		RenderPlanKey: "scene_main.shot_01.shot_video.r1",
+		ShotID:        uuidString(uuidWithByte(2)),
+		ShotClientKey: "shot_01",
+		Prompt:        "真实动态展示商品被人物推行",
+		OperationType: "image_to_video_first_frame",
+		Model:         ModelSpec{Provider: "volcengine", ModelID: "doubao-seedance-2-0-pro-260428"},
+		InputBindings: []InputBinding{{
+			SourceType:  "media_node",
+			SourceID:    "shot_01 preview image",
+			ContentType: "image_url",
+			ModelRole:   "first_frame",
+			Required:    true,
+		}},
+		MaxAttempts: 3,
+	})
+	task.RenderPlanID = uuidWithByte(77)
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err == nil {
+		t.Fatal("RunTask succeeded, want failure")
+	}
+	if len(runtime.signals) != 1 {
+		t.Fatalf("signals = %#v", runtime.signals)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(runtime.signals[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]any{
+		"model_provider":               "volcengine",
+		"model_id":                     "doubao-seedance-2-0-pro-260428",
+		"operation_type":               "image_to_video_first_frame",
+		"fallback_strategy":            "template_fallback_or_hitl",
+		"recommended_next_action":      "route_to_template_fallback_or_request_user_confirmation",
+		"should_stop_same_route_retry": true,
+		"cost_risk":                    true,
+	} {
+		if got := payload[key]; got != want {
+			t.Fatalf("payload[%s] = %#v, want %#v; payload=%#v", key, got, want, payload)
+		}
+	}
+	if len(producerEnqueuer.tasks) != 1 {
+		t.Fatalf("producer wake tasks = %#v", producerEnqueuer.tasks)
+	}
+}
+
 func TestWorkerDoesNotWakeProducerWhenProducerRunning(t *testing.T) {
 	store := &fakeWorkerStore{
 		existingNode: db.MediaNode{

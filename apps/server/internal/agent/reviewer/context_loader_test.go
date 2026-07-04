@@ -90,6 +90,157 @@ func TestModelAssetReferenceDoesNotInlineNonImageAssets(t *testing.T) {
 	}
 }
 
+func TestContextLoaderIncludesMotionShotRoutingFacts(t *testing.T) {
+	store := &fakeReviewContextStore{
+		shot: db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-02", SemanticKey: "scene_main.shot_02", Title: "卖点卡片", Status: "video_ready"},
+		node: db.MediaNode{
+			ID:               uuidWithByte(3),
+			WorkspaceID:      uuidWithByte(1),
+			ShotID:           uuidWithByte(2),
+			Title:            "shot-02 motion shot video",
+			NodeType:         db.NodeTypeVideo,
+			Status:           db.NodeStatusSucceeded,
+			CurrentVersionID: uuidWithByte(4),
+			ModelProvider:    pgtype.Text{String: "internal_motion_video", Valid: true},
+			ModelID:          pgtype.Text{String: "remotion-motion-shot-v1", Valid: true},
+			Metadata:         []byte(`{"rendering_family":"motion_shot_video","renderer_engine":"remotion","motion_style":"premium_product_ad"}`),
+			SemanticKey:      "scene_main.shot_02.shot_video.r1.node",
+		},
+		version: db.ArtifactVersion{
+			ID:               uuidWithByte(4),
+			WorkspaceID:      uuidWithByte(1),
+			NodeID:           uuidWithByte(3),
+			AssetID:          uuidWithByte(5),
+			VersionNo:        1,
+			Status:           db.JobStatusSucceeded,
+			SemanticKey:      "scene_main.shot_02.shot_video.r1.artifact.v1",
+			ArtifactKind:     "shot_video",
+			Output:           []byte(`{"rendering_family":"motion_shot_video","renderer_engine":"remotion","motion_style":"premium_product_ad","duration_sec":5}`),
+			ProviderResponse: []byte(`{"renderer_engine":"remotion","motion_style":"premium_product_ad","sandbox_job_id":"sandbox-1"}`),
+		},
+		job: db.GenerationJob{
+			ID:               uuidWithByte(6),
+			WorkspaceID:      uuidWithByte(1),
+			TargetNodeID:     uuidWithByte(3),
+			Provider:         "internal_motion_video",
+			ModelID:          "remotion-motion-shot-v1",
+			OperationType:    "image_to_motion_video",
+			RenderedPrompt:   "商品图轻微推进，三张卖点卡依次出现，末尾 CTA",
+			Status:           db.JobStatusSucceeded,
+			ProviderResponse: []byte(`{"renderer_engine":"remotion","motion_style":"premium_product_ad"}`),
+		},
+		asset: db.MediaAsset{
+			ID:          uuidWithByte(5),
+			WorkspaceID: uuidWithByte(1),
+			Type:        db.AssetTypeVideo,
+			Mime:        "video/mp4",
+			StorageUrl:  pgtype.Text{String: "workspace/shot-02.mp4", Valid: true},
+		},
+	}
+	loader := ContextLoader{Store: store}
+
+	out, err := loader.Load(context.Background(), GraphInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(8),
+		TaskID:      uuidWithByte(9),
+		Task: TaskInput{
+			TargetPhase:       TargetPhaseShotVideo,
+			ShotID:            uuidString(uuidWithByte(2)),
+			NodeID:            uuidString(uuidWithByte(3)),
+			ArtifactVersionID: uuidString(uuidWithByte(4)),
+			GenerationJobID:   uuidString(uuidWithByte(6)),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Route Facts",
+		"provider=internal_motion_video",
+		"model_id=remotion-motion-shot-v1",
+		"operation_type=image_to_motion_video",
+		"rendering_family=motion_shot_video",
+		"renderer_engine=remotion",
+		"motion_style=premium_product_ad",
+		"review_focus=readability, platform_selling_power, brand_consistency, motion_rhythm, audio_sync, truthfulness",
+	} {
+		if !strings.Contains(out.Text, want) {
+			t.Fatalf("context text missing %q: %s", want, out.Text)
+		}
+	}
+}
+
+func TestContextLoaderBuildsPreRenderPlanReviewContext(t *testing.T) {
+	store := &fakeReviewContextStore{
+		shot: db.Shot{ID: uuidWithByte(2), WorkspaceID: uuidWithByte(1), ClientKey: "shot-01", SemanticKey: "scene_main.shot_01", Title: "卖点卡+CTA", Status: "planned"},
+		renderPlan: db.RenderPlan{
+			ID:                 uuidWithByte(3),
+			WorkspaceID:        uuidWithByte(1),
+			ScopeType:          "shot",
+			ScopeID:            uuidWithByte(2),
+			TargetPhase:        TargetPhaseShotVideo,
+			ModelPromptProfile: "motion_shot_video",
+			Operation:          "image_to_motion_video",
+			Status:             "waiting_for_approval",
+			Revision:           1,
+			RenderPlanKey:      "shot_01.shot_video.r1",
+			SemanticKey:        "shot_01.shot_video.r1",
+			Params:             []byte(`{"motion_style":"premium_product_ad","video_route_policy":"motion_only","duration_sec":8}`),
+			AuditHints:         []byte(`{"forbidden_provider":"seedance","execution_policy":"wait_for_producer"}`),
+			CostEstimate:       []byte(`{"estimate":"not_charged_until_provider_submit"}`),
+			Rationale:          "低成本图片动效视频计划，不提交 Worker。",
+		},
+		reviews: []db.ReviewRecord{
+			{ID: uuidWithByte(7), WorkspaceID: uuidWithByte(1), RenderPlanID: uuidWithByte(3), TargetPhase: TargetPhasePreRenderPlan, Status: "accepted_with_warnings", Critique: "上轮提醒补充音频预留"},
+		},
+	}
+	loader := ContextLoader{
+		Store:      store,
+		PSSBuilder: fakeReviewPSSBuilder{text: "当前项目\n- video_route_policy=motion_only\n- AudioPlan: 火山 TTS 预留"},
+	}
+
+	out, err := loader.Load(context.Background(), GraphInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(8),
+		TaskID:      uuidWithByte(9),
+		Task: TaskInput{
+			ReviewTask:  ReviewTaskPreRenderPlan,
+			TargetPhase: TargetPhasePreRenderPlan,
+			Target: ReviewTarget{
+				RenderPlanID: uuidString(uuidWithByte(3)),
+				RenderPlanRef: ReviewObjectRef{
+					Type: "render_plan",
+					Key:  "shot_01.shot_video.r1",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"pre_render_plan",
+		"render_plan/shot_01.shot_video.r1",
+		"target_phase=shot_video",
+		"operation=image_to_motion_video",
+		"profile=motion_shot_video",
+		"motion_style",
+		"premium_product_ad",
+		"forbidden_provider",
+		"seedance",
+		"not_charged_until_provider_submit",
+		"scene_main.shot_01",
+		"AudioPlan",
+	} {
+		if !strings.Contains(out.Text, want) {
+			t.Fatalf("context text missing %q: %s", want, out.Text)
+		}
+	}
+	if out.Node.ID.Valid || out.Version.ID.Valid {
+		t.Fatalf("pre render plan review should not require media artifact: node=%#v version=%#v", out.Node, out.Version)
+	}
+}
+
 func TestContextLoaderBuildsFinalVideoReviewContext(t *testing.T) {
 	store := &fakeReviewContextStore{
 		node: db.MediaNode{
@@ -182,12 +333,13 @@ func TestContextLoaderBuildsFinalVideoReviewContext(t *testing.T) {
 }
 
 type fakeReviewContextStore struct {
-	shot    db.Shot
-	node    db.MediaNode
-	version db.ArtifactVersion
-	job     db.GenerationJob
-	asset   db.MediaAsset
-	reviews []db.ReviewRecord
+	shot       db.Shot
+	renderPlan db.RenderPlan
+	node       db.MediaNode
+	version    db.ArtifactVersion
+	job        db.GenerationJob
+	asset      db.MediaAsset
+	reviews    []db.ReviewRecord
 }
 
 func (f *fakeReviewContextStore) GetShotByID(context.Context, pgtype.UUID) (db.Shot, error) {
@@ -210,7 +362,15 @@ func (f *fakeReviewContextStore) GetMediaAssetByID(context.Context, pgtype.UUID)
 	return f.asset, nil
 }
 
+func (f *fakeReviewContextStore) GetRenderPlanByID(context.Context, db.GetRenderPlanByIDParams) (db.RenderPlan, error) {
+	return f.renderPlan, nil
+}
+
 func (f *fakeReviewContextStore) ListReviewRecordsByShotPhase(context.Context, db.ListReviewRecordsByShotPhaseParams) ([]db.ReviewRecord, error) {
+	return f.reviews, nil
+}
+
+func (f *fakeReviewContextStore) ListReviewRecordsByRenderPlan(context.Context, pgtype.UUID) ([]db.ReviewRecord, error) {
 	return f.reviews, nil
 }
 

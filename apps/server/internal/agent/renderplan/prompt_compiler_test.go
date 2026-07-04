@@ -2,6 +2,7 @@ package renderplan
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -42,5 +43,40 @@ func TestCompileSeedanceShotVideoRequiresActionOrSequence(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "action 或 sequence") {
 		t.Fatalf("error = %v, want action/sequence validation", err)
+	}
+}
+
+func TestCompileMotionShotVideoPromptIncludesInternalProvider(t *testing.T) {
+	compiler := NewPromptCompiler()
+	out, err := compiler.Compile(context.Background(), UpsertInput{
+		TargetPhase:        PhaseShotVideo,
+		ModelPromptProfile: ProfileMotionShotVideo,
+		Operation:          "image_to_motion_video",
+		PromptParts: PromptParts{
+			Objective:     "生成低成本 Remotion motion shot：商品卖点卡片、产品图轻微推进、价格利益点、结尾 CTA。",
+			Subject:       "银灰色硬壳行李箱。",
+			TextRendering: "轻松登机｜现在出发",
+		},
+		Params: Params{DurationSec: 5, Ratio: "9:16", Resolution: "1080p", FPS: 30},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.CompiledPrompt, "结尾 CTA") || !strings.Contains(out.CompiledPrompt, "轻松登机") {
+		t.Fatalf("compiled prompt = %s", out.CompiledPrompt)
+	}
+	var request map[string]any
+	if err := json.Unmarshal(out.CompiledRequest, &request); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"provider":  "internal_motion_video",
+		"model":     "remotion-motion-shot-v1",
+		"profile":   ProfileMotionShotVideo,
+		"operation": "image_to_motion_video",
+	} {
+		if request[key] != want {
+			t.Fatalf("request[%s] = %#v, want %q; request=%s", key, request[key], want, string(out.CompiledRequest))
+		}
 	}
 }

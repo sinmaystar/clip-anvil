@@ -41,7 +41,7 @@ type DispatchComposerInput struct {
 	SourceStoryboardRef    ToolObjectRef `json:"source_storyboard_ref" jsonschema_description:"需要成片的来源媒体/故事板节点语义引用。使用 read_project_context 返回的 type=media_node,key=...。"`
 	SourceStoryboardNodeID string        `json:"source_storyboard_node_id" jsonschema_description:"兼容旧字段：内部 ID 或历史语义键。模型不要填写；请优先使用 source_storyboard_ref。"`
 	Instructions           string        `json:"instructions" jsonschema:"required" jsonschema_description:"给 Composer 的成片说明，例如拼接策略、节奏、淡入淡出要求。"`
-	TemplateKey            string        `json:"template_key,omitempty" jsonschema:"enum=simple_concat,enum=concat_with_fades" jsonschema_description:"可选 Phase 1 模版，默认 simple_concat。"`
+	TemplateKey            string        `json:"template_key,omitempty" jsonschema:"enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1" jsonschema_description:"可选 timeline 模版，默认 simple_concat；低成本 Remotion final composer 使用 remotion_timeline_v1。"`
 }
 
 func NewDispatchComposerNativeTool(runtime ComposeRuntime, enqueuer ComposerTaskEnqueuer, resolver ...ComposerSourceResolver) DispatchComposerNativeTool {
@@ -198,7 +198,7 @@ func validateDispatchComposerInput(input DispatchComposerInput) error {
 		return err
 	}
 	if strings.TrimSpace(input.TemplateKey) != "" {
-		return requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade)
+		return requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1)
 	}
 	return nil
 }

@@ -17,6 +17,14 @@ INSERT INTO render_plan (
 SELECT * FROM render_plan
 WHERE id = $1 AND workspace_id = $2 AND archived_at IS NULL;
 
+-- name: ArchiveRenderPlansBySemanticKey :exec
+UPDATE render_plan
+SET archived_at = now(),
+    updated_at = now()
+WHERE workspace_id = $1
+  AND semantic_key = $2
+  AND archived_at IS NULL;
+
 -- name: ListRenderPlansByWorkspace :many
 SELECT * FROM render_plan
 WHERE workspace_id = $1 AND archived_at IS NULL

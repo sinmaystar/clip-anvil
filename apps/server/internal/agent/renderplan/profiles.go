@@ -56,6 +56,18 @@ func ProfileByID(id string) (ModelPromptProfile, bool) {
 			DefaultParams:  Params{Format: "mp3", SampleRate: 48000, Watermark: false},
 			MaxPromptChars: 2048,
 		}, true
+	case ProfileMotionShotVideo:
+		return ModelPromptProfile{
+			ID:              ProfileMotionShotVideo,
+			DefaultProvider: "internal_motion_video",
+			DefaultModelID:  "remotion-motion-shot-v1",
+			OutputType:      "video",
+			AllowedOperations: map[string]bool{
+				"image_to_motion_video": true,
+			},
+			DefaultParams:  Params{Ratio: "9:16", DurationSec: 5, Resolution: "1080p", FPS: 30},
+			MaxPromptChars: 3000,
+		}, true
 	default:
 		return ModelPromptProfile{}, false
 	}

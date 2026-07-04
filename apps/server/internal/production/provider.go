@@ -50,9 +50,10 @@ func NewProviderRegistry(cfg ProviderConfig) *ProviderRegistry {
 	return &ProviderRegistry{
 		cfg: cfg,
 		providers: map[string]ProviderBridge{
-			"mock":            MockProvider{},
-			"volcengine":      NewVolcengineProvider(cfg.Volcengine),
-			"internal_ffmpeg": NewInternalFFmpegProvider(nil),
+			"mock":                  MockProvider{},
+			"volcengine":            NewVolcengineProvider(cfg.Volcengine),
+			"internal_ffmpeg":       NewInternalFFmpegProvider(nil),
+			"internal_motion_video": NewMotionShotProvider(nil),
 		},
 	}
 }
@@ -74,6 +75,9 @@ func (r *ProviderRegistry) Resolve(intent GenerationIntent) (ProviderBridge, err
 	providerID := strings.TrimSpace(intent.Model.Provider)
 	if providerID == "" {
 		providerID = r.cfg.DefaultProvider
+	}
+	if r.cfg.ProviderMode != "real" && providerID == "volcengine" {
+		providerID = "mock"
 	}
 	provider, ok := r.providers[providerID]
 	if !ok {

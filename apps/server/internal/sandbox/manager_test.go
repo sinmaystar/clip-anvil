@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -17,6 +18,23 @@ func TestVolumeName(t *testing.T) {
 	id := pgtype.UUID{Bytes: [16]byte{0xaa, 0xbb, 0xcc, 0xdd}, Valid: true}
 	if got := VolumeName(id); got != "sandbox-ws-aabbccdd-0000-0000-0000-000000000000" {
 		t.Fatalf("VolumeName() = %q", got)
+	}
+}
+
+func TestConnectionConfigUsesSandboxTimeoutForRequests(t *testing.T) {
+	cfg := testSandboxConfig()
+	cfg.Endpoint = "http://host.docker.internal:8080/v1"
+
+	got := connectionConfig(cfg)
+
+	if got.Domain != "host.docker.internal:8080" || got.Protocol != "http" {
+		t.Fatalf("endpoint parsed as protocol=%q domain=%q", got.Protocol, got.Domain)
+	}
+	if got.RequestTimeout != 1800*time.Second {
+		t.Fatalf("request timeout = %v, want 1800s", got.RequestTimeout)
+	}
+	if got.EndpointHostRewrite["host.docker.internal"] != "localhost" {
+		t.Fatalf("host rewrite = %#v", got.EndpointHostRewrite)
 	}
 }
 

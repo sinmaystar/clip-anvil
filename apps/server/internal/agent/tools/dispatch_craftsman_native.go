@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -13,17 +14,18 @@ type DispatchCraftsmanNativeTool struct {
 }
 
 type DispatchCraftsmanToolInput struct {
-	Brief           string                 `json:"brief" jsonschema:"required" jsonschema_description:"一句话描述调用该工具的意图，例如生成机场晨光统一参考图或直接生成所有分镜预览图。不要超过 160 个中文字符。"`
-	Scope           DispatchCraftsmanScope `json:"scope" jsonschema:"required" jsonschema_description:"生产归属范围。shot 表示分镜图或分镜视频；key_element_state 表示共享参考图；audio_plan 表示全片旁白或 BGM 音频。scope.type=shot 且 key 为空时，可配合 shot_refs 批量派发；scope.type=key_element_state 时 key 填 read_project_context 返回的 semantic_key；scope.type=audio_plan 时 key 填 audio_plan.active。"`
-	ShotRefs        []string               `json:"shot_refs" jsonschema_description:"scope.type=shot 时可填写分镜 semantic_key 或稳定 client_key。为空表示派发所有可生成的 active shots。scope.type=key_element_state 或 audio_plan 时必须留空。"`
-	TargetPhase     string                 `json:"target_phase" jsonschema:"required,enum=reference_image,enum=preview_image,enum=shot_video,enum=voiceover_audio,enum=bgm_audio" jsonschema_description:"生成阶段。reference_image 生成 KeyElementState 统一参考图；preview_image 生成分镜预览图；shot_video 基于已确认预览图生成分镜视频；voiceover_audio / bgm_audio 基于已批准 AudioPlan 生成音频 RenderPlan。"`
-	Mode            string                 `json:"mode" jsonschema:"enum=preview_image,enum=shot_video" jsonschema_description:"兼容旧参数；新调用请使用 target_phase。"`
-	ExecutionPolicy string                 `json:"execution_policy" jsonschema:"required,enum=execute_immediately,enum=wait_for_producer" jsonschema_description:"执行策略。execute_immediately 表示 Craftsman 编译 RenderPlan 后工程自动提交 Worker；wait_for_producer 表示只编译并等待 Producer 后续 accept/reject。"`
-	Force           bool                   `json:"force" jsonschema_description:"为 true 时即使已有完成结果也创建新尝试；默认 false。不能用于绕过正在排队或运行中的同 scope/target_phase Craftsman 任务。"`
-	MaxAttempts     int32                  `json:"max_attempts" jsonschema_description:"Craftsman 最大尝试次数，范围 1 到 3；为空时默认 3。"`
-	Critique        string                 `json:"critique" jsonschema_description:"可选的评审意见或用户修改意见，Craftsman 必须在 RenderPlan 中回应。"`
-	FixHints        []string               `json:"fix_hints" jsonschema_description:"可选的具体修复建议，例如保持行李箱银灰色、改成低机位跟拍。"`
-	InputNodeRefs   []string               `json:"input_node_refs" jsonschema_description:"可选输入节点引用，例如上一个分镜尾帧或已确认预览图。没有明确依赖时留空。"`
+	Brief            string                 `json:"brief" jsonschema:"required" jsonschema_description:"一句话描述调用该工具的意图，例如生成机场晨光统一参考图或直接生成所有分镜预览图。不要超过 160 个中文字符。"`
+	Scope            DispatchCraftsmanScope `json:"scope" jsonschema:"required" jsonschema_description:"生产归属范围。shot 表示分镜图或分镜视频；key_element_state 表示共享参考图；audio_plan 表示全片旁白或 BGM 音频。scope.type=shot 且 key 为空时，可配合 shot_refs 批量派发；scope.type=key_element_state 时 key 填 read_project_context 返回的 semantic_key；scope.type=audio_plan 时 key 填 audio_plan.active。"`
+	ShotRefs         []string               `json:"shot_refs" jsonschema_description:"scope.type=shot 时可填写分镜 semantic_key 或稳定 client_key。为空表示派发所有可生成的 active shots。scope.type=key_element_state 或 audio_plan 时必须留空。"`
+	TargetPhase      string                 `json:"target_phase" jsonschema:"required,enum=reference_image,enum=preview_image,enum=shot_video,enum=voiceover_audio,enum=bgm_audio" jsonschema_description:"生成阶段。reference_image 生成 KeyElementState 统一参考图；preview_image 生成分镜预览图；shot_video 基于已确认预览图生成分镜视频；voiceover_audio / bgm_audio 基于已批准 AudioPlan 生成音频 RenderPlan。"`
+	Mode             string                 `json:"mode" jsonschema:"enum=preview_image,enum=shot_video" jsonschema_description:"兼容旧参数；新调用请使用 target_phase。"`
+	ExecutionPolicy  string                 `json:"execution_policy" jsonschema:"required,enum=execute_immediately,enum=wait_for_producer" jsonschema_description:"执行策略。execute_immediately 表示 Craftsman 编译 RenderPlan 后工程自动提交 Worker；wait_for_producer 表示只编译并等待 Producer 后续 accept/reject。"`
+	VideoRoutePolicy string                 `json:"video_route_policy" jsonschema:"enum=default,enum=motion_only" jsonschema_description:"分镜视频路由策略。用户明确要求不要调用 Seedance 或只使用 Remotion motion shot 时必须填写 motion_only；默认 default。"`
+	Force            bool                   `json:"force" jsonschema_description:"为 true 时即使已有完成结果也创建新尝试；默认 false。不能用于绕过正在排队或运行中的同 scope/target_phase Craftsman 任务。"`
+	MaxAttempts      int32                  `json:"max_attempts" jsonschema_description:"Craftsman 最大尝试次数，范围 1 到 3；为空时默认 3。"`
+	Critique         string                 `json:"critique" jsonschema_description:"可选的评审意见或用户修改意见，Craftsman 必须在 RenderPlan 中回应。"`
+	FixHints         []string               `json:"fix_hints" jsonschema_description:"可选的具体修复建议，例如保持行李箱银灰色、改成低机位跟拍。"`
+	InputNodeRefs    []string               `json:"input_node_refs" jsonschema_description:"可选输入节点引用，例如上一个分镜尾帧或已确认预览图。没有明确依赖时留空。"`
 }
 
 type DispatchCraftsmanScope struct {
@@ -62,6 +64,7 @@ func (t DispatchCraftsmanNativeTool) InvokableRun(ctx context.Context, arguments
 			"target_phase":        targetPhaseFromNativeInput(input),
 			"mode":                input.Mode,
 			"execution_policy":    input.ExecutionPolicy,
+			"video_route_policy":  input.VideoRoutePolicy,
 			"parent_tool_call_id": runtime.ToolCallID,
 			"force":               input.Force,
 			"max_attempts":        input.MaxAttempts,
@@ -114,6 +117,11 @@ func validateDispatchCraftsmanInput(input DispatchCraftsmanToolInput) error {
 	}
 	if err := requireMode(input.ExecutionPolicy, "execute_immediately", "wait_for_producer"); err != nil {
 		return err
+	}
+	if strings.TrimSpace(input.VideoRoutePolicy) != "" {
+		if err := requireMode(input.VideoRoutePolicy, "default", "motion_only"); err != nil {
+			return err
+		}
 	}
 	if input.MaxAttempts < 0 || input.MaxAttempts > 3 {
 		return fmt.Errorf("max_attempts 必须在 1 到 3 之间，或留空使用默认值")

@@ -64,6 +64,18 @@ func (s *Service) Upsert(ctx context.Context, input UpsertInput) (db.RenderPlan,
 		}
 		return s.compileIfReady(ctx, input, updated)
 	}
+	if input.Mode == "fork_from" {
+		source, err := s.store.GetRenderPlanByID(ctx, db.GetRenderPlanByIDParams{ID: input.ForkFromRenderPlanID, WorkspaceID: input.WorkspaceID})
+		if err != nil {
+			return db.RenderPlan{}, err
+		}
+		revision := source.Revision + 1
+		created, err := s.store.CreateRenderPlan(ctx, createParams(input, revision))
+		if err != nil {
+			return db.RenderPlan{}, err
+		}
+		return s.compileIfReady(ctx, input, created)
+	}
 	revision, err := s.store.NextRenderPlanRevision(ctx, db.NextRenderPlanRevisionParams{
 		WorkspaceID: input.WorkspaceID,
 		ScopeType:   input.Scope.Type,
@@ -99,7 +111,7 @@ func validateInput(input UpsertInput) error {
 	if err := requireValue(input.TaskType, "task_type", TaskGenerate, TaskEdit, TaskExtend, TaskBridge); err != nil {
 		return err
 	}
-	if err := requireValue(input.ModelPromptProfile, "model_prompt_profile", ProfileSeedream5Image, ProfileSeedance2Video, ProfileSeedAudio1); err != nil {
+	if err := requireValue(input.ModelPromptProfile, "model_prompt_profile", ProfileSeedream5Image, ProfileSeedance2Video, ProfileSeedAudio1, ProfileMotionShotVideo); err != nil {
 		return err
 	}
 	if strings.TrimSpace(input.Operation) == "" {
@@ -120,11 +132,14 @@ func validateInput(input UpsertInput) error {
 	if (input.TargetPhase == PhaseVoiceoverAudio || input.TargetPhase == PhaseBGMAudio) && input.Operation != "text_to_audio" {
 		return fmt.Errorf("%w: 音频阶段 operation 必须是 text_to_audio", ErrInvalidInput)
 	}
-	if input.TargetPhase == PhaseShotVideo && input.ModelPromptProfile != ProfileSeedance2Video {
-		return fmt.Errorf("%w: shot_video 必须使用 seedance_2_video", ErrInvalidInput)
+	if input.TargetPhase == PhaseShotVideo && input.ModelPromptProfile != ProfileSeedance2Video && input.ModelPromptProfile != ProfileMotionShotVideo {
+		return fmt.Errorf("%w: shot_video 必须使用 seedance_2_video 或 motion_shot_video", ErrInvalidInput)
 	}
 	if input.TargetPhase != PhaseShotVideo && input.ModelPromptProfile == ProfileSeedance2Video {
 		return fmt.Errorf("%w: 图片阶段不能使用 seedance_2_video", ErrInvalidInput)
+	}
+	if input.TargetPhase != PhaseShotVideo && input.ModelPromptProfile == ProfileMotionShotVideo {
+		return fmt.Errorf("%w: motion_shot_video 只能用于 shot_video", ErrInvalidInput)
 	}
 	if input.ModelPromptProfile == ProfileSeedance2Video {
 		duration := int(input.Params.DurationSec)

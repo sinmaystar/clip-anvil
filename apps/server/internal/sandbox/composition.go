@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/sinmaystar/clip-anvil/internal/remotiontimeline"
 	"github.com/sinmaystar/clip-anvil/internal/storage"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -62,6 +63,14 @@ type RunFFmpegCommandInput struct {
 	Cwd          string
 	Args         []string
 	TimeoutSec   int
+}
+
+type RenderRemotionTimelineInput struct {
+	WorkspaceID    pgtype.UUID
+	TargetNodeID   pgtype.UUID
+	TimelinePlanID pgtype.UUID
+	Plan           remotiontimeline.Plan
+	OutputPath     string
 }
 
 type UploadCompositionOutputInput struct {

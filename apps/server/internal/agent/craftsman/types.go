@@ -40,6 +40,13 @@ type GraphInput struct {
 	ParentToolCallID string
 	MaxAttempts      int
 	WorkerParams     map[string]any
+	InputNodeRefs    []string
+	VideoRoutePolicy string
+
+	RecommendedModelPromptProfile string
+	RecommendedOperation          string
+	RecommendedParams             map[string]any
+	RecommendedRouteReason        string
 }
 
 type GraphOutput struct {

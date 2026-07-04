@@ -51,6 +51,10 @@ func main() {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
+	if err := validateRealMediaE2EConfig(cfg); err != nil {
+		slog.Error("real media E2E configuration is invalid", "error", err)
+		os.Exit(1)
+	}
 
 	ctx := context.Background()
 	agentTracing := initAgentTracing(ctx, slog.Default())
@@ -154,6 +158,7 @@ func main() {
 	})
 	sandboxJobService := sandbox.NewJobService(sandboxManager, sandboxClient, queries, storageService)
 	providerRegistry.Register("internal_ffmpeg", production.NewInternalFFmpegProvider(sandboxJobService))
+	providerRegistry.Register("internal_motion_video", production.NewMotionShotProvider(sandboxJobService))
 	productionService := production.NewService(pgPool, queries, providerRegistry, storageService)
 	productionService.SetRemoteAssetImporter(sandboxJobService)
 	legacyProductionRuntime := production.NewLegacyProviderRuntime(providerRegistry)
@@ -566,6 +571,34 @@ func main() {
 	h.Spin()
 }
 
+func validateRealMediaE2EConfig(cfg *config.Config) error {
+	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_REQUIRE_REAL_MEDIA")) != "1" {
+		return nil
+	}
+	if cfg == nil {
+		return fmt.Errorf("CLIPANVIL_E2E_REQUIRE_REAL_MEDIA=1 requires loaded config")
+	}
+	if strings.TrimSpace(cfg.Production.ProviderMode) != "real" {
+		return fmt.Errorf("CLIPANVIL_E2E_REQUIRE_REAL_MEDIA=1 requires production.provider_mode=real")
+	}
+	if strings.TrimSpace(cfg.Production.DefaultProvider) != "volcengine" {
+		return fmt.Errorf("CLIPANVIL_E2E_REQUIRE_REAL_MEDIA=1 requires production.default_provider=volcengine")
+	}
+	if strings.TrimSpace(cfg.Production.Volcengine.APIKey) == "" {
+		return fmt.Errorf("CLIPANVIL_E2E_REQUIRE_REAL_MEDIA=1 requires CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY")
+	}
+	if strings.TrimSpace(cfg.Production.Volcengine.ImageModel) == "" {
+		return fmt.Errorf("CLIPANVIL_E2E_REQUIRE_REAL_MEDIA=1 requires CLIPANVIL_PRODUCTION_VOLCENGINE_IMAGE_MODEL")
+	}
+	if strings.TrimSpace(cfg.Production.Volcengine.AudioAPIKey) == "" && strings.TrimSpace(cfg.Production.Volcengine.APIKey) == "" {
+		return fmt.Errorf("CLIPANVIL_E2E_REQUIRE_REAL_MEDIA=1 requires CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_API_KEY or CLIPANVIL_PRODUCTION_VOLCENGINE_API_KEY")
+	}
+	if strings.TrimSpace(cfg.Production.Volcengine.AudioModel) == "" {
+		return fmt.Errorf("CLIPANVIL_E2E_REQUIRE_REAL_MEDIA=1 requires CLIPANVIL_PRODUCTION_VOLCENGINE_AUDIO_MODEL")
+	}
+	return nil
+}
+
 type agentPreviewEventSink struct {
 	runtime          *agentruntime.Service
 	broadcaster      *api.AgentBroadcaster
@@ -830,6 +863,10 @@ func contextFullSummarizerForConfig(cfg *config.Config) agentcontextcompact.Full
 
 func craftsmanResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentcraftsman.ToolCallingResponder {
 	craftsmanFixture := strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_CRAFTSMAN_FIXTURE"))
+	if craftsmanFixture == "motion_shot_video" {
+		slog.Warn("using motion-only video E2E craftsman fixture responder")
+		return e2eMotionShotVideoCraftsmanResponder{}
+	}
 	if craftsmanFixture == "m2_render_plan" || craftsmanFixture == "m3_reviewer_gate" {
 		slog.Warn("using M2 render plan E2E craftsman fixture responder")
 		return e2eM2RenderPlanCraftsmanResponder{}
@@ -846,6 +883,10 @@ func craftsmanResponderForConfig(cfg *config.Config, contextCompactor agentconte
 }
 
 func producerResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentproducer.Responder {
+	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_PRODUCER_FIXTURE")) == "motion_shot_video" {
+		slog.Warn("using motion-only video E2E producer fixture responder")
+		return e2eMotionShotVideoProducerResponder{}
+	}
 	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_PRODUCER_FIXTURE")) == "m3_reviewer_gate" {
 		slog.Warn("using M3 reviewer gate E2E producer fixture responder")
 		return e2eM3ReviewerGateProducerResponder{}
@@ -896,6 +937,10 @@ func reviewerResponderForConfig(cfg *config.Config, contextCompactor agentcontex
 }
 
 func composerResponderForConfig(cfg *config.Config, contextCompactor agentcontextcompact.Middleware) agentcomposer.ToolResponder {
+	if strings.TrimSpace(os.Getenv("CLIPANVIL_E2E_COMPOSER_FIXTURE")) == "motion_shot_video" {
+		slog.Warn("using motion-only video E2E composer fixture responder")
+		return e2eMotionShotVideoComposerResponder{}
+	}
 	if cfg.Production.ProviderMode != "real" ||
 		strings.TrimSpace(cfg.Production.Volcengine.APIKey) == "" {
 		slog.Warn(

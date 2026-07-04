@@ -231,6 +231,35 @@ func TestProducerRuntimeTriggerTextSupportsCompositionSignals(t *testing.T) {
 	}
 }
 
+func TestProducerRuntimeTriggerTextIncludesFallbackGuidance(t *testing.T) {
+	payload := producerTaskTriggerPayload{
+		Trigger:                  "worker_generation_completed",
+		TargetPhase:              "shot_video",
+		RenderPlanStatus:         "failed",
+		RenderPlanKey:            "scene_main.shot_01.shot_video.r1",
+		ModelProvider:            "volcengine",
+		ModelID:                  "doubao-seedance-2-0-pro-260428",
+		OperationType:            "image_to_video_first_frame",
+		FallbackStrategy:         "template_fallback_or_hitl",
+		RecommendedNextAction:    "route_to_template_fallback_or_request_user_confirmation",
+		ShouldStopSameRouteRetry: true,
+		CostRisk:                 true,
+	}
+	text := producerRuntimeTriggerText(payload)
+	for _, want := range []string{
+		"volcengine",
+		"doubao-seedance-2-0-pro-260428",
+		"不要继续同一路线自动重试",
+		"template fallback",
+		"请求用户确认",
+		"cost_risk",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("runtime trigger text missing %q: %q", want, text)
+		}
+	}
+}
+
 func TestExecutorPersistsNativeToolTraceBeforeFinalAssistantMessage(t *testing.T) {
 	runtime := &fakeRuntime{}
 	executor := NewExecutor(ExecutorConfig{

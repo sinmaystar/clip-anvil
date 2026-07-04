@@ -86,6 +86,17 @@ Seedance 视频评审重点：
 - 编辑 / 延长 / bridge：不能把严格编辑误判为普通参考生成。
 - 音频：台词、旁白、音效、BGM 和画面节奏要匹配。
 
+	Remotion Motion Shot 评审重点：
+	- Motion Shot 指 internal_motion_video/remotion-motion-shot-v1 生成的图片驱动静音视频，通常用于卖点卡、CTA、packshot、产品图轻动效、品牌尾帧和 Seedance fallback。
+	- readability：标题、字幕、卖点和 CTA 在移动端是否清楚可读，是否存在遮挡、字号过小或信息层级混乱。
+	- platform_selling_power：是否像抖音/信息流广告，首秒信息、卖点节奏和 CTA 是否有转化力，而不是普通 PPT。
+	- brand_consistency：品牌色、商品图、Logo、文案和 ProjectMemory 是否一致。
+	- motion_rhythm：图片动效是否足够支撑节奏，不能完全静止到影响成片流动，也不能花哨到抢走商品信息。
+	- audio_sync：旁白/BGM cue、最终字幕和 motion shot 段落节奏是否可在 Composer 中同步；不要要求 motion shot 自带完整口播音频。
+	- truthfulness：不能把静态/半动态图片动效 fallback 冒充真实拍摄、真实动作或复杂运动生成。
+	- 如果 brief 或 ShotPlan 明确要求真实动态展示、人物表演、复杂物理运动或镜头穿越，而结果是 motion fallback，你应给 accepted_with_warnings 或 rejected，并提交 faithfulness、motion_physics 或 cost_risk issue。
+	- 当 motion fallback 改变了用户明确要求的真实动态质量栏，retry_recommendation.requires_user_confirmation 必须为 true；建议 Producer 请求用户确认接受静态/半动态 fallback，或提供新素材后再走 Seedance。
+
 pre-render 检查：
 - compiled_prompt 不能裸出现 asset id、storage URL 或无语义 UUID。
 - reference_bindings 必须说明每个素材的官方 content_type 和 model_role，例如 content_type=image_url/model_role=first_frame、content_type=image_url/model_role=last_frame、content_type=image_url/model_role=reference_image。商品、场景、风格等业务语义只能写在 semantic_target 或 notes。
@@ -101,6 +112,16 @@ final video 音频评审重点：
 - 检查 BGM ducking 是否在旁白下方自然发生，不能突然抽吸或忽大忽小。
 - 检查 audio_sync：旁白节奏、画面动作、转场、字幕或口型（如有）是否对齐。
 - 检查音频是否支持 platform_selling_power：节奏、情绪和信息效率应服务营销目标，而不是喧宾夺主。
+
+Remotion Timeline final video 评审重点：
+- 检查 final timeline 是否使用 remotion_timeline_v1 时保留 single Composer-owned caption lane；不能出现双字幕、字幕与标题重叠、字幕超出底部安全区。
+- 检查 cue/asset 语义同步：wheel cue 必须使用万向轮、轮子、细节或可解释的商品近景素材；storage cue 必须使用打开、内里、分区或收纳素材。
+- 检查 layout repetition：同一 layout 不应连续重复超过 2 次，同一 still image 不应覆盖多数 segments，除非 Producer 明确说明素材不足。
+- 检查 no-Seedance compliance：用户禁止 Seedance 时，final timeline 可以使用 Seedream still、Volcengine audio 和 Remotion renderer，但不能出现 Seedance video generation job 或伪装成真实视频生成。
+- 检查 mixed-cost / premium cost summary：final timeline 混合 video/image segments 时，应说明 Seedance video segment count、Remotion still segment count、哪些 shot 使用高成本视频、这些使用是否符合 Producer 的成本路线。
+- mixed-cost 中 Seedance 应只用于 hero、复杂真实运动或 Producer 明确批准的关键分镜；如果普通卖点分镜大量使用 Seedance，应提交 cost_risk 或 faithfulness issue。
+- 检查 captions 来源：字幕只能来自 AudioPlan cue、voiceover alignment、TTS alignment 或人工字幕；不能使用 narrative_purpose、visual_intent、action_text、camera_intent 或内部导演笔记。
+- 发现字幕重叠、口播画面错配、音频缺失、Seedance 违规或重复视觉过高时，提交 blocking issue 或 rejected verdict。
 
 ---
 

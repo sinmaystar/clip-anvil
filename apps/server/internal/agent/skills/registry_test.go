@@ -108,10 +108,12 @@ func TestM82DefaultRegistryContainsCommerceSkillPack(t *testing.T) {
 			"audio-plan-producer",
 			"commerce-ad-producer",
 			"hitl-checkpoint-producer",
+			"motion-shot-producer",
 			"reference-video-analysis-producer",
 		},
 		RoleCraftsman: {
 			"audio-renderplan-craftsman",
+			"motion-shot-craftsman",
 			"renderplan-repair-craftsman",
 			"seedance-renderplan-craftsman",
 			"seedream-renderplan-craftsman",
@@ -119,6 +121,8 @@ func TestM82DefaultRegistryContainsCommerceSkillPack(t *testing.T) {
 		RoleReviewer: {
 			"commerce-delivery-promise-reviewer",
 			"final-video-audio-reviewer",
+			"final-video-remotion-reviewer",
+			"motion-shot-reviewer",
 			"reference-consistency-reviewer",
 			"reviewer-quality-gate",
 		},
@@ -127,6 +131,7 @@ func TestM82DefaultRegistryContainsCommerceSkillPack(t *testing.T) {
 			"composer-timeline-director",
 			"ffmpeg-audio-mix-composer",
 			"platform-export-composer",
+			"remotion-timeline-composer",
 		},
 	}
 	for role, want := range expected {
@@ -206,6 +211,150 @@ func TestFinalVideoAudioReviewerSkillNamesAllFinalRequiredAxes(t *testing.T) {
 	} {
 		if !strings.Contains(loaded.Content, axis) {
 			t.Fatalf("final-video-audio-reviewer missing required axis %q:\n%s", axis, loaded.Content)
+		}
+	}
+}
+
+func TestFinalVideoRemotionReviewerSkillNamesTimelineQualityGates(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("final-video-remotion-reviewer", RoleReviewer, "reviewer_turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"caption lane",
+		"cue/asset sync",
+		"no-Seedance",
+		"mixed-cost",
+		"Seedance video segment",
+		"Remotion still segment",
+		"layout diversity",
+		"audio_sync",
+		"platform_selling_power",
+	} {
+		if !strings.Contains(loaded.Content, required) {
+			t.Fatalf("final-video-remotion-reviewer missing %q:\n%s", required, loaded.Content)
+		}
+	}
+}
+
+func TestMotionShotSkillsCarryRemotionGuidance(t *testing.T) {
+	tests := []struct {
+		name string
+		role Role
+		want []string
+	}{
+		{
+			name: "motion-shot-producer",
+			role: RoleProducer,
+			want: []string{"remotion_timeline_v1", "Seedream", "Volcengine", "motion_shot_video", "Do not require every shot to become `motion_shot_video`"},
+		},
+		{
+			name: "motion-shot-craftsman",
+			role: RoleCraftsman,
+			want: []string{"model_prompt_profile: motion_shot_video", "image_to_motion_video", "text_layers", "visual_layers", "motion_style", "Do not write raw Remotion"},
+		},
+		{
+			name: "motion-shot-reviewer",
+			role: RoleReviewer,
+			want: []string{"scene_timing", "text_safety", "product_visibility", "motion_rhythm", "audio_readiness", "seedance_policy", "pre_render_plan_review", "faithfulness", "subject_consistency", "continuity", "Do not invent rubric axis names"},
+		},
+	}
+	for _, tt := range tests {
+		loaded, err := DefaultRegistry().Load(tt.name, tt.role, "")
+		if err != nil {
+			t.Fatalf("load %s: %v", tt.name, err)
+		}
+		for _, want := range tt.want {
+			if !strings.Contains(loaded.Content, want) {
+				t.Fatalf("%s missing %q:\n%s", tt.name, want, loaded.Content)
+			}
+		}
+	}
+}
+
+func TestCommerceAdProducerPreservesDynamicStoryboardForNoSeedance(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("commerce-ad-producer", RoleProducer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"no-Seedance does not reduce the storyboard to one shot",
+		"20-45 second commerce ads usually need 4-9 shots",
+		"each shot must have narrative_purpose, duration_sec, visual_intent, action_text, camera_intent, and narration",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("commerce-ad-producer missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestMotionShotProducerIsRoutePolicyOnly(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("motion-shot-producer", RoleProducer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"must be paired with commerce-ad-producer",
+		"do not create a fixed storyboard",
+		"dispatch Composer with `template_key=remotion_timeline_v1`",
+		"Do not require every shot to become `motion_shot_video`",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("motion-shot-producer missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestMotionShotCraftsmanInheritsDynamicShotFacts(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("motion-shot-craftsman", RoleCraftsman, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"inherit the current shot duration_sec",
+		"vary layout, motion_style, transitions, and text positions by shot purpose",
+		"do not bake full voiceover subtitles into the motion shot",
+		"block the task when no usable image input is available",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("motion-shot-craftsman missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestRemotionTimelineComposerSkillGuidesCueAlignedStillTimeline(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("remotion-timeline-composer", RoleComposer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"remotion_timeline_v1",
+		"still images are first-class visual assets",
+		"existing `clip` assets as video segments",
+		"Use `type=image` for still assets and `type=video` for clip assets",
+		"Composer only packages assets returned by `get_composition_context`",
+		"AudioPlan cue_plan is the primary timing contract",
+		"Do not use narrative_purpose, visual_intent, action_text, or camera_intent as captions",
+		"match wheel cues to wheel/detail assets and storage cues to open-interior assets",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("remotion-timeline-composer missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestSeedanceCraftsmanRefusesMotionOnlyRoute(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("seedance-renderplan-craftsman", RoleCraftsman, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"video_route_policy=motion_only",
+		"must not create seedance_2_video",
+		"mark the task blocked or ask Producer to change the route",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("seedance-renderplan-craftsman missing %q\n%s", needle, loaded.Content)
 		}
 	}
 }

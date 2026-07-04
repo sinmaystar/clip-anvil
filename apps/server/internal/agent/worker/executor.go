@@ -449,7 +449,10 @@ func (e *Executor) wakeProducerOnFailure(ctx context.Context, task db.AgentTask,
 	if !dedupeID.Valid {
 		dedupeID = task.ID
 	}
-	payload := mustJSON(map[string]any{
+	modelProvider := firstWorkerNonEmpty(input.Model.Provider, result.Job.Provider)
+	modelID := firstWorkerNonEmpty(input.Model.ModelID, result.Job.ModelID)
+	operationType := firstWorkerNonEmpty(input.OperationType, result.Job.OperationType, generationSpec(input).OperationType)
+	payloadFields := map[string]any{
 		"trigger":              "worker_generation_completed",
 		"target_phase":         targetPhase,
 		"render_plan_id":       uuidString(task.RenderPlanID),
@@ -477,7 +480,14 @@ func (e *Executor) wakeProducerOnFailure(ctx context.Context, task db.AgentTask,
 		"worker_thread_id":     uuidString(task.ThreadID),
 		"error_code":           code,
 		"error":                message,
-	})
+		"model_provider":       modelProvider,
+		"model_id":             modelID,
+		"operation_type":       operationType,
+	}
+	for key, value := range fallbackGuidanceForWorkerFailure(input, targetPhase, modelProvider, modelID, operationType, result) {
+		payloadFields[key] = value
+	}
+	payload := mustJSON(payloadFields)
 	if _, err := e.runtime.CreateProducerPendingSignal(ctx, agentruntime.CreateProducerPendingSignalParams{
 		WorkspaceID:      task.WorkspaceID,
 		ProducerThreadID: thread.ID,
@@ -495,6 +505,30 @@ func (e *Executor) wakeProducerOnFailure(ctx context.Context, task db.AgentTask,
 		return
 	}
 	e.ensureProducerWakeTask(ctx, task.WorkspaceID, thread.ID, payload)
+}
+
+func fallbackGuidanceForWorkerFailure(input GenerationInput, targetPhase string, provider string, modelID string, operationType string, result production.RunResult) map[string]any {
+	phase := firstWorkerNonEmpty(targetPhase, input.TargetPhase, input.Mode)
+	if phase != "shot_video" {
+		return nil
+	}
+	searchText := strings.ToLower(strings.Join([]string{
+		provider,
+		modelID,
+		operationType,
+		result.Job.Provider,
+		result.Job.ModelID,
+		result.Job.OperationType,
+	}, " "))
+	if !strings.Contains(searchText, "seedance") && !strings.Contains(searchText, "volcengine") {
+		return nil
+	}
+	return map[string]any{
+		"fallback_strategy":            "template_fallback_or_hitl",
+		"recommended_next_action":      "route_to_template_fallback_or_request_user_confirmation",
+		"should_stop_same_route_retry": true,
+		"cost_risk":                    true,
+	}
 }
 
 func firstWorkerNonEmpty(values ...string) string {

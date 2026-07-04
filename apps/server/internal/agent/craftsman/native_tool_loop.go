@@ -364,16 +364,23 @@ func nativeCraftsmanToolRuntimeMiddleware(stateStore *craftsmanLoopToolStateStor
 					if state, ok := stateStore.stateByKey(stateKey); ok {
 						stateStore.rememberCallWithKey(input.CallID, stateKey, state)
 						ctx = agenttools.WithNativeRuntimeContext(ctx, agenttools.NativeRuntimeContext{
-							WorkspaceID:     state.Context.Input.WorkspaceID,
-							ThreadID:        state.Context.Input.ThreadID,
-							TaskID:          state.Context.Input.TaskID,
-							TaskType:        "craftsman_turn",
-							ToolCallID:      input.CallID,
-							ExecutionPolicy: state.Context.Input.ExecutionPolicy,
-							ScopeType:       state.Context.Input.ScopeType,
-							ScopeID:         state.Context.Input.ScopeID,
-							ScopeKey:        state.Context.Input.ScopeKey,
-							TargetPhase:     state.Context.Input.Mode,
+							WorkspaceID:      state.Context.Input.WorkspaceID,
+							ThreadID:         state.Context.Input.ThreadID,
+							TaskID:           state.Context.Input.TaskID,
+							TaskType:         "craftsman_turn",
+							ToolCallID:       input.CallID,
+							ExecutionPolicy:  state.Context.Input.ExecutionPolicy,
+							ScopeType:        state.Context.Input.ScopeType,
+							ScopeID:          state.Context.Input.ScopeID,
+							ScopeKey:         state.Context.Input.ScopeKey,
+							TargetPhase:      state.Context.Input.Mode,
+							InputNodeRefs:    state.Context.Input.InputNodeRefs,
+							VideoRoutePolicy: state.Context.Input.VideoRoutePolicy,
+
+							RecommendedModelPromptProfile: state.Context.Input.RecommendedModelPromptProfile,
+							RecommendedOperation:          state.Context.Input.RecommendedOperation,
+							RecommendedParams:             state.Context.Input.RecommendedParams,
+							RecommendedRouteReason:        state.Context.Input.RecommendedRouteReason,
 						})
 					}
 				}

@@ -12,6 +12,9 @@ export function AgentProjectOverviewNode({
   const brief = workbench.overview.brief;
   const memory = workbench.overview.memory;
   const audioPlan = workbench.overview.audio_plan;
+  const sourceMaterials = workbench.overview.source_materials ?? [];
+  const keyElements = workbench.overview.key_elements ?? [];
+  const keyElementStates = workbench.overview.key_element_states ?? [];
   const referenceVideoAnalyses =
     workbench.overview.reference_video_analyses ?? [];
   const selection = useAgentWorkbenchSelection();
@@ -64,9 +67,9 @@ export function AgentProjectOverviewNode({
           ) : null}
         </div>
       ) : null}
-      {workbench.overview.source_materials.length > 0 ? (
+      {sourceMaterials.length > 0 ? (
         <div className="agent-workbench-overview-materials">
-          {workbench.overview.source_materials.slice(0, 6).map((material) => {
+          {sourceMaterials.slice(0, 6).map((material) => {
             const previewURL = material.thumbnail_url || material.access_url;
             return (
               <button
@@ -118,7 +121,7 @@ export function AgentProjectOverviewNode({
         </div>
       ) : null}
       <div className="agent-workbench-overview-elements">
-        {workbench.overview.key_elements.slice(0, 5).map((element) => (
+        {keyElements.slice(0, 5).map((element) => (
           <button
             data-selected={selection.isSelected("key_element", element.id)}
             key={element.id}
@@ -137,7 +140,7 @@ export function AgentProjectOverviewNode({
         ))}
       </div>
       <div className="agent-workbench-overview-states">
-        {workbench.overview.key_element_states.slice(0, 6).map((state) => (
+        {keyElementStates.slice(0, 6).map((state) => (
           <button
             data-selected={selection.isSelected("key_element_state", state.id)}
             data-tone={

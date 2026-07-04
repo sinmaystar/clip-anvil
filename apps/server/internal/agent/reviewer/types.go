@@ -126,6 +126,7 @@ type RetryDispatchInput struct {
 type Context struct {
 	Input            GraphInput
 	Shot             db.Shot
+	RenderPlan       db.RenderPlan
 	Node             db.MediaNode
 	Version          db.ArtifactVersion
 	GenerationJob    db.GenerationJob

@@ -91,6 +91,49 @@ func TestProducerSystemPromptContainsDomainConcepts(t *testing.T) {
 	}
 }
 
+func TestProducerPromptNoSeedanceKeepsDynamicStoryboard(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{})
+	for _, needle := range []string{
+		"no-Seedance 不等于固定模板",
+		"继续使用动态 Storyboard",
+		"30 秒左右营销视频通常需要 4-9 个 shot",
+		"no-Seedance low-cost final route should prefer Seedream stills plus remotion_timeline_v1 final Composer",
+		"do not require every shot to become motion_shot_video",
+		"dispatch_composer with template_key=remotion_timeline_v1",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("Producer prompt missing %q", needle)
+		}
+	}
+}
+
+func TestProducerPromptPrefersRemotionTimelineForNoSeedanceLowCostRoute(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{})
+	for _, needle := range []string{
+		"no-Seedance low-cost final route should prefer Seedream stills plus remotion_timeline_v1 final Composer",
+		"do not require every shot to become motion_shot_video",
+		"dispatch_composer with template_key=remotion_timeline_v1",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("producer prompt missing %q", needle)
+		}
+	}
+}
+
+func TestProducerPromptDefinesMixedCostRemotionRoute(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{})
+	for _, needle := range []string{
+		"mixed-cost 路线只在 hero shot、复杂真实运动",
+		"其余分镜仍用 Seedream still",
+		"最终统一交给 remotion_timeline_v1",
+		"Seedance 使用数量和成本风险",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("producer prompt missing mixed-cost route wording %q", needle)
+		}
+	}
+}
+
 func TestProducerSystemPromptEnablesCurrentGenerationAndReviewerGate(t *testing.T) {
 	prompt := ProducerSystemPrompt(ProducerContext{})
 	for _, forbidden := range []string{
@@ -121,6 +164,10 @@ func TestProducerSystemPromptEnablesCurrentGenerationAndReviewerGate(t *testing.
 		"audio_generation_succeeded",
 		"worker_generation_completed",
 		"composition_completed",
+		"fallback_strategy",
+		"不要继续同一路线自动重试",
+		"motion shot fallback",
+		"cost_risk",
 		"用户明确授权自动推进",
 		"shot_04.preview_image.r1.node",
 		"media_node",

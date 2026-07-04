@@ -96,6 +96,11 @@ func (t DispatchCraftsmanTool) Definition() Definition {
 				"enum":        []string{"execute_immediately", "wait_for_producer"},
 				"description": "execute_immediately 表示 Craftsman 编译 RenderPlan 后自动提交 Worker；wait_for_producer 表示编译后等待 Producer accept/reject。",
 			},
+			"video_route_policy": map[string]any{
+				"type":        "string",
+				"enum":        []string{"default", "motion_only"},
+				"description": "分镜视频路由策略。用户明确要求不要调用 Seedance 或只使用 Remotion motion shot 时必须填写 motion_only；默认 default。",
+			},
 			"force": map[string]any{
 				"type":        "boolean",
 				"description": "为 true 时，即使已有完成结果也创建新的尝试；默认 false。注意：force 不能绕过正在排队或运行中的同 scope/target_phase Craftsman 任务。",
@@ -162,7 +167,7 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 	if err != nil {
 		return ExecuteOutput{}, err
 	}
-	for _, scope := range scopes {
+	for index, scope := range scopes {
 		if active, ok := activeCraftsmanTaskForScopePhase(activeTasks, scope.ScopeType, scope.ScopeID, args.TargetPhase); ok {
 			item := map[string]any{
 				"scope_type":                scope.ScopeType,
@@ -205,9 +210,27 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			"craftsman_thread_id":    uuidString(thread.ID),
 			"requested_max_attempts": args.MaxAttempts,
 		}
+		if args.VideoRoutePolicy != "" {
+			taskInput["video_route_policy"] = args.VideoRoutePolicy
+		}
+		if route := recommendedVideoRoute(args, scope, index, len(scopes)); route.Profile != "" {
+			taskInput["recommended_model_prompt_profile"] = route.Profile
+			taskInput["recommended_operation"] = route.Operation
+			taskInput["recommended_params"] = route.Params
+			taskInput["recommended_route_reason"] = route.Reason
+		}
 		if scope.ScopeType == "shot" {
 			taskInput["shot_id"] = uuidString(scope.ScopeID)
 			taskInput["shot_client_key"] = scope.ClientKey
+			taskInput["shot_facts"] = map[string]any{
+				"title":             scope.Title,
+				"duration_sec":      scope.DurationSec,
+				"narrative_purpose": scope.NarrativePurpose,
+				"visual_intent":     scope.VisualIntent,
+				"action_text":       scope.ActionText,
+				"camera_intent":     scope.CameraIntent,
+				"narration":         scope.Narration,
+			}
 		}
 		if scope.ScopeType == "key_element_state" {
 			taskInput["key_element_state_id"] = uuidString(scope.ScopeID)
@@ -228,8 +251,8 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		if len(args.FixHints) > 0 {
 			taskInput["review_fix_hints"] = args.FixHints
 		}
-		if len(args.InputNodeRefs) > 0 {
-			taskInput["input_node_refs"] = args.InputNodeRefs
+		if refs := inputNodeRefsForScope(args, scope); len(refs) > 0 {
+			taskInput["input_node_refs"] = refs
 		} else if args.TargetPhase == "shot_video" && strings.TrimSpace(scope.ClientKey) != "" {
 			taskInput["input_node_refs"] = []string{scope.ClientKey + " preview image"}
 		}
@@ -261,7 +284,7 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 			SourceRole:  "producer",
 			TargetRole:  "craftsman",
 			Scope:       mustJSON(map[string]any{"scope_type": scope.ScopeType, "scope_id": uuidString(scope.ScopeID), "scope_key": scope.ScopeKey, "client_key": scope.ClientKey}),
-			Payload:     mustJSON(map[string]any{"target_phase": args.TargetPhase, "execution_policy": args.ExecutionPolicy, "max_attempts": args.MaxAttempts}),
+			Payload:     mustJSON(map[string]any{"target_phase": args.TargetPhase, "execution_policy": args.ExecutionPolicy, "max_attempts": args.MaxAttempts, "video_route_policy": args.VideoRoutePolicy}),
 		})
 		if t.enqueuer != nil {
 			t.enqueuer.EnqueueCraftsmanTask(ctx, task)
@@ -287,6 +310,22 @@ func (t DispatchCraftsmanTool) Execute(ctx context.Context, input ExecuteInput) 
 		"dispatched":   dispatched,
 		"skipped":      skipped,
 	}}, nil
+}
+
+func inputNodeRefsForScope(args parsedDispatchCraftsmanArgs, scope craftsmanDispatchScope) []string {
+	if len(args.InputNodeRefs) == 0 {
+		return nil
+	}
+	if args.TargetPhase != "shot_video" || strings.TrimSpace(scope.ClientKey) == "" {
+		return args.InputNodeRefs
+	}
+	clientKey := strings.TrimSpace(scope.ClientKey)
+	for _, ref := range args.InputNodeRefs {
+		if strings.Contains(strings.TrimSpace(ref), clientKey) {
+			return []string{strings.TrimSpace(ref)}
+		}
+	}
+	return args.InputNodeRefs
 }
 
 func dispatchStatus(dispatched int, skipped int) string {
@@ -333,6 +372,12 @@ func craftsmanDelegationText(scope craftsmanDispatchScope, args parsedDispatchCr
 	}
 	if args.Brief != "" {
 		lines = append(lines, "- brief: "+args.Brief)
+	}
+	if args.VideoRoutePolicy != "" {
+		lines = append(lines, "- video_route_policy: "+args.VideoRoutePolicy)
+		if isMotionOnlyVideoPolicy(args.VideoRoutePolicy) {
+			lines = append(lines, "- video_route_policy_rule: 禁止调用 Seedance；必须使用 Remotion motion_shot_video，无法满足时标记 blocked。")
+		}
 	}
 	if args.Critique != "" {
 		lines = append(lines, "- critique: "+args.Critique)
@@ -407,6 +452,7 @@ type parsedDispatchCraftsmanArgs struct {
 	Critique         string
 	FixHints         []string
 	InputNodeRefs    []string
+	VideoRoutePolicy string
 }
 
 func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, error) {
@@ -474,6 +520,7 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 		}
 	}
 	shotRefs := stringSliceValue(raw, "shot_refs")
+	videoRoutePolicy := normalizeVideoRoutePolicy(stringValue(raw, "video_route_policy"))
 	return parsedDispatchCraftsmanArgs{
 		Brief:            stringValue(raw, "brief"),
 		ScopeType:        scopeType,
@@ -489,14 +536,22 @@ func dispatchCraftsmanArgs(raw map[string]any) (parsedDispatchCraftsmanArgs, err
 		Critique:         stringValue(raw, "critique"),
 		FixHints:         stringSliceValue(raw, "fix_hints"),
 		InputNodeRefs:    stringSliceValue(raw, "input_node_refs"),
+		VideoRoutePolicy: videoRoutePolicy,
 	}, nil
 }
 
 type craftsmanDispatchScope struct {
-	ScopeType string
-	ScopeID   pgtype.UUID
-	ScopeKey  string
-	ClientKey string
+	ScopeType        string
+	ScopeID          pgtype.UUID
+	ScopeKey         string
+	ClientKey        string
+	Title            string
+	DurationSec      float64
+	NarrativePurpose string
+	VisualIntent     string
+	ActionText       string
+	CameraIntent     string
+	Narration        string
 }
 
 func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pgtype.UUID, args parsedDispatchCraftsmanArgs) ([]craftsmanDispatchScope, error) {
@@ -532,9 +587,125 @@ func (t DispatchCraftsmanTool) resolveScopes(ctx context.Context, workspaceID pg
 	}
 	out := make([]craftsmanDispatchScope, 0, len(shots))
 	for _, shot := range shots {
-		out = append(out, craftsmanDispatchScope{ScopeType: "shot", ScopeID: shot.ID, ScopeKey: semanticScopeKey(shot.SemanticKey, "shot", shot.ClientKey), ClientKey: shot.ClientKey})
+		out = append(out, craftsmanDispatchScope{
+			ScopeType:        "shot",
+			ScopeID:          shot.ID,
+			ScopeKey:         semanticScopeKey(shot.SemanticKey, "shot", shot.ClientKey),
+			ClientKey:        shot.ClientKey,
+			Title:            shot.Title,
+			DurationSec:      shotDurationSeconds(shot.DurationSec),
+			NarrativePurpose: shot.NarrativePurpose,
+			VisualIntent:     shot.VisualIntent,
+			ActionText:       shot.ActionText,
+			CameraIntent:     shot.CameraIntent,
+			Narration:        shot.Narration,
+		})
 	}
 	return out, nil
+}
+
+func shotDurationSeconds(value pgtype.Float8) float64 {
+	if !value.Valid || value.Float64 <= 0 {
+		return 0
+	}
+	return value.Float64
+}
+
+type recommendedRoute struct {
+	Profile   string
+	Operation string
+	Params    map[string]any
+	Reason    string
+}
+
+func recommendedVideoRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDispatchScope, index int, total int) recommendedRoute {
+	if args.TargetPhase != "shot_video" || scope.ScopeType != "shot" {
+		return recommendedRoute{}
+	}
+	if isMotionOnlyVideoPolicy(args.VideoRoutePolicy) {
+		return motionRecommendedRoute(args, scope, "video_route_policy=motion_only applies no-Seedance policy; routing to Remotion motion_shot_video")
+	}
+	if total <= 1 && !isMotionRouteCandidate(args.Brief, scope) {
+		return recommendedRoute{
+			Profile:   "seedance_2_video",
+			Operation: "image_to_video_first_frame",
+			Params:    map[string]any{"ratio": "9:16", "duration_sec": 5, "resolution": "1080p"},
+			Reason:    "single shot video dispatch defaults to Seedance unless the brief/scope is motion-shot-like",
+		}
+	}
+	if index == 0 && !isMotionRouteCandidate(args.Brief, scope) {
+		return recommendedRoute{
+			Profile:   "seedance_2_video",
+			Operation: "image_to_video_first_frame",
+			Params:    map[string]any{"ratio": "9:16", "duration_sec": 5, "resolution": "1080p"},
+			Reason:    "first broad shot_video dispatch is treated as the hero Seedance shot",
+		}
+	}
+	return motionRecommendedRoute(args, scope, "non-hero shot_video dispatch defaults to Remotion motion_shot_video to control Seedance cost")
+}
+
+func motionRecommendedRoute(args parsedDispatchCraftsmanArgs, scope craftsmanDispatchScope, reason string) recommendedRoute {
+	durationSec := motionShotDuration(scope.DurationSec)
+	return recommendedRoute{
+		Profile:   "motion_shot_video",
+		Operation: "image_to_motion_video",
+		Params: map[string]any{
+			"ratio":        "9:16",
+			"duration_sec": durationSec,
+			"resolution":   "1080p",
+			"fps":          30,
+			"motion_style": "premium_product_ad",
+			"safe_area":    "caption_reserved_bottom",
+			"text_layers":  []map[string]any{},
+		},
+		Reason: reason,
+	}
+}
+
+func motionShotDuration(value float64) int {
+	rounded := int(value + 0.5)
+	switch rounded {
+	case 3, 4, 5, 6, 8:
+		return rounded
+	case 7:
+		return 8
+	default:
+		if rounded <= 0 {
+			return 5
+		}
+		if rounded < 3 {
+			return 3
+		}
+		if rounded > 8 {
+			return 8
+		}
+		return 5
+	}
+}
+
+func isMotionRouteCandidate(brief string, scope craftsmanDispatchScope) bool {
+	text := strings.ToLower(brief + " " + scope.Title + " " + scope.ScopeKey + " " + scope.ClientKey)
+	for _, keyword := range []string{"cta", "packshot", "benefit", "motion shot", "remotion", "no seedance", "without seedance", "seedance 禁止", "不要调用 seedance", "不调用 seedance", "不使用 seedance", "卖点", "卡片", "收尾", "尾帧", "商品图", "静态", "图片动效", "轻动效"} {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeVideoRoutePolicy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "default":
+		return ""
+	case "motion_only", "motion-only", "remotion_only", "remotion-only", "no_seedance", "no-seedance":
+		return "motion_only"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func isMotionOnlyVideoPolicy(value string) bool {
+	return normalizeVideoRoutePolicy(value) == "motion_only"
 }
 
 func semanticScopeKey(semanticKey string, scopeType string, clientKey string) string {
@@ -596,7 +767,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		if err != nil {
 			return nil, err
 		}
-		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase, args.VideoRoutePolicy) {
 			return nil, nil
 		}
 		return []db.Shot{shot}, nil
@@ -606,7 +777,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		if err != nil {
 			return nil, err
 		}
-		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase, args.VideoRoutePolicy) {
 			return nil, nil
 		}
 		return []db.Shot{shot}, nil
@@ -618,7 +789,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		}
 		out := make([]db.Shot, 0, len(shots))
 		for _, shot := range shots {
-			if shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+			if shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase, args.VideoRoutePolicy) {
 				out = append(out, shot)
 			}
 		}
@@ -634,7 +805,7 @@ func (t DispatchCraftsmanTool) resolveShots(ctx context.Context, workspaceID pgt
 		if seen[shot.ID] {
 			continue
 		}
-		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase) {
+		if !shotDispatchableForPhase(shot.Status, args.Force, args.TargetPhase, args.VideoRoutePolicy) {
 			continue
 		}
 		seen[shot.ID] = true
@@ -681,9 +852,11 @@ func (t DispatchCraftsmanTool) resolveShotRef(ctx context.Context, workspaceID p
 	})
 }
 
-func shotDispatchableForPhase(status string, force bool, targetPhase string) bool {
+func shotDispatchableForPhase(status string, force bool, targetPhase string, videoRoutePolicy string) bool {
 	if targetPhase == "shot_video" {
 		switch strings.TrimSpace(status) {
+		case "planned", "draft":
+			return isMotionOnlyVideoPolicy(videoRoutePolicy)
 		case "preview_ready", "failed":
 			return true
 		case "video_ready", "video_running":

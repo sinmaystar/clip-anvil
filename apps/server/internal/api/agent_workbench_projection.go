@@ -595,6 +595,8 @@ func agentWorkbenchAudioPlanSummary(ctx context.Context, signer assetURLSigner, 
 	if !audioPlan.ID.Valid {
 		return nil, nil
 	}
+	voiceoverNodeID := agentWorkbenchAudioNodeID(audioPlan.VoiceoverNodeID, nodes, "voiceover_audio")
+	bgmNodeID := agentWorkbenchAudioNodeID(audioPlan.BgmNodeID, nodes, "bgm_audio")
 	out := &agentWorkbenchAudioPlanResponse{
 		ID:                    uuidToString(audioPlan.ID),
 		Status:                audioPlan.Status,
@@ -605,10 +607,10 @@ func agentWorkbenchAudioPlanSummary(ctx context.Context, signer assetURLSigner, 
 		VoiceProfile:          jsonObjectValue(audioPlan.VoiceProfile),
 		BGMPlan:               jsonObjectValue(audioPlan.BgmPlan),
 		CuePlan:               jsonAnyValue(audioPlan.CuePlan),
-		VoiceoverNodeID:       uuidStringForWorkbench(audioPlan.VoiceoverNodeID),
-		VoiceoverStatus:       agentWorkbenchLinkedNodeStatus(audioPlan.VoiceoverNodeID, nodes),
-		BGMNodeID:             uuidStringForWorkbench(audioPlan.BgmNodeID),
-		BGMStatus:             agentWorkbenchLinkedNodeStatus(audioPlan.BgmNodeID, nodes),
+		VoiceoverNodeID:       uuidStringForWorkbench(voiceoverNodeID),
+		VoiceoverStatus:       agentWorkbenchLinkedNodeStatus(voiceoverNodeID, nodes),
+		BGMNodeID:             uuidStringForWorkbench(bgmNodeID),
+		BGMStatus:             agentWorkbenchLinkedNodeStatus(bgmNodeID, nodes),
 		TimelinePlanID:        uuidStringForWorkbench(audioPlan.TimelinePlanID),
 		VoiceoverRenderPlanID: uuidStringForWorkbench(audioPlan.VoiceoverRenderPlanID),
 		BGMRenderPlanID:       uuidStringForWorkbench(audioPlan.BgmRenderPlanID),
@@ -617,17 +619,29 @@ func agentWorkbenchAudioPlanSummary(ctx context.Context, signer assetURLSigner, 
 		value := audioPlan.TargetDurationSec.Float64
 		out.TargetDurationSec = &value
 	}
-	voiceoverArtifact, err := agentWorkbenchAudioPlanArtifact(ctx, signer, audioPlan.VoiceoverNodeID, nodes, assets, versions)
+	voiceoverArtifact, err := agentWorkbenchAudioPlanArtifact(ctx, signer, voiceoverNodeID, nodes, assets, versions)
 	if err != nil {
 		return nil, err
 	}
 	out.VoiceoverArtifact = voiceoverArtifact
-	bgmArtifact, err := agentWorkbenchAudioPlanArtifact(ctx, signer, audioPlan.BgmNodeID, nodes, assets, versions)
+	bgmArtifact, err := agentWorkbenchAudioPlanArtifact(ctx, signer, bgmNodeID, nodes, assets, versions)
 	if err != nil {
 		return nil, err
 	}
 	out.BGMArtifact = bgmArtifact
 	return out, nil
+}
+
+func agentWorkbenchAudioNodeID(linkedNodeID pgtype.UUID, nodes map[pgtype.UUID]db.MediaNode, artifactKind string) pgtype.UUID {
+	if linkedNodeID.Valid {
+		return linkedNodeID
+	}
+	for _, node := range nodes {
+		if node.NodeType == db.NodeTypeAudio && node.CurrentVersionID.Valid && agentWorkbenchArtifactKind(node.Metadata) == artifactKind {
+			return node.ID
+		}
+	}
+	return pgtype.UUID{}
 }
 
 func agentWorkbenchAudioPlanArtifact(ctx context.Context, signer assetURLSigner, nodeID pgtype.UUID, nodes map[pgtype.UUID]db.MediaNode, assets map[pgtype.UUID]db.MediaAsset, versions map[pgtype.UUID]db.ArtifactVersion) (*agentWorkbenchArtifactSlotResponse, error) {
