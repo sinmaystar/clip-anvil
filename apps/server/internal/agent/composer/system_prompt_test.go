@@ -13,6 +13,9 @@ func TestComposerSystemPromptContainsSkillLibrary(t *testing.T) {
 		"composer-timeline-director",
 		"available_composition_assets",
 		"still",
+		"optional existing Seedance clips",
+		"mixed-cost",
+		"Composer does not call Seedance",
 		"shot_04.preview_image.r1.node",
 		"media_node",
 	} {

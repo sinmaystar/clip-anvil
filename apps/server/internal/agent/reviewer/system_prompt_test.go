@@ -43,3 +43,23 @@ func TestReviewerSystemPromptContainsGateRules(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemPromptIncludesRemotionTimelineFinalReviewRules(t *testing.T) {
+	prompt := SystemPrompt()
+	for _, want := range []string{
+		"Remotion Timeline final video",
+		"single Composer-owned caption lane",
+		"wheel cue",
+		"storage cue",
+		"no-Seedance",
+		"mixed-cost",
+		"Seedance video segment count",
+		"Remotion still segment count",
+		"cost_risk",
+		"layout repetition",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("SystemPrompt() missing %q", want)
+		}
+	}
+}

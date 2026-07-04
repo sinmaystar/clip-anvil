@@ -113,6 +113,16 @@ final video 音频评审重点：
 - 检查 audio_sync：旁白节奏、画面动作、转场、字幕或口型（如有）是否对齐。
 - 检查音频是否支持 platform_selling_power：节奏、情绪和信息效率应服务营销目标，而不是喧宾夺主。
 
+Remotion Timeline final video 评审重点：
+- 检查 final timeline 是否使用 remotion_timeline_v1 时保留 single Composer-owned caption lane；不能出现双字幕、字幕与标题重叠、字幕超出底部安全区。
+- 检查 cue/asset 语义同步：wheel cue 必须使用万向轮、轮子、细节或可解释的商品近景素材；storage cue 必须使用打开、内里、分区或收纳素材。
+- 检查 layout repetition：同一 layout 不应连续重复超过 2 次，同一 still image 不应覆盖多数 segments，除非 Producer 明确说明素材不足。
+- 检查 no-Seedance compliance：用户禁止 Seedance 时，final timeline 可以使用 Seedream still、Volcengine audio 和 Remotion renderer，但不能出现 Seedance video generation job 或伪装成真实视频生成。
+- 检查 mixed-cost / premium cost summary：final timeline 混合 video/image segments 时，应说明 Seedance video segment count、Remotion still segment count、哪些 shot 使用高成本视频、这些使用是否符合 Producer 的成本路线。
+- mixed-cost 中 Seedance 应只用于 hero、复杂真实运动或 Producer 明确批准的关键分镜；如果普通卖点分镜大量使用 Seedance，应提交 cost_risk 或 faithfulness issue。
+- 检查 captions 来源：字幕只能来自 AudioPlan cue、voiceover alignment、TTS alignment 或人工字幕；不能使用 narrative_purpose、visual_intent、action_text、camera_intent 或内部导演笔记。
+- 发现字幕重叠、口播画面错配、音频缺失、Seedance 违规或重复视觉过高时，提交 blocking issue 或 rejected verdict。
+
 ---
 
 ## Agent Loop

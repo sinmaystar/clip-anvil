@@ -13,6 +13,7 @@ import (
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
 	agentprompt "github.com/sinmaystar/clip-anvil/internal/agent/prompt"
+	remotiontimeline "github.com/sinmaystar/clip-anvil/internal/remotiontimeline"
 )
 
 type arkChatModel interface {
@@ -162,7 +163,7 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, composerContext C
 
 func deterministicTemplateComposerTurn(composerContext Context) (ComposerTurnOutput, bool, error) {
 	templateKey := strings.TrimSpace(composerContext.Input.Input.TemplateKey)
-	if templateKey != "simple_concat" && templateKey != "concat_with_fades" {
+	if templateKey != "simple_concat" && templateKey != "concat_with_fades" && templateKey != remotiontimeline.TemplateKeyV1 {
 		return ComposerTurnOutput{}, false, nil
 	}
 	if !hasComposerToolResult(composerContext, "get_composition_context") {
@@ -349,6 +350,9 @@ func composerAssetsForStaging(compositionContext map[string]any) []map[string]an
 }
 
 func deterministicComposerTimelinePlan(composerContext Context, templateKey string) (map[string]any, error) {
+	if strings.TrimSpace(templateKey) == remotiontimeline.TemplateKeyV1 {
+		return deterministicComposerRemotionTimelinePlan(composerContext)
+	}
 	compositionContext, err := composerToolResultMap(composerContext, "get_composition_context")
 	if err != nil {
 		return nil, err
@@ -440,6 +444,299 @@ func deterministicComposerTimelinePlan(composerContext Context, templateKey stri
 	return plan, nil
 }
 
+func deterministicComposerRemotionTimelinePlan(composerContext Context) (map[string]any, error) {
+	compositionContext, err := composerToolResultMap(composerContext, "get_composition_context")
+	if err != nil {
+		return nil, err
+	}
+	staged, err := composerToolResultMap(composerContext, "stage_media_inputs")
+	if err != nil {
+		return nil, err
+	}
+	pathsByAsset := composerStagedPaths(staged)
+	rawAssets, _ := compositionContext["available_composition_assets"].([]any)
+	cues := composerAudioCues(compositionContext)
+	if len(cues) == 0 {
+		return nil, fmt.Errorf("remotion timeline requires audio_plan.cue_plan")
+	}
+	targetDuration := composerBestAudioTargetDuration(compositionContext, rawAssets)
+	if targetDuration <= 0 {
+		targetDuration = composerAudioTargetDuration(compositionContext)
+	}
+	scale := composerCueDurationScale(cues, targetDuration)
+	segments := []any{}
+	for index, cue := range cues {
+		asset := composerVisualAssetForCue(rawAssets, pathsByAsset, cue)
+		if asset == nil {
+			continue
+		}
+		assetID := strings.TrimSpace(composerString(asset["asset_id"]))
+		start := cue.StartSec * scale
+		end := cue.EndSec * scale
+		if end <= start {
+			continue
+		}
+		layout := composerRemotionLayoutForCue(index, cue, asset, len(cues))
+		segments = append(segments, map[string]any{
+			"id":           cue.ShotRef,
+			"shot_ref":     cue.ShotRef,
+			"start_sec":    start,
+			"end_sec":      end,
+			"layout":       layout,
+			"visual_focus": composerVisualFocusForCue(cue, layout),
+			"assets": []any{
+				map[string]any{
+					"id":             assetID,
+					"role":           "primary",
+					"type":           composerRemotionAssetType(asset),
+					"workspace_path": pathsByAsset[assetID],
+					"node_ref":       strings.TrimSpace(composerString(asset["node_ref"])),
+				},
+			},
+			"motion":        map[string]any{"preset": composerRemotionMotionForLayout(layout, index), "intensity": 0.55},
+			"transition_in": composerRemotionTransitionForIndex(index),
+			"caption": map[string]any{
+				"source":    "audio_cue",
+				"text":      firstNonEmpty(cue.Caption, cue.Text),
+				"start_sec": start,
+				"end_sec":   end,
+				"position":  "subtitle_bottom",
+			},
+		})
+	}
+	if len(segments) == 0 {
+		return nil, fmt.Errorf("remotion timeline has no cue-matched staged still or clip assets")
+	}
+	plan := map[string]any{
+		"schema":       remotiontimeline.SchemaV1,
+		"composition":  remotiontimeline.CompositionMarketingTimeline,
+		"template_key": remotiontimeline.TemplateKeyV1,
+		"output": map[string]any{
+			"width":        1080,
+			"height":       1920,
+			"fps":          30,
+			"duration_sec": targetDuration,
+			"codec":        "h264",
+			"audio_codec":  "aac",
+		},
+		"segments":     segments,
+		"audio_tracks": deterministicComposerRemotionAudioTracks(rawAssets, pathsByAsset, targetDuration),
+		"captions":     map[string]any{"source": "audio_cue", "single_lane": true, "max_chars_per_line": 18, "style": "commerce_subtitle"},
+		"theme":        map[string]any{"background": "#0f172a", "accent": "#facc15"},
+	}
+	decoded, err := remotiontimeline.Decode(plan)
+	if err != nil {
+		return nil, err
+	}
+	if err := remotiontimeline.Validate(decoded); err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+func composerVisualAssetForCue(rawAssets []any, pathsByAsset map[string]string, cue composerAudioCue) map[string]any {
+	bestScore := -1
+	var best map[string]any
+	cueFocus := composerSemanticFocus(strings.Join([]string{cue.ShotRef, cue.Caption, cue.Text, cue.VisualFocus}, " "))
+	for _, raw := range rawAssets {
+		asset, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		role := strings.TrimSpace(composerString(asset["role"]))
+		if role != "still" && role != "clip" {
+			continue
+		}
+		assetID := strings.TrimSpace(composerString(asset["asset_id"]))
+		if pathsByAsset[assetID] == "" {
+			continue
+		}
+		assetFocus := composerSemanticFocus(composerAssetSearchText(asset, pathsByAsset[assetID]))
+		if composerOppositeFocus(cueFocus, assetFocus) {
+			continue
+		}
+		score := 0
+		if strings.TrimSpace(composerString(asset["shot_ref"])) == cue.ShotRef {
+			score += 100
+		}
+		if cueFocus != "" && cueFocus == assetFocus {
+			score += 45
+		}
+		if role == "clip" {
+			score += 12
+		}
+		if role == "still" {
+			score += 5
+		}
+		if score > bestScore {
+			bestScore = score
+			best = asset
+		}
+	}
+	if bestScore < 45 {
+		return nil
+	}
+	return best
+}
+
+func composerRemotionAssetType(asset map[string]any) string {
+	if strings.TrimSpace(composerString(asset["role"])) == "clip" {
+		return "video"
+	}
+	return "image"
+}
+
+func composerRemotionLayoutForCue(index int, cue composerAudioCue, asset map[string]any, total int) string {
+	text := strings.ToLower(strings.Join([]string{
+		composerString(asset["shot_ref"]),
+		composerString(asset["shot_title"]),
+		composerString(asset["title"]),
+		composerAssetSearchText(asset, ""),
+		cue.Text,
+		cue.Caption,
+		cue.VisualFocus,
+	}, " "))
+	switch {
+	case index == total-1 || strings.Contains(text, "cta") || strings.Contains(text, "现在") || strings.Contains(text, "出发"):
+		return "cta_endcard"
+	case strings.Contains(text, "wheel") || strings.Contains(text, "轮"):
+		return "detail_focus"
+	case strings.Contains(text, "storage") || strings.Contains(text, "收纳") || strings.Contains(text, "分区") || strings.Contains(text, "打开") || strings.Contains(text, "interior") || strings.Contains(text, "内景"):
+		return "open_storage"
+	case strings.Contains(text, "对比") || strings.Contains(text, "compare"):
+		return "split_compare"
+	case strings.Contains(text, "场景") || strings.Contains(text, "出差") || strings.Contains(text, "周末"):
+		return "scenario_card"
+	case index == 0:
+		return "hero_packshot"
+	default:
+		return "benefit_card"
+	}
+}
+
+func composerRemotionMotionForLayout(layout string, index int) string {
+	switch layout {
+	case "detail_focus":
+		return "spotlight_reveal"
+	case "open_storage":
+		return "pull_out"
+	case "benefit_card":
+		return "float_parallax"
+	case "split_compare":
+		return "pan_left"
+	case "scenario_card":
+		return "pan_right"
+	case "cta_endcard":
+		return "cta_pop"
+	default:
+		if index%2 == 0 {
+			return "push_in"
+		}
+		return "pan_right"
+	}
+}
+
+func composerVisualFocusForCue(cue composerAudioCue, layout string) string {
+	if strings.TrimSpace(cue.VisualFocus) != "" && len(strings.TrimSpace(cue.VisualFocus)) <= 12 {
+		return strings.TrimSpace(cue.VisualFocus)
+	}
+	caption := strings.TrimSpace(cue.Caption)
+	if len(caption) <= 12 {
+		return caption
+	}
+	switch layout {
+	case "detail_focus":
+		return "顺滑万向轮"
+	case "open_storage":
+		return "分区收纳"
+	case "scenario_card":
+		return "出行场景"
+	case "cta_endcard":
+		return "现在出发"
+	case "benefit_card":
+		return "核心卖点"
+	case "split_compare":
+		return "对比清晰"
+	default:
+		return "悦行行李箱"
+	}
+}
+
+func composerRemotionTransitionForIndex(index int) map[string]any {
+	transitions := []string{"crossfade", "slide", "wipe", "zoom_blur", "crossfade"}
+	if index == 0 {
+		return map[string]any{"type": "cut", "duration_sec": 0}
+	}
+	return map[string]any{"type": transitions[index%len(transitions)], "duration_sec": 0.28}
+}
+
+func composerAssetSearchText(asset map[string]any, workspacePath string) string {
+	return strings.Join([]string{
+		workspacePath,
+		composerString(asset["shot_ref"]),
+		composerString(asset["shot_title"]),
+		composerString(asset["title"]),
+		composerString(asset["visual_intent"]),
+		composerString(asset["action_text"]),
+		composerString(asset["camera_intent"]),
+		composerString(asset["node_ref"]),
+		composerString(asset["file_name"]),
+	}, " ")
+}
+
+func composerSemanticFocus(text string) string {
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(lower, "万向轮") || strings.Contains(lower, "wheel") || strings.Contains(lower, "caster") || strings.Contains(lower, "轮组"):
+		return "wheel"
+	case strings.Contains(lower, "收纳") || strings.Contains(lower, "分区") || strings.Contains(lower, "打开") || strings.Contains(lower, "storage") || strings.Contains(lower, "interior") || strings.Contains(lower, "inside") || strings.Contains(lower, "open"):
+		return "storage"
+	default:
+		return ""
+	}
+}
+
+func composerOppositeFocus(left, right string) bool {
+	return (left == "wheel" && right == "storage") || (left == "storage" && right == "wheel")
+}
+
+func deterministicComposerRemotionAudioTracks(rawAssets []any, pathsByAsset map[string]string, duration float64) []any {
+	tracks := []any{}
+	for _, raw := range rawAssets {
+		asset, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		role := strings.TrimSpace(composerString(asset["role"]))
+		if role != "voiceover" && role != "bgm" {
+			continue
+		}
+		assetID := strings.TrimSpace(composerString(asset["asset_id"]))
+		path := pathsByAsset[assetID]
+		if path == "" {
+			continue
+		}
+		track := map[string]any{
+			"id":             role + "-main",
+			"role":           role,
+			"asset_id":       assetID,
+			"workspace_path": path,
+			"start_sec":      0,
+			"duration_sec":   duration,
+			"volume":         1,
+			"fade_in_sec":    0.05,
+			"fade_out_sec":   0.1,
+		}
+		if role == "bgm" {
+			track["volume"] = 0.28
+			track["fade_in_sec"] = 0.5
+			track["fade_out_sec"] = 1.2
+		}
+		tracks = append(tracks, track)
+	}
+	return tracks
+}
+
 func deterministicComposerCueSegments(compositionContext map[string]any, rawAssets []any, pathsByAsset map[string]string) []any {
 	cues := composerAudioCues(compositionContext)
 	if len(cues) == 0 {
@@ -502,11 +799,12 @@ func deterministicComposerCueSegments(compositionContext map[string]any, rawAsse
 }
 
 type composerAudioCue struct {
-	ShotRef  string
-	StartSec float64
-	EndSec   float64
-	Text     string
-	Caption  string
+	ShotRef     string
+	StartSec    float64
+	EndSec      float64
+	Text        string
+	Caption     string
+	VisualFocus string
 }
 
 func composerAudioCues(compositionContext map[string]any) []composerAudioCue {
@@ -529,7 +827,8 @@ func composerAudioCues(compositionContext map[string]any) []composerAudioCue {
 		if caption == "" {
 			caption = text
 		}
-		cues = append(cues, composerAudioCue{ShotRef: shotRef, StartSec: start, EndSec: end, Text: text, Caption: caption})
+		visualFocus := strings.TrimSpace(firstNonEmpty(composerString(item["visual_focus"]), composerString(item["visual_intent"])))
+		cues = append(cues, composerAudioCue{ShotRef: shotRef, StartSec: start, EndSec: end, Text: text, Caption: caption, VisualFocus: visualFocus})
 	}
 	return cues
 }

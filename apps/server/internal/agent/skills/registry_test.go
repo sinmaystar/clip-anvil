@@ -121,6 +121,7 @@ func TestM82DefaultRegistryContainsCommerceSkillPack(t *testing.T) {
 		RoleReviewer: {
 			"commerce-delivery-promise-reviewer",
 			"final-video-audio-reviewer",
+			"final-video-remotion-reviewer",
 			"motion-shot-reviewer",
 			"reference-consistency-reviewer",
 			"reviewer-quality-gate",
@@ -130,6 +131,7 @@ func TestM82DefaultRegistryContainsCommerceSkillPack(t *testing.T) {
 			"composer-timeline-director",
 			"ffmpeg-audio-mix-composer",
 			"platform-export-composer",
+			"remotion-timeline-composer",
 		},
 	}
 	for role, want := range expected {
@@ -213,6 +215,28 @@ func TestFinalVideoAudioReviewerSkillNamesAllFinalRequiredAxes(t *testing.T) {
 	}
 }
 
+func TestFinalVideoRemotionReviewerSkillNamesTimelineQualityGates(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("final-video-remotion-reviewer", RoleReviewer, "reviewer_turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"caption lane",
+		"cue/asset sync",
+		"no-Seedance",
+		"mixed-cost",
+		"Seedance video segment",
+		"Remotion still segment",
+		"layout diversity",
+		"audio_sync",
+		"platform_selling_power",
+	} {
+		if !strings.Contains(loaded.Content, required) {
+			t.Fatalf("final-video-remotion-reviewer missing %q:\n%s", required, loaded.Content)
+		}
+	}
+}
+
 func TestMotionShotSkillsCarryRemotionGuidance(t *testing.T) {
 	tests := []struct {
 		name string
@@ -222,7 +246,7 @@ func TestMotionShotSkillsCarryRemotionGuidance(t *testing.T) {
 		{
 			name: "motion-shot-producer",
 			role: RoleProducer,
-			want: []string{"internal_motion_video", "motion_shot_video", "remotion-motion-shot-v1", "video_route_policy: motion_only", "Composer owns captions"},
+			want: []string{"remotion_timeline_v1", "Seedream", "Volcengine", "motion_shot_video", "Do not require every shot to become `motion_shot_video`"},
 		},
 		{
 			name: "motion-shot-craftsman",
@@ -272,8 +296,8 @@ func TestMotionShotProducerIsRoutePolicyOnly(t *testing.T) {
 	for _, needle := range []string{
 		"must be paired with commerce-ad-producer",
 		"do not create a fixed storyboard",
-		"dispatch every ready shot_video with video_route_policy: motion_only",
-		"do not dispatch only one synthetic shot unless the dynamic storyboard truly has one shot",
+		"dispatch Composer with `template_key=remotion_timeline_v1`",
+		"Do not require every shot to become `motion_shot_video`",
 	} {
 		if !strings.Contains(loaded.Content, needle) {
 			t.Fatalf("motion-shot-producer missing %q\n%s", needle, loaded.Content)
@@ -294,6 +318,27 @@ func TestMotionShotCraftsmanInheritsDynamicShotFacts(t *testing.T) {
 	} {
 		if !strings.Contains(loaded.Content, needle) {
 			t.Fatalf("motion-shot-craftsman missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestRemotionTimelineComposerSkillGuidesCueAlignedStillTimeline(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("remotion-timeline-composer", RoleComposer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"remotion_timeline_v1",
+		"still images are first-class visual assets",
+		"existing `clip` assets as video segments",
+		"Use `type=image` for still assets and `type=video` for clip assets",
+		"Composer only packages assets returned by `get_composition_context`",
+		"AudioPlan cue_plan is the primary timing contract",
+		"Do not use narrative_purpose, visual_intent, action_text, or camera_intent as captions",
+		"match wheel cues to wheel/detail assets and storage cues to open-interior assets",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("remotion-timeline-composer missing %q\n%s", needle, loaded.Content)
 		}
 	}
 }

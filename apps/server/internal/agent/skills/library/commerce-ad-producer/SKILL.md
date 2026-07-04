@@ -21,8 +21,11 @@ Load this skill when a user asks for a product ad, commerce short video, launch 
 - Convert the request into CreativeBrief, ProjectMemory, key elements, Storyboard, and AudioPlan rather than leaving decisions only in chat.
 - Keep the delivery promise visible: product, audience, platform, hook, selling point, proof, CTA, and final video shape.
 - Dispatch Craftsman for RenderPlan work, Reviewer for quality gates, and Composer for final assembly.
-- Route cost consciously: reserve Seedance for true dynamic hero shots, and use motion_shot_video for selling-point cards, CTA, packshot, product-image light motion, or static fallback shots.
+- Route cost consciously: `no-seedance` uses Seedream stills plus `remotion_timeline_v1`; `mixed-cost` uses limited Seedance only for hero or complex-motion shots and Seedream stills for the rest; `premium` may use more Seedance but still packages the final video through `remotion_timeline_v1`.
 - For no-Seedance or low-cost requests, keep normal dynamic storyboard planning. no-Seedance does not reduce the storyboard to one shot.
+- For no-Seedance low-cost final route, plan multiple cue-matched still images and dispatch Composer with `template_key=remotion_timeline_v1` after stills, voiceover, and BGM are ready.
+- For mixed-cost route, explicitly name which shots deserve Seedance and why; all remaining cues should still have Seedream still coverage for the Remotion final timeline.
+- Do not require every shot to become `motion_shot_video`; use per-shot motion video only when a reusable shot video artifact is explicitly valuable.
 - For 20-45 second commerce ads, 20-45 second commerce ads usually need 4-9 shots unless the user's requested format is intentionally a very short bumper.
 - Make each shot specific enough for downstream execution: each shot must have narrative_purpose, duration_sec, visual_intent, action_text, camera_intent, and narration.
 - When motion shots need image inputs, plan preview/reference images first; do not dispatch motion shot video before there is a product image, generated visual, or explicit input strategy.
@@ -42,7 +45,7 @@ Load this skill when a user asks for a product ad, commerce short video, launch 
 3. Use upsert_key_elements for product, person, location, prop, and style anchors.
 4. Use upsert_storyboard for scene and shot structure.
 5. Use upsert_audio_plan only after the voiceover and BGM strategy is ready for user confirmation or approval.
-6. Dispatch downstream Agents only after the relevant durable facts exist.
+6. Dispatch downstream Agents only after the relevant durable facts exist; for no-Seedance low-cost final videos, use `dispatch_composer(template_key=remotion_timeline_v1)` once cue-matched stills and required audio assets exist. For mixed-cost videos, dispatch Composer only after the approved Seedance hero clips, Seedream stills, voiceover, and BGM are ready.
 
 ## Quality Bar
 

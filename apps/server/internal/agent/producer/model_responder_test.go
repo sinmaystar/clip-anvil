@@ -97,11 +97,39 @@ func TestProducerPromptNoSeedanceKeepsDynamicStoryboard(t *testing.T) {
 		"no-Seedance 不等于固定模板",
 		"继续使用动态 Storyboard",
 		"30 秒左右营销视频通常需要 4-9 个 shot",
-		"每个 shot_video 都必须填写 video_route_policy=motion_only",
-		"最终 30 秒以上成片由 Composer 拼接多个 motion_shot_video、旁白和 BGM",
+		"no-Seedance low-cost final route should prefer Seedream stills plus remotion_timeline_v1 final Composer",
+		"do not require every shot to become motion_shot_video",
+		"dispatch_composer with template_key=remotion_timeline_v1",
 	} {
 		if !strings.Contains(prompt, needle) {
 			t.Fatalf("Producer prompt missing %q", needle)
+		}
+	}
+}
+
+func TestProducerPromptPrefersRemotionTimelineForNoSeedanceLowCostRoute(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{})
+	for _, needle := range []string{
+		"no-Seedance low-cost final route should prefer Seedream stills plus remotion_timeline_v1 final Composer",
+		"do not require every shot to become motion_shot_video",
+		"dispatch_composer with template_key=remotion_timeline_v1",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("producer prompt missing %q", needle)
+		}
+	}
+}
+
+func TestProducerPromptDefinesMixedCostRemotionRoute(t *testing.T) {
+	prompt := ProducerSystemPrompt(ProducerContext{})
+	for _, needle := range []string{
+		"mixed-cost 路线只在 hero shot、复杂真实运动",
+		"其余分镜仍用 Seedream still",
+		"最终统一交给 remotion_timeline_v1",
+		"Seedance 使用数量和成本风险",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("producer prompt missing mixed-cost route wording %q", needle)
 		}
 	}
 }

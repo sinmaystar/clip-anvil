@@ -19,8 +19,8 @@ Load this skill when the user wants a low-cost marketing video, explicitly forbi
 ## Do
 
 - Read project context before changing durable facts or spending generation budget.
-- Lock the route in ProjectMemory: `internal_motion_video` for video, `motion_shot_video` RenderPlan profile, `remotion-motion-shot-v1` model, Seedream allowed for still images, Volcengine audio allowed for voiceover or BGM.
-- Separate the asset route from the video route: preview/reference images may use Seedream, audio may use Volcengine TTS/BGM, shot video must use motion shots when the user forbids Seedance.
+- Lock the route in ProjectMemory: Seedream allowed for still images, Volcengine audio allowed for voiceover or BGM, and `remotion_timeline_v1` as the preferred final Composer route when the user forbids Seedance.
+- Separate the asset route from the final video route: preview/reference images may use Seedream, audio may use Volcengine TTS/BGM, and the final video should usually be assembled by Remotion timeline rather than per-shot generated video.
 - This skill must be paired with commerce-ad-producer. Commerce ad structure still comes from CreativeBrief, ProjectMemory, KeyElement, Storyboard, and AudioPlan.
 - Route policy only: do not create a fixed storyboard, do not replace dynamic shot planning, and do not choose a canned 30 second template.
 - Keep motion shots scoped to one communication job: product hero, benefit, comparison, and CTA should usually be separate shots for better pacing.
@@ -29,10 +29,10 @@ Load this skill when the user wants a low-cost marketing video, explicitly forbi
 - Size the voiceover script to the target duration. For a 30-35s Chinese commerce ad, write a real 140-180 Chinese-character narration unless the user asks for a sparse music-led video; do not stretch a 10-15s script over a 30s timeline.
 - Align every claim in the cue to a visual asset strategy. If the cue says wheels, the shot should request a wheel close-up; if it says storage, the shot should request an open-interior/storage still; do not reuse the same full-product hero for every benefit.
 - Put the expected still-image intent into `visual_intent` and `creative_text` so Craftsman can generate different Seedream assets before Remotion motion.
-- Dispatch Craftsman with `video_route_policy: motion_only` when Seedance is forbidden.
-- For no-Seedance requests, dispatch every ready shot_video with video_route_policy: motion_only.
+- Dispatch Craftsman with `video_route_policy: motion_only` only when a per-shot `motion_shot_video` artifact is explicitly needed.
+- For no-Seedance requests, first generate cue-matched still images for each selling point, then dispatch Composer with `template_key=remotion_timeline_v1`.
 - Preserve real shot_refs from the dynamic storyboard; do not dispatch only one synthetic shot unless the dynamic storyboard truly has one shot.
-- Dispatch Reviewer for motion-shot RenderPlans or artifacts when text readability, product visibility, motion rhythm, or route compliance matters.
+- Dispatch Reviewer for still images, motion-shot RenderPlans, final timeline plans, or final artifacts when text readability, product visibility, motion rhythm, audio sync, or route compliance matters.
 
 ## Do Not
 
@@ -41,6 +41,7 @@ Load this skill when the user wants a low-cost marketing video, explicitly forbi
 - Do not treat a queued Composer task as a completed final video.
 - Do not hide image generation, motion shot, audio, and final composition behind one opaque step when the user needs cost transparency.
 - Do not turn a multi-shot request into a single internal motion card.
+- Do not require every shot to become `motion_shot_video`; Remotion final timeline can animate stills, captions, transitions, voiceover, and BGM.
 
 ## Tool Protocol
 
@@ -48,14 +49,14 @@ Load this skill when the user wants a low-cost marketing video, explicitly forbi
 2. `upsert_project_brief` and `update_project_memory` to record product promise, route policy, forbidden providers, allowed model asset types, motion-shot style, and target format.
 3. `upsert_storyboard` with shots whose `shot_kind`, `creative_text`, and `visual_intent` identify the product image, short on-screen copy, and motion intent.
 4. `upsert_audio_plan` when voiceover/BGM is part of the deliverable; align `cue_plan` to real storyboard `shot_ref` values before dispatching final shot videos.
-5. `dispatch_craftsman` first for Seedream preview/reference images when needed, then dispatch `voiceover_audio`/`bgm_audio` for the approved AudioPlan when required, then dispatch `shot_video` with `video_route_policy: motion_only` when no Seedance is allowed.
+5. `dispatch_craftsman` first for Seedream preview/reference images when needed, then dispatch `voiceover_audio`/`bgm_audio` for the approved AudioPlan when required, then dispatch Composer with `template_key=remotion_timeline_v1` for the final video. Dispatch `shot_video` with `video_route_policy: motion_only` only when a separate per-shot motion artifact is useful.
 6. `dispatch_reviewer` before accepting motion-shot video if it is a user-visible shot or fallback.
 7. `dispatch_composer` only after successful shot videos and required audio assets exist.
 
 ## Quality Bar
 
 - The route is auditable in durable facts: no one has to infer whether Seedance is allowed.
-- Each motion shot has an explicit input asset strategy, short copy role, and motion role.
+- Each still or optional motion shot has an explicit input asset strategy, short copy role, and motion role.
 - Cue text, shot_ref, and visual_intent agree on the same feature or scene, so Composer does not show one benefit while the voiceover says another.
 - Craftsman can write a valid `motion_shot_video` RenderPlan without inventing product facts, provider choice, or local file paths.
 - Reviewer can evaluate readability, product visibility, motion rhythm, and Seedance policy compliance from project facts.

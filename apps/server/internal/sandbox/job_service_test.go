@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/motionshot"
+	"github.com/sinmaystar/clip-anvil/internal/remotiontimeline"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
 
@@ -296,6 +297,73 @@ func TestJobServiceRenderMotionShotRunsRemotionAndUploadsMP4(t *testing.T) {
 	}
 	if got, want := uploadedPlan.VisualLayers[0].InputRef, "assets/product.png"; got != want {
 		t.Fatalf("uploaded visual input_ref = %q, want %q", got, want)
+	}
+}
+
+func TestJobServiceRenderRemotionTimelineRunsRendererAndKeepsOutput(t *testing.T) {
+	repo := newFakeSandboxJobRepository()
+	client := &jobServiceFakeClient{
+		result: ExecResult{ExitCode: 0, Stdout: "timeline rendered", DurationMS: 120},
+		inspect: FileInfo{
+			Path:      "/workspace/output/final-timeline.mp4",
+			SizeBytes: 789,
+			Mime:      "video/mp4",
+		},
+	}
+	manager := NewManager(client, testSandboxConfig(), newFakeBindingStore(Binding{
+		Status:     StatusRunning,
+		SandboxID:  "sandbox-1",
+		VolumeName: "sandbox-ws-aabbccdd-0000-0000-0000-000000000000",
+	}))
+	service := NewJobService(manager, client, repo, nil)
+
+	result, err := service.RenderRemotionTimeline(context.Background(), RenderRemotionTimelineInput{
+		WorkspaceID:    testWorkspaceID(),
+		TargetNodeID:   testNodeID(),
+		TimelinePlanID: pgtype.UUID{Bytes: [16]byte{0x40}, Valid: true},
+		Plan: remotiontimeline.Plan{
+			Schema:      remotiontimeline.SchemaV1,
+			Composition: remotiontimeline.CompositionMarketingTimeline,
+			Output:      remotiontimeline.Output{Width: 1080, Height: 1920, FPS: 30, DurationSec: 10, Codec: "h264", AudioCodec: "aac"},
+			Segments: []remotiontimeline.Segment{{
+				ID:       "seg-1",
+				StartSec: 0,
+				EndSec:   10,
+				Layout:   "hero_packshot",
+				Assets: []remotiontimeline.Asset{{
+					Role:          "primary",
+					Type:          "image",
+					WorkspacePath: "/workspace/input/product.png",
+				}},
+			}},
+		},
+		OutputPath: "/workspace/output/final-timeline.mp4",
+	})
+	if err != nil {
+		t.Fatalf("RenderRemotionTimeline error = %v", err)
+	}
+	if result.Job.Status != db.JobStatusSucceeded || result.Job.OperationType != "render_remotion_timeline" || result.MIME != "video/mp4" {
+		t.Fatalf("result = %#v", result)
+	}
+	joined := strings.Join(client.commands, "\n")
+	for _, want := range []string{"timeline-plan.json", "remotion-timeline", "render.mjs", "/workspace/output/final-timeline.mp4"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected command containing %q, got %q", want, joined)
+		}
+	}
+	if len(client.uploadBodies) == 0 {
+		t.Fatalf("expected timeline plan upload")
+	}
+	var uploadedPlan remotiontimeline.Plan
+	for uploadPath, body := range client.uploadBodies {
+		if strings.HasSuffix(uploadPath, "timeline-plan.json") {
+			if err := json.Unmarshal([]byte(body), &uploadedPlan); err != nil {
+				t.Fatalf("uploaded timeline plan JSON error = %v", err)
+			}
+		}
+	}
+	if uploadedPlan.Schema != remotiontimeline.SchemaV1 || len(uploadedPlan.Segments) != 1 {
+		t.Fatalf("uploaded timeline plan = %#v", uploadedPlan)
 	}
 }
 

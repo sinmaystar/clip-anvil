@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/sinmaystar/clip-anvil/internal/agent/contextcompact"
+	"github.com/sinmaystar/clip-anvil/internal/remotiontimeline"
 )
 
 func TestVolcengineModelResponderAppliesContextCompactionProjection(t *testing.T) {
@@ -235,6 +236,209 @@ func TestDeterministicComposerTimelinePlanUsesAudioCuesForSegmentTimingAndCaptio
 	if first["duration_sec"] != float64(5) || second["duration_sec"] != float64(5) {
 		t.Fatalf("cue durations should be scaled to 10s voiceover duration: %#v / %#v", first["duration_sec"], second["duration_sec"])
 	}
+}
+
+func TestDeterministicComposerRemotionTimelinePlanUsesCuePlanAndStills(t *testing.T) {
+	compositionContext := map[string]any{
+		"audio_plan": map[string]any{
+			"target_duration_sec": float64(30),
+			"cue_plan": []any{
+				map[string]any{"shot_ref": "shot_wheels", "start_sec": float64(0), "end_sec": float64(15), "text": "顺滑万向轮，转弯不费力。", "caption": "顺滑万向轮"},
+				map[string]any{"shot_ref": "shot_storage", "start_sec": float64(15), "end_sec": float64(30), "text": "打开就是分区收纳。", "caption": "分区收纳"},
+			},
+		},
+		"available_composition_assets": []any{
+			map[string]any{"role": "still", "shot_ref": "shot_storage", "shot_title": "打开收纳", "asset_id": "asset-storage", "mime_type": "image/png", "visual_intent": "打开箱体内景"},
+			map[string]any{"role": "still", "shot_ref": "shot_wheels", "shot_title": "万向轮特写", "asset_id": "asset-wheels", "mime_type": "image/png", "visual_intent": "轮组近景"},
+			map[string]any{"role": "voiceover", "asset_id": "asset-voice", "mime_type": "audio/mpeg", "metadata": map[string]any{"duration_sec": float64(30)}},
+			map[string]any{"role": "bgm", "asset_id": "asset-bgm", "mime_type": "audio/mpeg"},
+		},
+	}
+	staged := map[string]any{
+		"files": []any{
+			map[string]any{"asset_id": "asset-storage", "workspace_path": "/workspace/input/storage.png"},
+			map[string]any{"asset_id": "asset-wheels", "workspace_path": "/workspace/input/wheels.png"},
+			map[string]any{"asset_id": "asset-voice", "workspace_path": "/workspace/input/voiceover.mp3"},
+			map[string]any{"asset_id": "asset-bgm", "workspace_path": "/workspace/input/bgm.mp3"},
+		},
+	}
+	context := Context{SameTurnMessages: []ComposerSameTurnMessage{
+		composerToolResultMessage(t, "get_composition_context", compositionContext),
+		composerToolResultMessage(t, "stage_media_inputs", staged),
+	}}
+
+	plan, err := deterministicComposerTimelinePlan(context, "remotion_timeline_v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan["schema"] != "clipanvil.remotion_timeline.v1" || plan["composition"] != "MarketingTimeline" {
+		t.Fatalf("remotion plan header = %#v", plan)
+	}
+	output, _ := plan["output"].(map[string]any)
+	if output["width"] != 1080 || output["height"] != 1920 || output["duration_sec"] != float64(30) {
+		t.Fatalf("output = %#v", output)
+	}
+	segments, ok := plan["segments"].([]any)
+	if !ok || len(segments) != 2 {
+		t.Fatalf("segments = %#v", plan["segments"])
+	}
+	first := segments[0].(map[string]any)
+	second := segments[1].(map[string]any)
+	if first["id"] != "shot_wheels" || first["start_sec"] != float64(0) || first["end_sec"] != float64(15) {
+		t.Fatalf("first segment = %#v", first)
+	}
+	if second["id"] != "shot_storage" || second["start_sec"] != float64(15) || second["end_sec"] != float64(30) {
+		t.Fatalf("second segment = %#v", second)
+	}
+	firstAssets := first["assets"].([]any)
+	if firstAssets[0].(map[string]any)["workspace_path"] != "/workspace/input/wheels.png" {
+		t.Fatalf("wheel cue not matched to wheel still: %#v", firstAssets)
+	}
+	if firstAssets[0].(map[string]any)["type"] != "image" {
+		t.Fatalf("no-Seedance still fixture should use image segment, got %#v", firstAssets[0])
+	}
+	firstCaption := first["caption"].(map[string]any)
+	if firstCaption["text"] != "顺滑万向轮" || firstCaption["source"] != "audio_cue" {
+		t.Fatalf("caption should come from cue caption: %#v", firstCaption)
+	}
+	rawPlan := string(mustComposerJSON(t, plan))
+	if strings.Contains(rawPlan, "轮组近景") || strings.Contains(rawPlan, "打开箱体内景") {
+		t.Fatalf("internal visual_intent leaked into captions or text layers: %#v", plan)
+	}
+	decoded, err := remotiontimeline.Decode(plan)
+	if err != nil {
+		t.Fatalf("remotion timeline decode failed: %v", err)
+	}
+	if err := remotiontimeline.Validate(decoded); err != nil {
+		t.Fatalf("remotion timeline validation failed: %v", err)
+	}
+	audioTracks, ok := plan["audio_tracks"].([]any)
+	if !ok || len(audioTracks) != 2 {
+		t.Fatalf("audio_tracks = %#v", plan["audio_tracks"])
+	}
+}
+
+func TestDeterministicComposerRemotionTimelinePlanSupportsMixedVideoAndImageSegments(t *testing.T) {
+	compositionContext := map[string]any{
+		"audio_plan": map[string]any{
+			"target_duration_sec": float64(18),
+			"cue_plan": []any{
+				map[string]any{"shot_ref": "shot_hero", "start_sec": float64(0), "end_sec": float64(6), "text": "开场展示悦行行李箱，轻松出发。", "caption": "轻松出发"},
+				map[string]any{"shot_ref": "shot_wheels", "start_sec": float64(6), "end_sec": float64(12), "text": "顺滑万向轮，转弯不费力。", "caption": "顺滑万向轮"},
+				map[string]any{"shot_ref": "shot_storage", "start_sec": float64(12), "end_sec": float64(18), "text": "打开就是分区收纳。", "caption": "分区收纳"},
+			},
+		},
+		"available_composition_assets": []any{
+			map[string]any{"role": "clip", "shot_ref": "shot_hero", "shot_title": "Seedance hero video", "asset_id": "asset-hero-video", "mime_type": "video/mp4", "file_name": "hero-seedance.mp4"},
+			map[string]any{"role": "still", "shot_ref": "shot_wheels", "shot_title": "万向轮特写", "asset_id": "asset-wheels", "mime_type": "image/png", "file_name": "wheel-detail.png"},
+			map[string]any{"role": "still", "shot_ref": "shot_storage", "shot_title": "打开收纳", "asset_id": "asset-storage", "mime_type": "image/png", "file_name": "open-storage.png"},
+			map[string]any{"role": "voiceover", "asset_id": "asset-voice", "mime_type": "audio/mpeg", "metadata": map[string]any{"duration_sec": float64(18)}},
+		},
+	}
+	staged := map[string]any{"files": []any{
+		map[string]any{"asset_id": "asset-hero-video", "workspace_path": "/workspace/input/hero-seedance.mp4"},
+		map[string]any{"asset_id": "asset-wheels", "workspace_path": "/workspace/input/wheel-detail.png"},
+		map[string]any{"asset_id": "asset-storage", "workspace_path": "/workspace/input/open-storage.png"},
+		map[string]any{"asset_id": "asset-voice", "workspace_path": "/workspace/input/voiceover.mp3"},
+	}}
+	context := Context{SameTurnMessages: []ComposerSameTurnMessage{
+		composerToolResultMessage(t, "get_composition_context", compositionContext),
+		composerToolResultMessage(t, "stage_media_inputs", staged),
+	}}
+
+	plan, err := deterministicComposerTimelinePlan(context, "remotion_timeline_v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := remotiontimeline.Decode(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remotiontimeline.Validate(decoded); err != nil {
+		t.Fatal(err)
+	}
+	types := map[string]int{}
+	for _, segment := range decoded.Segments {
+		for _, asset := range segment.Assets {
+			types[asset.Type]++
+		}
+	}
+	if types["video"] != 1 || types["image"] != 2 {
+		t.Fatalf("asset types = %#v, want one video and two image segments; plan=%#v", types, decoded.Segments)
+	}
+	if decoded.Segments[0].Assets[0].WorkspacePath != "/workspace/input/hero-seedance.mp4" {
+		t.Fatalf("hero cue should use staged video clip: %#v", decoded.Segments[0])
+	}
+}
+
+func TestDeterministicComposerRemotionTimelinePlanUsesLayoutDiversity(t *testing.T) {
+	cuePlan := []any{
+		map[string]any{"shot_ref": "shot_hero", "start_sec": float64(0), "end_sec": float64(6), "text": "悦行行李箱，短途轻松出发。", "caption": "短途轻松出发"},
+		map[string]any{"shot_ref": "shot_wheels", "start_sec": float64(6), "end_sec": float64(12), "text": "顺滑万向轮，转弯不费力。", "caption": "顺滑万向轮", "visual_focus": "万向轮特写"},
+		map[string]any{"shot_ref": "shot_storage", "start_sec": float64(12), "end_sec": float64(18), "text": "打开就是分区收纳。", "caption": "分区收纳", "visual_focus": "打开收纳"},
+		map[string]any{"shot_ref": "shot_scene", "start_sec": float64(18), "end_sec": float64(24), "text": "周末出行，一箱刚刚好。", "caption": "周末出行"},
+		map[string]any{"shot_ref": "shot_cta", "start_sec": float64(24), "end_sec": float64(30), "text": "现在出发，悦行陪你走。", "caption": "现在出发"},
+	}
+	assets := []any{
+		map[string]any{"role": "still", "shot_ref": "shot_hero", "shot_title": "产品主视觉", "asset_id": "asset-hero", "mime_type": "image/png", "file_name": "hero-packshot.png"},
+		map[string]any{"role": "still", "shot_ref": "shot_wheels", "shot_title": "万向轮特写", "asset_id": "asset-wheels", "mime_type": "image/png", "file_name": "wheel-detail.png"},
+		map[string]any{"role": "still", "shot_ref": "shot_storage", "shot_title": "打开收纳", "asset_id": "asset-storage", "mime_type": "image/png", "file_name": "open-storage.png"},
+		map[string]any{"role": "still", "shot_ref": "shot_scene", "shot_title": "周末出行场景", "asset_id": "asset-scene", "mime_type": "image/png", "file_name": "scenario-packshot.png"},
+		map[string]any{"role": "still", "shot_ref": "shot_cta", "shot_title": "CTA packshot", "asset_id": "asset-cta", "mime_type": "image/png", "file_name": "cta-packshot.png"},
+		map[string]any{"role": "voiceover", "asset_id": "asset-voice", "mime_type": "audio/mpeg", "metadata": map[string]any{"duration_sec": float64(30)}},
+	}
+	staged := map[string]any{"files": []any{
+		map[string]any{"asset_id": "asset-hero", "workspace_path": "/workspace/input/hero-packshot.png"},
+		map[string]any{"asset_id": "asset-wheels", "workspace_path": "/workspace/input/wheel-detail.png"},
+		map[string]any{"asset_id": "asset-storage", "workspace_path": "/workspace/input/open-storage.png"},
+		map[string]any{"asset_id": "asset-scene", "workspace_path": "/workspace/input/scenario-packshot.png"},
+		map[string]any{"asset_id": "asset-cta", "workspace_path": "/workspace/input/cta-packshot.png"},
+		map[string]any{"asset_id": "asset-voice", "workspace_path": "/workspace/input/voiceover.mp3"},
+	}}
+	context := Context{SameTurnMessages: []ComposerSameTurnMessage{
+		composerToolResultMessage(t, "get_composition_context", map[string]any{
+			"audio_plan": map[string]any{
+				"target_duration_sec": float64(30),
+				"cue_plan":            cuePlan,
+			},
+			"available_composition_assets": assets,
+		}),
+		composerToolResultMessage(t, "stage_media_inputs", staged),
+	}}
+
+	plan, err := deterministicComposerTimelinePlan(context, "remotion_timeline_v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := remotiontimeline.Decode(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remotiontimeline.Validate(decoded); err != nil {
+		t.Fatal(err)
+	}
+	layouts := map[string]bool{}
+	for _, segment := range decoded.Segments {
+		layouts[segment.Layout] = true
+		if segment.Caption.Source != "audio_cue" {
+			t.Fatalf("caption source = %q, want audio_cue", segment.Caption.Source)
+		}
+	}
+	if len(layouts) < 4 {
+		t.Fatalf("layout diversity = %d, want at least 4 layouts: %#v", len(layouts), layouts)
+	}
+	captions := strings.Join(captionsForTest(decoded), " ")
+	if strings.Contains(captions, "痛点钩子") || strings.Contains(captions, "前三秒抓住") {
+		t.Fatalf("captions contain internal planning text: %s", captions)
+	}
+}
+
+func captionsForTest(plan remotiontimeline.Plan) []string {
+	out := make([]string, 0, len(plan.Segments))
+	for _, segment := range plan.Segments {
+		out = append(out, segment.Caption.Text)
+	}
+	return out
 }
 
 func composerToolResultMessage(t *testing.T, name string, value any) ComposerSameTurnMessage {

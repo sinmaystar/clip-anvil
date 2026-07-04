@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sinmaystar/clip-anvil/internal/production"
+	"github.com/sinmaystar/clip-anvil/internal/remotiontimeline"
 	"github.com/sinmaystar/clip-anvil/internal/sandbox"
 	"github.com/sinmaystar/clip-anvil/internal/store/db"
 )
@@ -29,6 +30,7 @@ const (
 	toolSubmitCompositionArtifact  = "submit_composition_artifact"
 	composerTemplateSimpleConcat   = "simple_concat"
 	composerTemplateConcatWithFade = "concat_with_fades"
+	composerTemplateRemotionV1     = remotiontimeline.TemplateKeyV1
 	composerTimelineWidth          = 1080
 	composerTimelineHeight         = 1920
 	composerTimelineFPS            = 30
@@ -43,6 +45,10 @@ type CompositionSandbox interface {
 	StageMediaInputs(ctx context.Context, input sandbox.StageMediaInputsInput) (sandbox.StageMediaInputsResult, error)
 	ProbeMedia(ctx context.Context, input sandbox.ProbeMediaInput) (sandbox.ProbeMediaResult, error)
 	RunFFmpegCommand(ctx context.Context, input sandbox.RunFFmpegCommandInput) (sandbox.SandboxJobResult, error)
+}
+
+type RemotionTimelineSandbox interface {
+	RenderRemotionTimeline(ctx context.Context, input sandbox.RenderRemotionTimelineInput) (sandbox.SandboxJobResult, error)
 }
 
 type CompositionTimelineStore interface {
@@ -84,7 +90,8 @@ type SubmitCompositionArtifactNativeTool struct {
 }
 
 type SandboxTimelineTemplateRenderer struct {
-	sandbox CompositionSandbox
+	sandbox  CompositionSandbox
+	remotion RemotionTimelineSandbox
 }
 
 type GetCompositionContextInput struct {
@@ -110,7 +117,7 @@ type ProbeMediaToolInput struct {
 
 type CreateTimelinePlanInput struct {
 	SourceStoryboardNodeID string         `json:"source_storyboard_node_id,omitempty" jsonschema_description:"来源媒体/故事板节点内部 ID。通常从当前 Composer task 或 get_composition_context 返回值原样复制。"`
-	TemplateKey            string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades" jsonschema_description:"Phase 1 timeline 模版。"`
+	TemplateKey            string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1" jsonschema_description:"Timeline 模版。simple_concat/concat_with_fades 使用 ffmpeg；remotion_timeline_v1 使用 Remotion final timeline renderer。"`
 	Plan                   map[string]any `json:"plan" jsonschema:"required" jsonschema_description:"TimelinePlan JSON。"`
 	RenderSettings         map[string]any `json:"render_settings,omitempty" jsonschema_description:"渲染设置。"`
 }
@@ -127,7 +134,7 @@ type UpdateTimelinePlanStatusInput struct {
 
 type RenderTimelineTemplateInput struct {
 	TimelinePlanID string         `json:"timeline_plan_id" jsonschema:"required" jsonschema_description:"timeline_plan 内部 ID。必须从 create_timeline_plan 返回结果原样复制。"`
-	TemplateKey    string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades" jsonschema_description:"Phase 1 模版。"`
+	TemplateKey    string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1" jsonschema_description:"Timeline 模版。"`
 	Plan           map[string]any `json:"plan" jsonschema:"required" jsonschema_description:"TimelinePlan JSON。"`
 }
 
@@ -184,7 +191,16 @@ func NewRunFFmpegCommandNativeTool(sandbox CompositionSandbox) RunFFmpegCommandN
 }
 
 func NewSandboxTimelineTemplateRenderer(sandbox CompositionSandbox) SandboxTimelineTemplateRenderer {
-	return SandboxTimelineTemplateRenderer{sandbox: sandbox}
+	renderer := SandboxTimelineTemplateRenderer{sandbox: sandbox}
+	if remotion, ok := sandbox.(RemotionTimelineSandbox); ok {
+		renderer.remotion = remotion
+	}
+	return renderer
+}
+
+func (r SandboxTimelineTemplateRenderer) WithRemotionRenderer(renderer RemotionTimelineSandbox) SandboxTimelineTemplateRenderer {
+	r.remotion = renderer
+	return r
 }
 
 func NewSubmitCompositionArtifactNativeTool(persister CompositionArtifactPersister, store ...CompositionArtifactStore) SubmitCompositionArtifactNativeTool {
@@ -362,7 +378,7 @@ func (t UpdateTimelinePlanStatusNativeTool) InvokableRun(ctx context.Context, ra
 }
 
 func (t RenderTimelineTemplateNativeTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfoFor[RenderTimelineTemplateInput](toolRenderTimelineTemplate, "按 Phase 1 模版渲染 timeline plan，支持 simple_concat 和 concat_with_fades。")
+	return toolInfoFor[RenderTimelineTemplateInput](toolRenderTimelineTemplate, "按 timeline 模版渲染 timeline plan，支持 simple_concat、concat_with_fades 和 remotion_timeline_v1。")
 }
 
 func (t RenderTimelineTemplateNativeTool) InvokableRun(ctx context.Context, raw string, _ ...einotool.Option) (string, error) {
@@ -521,6 +537,9 @@ func (t SubmitCompositionArtifactNativeTool) InvokableRun(ctx context.Context, r
 }
 
 func (r SandboxTimelineTemplateRenderer) RenderTimelineTemplate(ctx context.Context, runtime NativeRuntimeContext, input RenderTimelineTemplateInput) (RenderTimelineTemplateResult, error) {
+	if input.TemplateKey == composerTemplateRemotionV1 {
+		return r.renderRemotionTimeline(ctx, runtime, input)
+	}
 	if r.sandbox == nil {
 		return RenderTimelineTemplateResult{}, errors.New("composition sandbox 未配置")
 	}
@@ -551,6 +570,43 @@ func (r SandboxTimelineTemplateRenderer) RenderTimelineTemplate(ctx context.Cont
 		OutputPath:   outputPath,
 		SandboxJobID: result.Job.ID,
 		Summary:      fmt.Sprintf("rendered %d segments with %s", len(segments), input.TemplateKey),
+	}, nil
+}
+
+func (r SandboxTimelineTemplateRenderer) renderRemotionTimeline(ctx context.Context, runtime NativeRuntimeContext, input RenderTimelineTemplateInput) (RenderTimelineTemplateResult, error) {
+	if r.remotion == nil {
+		return RenderTimelineTemplateResult{}, errors.New("remotion timeline renderer 未配置")
+	}
+	timelinePlanID, ok := pgUUIDFromString(input.TimelinePlanID)
+	if !ok {
+		return RenderTimelineTemplateResult{}, errors.New("timeline_plan_id 必须从 create_timeline_plan 返回结果原样复制")
+	}
+	plan, err := remotiontimeline.Decode(input.Plan)
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	if err := remotiontimeline.Validate(plan); err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	fallbackOutputPath := "/workspace/output/final-" + shortToolID(input.TimelinePlanID) + ".mp4"
+	outputPath, err := timelineOutputPath(input.Plan, fallbackOutputPath)
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	result, err := r.remotion.RenderRemotionTimeline(ctx, sandbox.RenderRemotionTimelineInput{
+		WorkspaceID:    runtime.WorkspaceID,
+		TargetNodeID:   runtime.ScopeID,
+		TimelinePlanID: timelinePlanID,
+		Plan:           plan,
+		OutputPath:     outputPath,
+	})
+	if err != nil {
+		return RenderTimelineTemplateResult{}, err
+	}
+	return RenderTimelineTemplateResult{
+		OutputPath:   outputPath,
+		SandboxJobID: result.Job.ID,
+		Summary:      fmt.Sprintf("rendered %d segments with %s", len(plan.Segments), input.TemplateKey),
 	}, nil
 }
 
@@ -1182,7 +1238,7 @@ func validateStageMediaInputs(input StageMediaInputsInput) error {
 }
 
 func validateCreateTimelinePlan(input CreateTimelinePlanInput) error {
-	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade); err != nil {
+	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1); err != nil {
 		return err
 	}
 	if input.SourceStoryboardNodeID != "" {
@@ -1207,7 +1263,7 @@ func validateRenderTimelineTemplate(input RenderTimelineTemplateInput) error {
 	if _, ok := pgUUIDFromString(input.TimelinePlanID); !ok {
 		return errors.New("timeline_plan_id 必须从 create_timeline_plan 返回结果原样复制")
 	}
-	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade); err != nil {
+	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1); err != nil {
 		return err
 	}
 	if len(input.Plan) == 0 {
