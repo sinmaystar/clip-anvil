@@ -127,6 +127,7 @@ func TestM82DefaultRegistryContainsCommerceSkillPack(t *testing.T) {
 			"reviewer-quality-gate",
 		},
 		RoleComposer: {
+			"agent-remotion-code-composer",
 			"composer-blocker-escalation",
 			"composer-timeline-director",
 			"ffmpeg-audio-mix-composer",
@@ -171,6 +172,9 @@ func TestM82DefaultSkillsHaveRequiredSectionsAndAllowedTools(t *testing.T) {
 			"probe_media",
 			"create_timeline_plan",
 			"update_timeline_plan_status",
+			"create_remotion_renderer_attempt",
+			"validate_remotion_renderer_attempt",
+			"render_agent_remotion_renderer",
 			"render_timeline_template",
 			"run_ffmpeg_command",
 			"submit_composition_artifact",
@@ -192,6 +196,26 @@ func TestM82DefaultSkillsHaveRequiredSectionsAndAllowedTools(t *testing.T) {
 					t.Fatalf("%s references disallowed tool %q for role %s", meta.Name, tool, role)
 				}
 			}
+		}
+	}
+}
+
+func TestM145DefaultRegistryContainsAgentRemotionCodeComposer(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("agent-remotion-code-composer", RoleComposer, "composer_turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"agent_remotion_code_v1",
+		"create_remotion_renderer_attempt",
+		"validate_remotion_renderer_attempt",
+		"render_agent_remotion_renderer",
+		"Do not install dependencies",
+		"validate passed before render",
+		"fallback to `remotion_timeline_v1`",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("agent-remotion-code-composer missing %q\n%s", needle, loaded.Content)
 		}
 	}
 }
@@ -233,6 +257,29 @@ func TestFinalVideoRemotionReviewerSkillNamesTimelineQualityGates(t *testing.T) 
 	} {
 		if !strings.Contains(loaded.Content, required) {
 			t.Fatalf("final-video-remotion-reviewer missing %q:\n%s", required, loaded.Content)
+		}
+	}
+}
+
+func TestM145FinalVideoRemotionReviewerCoversAgentAuthoredRenderer(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("final-video-remotion-reviewer", RoleReviewer, "reviewer_turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"Agent-authored renderer",
+		"renderer artifact",
+		"renderer attempt",
+		"source_hash",
+		"props_hash",
+		"validation_result",
+		"compile_result",
+		"render_result",
+		"unsafe_renderer_code",
+		"fallback_required",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("final-video-remotion-reviewer missing %q:\n%s", needle, loaded.Content)
 		}
 	}
 }
@@ -288,6 +335,26 @@ func TestCommerceAdProducerPreservesDynamicStoryboardForNoSeedance(t *testing.T)
 	}
 }
 
+func TestM145CommerceProducerCanChooseAgentRemotionRoute(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("commerce-ad-producer", RoleProducer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"agent_remotion_code_v1",
+		"non-template",
+		"route rationale",
+		"fallback policy",
+		"Storyboard complexity",
+		"mixed-cost can combine Seedance hero clips, Seedream stills, and dynamic Remotion packaging",
+		"dispatch_composer(template_key=agent_remotion_code_v1)",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("commerce-ad-producer missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
 func TestMotionShotProducerIsRoutePolicyOnly(t *testing.T) {
 	loaded, err := DefaultRegistry().Load("motion-shot-producer", RoleProducer, "")
 	if err != nil {
@@ -336,6 +403,39 @@ func TestRemotionTimelineComposerSkillGuidesCueAlignedStillTimeline(t *testing.T
 		"AudioPlan cue_plan is the primary timing contract",
 		"Do not use narrative_purpose, visual_intent, action_text, or camera_intent as captions",
 		"match wheel cues to wheel/detail assets and storage cues to open-interior assets",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("remotion-timeline-composer missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestM145ComposerTimelineDirectorRoutesDynamicRenderer(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("composer-timeline-director", RoleComposer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"agent_remotion_code_v1",
+		"load `agent-remotion-code-composer`",
+		"must not follow the remotion_timeline_v1 JSON-only protocol",
+		"record fallback reason",
+	} {
+		if !strings.Contains(loaded.Content, needle) {
+			t.Fatalf("composer-timeline-director missing %q\n%s", needle, loaded.Content)
+		}
+	}
+}
+
+func TestM145RemotionTimelineComposerStaysFixedRendererOnly(t *testing.T) {
+	loaded, err := DefaultRegistry().Load("remotion-timeline-composer", RoleComposer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{
+		"only for `remotion_timeline_v1`",
+		"Do not create raw Remotion code",
+		"Do not use agent_remotion_code_v1 attempt tools",
 	} {
 		if !strings.Contains(loaded.Content, needle) {
 			t.Fatalf("remotion-timeline-composer missing %q\n%s", needle, loaded.Content)
@@ -462,6 +562,9 @@ func TestM84DefaultSkillToolReferencesMatchRoleRegistries(t *testing.T) {
 			"probe_media",
 			"create_timeline_plan",
 			"update_timeline_plan_status",
+			"create_remotion_renderer_attempt",
+			"validate_remotion_renderer_attempt",
+			"render_agent_remotion_renderer",
 			"render_timeline_template",
 			"run_ffmpeg_command",
 			"submit_composition_artifact",

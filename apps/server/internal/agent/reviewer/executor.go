@@ -3,6 +3,7 @@ package reviewer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -79,6 +80,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		return fmt.Errorf("%w: unsupported task type %q", ErrInvalidInput, task.TaskType)
 	}
 	if _, err := e.runtime.MarkTaskRunning(ctx, task.ID); err != nil {
+		if errors.Is(err, agentruntime.ErrTaskAlreadyClaimed) {
+			return nil
+		}
 		return err
 	}
 	taskInput, err := parseTaskInput(task.Input)

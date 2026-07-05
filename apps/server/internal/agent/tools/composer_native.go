@@ -31,6 +31,7 @@ const (
 	composerTemplateSimpleConcat   = "simple_concat"
 	composerTemplateConcatWithFade = "concat_with_fades"
 	composerTemplateRemotionV1     = remotiontimeline.TemplateKeyV1
+	composerTemplateAgentRemotion  = "agent_remotion_code_v1"
 	composerTimelineWidth          = 1080
 	composerTimelineHeight         = 1920
 	composerTimelineFPS            = 30
@@ -117,7 +118,7 @@ type ProbeMediaToolInput struct {
 
 type CreateTimelinePlanInput struct {
 	SourceStoryboardNodeID string         `json:"source_storyboard_node_id,omitempty" jsonschema_description:"来源媒体/故事板节点内部 ID。通常从当前 Composer task 或 get_composition_context 返回值原样复制。"`
-	TemplateKey            string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1" jsonschema_description:"Timeline 模版。simple_concat/concat_with_fades 使用 ffmpeg；remotion_timeline_v1 使用 Remotion final timeline renderer。"`
+	TemplateKey            string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1,enum=agent_remotion_code_v1" jsonschema_description:"Timeline 模版。simple_concat/concat_with_fades 使用 ffmpeg；remotion_timeline_v1 使用 Remotion final timeline renderer；agent_remotion_code_v1 使用 Agent-authored Remotion renderer attempt。"`
 	Plan                   map[string]any `json:"plan" jsonschema:"required" jsonschema_description:"TimelinePlan JSON。"`
 	RenderSettings         map[string]any `json:"render_settings,omitempty" jsonschema_description:"渲染设置。"`
 }
@@ -134,7 +135,7 @@ type UpdateTimelinePlanStatusInput struct {
 
 type RenderTimelineTemplateInput struct {
 	TimelinePlanID string         `json:"timeline_plan_id" jsonschema:"required" jsonschema_description:"timeline_plan 内部 ID。必须从 create_timeline_plan 返回结果原样复制。"`
-	TemplateKey    string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1" jsonschema_description:"Timeline 模版。"`
+	TemplateKey    string         `json:"template_key" jsonschema:"required,enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1,enum=agent_remotion_code_v1" jsonschema_description:"Timeline 模版。agent_remotion_code_v1 不走本工具渲染；请使用 render_agent_remotion_renderer。"`
 	Plan           map[string]any `json:"plan" jsonschema:"required" jsonschema_description:"TimelinePlan JSON。"`
 }
 
@@ -388,6 +389,9 @@ func (t RenderTimelineTemplateNativeTool) InvokableRun(ctx context.Context, raw 
 	}
 	if t.renderer == nil {
 		return NaturalToolError(toolRenderTimelineTemplate, "timeline template renderer 未配置。", "请检查 Composer graph wiring。"), nil
+	}
+	if input.TemplateKey == composerTemplateAgentRemotion {
+		return NaturalToolError(toolRenderTimelineTemplate, "agent_remotion_code_v1 不能通过固定 timeline template 渲染。", "请依次使用 create_remotion_renderer_attempt、validate_remotion_renderer_attempt、render_agent_remotion_renderer，再调用 submit_composition_artifact。"), nil
 	}
 	runtime, msg, ok := runtimeOrError(ctx, toolRenderTimelineTemplate)
 	if !ok {
@@ -1238,7 +1242,7 @@ func validateStageMediaInputs(input StageMediaInputsInput) error {
 }
 
 func validateCreateTimelinePlan(input CreateTimelinePlanInput) error {
-	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1); err != nil {
+	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1, composerTemplateAgentRemotion); err != nil {
 		return err
 	}
 	if input.SourceStoryboardNodeID != "" {
@@ -1263,7 +1267,7 @@ func validateRenderTimelineTemplate(input RenderTimelineTemplateInput) error {
 	if _, ok := pgUUIDFromString(input.TimelinePlanID); !ok {
 		return errors.New("timeline_plan_id 必须从 create_timeline_plan 返回结果原样复制")
 	}
-	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1); err != nil {
+	if err := requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1, composerTemplateAgentRemotion); err != nil {
 		return err
 	}
 	if len(input.Plan) == 0 {

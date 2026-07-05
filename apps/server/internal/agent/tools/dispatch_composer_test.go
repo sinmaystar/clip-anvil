@@ -105,6 +105,53 @@ func TestDispatchComposerNativeToolAcceptsSemanticSourceRef(t *testing.T) {
 	}
 }
 
+func TestDispatchComposerNativeToolReusesActiveComposerTask(t *testing.T) {
+	runtime := &fakeComposeRuntime{
+		activeTasks: []db.AgentTask{{
+			ID:          uuidWithByte(77),
+			WorkspaceID: uuidWithByte(1),
+			ThreadID:    uuidWithByte(44),
+			Role:        "composer",
+			ScopeType:   "final_output",
+			ScopeID:     uuidWithByte(33),
+			TaskType:    "composer_turn",
+			Status:      "running",
+			SemanticKey: "composer.final_output.source.composer_turn.active",
+		}},
+	}
+	resolver := fakeComposerSourceResolver{
+		object: db.AgentObjectIndex{
+			WorkspaceID: uuidWithByte(1),
+			ObjectType:  "media_node",
+			ObjectID:    uuidWithByte(33),
+			SemanticKey: "workspace.final_storyboard.v1",
+		},
+	}
+	enqueuer := &fakeComposerEnqueuer{}
+	tool := NewDispatchComposerNativeTool(runtime, enqueuer, resolver)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		ToolCallID:  "call_composer",
+	})
+
+	out, err := tool.InvokableRun(ctx, `{
+		"source_storyboard_ref":{"type":"media_node","key":"workspace.final_storyboard.v1"},
+		"instructions":"重复派发同一个 final output",
+		"template_key":"agent_remotion_code_v1"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.createdTasks) != 0 || len(runtime.appendedMessages) != 0 || len(enqueuer.tasks) != 0 {
+		t.Fatalf("active composer task should be reused without new writes: created=%#v messages=%#v enqueued=%#v", runtime.createdTasks, runtime.appendedMessages, enqueuer.tasks)
+	}
+	if !strings.Contains(out, "agent_task/composer.final_output.source.composer_turn.active") {
+		t.Fatalf("output should reference active task: %s", out)
+	}
+}
+
 type fakeComposerSourceResolver struct {
 	object db.AgentObjectIndex
 }
@@ -119,6 +166,7 @@ func (f fakeComposerSourceResolver) GetAgentObjectBySemanticKey(_ context.Contex
 type fakeComposeRuntime struct {
 	createdTasks     []db.AgentTask
 	appendedMessages []agentruntime.AppendMessageParams
+	activeTasks      []db.AgentTask
 }
 
 func (f *fakeComposeRuntime) GetOrCreateComposerThread(_ context.Context, workspaceID pgtype.UUID) (db.AgentThread, error) {
@@ -147,6 +195,16 @@ func (f *fakeComposeRuntime) AppendMessage(_ context.Context, params agentruntim
 		RawMessage:  params.RawMessage,
 		TaskID:      params.TaskID,
 	}, nil
+}
+
+func (f *fakeComposeRuntime) ListActiveAgentTasksByWorkspace(_ context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error) {
+	out := []db.AgentTask{}
+	for _, task := range f.activeTasks {
+		if task.WorkspaceID == workspaceID {
+			out = append(out, task)
+		}
+	}
+	return out, nil
 }
 
 type fakeComposerEnqueuer struct {

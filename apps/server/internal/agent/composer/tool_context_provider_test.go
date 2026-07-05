@@ -226,6 +226,51 @@ func TestCompositionContextIncludesPreviewImageFallbackWhenShotVideoMissing(t *t
 	}
 }
 
+func TestCompositionContextIncludesSourceUploadAsset(t *testing.T) {
+	workspaceID := uuidWithByte(1)
+	sourceNodeID := uuidWithByte(71)
+	sourceAssetID := uuidWithByte(72)
+	store := &fakeComposerStore{
+		nodes: []db.MediaNode{{
+			ID:          sourceNodeID,
+			WorkspaceID: workspaceID,
+			NodeType:    db.NodeTypeImage,
+			Title:       "product-suitcase.png",
+			Status:      db.NodeStatusSucceeded,
+			Source:      "agent",
+			AssetID:     sourceAssetID,
+		}},
+		assets: map[pgtype.UUID]db.MediaAsset{
+			sourceAssetID: {
+				ID:          sourceAssetID,
+				WorkspaceID: workspaceID,
+				Type:        "image",
+				Mime:        "image/png",
+				StorageUrl:  textValue("workspace/assets/product-suitcase.png"),
+				SizeBytes:   pgtype.Int8{Int64: 6930, Valid: true},
+				Metadata:    mustComposerJSON(t, map[string]any{"filename": "product-suitcase.png"}),
+			},
+		},
+	}
+
+	ctx, err := NewToolContextProvider(store).GetCompositionContext(context.Background(), agenttools.NativeRuntimeContext{WorkspaceID: workspaceID, ScopeID: sourceNodeID}, sourceNodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assets, _ := ctx["available_composition_assets"].([]map[string]any)
+	if len(assets) != 1 {
+		t.Fatalf("assets = %#v, want source upload asset", assets)
+	}
+	asset := assets[0]
+	if asset["role"] != "still" || asset["asset_id"] != uuidString(sourceAssetID) || asset["source_url"] != "workspace/assets/product-suitcase.png" {
+		t.Fatalf("source upload asset = %#v", asset)
+	}
+	if asset["node_id"] != uuidString(sourceNodeID) || asset["file_name"] != "product-suitcase.png" {
+		t.Fatalf("source upload identity = %#v", asset)
+	}
+}
+
 func TestCompositionContextIncludesRemotionTimelineInputs(t *testing.T) {
 	workspaceID := uuidWithByte(1)
 	wheelsShotID := uuidWithByte(21)

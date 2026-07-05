@@ -21,10 +21,13 @@ Load this skill when a user asks for a product ad, commerce short video, launch 
 - Convert the request into CreativeBrief, ProjectMemory, key elements, Storyboard, and AudioPlan rather than leaving decisions only in chat.
 - Keep the delivery promise visible: product, audience, platform, hook, selling point, proof, CTA, and final video shape.
 - Dispatch Craftsman for RenderPlan work, Reviewer for quality gates, and Composer for final assembly.
-- Route cost consciously: `no-seedance` uses Seedream stills plus `remotion_timeline_v1`; `mixed-cost` uses limited Seedance only for hero or complex-motion shots and Seedream stills for the rest; `premium` may use more Seedance but still packages the final video through `remotion_timeline_v1`.
+- Route cost consciously: `remotion_timeline_v1` is the stable baseline/fallback; `agent_remotion_code_v1` is available when the final video needs non-template packaging, stronger brand customization, or a visual system that the fixed renderer cannot express.
+- Prefer `agent_remotion_code_v1` when the user explicitly asks for non-template visuals, brand-custom motion, strong visual differentiation, or Agent-written Remotion code.
+- When the user does not explicitly ask for dynamic code, choose between `agent_remotion_code_v1` and `remotion_timeline_v1` using Storyboard complexity, brand expression needs, asset richness, delivery risk, cost, and repair budget.
+- Record route rationale, fallback policy, user acceptance, cost/time risk, and attempt budget in ProjectMemory or Composer dispatch instructions before choosing the dynamic code route.
 - For no-Seedance or low-cost requests, keep normal dynamic storyboard planning. no-Seedance does not reduce the storyboard to one shot.
-- For no-Seedance low-cost final route, plan multiple cue-matched still images and dispatch Composer with `template_key=remotion_timeline_v1` after stills, voiceover, and BGM are ready.
-- For mixed-cost route, explicitly name which shots deserve Seedance and why; all remaining cues should still have Seedream still coverage for the Remotion final timeline.
+- For no-Seedance low-cost final route, plan multiple cue-matched still images and dispatch Composer with `template_key=agent_remotion_code_v1` or `template_key=remotion_timeline_v1` after stills, voiceover, and BGM are ready.
+- For mixed-cost route, explicitly name which shots deserve Seedance and why; all remaining cues should still have Seedream still coverage for the Remotion final timeline. mixed-cost can combine Seedance hero clips, Seedream stills, and dynamic Remotion packaging.
 - Do not require every shot to become `motion_shot_video`; use per-shot motion video only when a reusable shot video artifact is explicitly valuable.
 - For 20-45 second commerce ads, 20-45 second commerce ads usually need 4-9 shots unless the user's requested format is intentionally a very short bumper.
 - Make each shot specific enough for downstream execution: each shot must have narrative_purpose, duration_sec, visual_intent, action_text, camera_intent, and narration.
@@ -45,7 +48,7 @@ Load this skill when a user asks for a product ad, commerce short video, launch 
 3. Use upsert_key_elements for product, person, location, prop, and style anchors.
 4. Use upsert_storyboard for scene and shot structure.
 5. Use upsert_audio_plan only after the voiceover and BGM strategy is ready for user confirmation or approval.
-6. Dispatch downstream Agents only after the relevant durable facts exist; for no-Seedance low-cost final videos, use `dispatch_composer(template_key=remotion_timeline_v1)` once cue-matched stills and required audio assets exist. For mixed-cost videos, dispatch Composer only after the approved Seedance hero clips, Seedream stills, voiceover, and BGM are ready.
+6. Dispatch downstream Agents only after the relevant durable facts exist; for non-template dynamic final videos, use `dispatch_composer(template_key=agent_remotion_code_v1)` and include staged asset expectations, renderer attempt validation, and fallback policy in instructions. For baseline final videos, use `dispatch_composer(template_key=remotion_timeline_v1)` once cue-matched stills and required audio assets exist. For mixed-cost videos, dispatch Composer only after the approved Seedance hero clips, Seedream stills, voiceover, and BGM are ready.
 
 ## Quality Bar
 

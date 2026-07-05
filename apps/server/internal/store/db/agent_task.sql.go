@@ -689,6 +689,7 @@ SET status = 'running',
     error_code = NULL,
     error_message = NULL
 WHERE id = $1
+  AND status = 'queued'
 RETURNING id, workspace_id, thread_id, role, scope_type, scope_id, task_type, status, attempt, max_attempts, input, output, error_code, error_message, created_at, started_at, completed_at, render_plan_id, semantic_key, display_name
 `
 

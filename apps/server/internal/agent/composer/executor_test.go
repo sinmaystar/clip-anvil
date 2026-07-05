@@ -81,6 +81,23 @@ func TestComposerExecutorAcceptsDispatchComposerInput(t *testing.T) {
 	}
 }
 
+func TestComposerExecutorSkipsAlreadyClaimedTask(t *testing.T) {
+	runtime := &fakeComposerRuntime{claimErr: agentruntime.ErrTaskAlreadyClaimed}
+	graph := &fakeComposerRunner{output: GraphOutput{Output: CompositionOutput{Status: "completed"}}}
+	executor := NewExecutor(ExecutorConfig{Runtime: runtime, Graph: graph})
+	task := composerTaskWithInput(t, CompositionInput{VideoNodeRefs: []string{"shot-01 shot video"}})
+
+	if err := executor.RunTask(context.Background(), RunTaskInput{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if graph.input.WorkspaceID.Valid {
+		t.Fatalf("graph must not run for already claimed task: %#v", graph.input)
+	}
+	if runtime.succeeded || len(runtime.appendedMessages) != 0 {
+		t.Fatalf("already claimed task must not persist output: succeeded=%v messages=%#v", runtime.succeeded, runtime.appendedMessages)
+	}
+}
+
 func TestComposerExecutorPersistsThreadMessages(t *testing.T) {
 	runtime := &fakeComposerRuntime{}
 	graph := &fakeComposerRunner{output: GraphOutput{
@@ -222,6 +239,7 @@ func composerTaskWithRawInput(t *testing.T, input any) db.AgentTask {
 }
 
 type fakeComposerRuntime struct {
+	claimErr         error
 	succeeded        bool
 	checkpointKey    string
 	checkpointValue  []byte
@@ -265,6 +283,9 @@ func traceAttribute(ctx context.Context, key string) string {
 }
 
 func (f *fakeComposerRuntime) MarkTaskRunning(context.Context, pgtype.UUID) (db.AgentTask, error) {
+	if f.claimErr != nil {
+		return db.AgentTask{}, f.claimErr
+	}
 	return db.AgentTask{}, nil
 }
 

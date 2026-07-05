@@ -3,6 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -25,6 +28,9 @@ func TestComposerNativeToolsRegisterExpectedNames(t *testing.T) {
 		NewCreateTimelinePlanNativeTool(nil),
 		NewUpdateTimelinePlanStatusNativeTool(nil),
 		NewRenderTimelineTemplateNativeTool(nil),
+		NewCreateRemotionRendererAttemptNativeTool(nil, nil, nil),
+		NewValidateRemotionRendererAttemptNativeTool(nil, nil, nil),
+		NewRenderAgentRemotionRendererNativeTool(nil, nil),
 		NewRunFFmpegCommandNativeTool(nil),
 		NewSubmitCompositionArtifactNativeTool(nil),
 	)
@@ -52,12 +58,254 @@ func TestComposerNativeToolsRegisterExpectedNames(t *testing.T) {
 		"create_timeline_plan",
 		"update_timeline_plan_status",
 		"render_timeline_template",
+		"create_remotion_renderer_attempt",
+		"validate_remotion_renderer_attempt",
+		"render_agent_remotion_renderer",
 		"run_ffmpeg_command",
 		"submit_composition_artifact",
 	} {
 		if !got[want] {
 			t.Fatalf("missing composer native tool %q in %#v", want, got)
 		}
+	}
+}
+
+func TestComposerTemplateSchemasExposeAgentRemotionCode(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{name: "create_timeline_plan", value: CreateTimelinePlanInput{}},
+		{name: "render_timeline_template", value: RenderTimelineTemplateInput{}},
+		{name: "dispatch_composer", value: DispatchComposerInput{}},
+	} {
+		field, ok := reflect.TypeOf(tc.value).FieldByName("TemplateKey")
+		if !ok {
+			t.Fatalf("%s missing TemplateKey field", tc.name)
+		}
+		if tag := field.Tag.Get("jsonschema"); !strings.Contains(tag, "enum=agent_remotion_code_v1") {
+			t.Fatalf("%s TemplateKey schema missing agent_remotion_code_v1: %s", tc.name, tag)
+		}
+	}
+	if err := validateCreateTimelinePlan(CreateTimelinePlanInput{
+		TemplateKey: "agent_remotion_code_v1",
+		Plan:        map[string]any{"route": "dynamic"},
+	}); err != nil {
+		t.Fatalf("create timeline should accept dynamic route: %v", err)
+	}
+	if err := validateDispatchComposerInput(DispatchComposerInput{
+		SourceStoryboardRef: ToolObjectRef{Type: "media_node", Key: "storyboard.current"},
+		Instructions:        "dynamic",
+		TemplateKey:         "agent_remotion_code_v1",
+	}); err != nil {
+		t.Fatalf("dispatch should accept dynamic route: %v", err)
+	}
+}
+
+func TestCreateRemotionRendererAttemptCreatesArtifactAttemptAndWorkspace(t *testing.T) {
+	store := newFakeRemotionRendererStore()
+	manager := fakeRemotionSandboxManager{sandboxID: "sandbox-1"}
+	client := newFakeRemotionSandboxClient()
+	tool := NewCreateRemotionRendererAttemptNativeTool(store, manager, client)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		TaskID:      uuidWithByte(2),
+		ScopeID:     uuidWithByte(3),
+	})
+	got, err := tool.InvokableRun(ctx, `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"attempt_no":1,
+		"route_policy":{"route":"agent_remotion_code_v1","rationale":"custom visual system"},
+		"summary":"dynamic product ad renderer",
+		"files":{"GeneratedComposition.tsx":"import {AbsoluteFill} from 'remotion'; export function AgentGeneratedComposition(){return <AbsoluteFill />;}"},
+		"props":{"output":{"width":1080,"height":1920,"fps":30,"duration_sec":6}}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("create_remotion_renderer_attempt failed: %s", got)
+	}
+	if store.createdArtifactParams.TimelinePlanID != uuidWithByte(4) {
+		t.Fatalf("artifact timeline id = %v, want %v", store.createdArtifactParams.TimelinePlanID, uuidWithByte(4))
+	}
+	if store.createdArtifactParams.CreatedByRole != "composer" || store.createdArtifactParams.CreatedByTaskID != uuidWithByte(2) {
+		t.Fatalf("artifact creator not recorded: %#v", store.createdArtifactParams)
+	}
+	if store.createdAttemptParams.AttemptNo != 1 || store.createdAttemptParams.WorkspaceDir == "" {
+		t.Fatalf("attempt not created with workspace dir: %#v", store.createdAttemptParams)
+	}
+	if store.createdAttemptParams.Status != "draft" {
+		t.Fatalf("attempt status = %q, want draft", store.createdAttemptParams.Status)
+	}
+	generatedPath := store.createdAttemptParams.WorkspaceDir + "/GeneratedComposition.tsx"
+	if _, ok := client.uploads[generatedPath]; !ok {
+		t.Fatalf("GeneratedComposition.tsx not uploaded to %s: %#v", generatedPath, client.uploads)
+	}
+	if !strings.Contains(got, `"renderer_artifact_id":"08000000-0000-0000-0000-000000000000"`) ||
+		!strings.Contains(got, `"renderer_attempt_id":"09000000-0000-0000-0000-000000000000"`) ||
+		!strings.Contains(got, `"workspace_dir":"`+store.createdAttemptParams.WorkspaceDir+`"`) {
+		t.Fatalf("result missing renderer ids/workspace dir: %s", got)
+	}
+}
+
+func TestValidateRemotionRendererAttemptPersistsValidatedSnapshot(t *testing.T) {
+	store := newFakeRemotionRendererStore()
+	store.currentAttempt = db.RemotionRendererAttempt{
+		ID:                 uuidWithByte(9),
+		WorkspaceID:        uuidWithByte(1),
+		TimelinePlanID:     uuidWithByte(4),
+		RendererArtifactID: uuidWithByte(8),
+		AttemptNo:          1,
+		Status:             "draft",
+		WorkspaceDir:       "/workspace/agent-remotion/08000000-0000-0000-0000-000000000000/1",
+	}
+	manager := fakeRemotionSandboxManager{sandboxID: "sandbox-1"}
+	client := newFakeRemotionSandboxClient()
+	client.files[store.currentAttempt.WorkspaceDir+"/GeneratedComposition.tsx"] = "import {AbsoluteFill} from 'remotion'; export function AgentGeneratedComposition(){return <AbsoluteFill />;}"
+	client.files[store.currentAttempt.WorkspaceDir+"/props.json"] = `{"output":{"width":1080,"height":1920,"fps":30,"duration_sec":6}}`
+	tool := NewValidateRemotionRendererAttemptNativeTool(store, manager, client)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{WorkspaceID: uuidWithByte(1)})
+
+	got, err := tool.InvokableRun(ctx, `{"renderer_attempt_id":"09000000-0000-0000-0000-000000000000"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("validate_remotion_renderer_attempt failed: %s", got)
+	}
+	if store.updatedAttemptSnapshotParams.Status != "validated" {
+		t.Fatalf("status = %q, want validated", store.updatedAttemptSnapshotParams.Status)
+	}
+	if !strings.Contains(got, `"passed":true`) || !strings.Contains(got, `"status":"validated"`) {
+		t.Fatalf("result missing passed/status: %s", got)
+	}
+}
+
+func TestValidateRemotionRendererAttemptReturnsValidationFailure(t *testing.T) {
+	store := newFakeRemotionRendererStore()
+	store.currentAttempt = db.RemotionRendererAttempt{
+		ID:                 uuidWithByte(9),
+		WorkspaceID:        uuidWithByte(1),
+		TimelinePlanID:     uuidWithByte(4),
+		RendererArtifactID: uuidWithByte(8),
+		AttemptNo:          1,
+		Status:             "draft",
+		WorkspaceDir:       "/workspace/agent-remotion/08000000-0000-0000-0000-000000000000/1",
+	}
+	manager := fakeRemotionSandboxManager{sandboxID: "sandbox-1"}
+	client := newFakeRemotionSandboxClient()
+	client.files[store.currentAttempt.WorkspaceDir+"/GeneratedComposition.tsx"] = "import fs from 'fs'; export function AgentGeneratedComposition(){return null;}"
+	client.files[store.currentAttempt.WorkspaceDir+"/props.json"] = `{"output":{"width":1080,"height":1920,"fps":30,"duration_sec":6}}`
+	tool := NewValidateRemotionRendererAttemptNativeTool(store, manager, client)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{WorkspaceID: uuidWithByte(1)})
+
+	got, err := tool.InvokableRun(ctx, `{"renderer_attempt_id":"09000000-0000-0000-0000-000000000000"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("validation failure should be structured, got natural tool error: %s", got)
+	}
+	if store.updatedAttemptSnapshotParams.Status != "validation_failed" {
+		t.Fatalf("status = %q, want validation_failed", store.updatedAttemptSnapshotParams.Status)
+	}
+	if !strings.Contains(got, `"passed":false`) || !strings.Contains(got, "forbidden_import") {
+		t.Fatalf("result missing validation issue: %s", got)
+	}
+}
+
+func TestRenderAgentRemotionRendererRejectsUnvalidatedAttempt(t *testing.T) {
+	store := newFakeRemotionRendererStore()
+	store.currentAttempt = db.RemotionRendererAttempt{
+		ID:                 uuidWithByte(9),
+		WorkspaceID:        uuidWithByte(1),
+		TimelinePlanID:     uuidWithByte(4),
+		RendererArtifactID: uuidWithByte(8),
+		AttemptNo:          1,
+		Status:             "draft",
+		WorkspaceDir:       "/workspace/agent-remotion/08000000-0000-0000-0000-000000000000/1",
+	}
+	tool := NewRenderAgentRemotionRendererNativeTool(store, &fakeAgentRemotionRenderer{})
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{WorkspaceID: uuidWithByte(1), ScopeID: uuidWithByte(3)})
+
+	got, err := tool.InvokableRun(ctx, `{"renderer_attempt_id":"09000000-0000-0000-0000-000000000000"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "必须先 validate") {
+		t.Fatalf("expected validation gate error, got: %s", got)
+	}
+}
+
+func TestRenderAgentRemotionRendererPersistsRenderResult(t *testing.T) {
+	store := newFakeRemotionRendererStore()
+	store.currentAttempt = db.RemotionRendererAttempt{
+		ID:                 uuidWithByte(9),
+		WorkspaceID:        uuidWithByte(1),
+		TimelinePlanID:     uuidWithByte(4),
+		RendererArtifactID: uuidWithByte(8),
+		AttemptNo:          1,
+		Status:             "validated",
+		WorkspaceDir:       "/workspace/agent-remotion/08000000-0000-0000-0000-000000000000/1",
+	}
+	renderer := &fakeAgentRemotionRenderer{
+		result: sandbox.SandboxJobResult{
+			Job: db.SandboxJob{
+				ID:     uuidWithByte(6),
+				Output: []byte(`{"output_path":"/workspace/output/custom.mp4","renderer_engine":"remotion","video_stream":true}`),
+			},
+			MIME: "video/mp4",
+			Size: 123,
+		},
+	}
+	tool := NewRenderAgentRemotionRendererNativeTool(store, renderer)
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{WorkspaceID: uuidWithByte(1), ScopeID: uuidWithByte(3)})
+
+	got, err := tool.InvokableRun(ctx, `{
+		"renderer_attempt_id":"09000000-0000-0000-0000-000000000000",
+		"output_path":"/workspace/output/custom.mp4"
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "工具调用失败") {
+		t.Fatalf("render_agent_remotion_renderer failed: %s", got)
+	}
+	if renderer.input.AttemptWorkspaceDir != store.currentAttempt.WorkspaceDir || renderer.input.OutputPath != "/workspace/output/custom.mp4" {
+		t.Fatalf("unexpected render input: %#v", renderer.input)
+	}
+	if store.updatedRenderParams.Status != "rendered" || store.updatedRenderParams.SandboxJobID != uuidWithByte(6) {
+		t.Fatalf("render result not persisted: %#v", store.updatedRenderParams)
+	}
+	if store.setCurrentParams.CurrentAttemptID != uuidWithByte(9) || store.setCurrentParams.Status != "rendered" {
+		t.Fatalf("current attempt not set: %#v", store.setCurrentParams)
+	}
+	if !strings.Contains(got, `"output_path":"/workspace/output/custom.mp4"`) ||
+		!strings.Contains(got, `"sandbox_job_id":"06000000-0000-0000-0000-000000000000"`) ||
+		!strings.Contains(got, `"result_for_timeline_plan"`) {
+		t.Fatalf("result missing render metadata: %s", got)
+	}
+}
+
+func TestRenderTimelineTemplateGuidesAgentRemotionToDedicatedTool(t *testing.T) {
+	tool := NewRenderTimelineTemplateNativeTool(NewSandboxTimelineTemplateRenderer(&fakeCompositionSandbox{}))
+	ctx := WithNativeRuntimeContext(context.Background(), NativeRuntimeContext{
+		WorkspaceID: uuidWithByte(1),
+		TaskID:      uuidWithByte(2),
+		ScopeType:   "final_output",
+		ScopeID:     uuidWithByte(3),
+	})
+	got, err := tool.InvokableRun(ctx, `{
+		"timeline_plan_id":"04000000-0000-0000-0000-000000000000",
+		"template_key":"agent_remotion_code_v1",
+		"plan":{"route":"dynamic"}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "render_agent_remotion_renderer") {
+		t.Fatalf("expected dedicated tool guidance, got: %s", got)
 	}
 }
 
@@ -470,6 +718,186 @@ func (f *fakeCompositionArtifactStore) UpdateAudioPlanTimelinePlan(_ context.Con
 type fakeCompositionOutputUploader struct {
 	input  sandbox.UploadCompositionOutputInput
 	result sandbox.SandboxJobResult
+}
+
+type fakeRemotionSandboxManager struct {
+	sandboxID string
+}
+
+func (f fakeRemotionSandboxManager) EnsureSandbox(context.Context, pgtype.UUID) (sandbox.WorkspaceSandbox, error) {
+	return sandbox.WorkspaceSandbox{SandboxID: f.sandboxID, VolumeName: "volume-1"}, nil
+}
+
+type fakeRemotionSandboxClient struct {
+	uploads map[string]string
+	files   map[string]string
+}
+
+func newFakeRemotionSandboxClient() *fakeRemotionSandboxClient {
+	return &fakeRemotionSandboxClient{
+		uploads: map[string]string{},
+		files:   map[string]string{},
+	}
+}
+
+func (f *fakeRemotionSandboxClient) Create(context.Context, sandbox.CreateRequest) (sandbox.SandboxInfo, error) {
+	return sandbox.SandboxInfo{}, nil
+}
+
+func (f *fakeRemotionSandboxClient) Get(context.Context, string) (sandbox.SandboxInfo, error) {
+	return sandbox.SandboxInfo{}, nil
+}
+
+func (f *fakeRemotionSandboxClient) Ping(context.Context, string) error { return nil }
+
+func (f *fakeRemotionSandboxClient) Exec(_ context.Context, _ string, req sandbox.ExecRequest) (sandbox.ExecResult, error) {
+	if strings.HasPrefix(req.Command, "find ") {
+		paths := make([]string, 0, len(f.files))
+		for path := range f.files {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		return sandbox.ExecResult{Stdout: strings.Join(paths, "\n"), ExitCode: 0}, nil
+	}
+	return sandbox.ExecResult{}, nil
+}
+
+func (f *fakeRemotionSandboxClient) Upload(_ context.Context, _ string, path string, r io.Reader) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	f.uploads[path] = string(data)
+	f.files[path] = string(data)
+	return nil
+}
+
+func (f *fakeRemotionSandboxClient) Download(_ context.Context, _ string, path string) (io.ReadCloser, sandbox.FileInfo, error) {
+	content, ok := f.files[path]
+	if !ok {
+		return nil, sandbox.FileInfo{}, io.ErrUnexpectedEOF
+	}
+	return io.NopCloser(strings.NewReader(content)), sandbox.FileInfo{Path: path, SizeBytes: int64(len(content)), Mime: "text/plain"}, nil
+}
+
+func (f *fakeRemotionSandboxClient) Delete(context.Context, string) error { return nil }
+
+type fakeRemotionRendererStore struct {
+	timelinePlan                 db.TimelinePlan
+	createdArtifactParams        db.CreateRemotionRendererArtifactParams
+	createdAttemptParams         db.CreateRemotionRendererAttemptParams
+	updatedAttemptSnapshotParams db.UpdateRemotionRendererAttemptSnapshotParams
+	updatedRenderParams          db.UpdateRemotionRendererAttemptRenderResultParams
+	setCurrentParams             db.SetCurrentRemotionRendererAttemptParams
+	currentAttempt               db.RemotionRendererAttempt
+}
+
+func newFakeRemotionRendererStore() *fakeRemotionRendererStore {
+	return &fakeRemotionRendererStore{
+		timelinePlan: db.TimelinePlan{
+			ID:          uuidWithByte(4),
+			WorkspaceID: uuidWithByte(1),
+			Status:      "draft",
+			TemplateKey: "agent_remotion_code_v1",
+		},
+	}
+}
+
+func (f *fakeRemotionRendererStore) CreateTimelinePlan(context.Context, db.CreateTimelinePlanParams) (db.TimelinePlan, error) {
+	return db.TimelinePlan{}, nil
+}
+
+func (f *fakeRemotionRendererStore) GetTimelinePlan(context.Context, pgtype.UUID) (db.TimelinePlan, error) {
+	return f.timelinePlan, nil
+}
+
+func (f *fakeRemotionRendererStore) UpdateTimelinePlanStatus(context.Context, db.UpdateTimelinePlanStatusParams) (db.TimelinePlan, error) {
+	return db.TimelinePlan{}, nil
+}
+
+func (f *fakeRemotionRendererStore) CreateRemotionRendererArtifact(_ context.Context, params db.CreateRemotionRendererArtifactParams) (db.RemotionRendererArtifact, error) {
+	f.createdArtifactParams = params
+	return db.RemotionRendererArtifact{
+		ID:              uuidWithByte(8),
+		WorkspaceID:     params.WorkspaceID,
+		TimelinePlanID:  params.TimelinePlanID,
+		Status:          params.Status,
+		RoutePolicy:     params.RoutePolicy,
+		Summary:         params.Summary,
+		CreatedByRole:   params.CreatedByRole,
+		CreatedByTaskID: params.CreatedByTaskID,
+	}, nil
+}
+
+func (f *fakeRemotionRendererStore) GetRemotionRendererArtifact(context.Context, pgtype.UUID) (db.RemotionRendererArtifact, error) {
+	return db.RemotionRendererArtifact{ID: uuidWithByte(8), WorkspaceID: uuidWithByte(1), TimelinePlanID: uuidWithByte(4), Status: "draft"}, nil
+}
+
+func (f *fakeRemotionRendererStore) CreateRemotionRendererAttempt(_ context.Context, params db.CreateRemotionRendererAttemptParams) (db.RemotionRendererAttempt, error) {
+	f.createdAttemptParams = params
+	return db.RemotionRendererAttempt{
+		ID:                 uuidWithByte(9),
+		WorkspaceID:        params.WorkspaceID,
+		TimelinePlanID:     params.TimelinePlanID,
+		RendererArtifactID: params.RendererArtifactID,
+		AttemptNo:          params.AttemptNo,
+		Status:             params.Status,
+		SourceSnapshot:     params.SourceSnapshot,
+		PropsJson:          params.PropsJson,
+		SourceHash:         params.SourceHash,
+		PropsHash:          params.PropsHash,
+		WorkspaceDir:       params.WorkspaceDir,
+		ValidationResult:   params.ValidationResult,
+		CompileResult:      params.CompileResult,
+		RenderResult:       params.RenderResult,
+		QaResult:           params.QaResult,
+	}, nil
+}
+
+func (f *fakeRemotionRendererStore) GetRemotionRendererAttempt(context.Context, pgtype.UUID) (db.RemotionRendererAttempt, error) {
+	return f.currentAttempt, nil
+}
+
+func (f *fakeRemotionRendererStore) UpdateRemotionRendererAttemptSnapshot(_ context.Context, params db.UpdateRemotionRendererAttemptSnapshotParams) (db.RemotionRendererAttempt, error) {
+	f.updatedAttemptSnapshotParams = params
+	f.currentAttempt.Status = params.Status
+	f.currentAttempt.SourceSnapshot = params.SourceSnapshot
+	f.currentAttempt.PropsJson = params.PropsJson
+	f.currentAttempt.SourceHash = params.SourceHash
+	f.currentAttempt.PropsHash = params.PropsHash
+	f.currentAttempt.WorkspaceDir = params.WorkspaceDir
+	f.currentAttempt.ValidationResult = params.ValidationResult
+	f.currentAttempt.CompileResult = params.CompileResult
+	return f.currentAttempt, nil
+}
+
+func (f *fakeRemotionRendererStore) UpdateRemotionRendererAttemptRenderResult(_ context.Context, params db.UpdateRemotionRendererAttemptRenderResultParams) (db.RemotionRendererAttempt, error) {
+	f.updatedRenderParams = params
+	f.currentAttempt.Status = params.Status
+	f.currentAttempt.RenderResult = params.RenderResult
+	f.currentAttempt.SandboxJobID = params.SandboxJobID
+	return f.currentAttempt, nil
+}
+
+func (f *fakeRemotionRendererStore) SetCurrentRemotionRendererAttempt(_ context.Context, params db.SetCurrentRemotionRendererAttemptParams) (db.RemotionRendererArtifact, error) {
+	f.setCurrentParams = params
+	return db.RemotionRendererArtifact{
+		ID:               params.ID,
+		WorkspaceID:      f.currentAttempt.WorkspaceID,
+		TimelinePlanID:   f.currentAttempt.TimelinePlanID,
+		CurrentAttemptID: params.CurrentAttemptID,
+		Status:           params.Status,
+	}, nil
+}
+
+type fakeAgentRemotionRenderer struct {
+	input  sandbox.RenderAgentRemotionCodeInput
+	result sandbox.SandboxJobResult
+}
+
+func (f *fakeAgentRemotionRenderer) RenderAgentRemotionCode(_ context.Context, input sandbox.RenderAgentRemotionCodeInput) (sandbox.SandboxJobResult, error) {
+	f.input = input
+	return f.result, nil
 }
 
 type fakeCompositionTimelineStore struct {

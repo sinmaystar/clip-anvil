@@ -748,6 +748,43 @@ type ReferenceVideoAnalysis struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RemotionRendererArtifact struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	TimelinePlanID   pgtype.UUID        `json:"timeline_plan_id"`
+	CurrentAttemptID pgtype.UUID        `json:"current_attempt_id"`
+	Status           string             `json:"status"`
+	RoutePolicy      []byte             `json:"route_policy"`
+	Summary          string             `json:"summary"`
+	CreatedByRole    string             `json:"created_by_role"`
+	CreatedByTaskID  pgtype.UUID        `json:"created_by_task_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RemotionRendererAttempt struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	TimelinePlanID      pgtype.UUID        `json:"timeline_plan_id"`
+	RendererArtifactID  pgtype.UUID        `json:"renderer_artifact_id"`
+	AttemptNo           int32              `json:"attempt_no"`
+	Status              string             `json:"status"`
+	SourceSnapshot      []byte             `json:"source_snapshot"`
+	PropsJson           []byte             `json:"props_json"`
+	SourceHash          string             `json:"source_hash"`
+	PropsHash           string             `json:"props_hash"`
+	WorkspaceDir        string             `json:"workspace_dir"`
+	ValidationResult    []byte             `json:"validation_result"`
+	CompileResult       []byte             `json:"compile_result"`
+	RenderResult        []byte             `json:"render_result"`
+	QaResult            []byte             `json:"qa_result"`
+	SandboxJobID        pgtype.UUID        `json:"sandbox_job_id"`
+	RepairFromAttemptID pgtype.UUID        `json:"repair_from_attempt_id"`
+	RepairNotes         string             `json:"repair_notes"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RenderPlan struct {
 	ID                     pgtype.UUID        `json:"id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`

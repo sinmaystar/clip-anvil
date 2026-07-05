@@ -177,6 +177,32 @@ func TestRuntimeContextLoaderLoadsProjectFactsForFullCompact(t *testing.T) {
 	}
 }
 
+func TestProducerImageAttachmentFromWorkspaceUploadNode(t *testing.T) {
+	node := db.MediaNode{
+		ID:            uuidWithByte(11),
+		WorkspaceID:   uuidWithByte(1),
+		NodeType:      db.NodeTypeImage,
+		Title:         "product-suitcase.png",
+		Source:        "agent",
+		OperationType: "upload",
+	}
+	asset := db.MediaAsset{
+		ID:        uuidWithByte(12),
+		Mime:      "image/png",
+		Metadata:  []byte(`{"filename":"asset-fallback.png"}`),
+		SizeBytes: pgtype.Int8{Int64: 6930, Valid: true},
+	}
+
+	attachment := producerImageAttachmentFromNodeAsset(node, asset, "data:image/png;base64,AAAA", "image/png")
+
+	if attachment.NodeID != uuidString(node.ID) || attachment.AssetID != uuidString(asset.ID) {
+		t.Fatalf("attachment ids = %#v", attachment)
+	}
+	if attachment.Name != "product-suitcase.png" || attachment.URL == "" || attachment.Mime != "image/png" {
+		t.Fatalf("attachment = %#v", attachment)
+	}
+}
+
 type fakeProducerContextRuntime struct {
 	messages []db.AgentMessage
 	afterSeq int64

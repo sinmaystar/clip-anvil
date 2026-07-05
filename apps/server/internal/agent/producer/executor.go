@@ -131,6 +131,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 	}
 	runningTask, err := e.runtime.MarkTaskRunning(ctx, input.TaskID)
 	if err != nil {
+		if errors.Is(err, agentruntime.ErrTaskAlreadyClaimed) {
+			return nil
+		}
 		return err
 	}
 	triggerPayload := applyProducerTaskTriggerInput(&input, runningTask.Input)

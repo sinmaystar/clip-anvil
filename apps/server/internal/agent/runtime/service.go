@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	ErrInvalidConfig  = errors.New("invalid agent runtime config")
-	ErrInvalidRequest = errors.New("invalid agent runtime request")
+	ErrInvalidConfig      = errors.New("invalid agent runtime config")
+	ErrInvalidRequest     = errors.New("invalid agent runtime request")
+	ErrTaskAlreadyClaimed = errors.New("agent task is not queued")
 )
 
 type txBeginner interface {
@@ -527,7 +528,11 @@ func (s *Service) MarkTaskRunning(ctx context.Context, taskID pgtype.UUID) (db.A
 	if !taskID.Valid {
 		return db.AgentTask{}, ErrInvalidRequest
 	}
-	return s.queries.MarkAgentTaskRunning(ctx, taskID)
+	task, err := s.queries.MarkAgentTaskRunning(ctx, taskID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.AgentTask{}, ErrTaskAlreadyClaimed
+	}
+	return task, err
 }
 
 func (s *Service) MarkTaskSucceeded(ctx context.Context, taskID pgtype.UUID, output []byte) (db.AgentTask, error) {

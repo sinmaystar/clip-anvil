@@ -37,6 +37,85 @@ func TestDeterministicResponderUsesLatestUserText(t *testing.T) {
 	}
 }
 
+func TestDeterministicResponderDispatchesDynamicRemotionComposerForUploadedMedia(t *testing.T) {
+	responder := DeterministicResponder{}
+
+	out, err := responder.Respond(context.Background(), ProducerContext{
+		LatestUserText: "用我上传的商品素材生成一个非固定模板视频，请动态编写 Remotion 渲染代码。",
+		ImageAttachments: map[string]ProducerImageAttachment{
+			"product.png": {
+				NodeID: "21000000-0000-0000-0000-000000000000",
+				Name:   "product.png",
+				Mime:   "image/png",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ModelMessage == nil || len(out.ModelMessage.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %#v, want one dispatch_composer call", out.ModelMessage)
+	}
+	call := out.ModelMessage.ToolCalls[0].Function
+	if call.Name != "dispatch_composer" {
+		t.Fatalf("tool = %q, want dispatch_composer", call.Name)
+	}
+	for _, want := range []string{
+		`"source_storyboard_node_id":"21000000-0000-0000-0000-000000000000"`,
+		`"template_key":"agent_remotion_code_v1"`,
+		"动态 Remotion",
+	} {
+		if !strings.Contains(call.Arguments, want) {
+			t.Fatalf("dispatch args missing %q: %s", want, call.Arguments)
+		}
+	}
+	if out.Metadata["route"] != "agent_remotion_code_v1" {
+		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+}
+
+func TestDeterministicResponderStopsAfterDynamicComposerDispatchResult(t *testing.T) {
+	responder := DeterministicResponder{}
+
+	out, err := responder.Respond(context.Background(), ProducerContext{
+		LatestUserText: "动态编写 Remotion 渲染代码",
+		SameTurnMessages: []ProducerSameTurnMessage{
+			{Role: "assistant", MessageType: "tool_call", ToolName: "dispatch_composer"},
+			{Role: "tool", MessageType: "tool_result", ToolName: "dispatch_composer", Content: `{"status":"queued"}`},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ModelMessage != nil && len(out.ModelMessage.ToolCalls) > 0 {
+		t.Fatalf("dispatch result should stop same-turn tool calls: %#v", out.ModelMessage.ToolCalls)
+	}
+	if out.Metadata["composer_dispatched"] != true {
+		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+}
+
+func TestDeterministicResponderDoesNotDispatchComposerForCompositionSignal(t *testing.T) {
+	responder := DeterministicResponder{}
+
+	out, err := responder.Respond(context.Background(), ProducerContext{
+		LatestUserText:     "动态编写 Remotion 渲染代码",
+		RuntimeTriggerText: "signal_ref=producer_pending_signal/signal.final_output.ws.composition_blocked.x type=composition_blocked",
+		ImageAttachments: map[string]ProducerImageAttachment{
+			"product.png": {NodeID: "21000000-0000-0000-0000-000000000000", Name: "product.png", Mime: "image/png"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ModelMessage != nil && len(out.ModelMessage.ToolCalls) > 0 {
+		t.Fatalf("composition signal must not redispatch composer: %#v", out.ModelMessage.ToolCalls)
+	}
+	if out.Metadata["signal"] != "composition_status" {
+		t.Fatalf("metadata = %#v", out.Metadata)
+	}
+}
+
 func TestGraphRunReturnsAssistantText(t *testing.T) {
 	graph, err := NewGraph(GraphConfig{
 		Loader: fakeContextLoader{
