@@ -367,6 +367,61 @@ func TestJobServiceRenderRemotionTimelineRunsRendererAndKeepsOutput(t *testing.T
 	}
 }
 
+func TestJobServiceRenderAgentRemotionCodeRunsRuntimeAndKeepsOutput(t *testing.T) {
+	repo := newFakeSandboxJobRepository()
+	client := &jobServiceFakeClient{
+		result: ExecResult{ExitCode: 0, Stdout: "agent rendered", DurationMS: 150},
+		inspect: FileInfo{
+			Path:      "/workspace/output/final-agent.mp4",
+			SizeBytes: 987,
+			Mime:      "video/mp4",
+		},
+		ffprobeStdout: `{"streams":[{"codec_type":"video","width":1080,"height":1920},{"codec_type":"audio"}],"format":{"duration":"6.250000"}}`,
+	}
+	manager := NewManager(client, testSandboxConfig(), newFakeBindingStore(Binding{
+		Status:     StatusRunning,
+		SandboxID:  "sandbox-1",
+		VolumeName: "sandbox-ws-aabbccdd-0000-0000-0000-000000000000",
+	}))
+	service := NewJobService(manager, client, repo, nil)
+
+	result, err := service.RenderAgentRemotionCode(context.Background(), RenderAgentRemotionCodeInput{
+		WorkspaceID:         testWorkspaceID(),
+		TargetNodeID:        testNodeID(),
+		TimelinePlanID:      pgtype.UUID{Bytes: [16]byte{0x41}, Valid: true},
+		RendererArtifactID:  pgtype.UUID{Bytes: [16]byte{0x42}, Valid: true},
+		RendererAttemptID:   pgtype.UUID{Bytes: [16]byte{0x43}, Valid: true},
+		AttemptWorkspaceDir: "/workspace/agent-remotion/artifact-1/1",
+		OutputPath:          "/workspace/output/final-agent.mp4",
+	})
+	if err != nil {
+		t.Fatalf("RenderAgentRemotionCode error = %v", err)
+	}
+	if result.Job.Status != db.JobStatusSucceeded || result.Job.OperationType != "render_agent_remotion_code" || result.MIME != "video/mp4" {
+		t.Fatalf("result = %#v", result)
+	}
+	joined := strings.Join(client.commands, "\n")
+	for _, want := range []string{"remotion-agent-runtime", "render.mjs", "--workdir", "/workspace/agent-remotion/artifact-1/1", "/workspace/output/final-agent.mp4"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected command containing %q, got %q", want, joined)
+		}
+	}
+	if !strings.Contains(string(result.Job.Output), "duration_sec") || !strings.Contains(string(result.Job.Output), "video_stream") {
+		t.Fatalf("output metadata missing probe data: %s", result.Job.Output)
+	}
+}
+
+func TestJobServiceRenderAgentRemotionCodeRejectsInvalidOutputPath(t *testing.T) {
+	service := NewJobService(nil, nil, nil, nil)
+	_, err := service.RenderAgentRemotionCode(context.Background(), RenderAgentRemotionCodeInput{
+		AttemptWorkspaceDir: "/workspace/agent-remotion/artifact-1/1",
+		OutputPath:          "/workspace/assets/final.mp4",
+	})
+	if err == nil {
+		t.Fatal("expected invalid output path to fail")
+	}
+}
+
 func TestJobServiceStageMediaInputsDownloadsToWorkspaceInput(t *testing.T) {
 	repo := newFakeSandboxJobRepository()
 	client := &jobServiceFakeClient{result: ExecResult{ExitCode: 0, Stdout: "done", DurationMS: 12}}
@@ -620,11 +675,12 @@ func (r *fakeSandboxJobRepository) MarkSandboxJobFailed(ctx context.Context, arg
 }
 
 type jobServiceFakeClient struct {
-	result       ExecResult
-	inspect      FileInfo
-	commands     []string
-	uploads      []string
-	uploadBodies map[string]string
+	result        ExecResult
+	inspect       FileInfo
+	ffprobeStdout string
+	commands      []string
+	uploads       []string
+	uploadBodies  map[string]string
 }
 
 func (f *jobServiceFakeClient) Create(ctx context.Context, req CreateRequest) (SandboxInfo, error) {
@@ -641,6 +697,11 @@ func (f *jobServiceFakeClient) Ping(ctx context.Context, sandboxID string) error
 
 func (f *jobServiceFakeClient) Exec(ctx context.Context, sandboxID string, req ExecRequest) (ExecResult, error) {
 	f.commands = append(f.commands, req.Command)
+	if strings.Contains(req.Command, "ffprobe") {
+		if f.ffprobeStdout != "" {
+			return ExecResult{ExitCode: 0, Stdout: f.ffprobeStdout}, nil
+		}
+	}
 	if strings.Contains(req.Command, "stat -c%s") {
 		if strings.Contains(req.Command, "thumbnail-") {
 			return ExecResult{ExitCode: 0, Stdout: "123\nimage/png"}, nil

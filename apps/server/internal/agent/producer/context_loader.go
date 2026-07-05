@@ -55,7 +55,7 @@ func (l RuntimeContextLoader) LoadProducerContext(ctx context.Context, input Pro
 	if err != nil {
 		return ProducerContext{}, err
 	}
-	imageAttachments := l.loadImageAttachments(ctx, messages)
+	imageAttachments := l.loadImageAttachments(ctx, input.WorkspaceID, messages)
 	projectFacts, projectMediaCards, err := l.loadProjectFacts(ctx, input.WorkspaceID)
 	if err != nil {
 		return ProducerContext{}, err
@@ -113,7 +113,7 @@ func (l RuntimeContextLoader) loadProjectFacts(ctx context.Context, workspaceID 
 	return l.Facts.LoadProducerFacts(ctx, workspaceID)
 }
 
-func (l RuntimeContextLoader) loadImageAttachments(ctx context.Context, messages []db.AgentMessage) map[string]ProducerImageAttachment {
+func (l RuntimeContextLoader) loadImageAttachments(ctx context.Context, workspaceID pgtype.UUID, messages []db.AgentMessage) map[string]ProducerImageAttachment {
 	out := map[string]ProducerImageAttachment{}
 	if l.Queries == nil {
 		return out
@@ -148,7 +148,50 @@ func (l RuntimeContextLoader) loadImageAttachments(ctx context.Context, messages
 			}
 		}
 	}
+	if len(out) == 0 && workspaceID.Valid {
+		for key, attachment := range l.loadWorkspaceUploadImageAttachments(ctx, workspaceID) {
+			out[key] = attachment
+		}
+	}
 	return out
+}
+
+func (l RuntimeContextLoader) loadWorkspaceUploadImageAttachments(ctx context.Context, workspaceID pgtype.UUID) map[string]ProducerImageAttachment {
+	out := map[string]ProducerImageAttachment{}
+	nodes, err := l.Queries.ListMediaNodesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return out
+	}
+	for _, node := range nodes {
+		if node.WorkspaceID != workspaceID ||
+			node.NodeType != db.NodeTypeImage ||
+			node.Source != "agent" ||
+			node.OperationType != "upload" ||
+			!node.AssetID.Valid {
+			continue
+		}
+		asset, err := l.Queries.GetMediaAssetByID(ctx, node.AssetID)
+		if err != nil || !asset.StorageUrl.Valid || strings.TrimSpace(asset.StorageUrl.String) == "" {
+			continue
+		}
+		imageURL, mime, ok := l.modelImageReference(ctx, asset)
+		if !ok {
+			continue
+		}
+		attachment := producerImageAttachmentFromNodeAsset(node, asset, imageURL, mime)
+		out[attachment.AssetID] = attachment
+	}
+	return out
+}
+
+func producerImageAttachmentFromNodeAsset(node db.MediaNode, asset db.MediaAsset, imageURL string, mime string) ProducerImageAttachment {
+	return ProducerImageAttachment{
+		AssetID: uuidString(asset.ID),
+		NodeID:  uuidString(node.ID),
+		Name:    strings.TrimSpace(firstNonEmpty(node.Title, stringFromAny(jsonObject(asset.Metadata)["filename"]))),
+		URL:     imageURL,
+		Mime:    strings.TrimSpace(mime),
+	}
 }
 
 func (l RuntimeContextLoader) modelImageReference(ctx context.Context, asset db.MediaAsset) (string, string, bool) {

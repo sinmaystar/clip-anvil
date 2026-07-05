@@ -50,6 +50,11 @@ func NewVolcengineModelResponder(cfg VolcengineModelResponderConfig) VolcengineM
 }
 
 func (r VolcengineModelResponder) Respond(ctx context.Context, composerContext Context) (ComposerTurnOutput, error) {
+	if shouldUseStableAgentRemotionFallback(composerContext) {
+		if out, ok, err := deterministicAgentRemotionComposerTurn(composerContext); ok || err != nil {
+			return out, err
+		}
+	}
 	if out, ok, err := deterministicTemplateComposerTurn(composerContext); ok || err != nil {
 		return out, err
 	}
@@ -159,6 +164,29 @@ func (r VolcengineModelResponder) Respond(ctx context.Context, composerContext C
 		Metadata:      metadata,
 		ModelMessage:  final,
 	}, nil
+}
+
+func shouldUseStableAgentRemotionFallback(composerContext Context) bool {
+	if strings.TrimSpace(composerContext.Input.Input.TemplateKey) != "agent_remotion_code_v1" {
+		return false
+	}
+	failure := composerToolFailureContent(composerContext, "create_remotion_renderer_attempt")
+	if failure != "" {
+		lower := strings.ToLower(failure)
+		return strings.Contains(lower, "参数不是合法 json") ||
+			strings.Contains(lower, "invalid json") ||
+			strings.Contains(lower, "unexpected end of json input")
+	}
+	for _, toolName := range []string{"run_ffmpeg_command", "read_file"} {
+		failure = composerToolFailureContent(composerContext, toolName)
+		lower := strings.ToLower(failure)
+		if strings.Contains(lower, "unrecognized option 'la'") ||
+			strings.Contains(lower, "path must be inside /workspace") ||
+			strings.Contains(lower, "renderer file must be .ts, .tsx, or .json") {
+			return true
+		}
+	}
+	return false
 }
 
 func deterministicTemplateComposerTurn(composerContext Context) (ComposerTurnOutput, bool, error) {
@@ -323,6 +351,19 @@ func composerToolResultMap(composerContext Context, name string) (map[string]any
 		return out, nil
 	}
 	return nil, fmt.Errorf("%s result not found", name)
+}
+
+func composerToolFailureContent(composerContext Context, name string) string {
+	for i := len(composerContext.SameTurnMessages) - 1; i >= 0; i-- {
+		message := composerContext.SameTurnMessages[i]
+		if message.Role != "tool" || strings.TrimSpace(message.ToolName) != name {
+			continue
+		}
+		if strings.Contains(message.Content, "工具调用失败") {
+			return strings.TrimSpace(message.Content)
+		}
+	}
+	return ""
 }
 
 func composerAssetsForStaging(compositionContext map[string]any) []map[string]any {
@@ -956,6 +997,9 @@ func NewDeterministicResponder() DeterministicResponder {
 }
 
 func (DeterministicResponder) Respond(_ context.Context, composerContext Context) (ComposerTurnOutput, error) {
+	if out, ok, err := deterministicAgentRemotionComposerTurn(composerContext); ok || err != nil {
+		return out, err
+	}
 	text := "Composer Agent 已接入 native tool loop；当前非 real 模式不会沿用旧线性合成逻辑自动伪造成片。"
 	return ComposerTurnOutput{
 		AssistantText: text,
@@ -969,6 +1013,311 @@ func (DeterministicResponder) Respond(_ context.Context, composerContext Context
 			Content: strings.TrimSpace(text + "\n\nContext: " + composerContext.Summary),
 		},
 	}, nil
+}
+
+func deterministicAgentRemotionComposerTurn(composerContext Context) (ComposerTurnOutput, bool, error) {
+	if strings.TrimSpace(composerContext.Input.Input.TemplateKey) != "agent_remotion_code_v1" {
+		return ComposerTurnOutput{}, false, nil
+	}
+	if !hasComposerToolResult(composerContext, "get_composition_context") {
+		return deterministicComposerToolCall("get_composition_context", map[string]any{
+			"source_storyboard_node_id": strings.TrimSpace(composerContext.Input.Input.SourceStoryboardNodeID),
+		}), true, nil
+	}
+	if !hasComposerToolResult(composerContext, "stage_media_inputs") {
+		compositionContext, err := composerToolResultMap(composerContext, "get_composition_context")
+		if err != nil {
+			return ComposerTurnOutput{}, true, err
+		}
+		assets := composerAssetsForStaging(compositionContext)
+		if len(assets) == 0 {
+			return deterministicComposerBlocked("agent_remotion_code_v1 没有可 staging 的上传或分镜素材。"), true, nil
+		}
+		return deterministicComposerToolCall("stage_media_inputs", map[string]any{
+			"assets":     assets,
+			"target_dir": "/workspace/input",
+		}), true, nil
+	}
+	if !hasComposerToolResult(composerContext, "create_timeline_plan") {
+		plan, err := deterministicAgentRemotionPlan(composerContext)
+		if err != nil {
+			return ComposerTurnOutput{}, true, err
+		}
+		return deterministicComposerToolCall("create_timeline_plan", map[string]any{
+			"source_storyboard_node_id": strings.TrimSpace(composerContext.Input.Input.SourceStoryboardNodeID),
+			"template_key":              "agent_remotion_code_v1",
+			"plan":                      plan,
+			"render_settings": map[string]any{
+				"mode":      "deterministic_agent_remotion",
+				"mock_e2e":  true,
+				"rationale": "本地 mock provider 下验证 Agent-authored Remotion route；真实环境由 Composer 模型自由编写 renderer。",
+			},
+		}), true, nil
+	}
+	if !hasComposerToolResult(composerContext, "create_remotion_renderer_attempt") {
+		created, err := composerToolResultMap(composerContext, "create_timeline_plan")
+		if err != nil {
+			return ComposerTurnOutput{}, true, err
+		}
+		timelinePlanID := strings.TrimSpace(composerString(created["timeline_plan_id"]))
+		if timelinePlanID == "" {
+			return deterministicComposerBlocked("create_timeline_plan 未返回 timeline_plan_id。"), true, nil
+		}
+		files, props, err := deterministicAgentRemotionRenderer(composerContext)
+		if err != nil {
+			return ComposerTurnOutput{}, true, err
+		}
+		return deterministicComposerToolCall("create_remotion_renderer_attempt", map[string]any{
+			"timeline_plan_id": timelinePlanID,
+			"attempt_no":       1,
+			"route_policy": map[string]any{
+				"route":         "agent_remotion_code_v1",
+				"rationale":     "用户明确要求非固定模板和动态 Remotion renderer。",
+				"fallback":      "validation 或 render 失败时 fallback 到 remotion_timeline_v1。",
+				"stable_repair": shouldUseStableAgentRemotionFallback(composerContext),
+			},
+			"summary": "stable Agent-authored Remotion renderer attempt",
+			"files":   files,
+			"props":   props,
+		}), true, nil
+	}
+	if !hasComposerToolResult(composerContext, "validate_remotion_renderer_attempt") {
+		attempt, err := composerToolResultMap(composerContext, "create_remotion_renderer_attempt")
+		if err != nil {
+			return ComposerTurnOutput{}, true, err
+		}
+		attemptID := strings.TrimSpace(firstNonEmpty(composerString(attempt["renderer_attempt_id"]), composerString(attempt["attempt_id"])))
+		if attemptID == "" {
+			return deterministicComposerBlocked("create_remotion_renderer_attempt 未返回 renderer_attempt_id。"), true, nil
+		}
+		return deterministicComposerToolCall("validate_remotion_renderer_attempt", map[string]any{
+			"renderer_attempt_id": attemptID,
+		}), true, nil
+	}
+	if !hasComposerToolResult(composerContext, "render_agent_remotion_renderer") {
+		if failure := composerToolFailureContent(composerContext, "render_agent_remotion_renderer"); failure != "" {
+			return deterministicComposerBlocked("agent_remotion_code_v1 render 失败，已记录 fallback 条件；可切换 remotion_timeline_v1 或修复 sandbox runtime 后重试。"), true, nil
+		}
+		validated, err := composerToolResultMap(composerContext, "validate_remotion_renderer_attempt")
+		if err != nil {
+			return ComposerTurnOutput{}, true, err
+		}
+		attemptID := strings.TrimSpace(firstNonEmpty(composerString(validated["renderer_attempt_id"]), composerString(validated["attempt_id"])))
+		if attemptID == "" {
+			return deterministicComposerBlocked("validate_remotion_renderer_attempt 未返回 renderer_attempt_id。"), true, nil
+		}
+		return deterministicComposerToolCall("render_agent_remotion_renderer", map[string]any{
+			"renderer_attempt_id": attemptID,
+			"output_path":         "/workspace/output/final-agent-remotion-deterministic.mp4",
+		}), true, nil
+	}
+	if !hasComposerToolResult(composerContext, "submit_composition_artifact") {
+		created, err := composerToolResultMap(composerContext, "create_timeline_plan")
+		if err != nil {
+			return ComposerTurnOutput{}, true, err
+		}
+		rendered, err := composerToolResultMap(composerContext, "render_agent_remotion_renderer")
+		if err != nil {
+			return ComposerTurnOutput{}, true, err
+		}
+		timelinePlanID := strings.TrimSpace(composerString(created["timeline_plan_id"]))
+		outputPath := strings.TrimSpace(composerString(rendered["output_path"]))
+		if timelinePlanID == "" || outputPath == "" {
+			return deterministicComposerBlocked("render_agent_remotion_renderer 未返回可提交的 timeline_plan_id/output_path。"), true, nil
+		}
+		return deterministicComposerToolCall("submit_composition_artifact", map[string]any{
+			"timeline_plan_id": timelinePlanID,
+			"output_path":      outputPath,
+			"sandbox_job_id":   strings.TrimSpace(composerString(rendered["sandbox_job_id"])),
+			"mime_type":        "video/mp4",
+			"result": map[string]any{
+				"mode":                "agent_remotion_code_v1",
+				"template_key":        "agent_remotion_code_v1",
+				"renderer_attempt_id": firstNonEmpty(composerString(rendered["renderer_attempt_id"]), composerString(rendered["attempt_id"])),
+				"summary":             "Rendered by Agent-authored Remotion route.",
+			},
+		}), true, nil
+	}
+	submitted, err := composerToolResultMap(composerContext, "submit_composition_artifact")
+	if err != nil {
+		return ComposerTurnOutput{}, true, err
+	}
+	return ComposerTurnOutput{
+		AssistantText: "Composer 已完成 agent_remotion_code_v1 动态 Remotion renderer，并提交最终成片。",
+		Result: CompositionOutput{
+			Status:            "completed",
+			OperationType:     "compose_final_video",
+			TimelinePlanID:    strings.TrimSpace(composerString(submitted["timeline_plan_id"])),
+			NodeID:            strings.TrimSpace(composerString(submitted["output_node_id"])),
+			GenerationJobID:   strings.TrimSpace(composerString(submitted["generation_job_id"])),
+			ArtifactVersionID: strings.TrimSpace(composerString(submitted["artifact_version_id"])),
+			SandboxJobID:      strings.TrimSpace(composerString(submitted["sandbox_job_id"])),
+		},
+		Metadata: map[string]any{"provider": "deterministic_agent_remotion", "template_key": "agent_remotion_code_v1"},
+		ModelMessage: &schema.Message{
+			Role:    schema.Assistant,
+			Content: "Composer 已完成 agent_remotion_code_v1 动态 Remotion renderer，并提交最终成片。",
+		},
+	}, true, nil
+}
+
+func deterministicAgentRemotionPlan(composerContext Context) (map[string]any, error) {
+	if plan, err := deterministicComposerRemotionTimelinePlan(composerContext); err == nil {
+		plan["template_key"] = "agent_remotion_code_v1"
+		if output, ok := plan["output"].(map[string]any); ok {
+			output["workspace_path"] = "/workspace/output/final-agent-remotion-stable.mp4"
+		}
+		plan["route_policy"] = map[string]any{
+			"route":     "agent_remotion_code_v1",
+			"fallback":  "remotion_timeline_v1",
+			"seedance":  "reuse existing staged Seedance clip assets",
+			"seedream":  "reuse existing staged Seedream still assets",
+			"voiceover": "reuse existing staged voiceover and BGM assets",
+		}
+		return plan, nil
+	}
+	staged, err := composerToolResultMap(composerContext, "stage_media_inputs")
+	if err != nil {
+		return nil, err
+	}
+	pathsByAsset := composerStagedPaths(staged)
+	segments := []any{}
+	for assetID, workspacePath := range pathsByAsset {
+		segments = append(segments, map[string]any{
+			"id":             "product_hero",
+			"asset_id":       assetID,
+			"workspace_path": workspacePath,
+			"role":           "still",
+			"duration_sec":   30,
+			"caption":        "轻装出发",
+		})
+		break
+	}
+	if len(segments) == 0 {
+		return nil, fmt.Errorf("agent_remotion_code_v1 requires at least one staged visual asset")
+	}
+	return map[string]any{
+		"template_key": "agent_remotion_code_v1",
+		"segments":     segments,
+		"output": map[string]any{
+			"workspace_path": "/workspace/output/final-agent-remotion-deterministic.mp4",
+			"width":          720,
+			"height":         1280,
+			"fps":            24,
+			"duration_sec":   30,
+			"format":         "mp4",
+			"audio_codec":    "aac",
+		},
+		"route_policy": map[string]any{
+			"route":     "agent_remotion_code_v1",
+			"fallback":  "remotion_timeline_v1",
+			"seedance":  "reuse staged Seedance clip when available.",
+			"seedream":  "reuse staged still image assets.",
+			"voiceover": "reuse staged voiceover and BGM when available.",
+		},
+	}, nil
+}
+
+func deterministicAgentRemotionRenderer(composerContext Context) (map[string]string, map[string]any, error) {
+	plan, err := deterministicAgentRemotionPlan(composerContext)
+	if err != nil {
+		return nil, nil, err
+	}
+	files := map[string]string{
+		"GeneratedComposition.tsx": deterministicAgentRemotionSource(),
+	}
+	return files, plan, nil
+}
+
+func deterministicAgentRemotionSource() string {
+	return `import React from "react";
+import {AbsoluteFill, Audio, Img, Sequence, Video, interpolate, staticFile, useCurrentFrame, useVideoConfig} from "remotion";
+
+type Asset = {type?: "image" | "video"; workspace_path: string};
+type Caption = {text?: string; start_sec?: number; end_sec?: number};
+type Segment = {id: string; start_sec: number; end_sec: number; layout?: string; assets: Asset[]; caption?: Caption};
+type AudioTrack = {role: "voiceover" | "bgm"; workspace_path: string; volume?: number; start_sec?: number};
+type Props = {output: {width: number; height: number; fps: number; duration_sec: number}; segments: Segment[]; audio_tracks?: AudioTrack[]};
+
+const toAsset = (value: string) => staticFile(value.replace(/^\/workspace\/?/, "").replace(/^\//, ""));
+const isVideoAsset = (asset?: Asset) => asset?.type === "video" || /\.(mp4|mov|webm|m4v)$/i.test(asset?.workspace_path || "");
+const titleFor = (segment: Segment) => {
+  if (segment.id.includes("02")) return "顺滑万向轮";
+  if (segment.id.includes("03")) return "科学分区 大容量收纳";
+  if (segment.id.includes("04")) return "现在出发 悦行行李箱";
+  return "说走就走";
+};
+
+export const AgentGeneratedComposition: React.FC<Props> = ({segments, audio_tracks = []}) => {
+  const frame = useCurrentFrame();
+  const {fps, durationInFrames} = useVideoConfig();
+  const sec = frame / fps;
+  const progress = frame / Math.max(1, durationInFrames - 1);
+  const active = segments.find((segment) => sec >= segment.start_sec && sec < segment.end_sec) || segments[segments.length - 1] || segments[0];
+  const lightSweep = interpolate(progress, [0, 1], [-320, 1150]);
+
+  return (
+    <AbsoluteFill style={{background: "#0d1f24", color: "white", fontFamily: "Inter, Arial, sans-serif", overflow: "hidden"}}>
+      {audio_tracks.map((track) => <Audio key={track.role} src={toAsset(track.workspace_path)} startFrom={Math.round((track.start_sec || 0) * fps)} volume={track.volume ?? (track.role === "bgm" ? 0.22 : 1)} />)}
+      <AbsoluteFill style={{background: "radial-gradient(circle at 70% 14%, rgba(255,210,128,0.28), transparent 28%), linear-gradient(160deg, #0d1f24 0%, #155158 54%, #d8a543 120%)"}} />
+      <div style={{position: "absolute", top: 110, left: lightSweep, width: 260, height: 1260, transform: "rotate(18deg)", background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent)"}} />
+      <div style={{position: "absolute", inset: 42, border: "2px solid rgba(255,255,255,0.2)"}} />
+      <div style={{position: "absolute", top: 76, left: 58, right: 58, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 28}}>
+        <span style={{color: "#f8d47a", fontWeight: 700}}>轻装出行</span>
+        <span style={{padding: "10px 18px", border: "1px solid rgba(255,255,255,0.32)", borderRadius: 999}}>悦行行李箱</span>
+      </div>
+      {segments.map((segment, index) => {
+        const start = Math.round(segment.start_sec * fps);
+        const duration = Math.max(1, Math.round((segment.end_sec - segment.start_sec) * fps));
+        const asset = segment.assets[0];
+        const local = Math.max(0, frame - start);
+        const p = local / Math.max(1, duration - 1);
+        const opacity = interpolate(local, [0, 12, duration - 12, duration], [0, 1, 1, 0], {extrapolateLeft: "clamp", extrapolateRight: "clamp"});
+        const isVideo = isVideoAsset(asset);
+        const scale = interpolate(p, [0, 1], isVideo ? [1.02, 1.04] : [1.02, 1.16], {extrapolateLeft: "clamp", extrapolateRight: "clamp"});
+        const x = interpolate(p, [0, 1], index % 2 === 0 ? [-28, 18] : [24, -18], {extrapolateLeft: "clamp", extrapolateRight: "clamp"});
+        const title = titleFor(segment);
+        const caption = segment.caption?.text || title;
+        const src = asset ? toAsset(asset.workspace_path) : "";
+        return (
+          <Sequence key={segment.id} from={start} durationInFrames={duration}>
+            <AbsoluteFill style={{opacity}}>
+              {isVideo ? (
+                <Video src={src} muted style={{width: "100%", height: "100%", objectFit: "cover", transform: "scale(" + scale + ") translateX(" + x + "px)"}} />
+              ) : (
+                <Img src={src} style={{width: "100%", height: "100%", objectFit: "cover", transform: "scale(" + scale + ") translateX(" + x + "px)"}} />
+              )}
+              <AbsoluteFill style={{background: "linear-gradient(to top, rgba(0,0,0,0.86) 0%, rgba(0,0,0,0.48) 25%, rgba(0,0,0,0.05) 58%, rgba(0,0,0,0.28) 100%)"}} />
+              <div style={{position: "absolute", left: 64, right: 64, top: 168}}>
+                <div style={{fontSize: 74, fontWeight: 900, lineHeight: 1.04, textShadow: "0 10px 28px rgba(0,0,0,0.42)"}}>{title}</div>
+              </div>
+            </AbsoluteFill>
+          </Sequence>
+        );
+      })}
+      <div style={{position: "absolute", left: 58, right: 58, top: 920, display: "flex", gap: 14, flexWrap: "wrap"}}>
+        {["轻", "稳", "能装"].map((badge, index) => {
+          const enter = interpolate(progress, [0.08 + index * 0.08, 0.18 + index * 0.08], [40, 0], {extrapolateLeft: "clamp", extrapolateRight: "clamp"});
+          return (
+            <div key={badge} style={{padding: "14px 20px", borderRadius: 999, background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.26)", fontSize: 30, fontWeight: 800, transform: "translateY(" + enter + "px)"}}>
+              {badge}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{position: "absolute", left: 58, right: 58, bottom: 210, minHeight: 150, padding: "28px 30px", background: "rgba(13,31,36,0.76)", border: "1px solid rgba(255,255,255,0.22)"}}>
+        <div style={{fontSize: 40, lineHeight: 1.22, fontWeight: 800}}>{active ? (active.caption?.text || titleFor(active)) : "现在出发 悦行行李箱"}</div>
+      </div>
+      <div style={{position: "absolute", left: 58, right: 58, bottom: 82, display: "flex", alignItems: "center", justifyContent: "space-between", opacity: interpolate(progress, [0.72, 0.88], [0, 1], {extrapolateLeft: "clamp", extrapolateRight: "clamp"})}}>
+        <div style={{fontSize: 28, color: "#f8d47a"}}>随身轻载，旅程更快一步</div>
+        <div style={{fontSize: 38, fontWeight: 800}}>现在出发</div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+export default AgentGeneratedComposition;
+`
 }
 
 type composerPromptBoundary struct {

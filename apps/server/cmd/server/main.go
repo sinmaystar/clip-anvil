@@ -266,6 +266,9 @@ func main() {
 		agenttools.NewCreateTimelinePlanNativeTool(queries),
 		agenttools.NewUpdateTimelinePlanStatusNativeTool(queries),
 		agenttools.NewRenderTimelineTemplateNativeTool(agenttools.NewSandboxTimelineTemplateRenderer(sandboxJobService)),
+		agenttools.NewCreateRemotionRendererAttemptNativeTool(queries, sandboxManager, sandboxClient),
+		agenttools.NewValidateRemotionRendererAttemptNativeTool(queries, sandboxManager, sandboxClient),
+		agenttools.NewRenderAgentRemotionRendererNativeTool(queries, sandboxJobService),
 		agenttools.NewRunFFmpegCommandNativeTool(sandboxJobService),
 		agenttools.NewSubmitCompositionArtifactNativeTool(productionService, queries).WithOutputUploader(sandboxJobService),
 	)

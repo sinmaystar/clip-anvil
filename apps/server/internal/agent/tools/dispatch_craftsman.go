@@ -856,7 +856,7 @@ func shotDispatchableForPhase(status string, force bool, targetPhase string, vid
 	if targetPhase == "shot_video" {
 		switch strings.TrimSpace(status) {
 		case "planned", "draft":
-			return isMotionOnlyVideoPolicy(videoRoutePolicy)
+			return true
 		case "preview_ready", "failed":
 			return true
 		case "video_ready", "video_running":

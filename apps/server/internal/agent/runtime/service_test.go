@@ -207,6 +207,18 @@ func TestRuntimeGetThreadForWorkspaceRejectsInvalidThread(t *testing.T) {
 	}
 }
 
+func TestMarkTaskRunningReturnsAlreadyClaimedWhenTaskIsNotQueued(t *testing.T) {
+	svc, err := NewService(&fakeBeginner{}, db.New(fakeTaskAlreadyClaimedDBTX{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.MarkTaskRunning(context.Background(), uuidWithByte(1))
+	if !errors.Is(err, ErrTaskAlreadyClaimed) {
+		t.Fatalf("error = %v, want ErrTaskAlreadyClaimed", err)
+	}
+}
+
 func TestRuntimeListThreadMessagesRejectsInvalidThread(t *testing.T) {
 	svc, err := NewService(&fakeBeginner{}, db.New(fakeDBTX{}))
 	if err != nil {
@@ -274,6 +286,17 @@ func (fakeDBTX) QueryRow(_ context.Context, query string, args ...interface{}) p
 			"",
 			"",
 		}}
+	}
+	return fakeRow{}
+}
+
+type fakeTaskAlreadyClaimedDBTX struct {
+	fakeDBTX
+}
+
+func (fakeTaskAlreadyClaimedDBTX) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+	if strings.Contains(query, "UPDATE agent_task") && strings.Contains(query, "status = 'running'") {
+		return fakeRow{err: pgx.ErrNoRows}
 	}
 	return fakeRow{}
 }

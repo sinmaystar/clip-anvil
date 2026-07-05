@@ -29,6 +29,10 @@ type ComposeRuntime interface {
 	AppendMessage(ctx context.Context, params agentruntime.AppendMessageParams) (db.AgentMessage, error)
 }
 
+type composerActiveTaskRuntime interface {
+	ListActiveAgentTasksByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.AgentTask, error)
+}
+
 type ComposerTaskEnqueuer interface {
 	EnqueueComposerTask(ctx context.Context, task db.AgentTask)
 }
@@ -41,7 +45,7 @@ type DispatchComposerInput struct {
 	SourceStoryboardRef    ToolObjectRef `json:"source_storyboard_ref" jsonschema_description:"需要成片的来源媒体/故事板节点语义引用。使用 read_project_context 返回的 type=media_node,key=...。"`
 	SourceStoryboardNodeID string        `json:"source_storyboard_node_id" jsonschema_description:"兼容旧字段：内部 ID 或历史语义键。模型不要填写；请优先使用 source_storyboard_ref。"`
 	Instructions           string        `json:"instructions" jsonschema:"required" jsonschema_description:"给 Composer 的成片说明，例如拼接策略、节奏、淡入淡出要求。"`
-	TemplateKey            string        `json:"template_key,omitempty" jsonschema:"enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1" jsonschema_description:"可选 timeline 模版，默认 simple_concat；低成本 Remotion final composer 使用 remotion_timeline_v1。"`
+	TemplateKey            string        `json:"template_key,omitempty" jsonschema:"enum=simple_concat,enum=concat_with_fades,enum=remotion_timeline_v1,enum=agent_remotion_code_v1" jsonschema_description:"可选 timeline 模版，默认 simple_concat；低成本 Remotion final composer 使用 remotion_timeline_v1；非模板化动态路线使用 agent_remotion_code_v1。"`
 }
 
 func NewDispatchComposerNativeTool(runtime ComposeRuntime, enqueuer ComposerTaskEnqueuer, resolver ...ComposerSourceResolver) DispatchComposerNativeTool {
@@ -96,6 +100,11 @@ func (t DispatchComposerNativeTool) InvokableRun(ctx context.Context, raw string
 	if err != nil {
 		return NaturalToolError("dispatch_composer", err.Error(), "请检查 Composer task input 序列化。"), nil
 	}
+	if existing, ok, err := t.activeComposerTask(ctx, runtimeContext.WorkspaceID, sourceID); err != nil {
+		return NaturalToolError("dispatch_composer", err.Error(), "请确认 Composer active task 查询可用后重试。"), nil
+	} else if ok {
+		return composerDispatchQueuedResult(templateKey, sourceKey, existing), nil
+	}
 	task, err := t.runtime.CreateTask(ctx, agentruntime.CreateTaskParams{
 		WorkspaceID: runtimeContext.WorkspaceID,
 		ThreadID:    thread.ID,
@@ -124,6 +133,34 @@ func (t DispatchComposerNativeTool) InvokableRun(ctx context.Context, raw string
 	if t.enqueuer != nil {
 		t.enqueuer.EnqueueComposerTask(ctx, task)
 	}
+	return composerDispatchQueuedResult(templateKey, sourceKey, task), nil
+}
+
+func (t DispatchComposerNativeTool) activeComposerTask(ctx context.Context, workspaceID pgtype.UUID, sourceID pgtype.UUID) (db.AgentTask, bool, error) {
+	runtime, ok := t.runtime.(composerActiveTaskRuntime)
+	if !ok {
+		return db.AgentTask{}, false, nil
+	}
+	tasks, err := runtime.ListActiveAgentTasksByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return db.AgentTask{}, false, err
+	}
+	for _, task := range tasks {
+		if task.Role != "composer" || task.TaskType != "composer_turn" || task.ScopeType != "final_output" {
+			continue
+		}
+		if task.ScopeID != sourceID {
+			continue
+		}
+		switch task.Status {
+		case "queued", "running", "waiting_for_user":
+			return task, true, nil
+		}
+	}
+	return db.AgentTask{}, false, nil
+}
+
+func composerDispatchQueuedResult(templateKey string, sourceKey string, task db.AgentTask) string {
 	items := []NaturalResultItem{
 		{Label: "状态", Value: "queued"},
 		{Label: "模版", Value: templateKey},
@@ -136,7 +173,7 @@ func (t DispatchComposerNativeTool) InvokableRun(ctx context.Context, raw string
 		Title: "Composer 派发结果",
 		Items: items,
 		Next:  "Composer 任务已入队。请等待 composition_completed、composition_blocked 或 composition_failed signal，不要把派发结果当作最终视频已完成。",
-	}.String(), nil
+	}.String()
 }
 
 func (t DispatchComposerNativeTool) appendDelegationMessage(ctx context.Context, workspaceID pgtype.UUID, threadID pgtype.UUID, taskID pgtype.UUID, sourceID pgtype.UUID, sourceKey string, taskInput map[string]any) error {
@@ -198,7 +235,7 @@ func validateDispatchComposerInput(input DispatchComposerInput) error {
 		return err
 	}
 	if strings.TrimSpace(input.TemplateKey) != "" {
-		return requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1)
+		return requireMode(input.TemplateKey, composerTemplateSimpleConcat, composerTemplateConcatWithFade, composerTemplateRemotionV1, composerTemplateAgentRemotion)
 	}
 	return nil
 }

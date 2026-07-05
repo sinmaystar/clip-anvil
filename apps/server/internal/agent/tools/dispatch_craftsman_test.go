@@ -451,6 +451,48 @@ func TestDispatchCraftsmanMotionOnlyPolicyAllowsPlannedShotVideo(t *testing.T) {
 	}
 }
 
+func TestDispatchCraftsmanDefaultPolicyAllowsPlannedSeedanceShotVideo(t *testing.T) {
+	store := &fakeCraftsmanDispatchStore{
+		workspace: db.Workspace{ID: uuidWithByte(1), Mode: db.WorkspaceModeAgent},
+		shots: []db.Shot{
+			{ID: uuidWithByte(11), WorkspaceID: uuidWithByte(1), ClientKey: "shot_02", SemanticKey: "scene_motion.shot_02", Title: "机场顺滑滑行 hero clip", Status: "planned"},
+		},
+	}
+	runtime := &fakeCraftsmanRuntime{}
+	tool := NewDispatchCraftsmanTool(store, runtime, &fakeCraftsmanEnqueuer{})
+
+	out, err := tool.Execute(context.Background(), ExecuteInput{
+		WorkspaceID: uuidWithByte(1),
+		ThreadID:    uuidWithByte(2),
+		TaskID:      uuidWithByte(3),
+		Arguments: map[string]any{
+			"brief":            "为关键动态 hero 镜头生成真实 Seedance 分镜视频。",
+			"target_phase":     "shot_video",
+			"execution_policy": "execute_immediately",
+			"scope":            map[string]any{"type": "shot"},
+			"shot_refs":        []string{"scene_motion.shot_02"},
+			"input_node_refs":  []string{"shot_01.preview_image.current"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Result["status"] != "queued" || len(runtime.createdTasks) != 1 {
+		t.Fatalf("result=%#v created=%d", out.Result, len(runtime.createdTasks))
+	}
+	var input map[string]any
+	if err := json.Unmarshal(runtime.createdTasks[0].Input, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["recommended_model_prompt_profile"] != "seedance_2_video" ||
+		input["recommended_operation"] != "image_to_video_first_frame" {
+		t.Fatalf("planned hero shot should default to Seedance route: %#v", input)
+	}
+	if refs := input["input_node_refs"].([]any); len(refs) != 1 || refs[0] != "shot_01.preview_image.current" {
+		t.Fatalf("input_node_refs = %#v", input["input_node_refs"])
+	}
+}
+
 func mustString(value any) string {
 	if value == nil {
 		return ""

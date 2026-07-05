@@ -2,7 +2,6 @@ package referencevideo
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -259,12 +258,4 @@ func (f *fakeStore) MarkReferenceVideoAnalysisFailed(_ context.Context, arg db.M
 
 func uuidWithByte(value byte) pgtype.UUID {
 	return pgtype.UUID{Bytes: [16]byte{value, value, value, value, value, value, value, value, value, value, value, value, value, value, value, value}, Valid: true}
-}
-
-func mustJSON(value any) []byte {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		panic(err)
-	}
-	return raw
 }

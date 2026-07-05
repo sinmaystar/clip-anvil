@@ -13,11 +13,12 @@ version: 0.1.0
 
 ## Use When
 
-Load this skill when `template_key=remotion_timeline_v1`, when Producer requests a low-cost no-Seedance final video, or when the final video should be assembled from still images, optional existing clips, voiceover, BGM, captions, and Remotion layout/motion.
+Load this skill only for `remotion_timeline_v1`, when Producer requests the fixed renderer baseline/fallback, a low-cost no-Seedance final video, or a final video assembled from still images, optional existing clips, voiceover, BGM, captions, and Remotion layout/motion.
 
 ## Do
 
 - Use `remotion_timeline_v1`.
+- Stay in the fixed renderer route only for `remotion_timeline_v1`; use JSON RemotionTimelinePlan, not raw TSX.
 - Treat still images as first-class visual assets in this route; still images are first-class visual assets, not emergency fallback.
 - Treat existing `clip` assets as video segments only when Producer selected mixed-cost or premium, or when those clips already exist in the approved context.
 - Treat AudioPlan cue_plan is the primary timing contract; AudioPlan cue_plan is the primary timing contract for segment order, duration, captions, and visual matching.
@@ -41,6 +42,7 @@ Load this skill when `template_key=remotion_timeline_v1`, when Producer requests
 - Do not reuse a generic full-product still for every benefit when shot-specific stills are available.
 - Do not render when a wheel cue only has storage/interior imagery, or a storage cue only has wheel/detail imagery; block and ask Producer/Craftsman for the missing still.
 - Do not create raw Remotion code.
+- Do not use agent_remotion_code_v1 attempt tools such as create_remotion_renderer_attempt, validate_remotion_renderer_attempt, or render_agent_remotion_renderer.
 - Do not submit a silent final video when approved audio assets exist.
 
 ## Tool Protocol

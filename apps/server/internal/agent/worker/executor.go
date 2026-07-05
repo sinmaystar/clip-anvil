@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -106,6 +107,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) (runErr erro
 		return ErrInvalidConfig
 	}
 	if _, err := e.runtime.MarkTaskRunning(ctx, task.ID); err != nil {
+		if errors.Is(err, agentruntime.ErrTaskAlreadyClaimed) {
+			return nil
+		}
 		return err
 	}
 	workerInput, err := parseGenerationInput(task.Input)

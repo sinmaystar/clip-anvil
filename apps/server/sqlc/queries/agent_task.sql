@@ -119,6 +119,7 @@ SET status = 'running',
     error_code = NULL,
     error_message = NULL
 WHERE id = $1
+  AND status = 'queued'
 RETURNING *;
 
 -- name: MarkAgentTaskSucceeded :one

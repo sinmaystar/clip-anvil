@@ -3,6 +3,7 @@ package craftsman
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -91,6 +92,9 @@ func (e *Executor) RunTask(ctx context.Context, input RunTaskInput) error {
 		return ErrInvalidConfig
 	}
 	if _, err := e.runtime.MarkTaskRunning(ctx, input.TaskID); err != nil {
+		if errors.Is(err, agentruntime.ErrTaskAlreadyClaimed) {
+			return nil
+		}
 		return err
 	}
 	_, _ = e.runtime.CreateEvent(ctx, agentruntime.CreateEventParams{

@@ -190,6 +190,188 @@ func TestComposerResponderUsesDeterministicTemplatePathBeforeModel(t *testing.T)
 	}
 }
 
+func TestDeterministicComposerUsesAgentRemotionAttemptToolSequence(t *testing.T) {
+	responder := NewDeterministicResponder()
+	base := Context{
+		Input: GraphInput{Input: CompositionInput{
+			TemplateKey:            "agent_remotion_code_v1",
+			SourceStoryboardNodeID: "04000000-0000-0000-0000-000000000000",
+			Instructions:           "动态 Remotion 营销视频",
+		}},
+	}
+
+	out, err := responder.Respond(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposerToolCall(t, out, "get_composition_context")
+
+	compositionContext := map[string]any{
+		"source_storyboard_node_id": "04000000-0000-0000-0000-000000000000",
+		"available_composition_assets": []any{
+			map[string]any{
+				"role":       "still",
+				"asset_id":   "asset-product",
+				"source_url": "workspace/assets/product.png",
+				"file_name":  "product.png",
+				"mime_type":  "image/png",
+				"title":      "product.png",
+			},
+		},
+	}
+	withContext := base
+	withContext.SameTurnMessages = []ComposerSameTurnMessage{composerToolResultMessage(t, "get_composition_context", compositionContext)}
+	out, err = responder.Respond(context.Background(), withContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposerToolCall(t, out, "stage_media_inputs")
+
+	withStage := base
+	withStage.SameTurnMessages = append(withContext.SameTurnMessages, composerToolResultMessage(t, "stage_media_inputs", map[string]any{
+		"files": []any{map[string]any{"asset_id": "asset-product", "workspace_path": "/workspace/input/product.png", "file_name": "product.png", "mime_type": "image/png"}},
+	}))
+	out, err = responder.Respond(context.Background(), withStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := assertComposerToolCall(t, out, "create_timeline_plan")
+	if !strings.Contains(call.Function.Arguments, `"template_key":"agent_remotion_code_v1"`) {
+		t.Fatalf("create timeline args = %s", call.Function.Arguments)
+	}
+
+	withTimeline := base
+	withTimeline.SameTurnMessages = append(withStage.SameTurnMessages, composerToolResultMessage(t, "create_timeline_plan", map[string]any{
+		"timeline_plan_id": "05000000-0000-0000-0000-000000000000",
+		"status":           "draft",
+	}))
+	out, err = responder.Respond(context.Background(), withTimeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call = assertComposerToolCall(t, out, "create_remotion_renderer_attempt")
+	if !strings.Contains(call.Function.Arguments, "GeneratedComposition.tsx") ||
+		!strings.Contains(call.Function.Arguments, "/workspace/input/product.png") ||
+		!strings.Contains(call.Function.Arguments, "staticFile") {
+		t.Fatalf("attempt args missing renderer source or staged asset: %s", call.Function.Arguments)
+	}
+
+	withAttempt := base
+	withAttempt.SameTurnMessages = append(withTimeline.SameTurnMessages, composerToolResultMessage(t, "create_remotion_renderer_attempt", map[string]any{
+		"renderer_artifact_id": "06000000-0000-0000-0000-000000000000",
+		"renderer_attempt_id":  "07000000-0000-0000-0000-000000000000",
+		"attempt_no":           1,
+		"status":               "draft",
+	}))
+	out, err = responder.Respond(context.Background(), withAttempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposerToolCall(t, out, "validate_remotion_renderer_attempt")
+
+	withValidated := base
+	withValidated.SameTurnMessages = append(withAttempt.SameTurnMessages, composerToolResultMessage(t, "validate_remotion_renderer_attempt", map[string]any{
+		"renderer_attempt_id": "07000000-0000-0000-0000-000000000000",
+		"status":              "validated",
+		"validation_result":   map[string]any{"passed": true},
+	}))
+	out, err = responder.Respond(context.Background(), withValidated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposerToolCall(t, out, "render_agent_remotion_renderer")
+
+	withRendered := base
+	withRendered.SameTurnMessages = append(withValidated.SameTurnMessages, composerToolResultMessage(t, "render_agent_remotion_renderer", map[string]any{
+		"timeline_plan_id":    "05000000-0000-0000-0000-000000000000",
+		"renderer_attempt_id": "07000000-0000-0000-0000-000000000000",
+		"sandbox_job_id":      "08000000-0000-0000-0000-000000000000",
+		"output_path":         "/workspace/output/final-agent-remotion.mp4",
+	}))
+	out, err = responder.Respond(context.Background(), withRendered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposerToolCall(t, out, "submit_composition_artifact")
+}
+
+func TestDeterministicAgentRemotionRendererAvoidsMockRouteCopy(t *testing.T) {
+	files, props, err := deterministicAgentRemotionRenderer(Context{
+		SameTurnMessages: []ComposerSameTurnMessage{
+			composerToolResultMessage(t, "stage_media_inputs", map[string]any{
+				"files": []any{map[string]any{
+					"asset_id":        "asset-product",
+					"workspace_path":  "/workspace/input/product.png",
+					"file_name":       "product.png",
+					"mime_type":       "image/png",
+					"source_provider": "upload",
+				}},
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := files["GeneratedComposition.tsx"]
+	for _, forbidden := range []string{
+		"Agent Remotion",
+		"30s Campaign",
+		"Seedream still",
+		"Remotion motion package",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("deterministic renderer source contains mock route copy %q:\n%s", forbidden, source)
+		}
+	}
+	raw, err := json.Marshal(props)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "Seedream") {
+		t.Fatalf("props claim Seedream output without a Seedream artifact: %s", raw)
+	}
+}
+
+func TestDeterministicComposerBlocksAfterAgentRemotionRenderFailure(t *testing.T) {
+	responder := NewDeterministicResponder()
+
+	out, err := responder.Respond(context.Background(), Context{
+		Input: GraphInput{Input: CompositionInput{TemplateKey: "agent_remotion_code_v1"}},
+		SameTurnMessages: []ComposerSameTurnMessage{
+			composerToolResultMessage(t, "get_composition_context", map[string]any{"available_composition_assets": []any{}}),
+			composerToolResultMessage(t, "stage_media_inputs", map[string]any{"files": []any{map[string]any{"asset_id": "asset-product", "workspace_path": "/workspace/input/product.png"}}}),
+			composerToolResultMessage(t, "create_timeline_plan", map[string]any{"timeline_plan_id": "05000000-0000-0000-0000-000000000000"}),
+			composerToolResultMessage(t, "create_remotion_renderer_attempt", map[string]any{"renderer_attempt_id": "07000000-0000-0000-0000-000000000000"}),
+			composerToolResultMessage(t, "validate_remotion_renderer_attempt", map[string]any{"renderer_attempt_id": "07000000-0000-0000-0000-000000000000", "status": "validated"}),
+			{Role: "tool", MessageType: "tool_result", ToolName: "render_agent_remotion_renderer", Content: "工具调用失败\n- 工具：render_agent_remotion_renderer\n- 问题：missing runtime"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Result.Status != "blocked" {
+		t.Fatalf("status = %#v, want blocked", out.Result)
+	}
+	if out.ModelMessage == nil || strings.Contains(out.ModelMessage.Content, "工具调用失败") {
+		t.Fatalf("blocked message should summarize fallback without retrying raw tool loop: %#v", out.ModelMessage)
+	}
+	if out.ModelMessage != nil && len(out.ModelMessage.ToolCalls) > 0 {
+		t.Fatalf("render failure must stop tool calls, got %#v", out.ModelMessage.ToolCalls)
+	}
+}
+
+func assertComposerToolCall(t *testing.T, out ComposerTurnOutput, name string) schema.ToolCall {
+	t.Helper()
+	if out.ModelMessage == nil || len(out.ModelMessage.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %#v, want one %s call", out.ModelMessage, name)
+	}
+	call := out.ModelMessage.ToolCalls[0]
+	if call.Function.Name != name {
+		t.Fatalf("tool = %q args=%s, want %s", call.Function.Name, call.Function.Arguments, name)
+	}
+	return call
+}
+
 func TestDeterministicComposerTimelinePlanUsesAudioCuesForSegmentTimingAndCaptions(t *testing.T) {
 	compositionContext := map[string]any{
 		"audio_plan": map[string]any{
@@ -430,6 +612,75 @@ func TestDeterministicComposerRemotionTimelinePlanUsesLayoutDiversity(t *testing
 	captions := strings.Join(captionsForTest(decoded), " ")
 	if strings.Contains(captions, "痛点钩子") || strings.Contains(captions, "前三秒抓住") {
 		t.Fatalf("captions contain internal planning text: %s", captions)
+	}
+}
+
+func TestVolcengineAgentRemotionFallbackAfterMalformedAttemptJSON(t *testing.T) {
+	model := &fakeComposerArkModel{final: &schema.Message{Role: schema.Assistant, Content: "should not be called"}}
+	responder := NewVolcengineModelResponder(VolcengineModelResponderConfig{
+		APIKey: "test-key",
+		Model:  "doubao-test",
+		Factory: func(context.Context, *ark.ChatModelConfig) (arkChatModel, error) {
+			return model, nil
+		},
+	})
+	ctx := Context{
+		WorkspaceID: uuidWithByte(1),
+		Input: GraphInput{
+			WorkspaceID: uuidWithByte(1),
+			ThreadID:    uuidWithByte(2),
+			TaskID:      uuidWithByte(3),
+			Input: CompositionInput{
+				TemplateKey:  "agent_remotion_code_v1",
+				Instructions: "compose dynamic video",
+			},
+		},
+		SameTurnMessages: []ComposerSameTurnMessage{
+			composerToolResultMessage(t, "get_composition_context", map[string]any{
+				"available_composition_assets": []any{map[string]any{
+					"role":      "still",
+					"asset_id":  "asset-product",
+					"file_name": "product.png",
+					"mime_type": "image/png",
+				}},
+			}),
+			composerToolResultMessage(t, "stage_media_inputs", map[string]any{
+				"files": []any{map[string]any{
+					"asset_id":       "asset-product",
+					"workspace_path": "/workspace/input/product.png",
+					"file_name":      "product.png",
+					"mime_type":      "image/png",
+				}},
+			}),
+			composerToolResultMessage(t, "create_timeline_plan", map[string]any{
+				"timeline_plan_id": "05000000-0000-0000-0000-000000000000",
+				"status":           "draft",
+			}),
+			{
+				Role:        "tool",
+				MessageType: "tool_result",
+				ToolName:    "create_remotion_renderer_attempt",
+				ToolCallID:  "bad-call",
+				Content:     "工具调用失败\n- 工具：create_remotion_renderer_attempt\n- 问题：参数不是合法 JSON：unexpected end of JSON input",
+			},
+		},
+	}
+
+	out, err := responder.Respond(context.Background(), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.generateCalls != 0 {
+		t.Fatalf("fallback should avoid another model call, got %d", model.generateCalls)
+	}
+	call := assertComposerToolCall(t, out, "create_remotion_renderer_attempt")
+	if !strings.Contains(call.Function.Arguments, `"timeline_plan_id":"05000000-0000-0000-0000-000000000000"`) ||
+		!strings.Contains(call.Function.Arguments, "GeneratedComposition.tsx") ||
+		!strings.Contains(call.Function.Arguments, "stable_repair") {
+		t.Fatalf("fallback attempt args = %s", call.Function.Arguments)
+	}
+	if strings.Contains(strings.ToLower(call.Function.Arguments), "mock") {
+		t.Fatalf("fallback attempt should not label real route as mock: %s", call.Function.Arguments)
 	}
 }
 

@@ -35,6 +35,11 @@ func (p ToolContextProvider) GetCompositionContext(ctx context.Context, runtime 
 	if err != nil {
 		return nil, err
 	}
+	if sourceAsset, ok, err := p.sourceUploadAsset(ctx, runtime.WorkspaceID, sourceNodeID); err != nil {
+		return nil, err
+	} else if ok {
+		assets = prependUniqueComposerAsset(assets, sourceAsset)
+	}
 	audioPlan, audioPlanOK, err := p.activeAudioPlan(ctx, runtime.WorkspaceID)
 	if err != nil {
 		return nil, err
@@ -47,10 +52,12 @@ func (p ToolContextProvider) GetCompositionContext(ctx context.Context, runtime 
 		assets = append(assets, audioAssets...)
 	}
 	timelineSchema := map[string]any{
-		"template_key": []string{"simple_concat", "concat_with_fades", remotiontimeline.TemplateKeyV1},
-		"segments":     "array of clip or still assets in final order; remotion_timeline_v1 segments may use asset type image or video",
-		"audio_tracks": "array of voiceover and bgm tracks with role, asset_id, workspace_path, start_sec, duration_sec, volume, fade_in_sec, fade_out_sec and optional ducking",
-		"output":       "final MP4 output settings; use audio_codec=aac when audio_tracks are present",
+		"template_key":              []string{"simple_concat", "concat_with_fades", remotiontimeline.TemplateKeyV1, "agent_remotion_code_v1"},
+		"segments":                  "array of clip or still assets in final order; remotion_timeline_v1 segments may use asset type image or video",
+		"audio_tracks":              "array of voiceover and bgm tracks with role, asset_id, workspace_path, start_sec, duration_sec, volume, fade_in_sec, fade_out_sec and optional ducking",
+		"output":                    "final MP4 output settings; use audio_codec=aac when audio_tracks are present",
+		"agent_remotion_code_v1":    "dynamic Agent-authored Remotion renderer; use create_remotion_renderer_attempt, validate_remotion_renderer_attempt, render_agent_remotion_renderer, then submit_composition_artifact",
+		"dynamic_route_persistence": "sandbox files are editable working state; renderer artifact and attempt snapshots are durable DB facts",
 	}
 	result := map[string]any{
 		"workspace_id":                 uuidString(runtime.WorkspaceID),
@@ -63,6 +70,57 @@ func (p ToolContextProvider) GetCompositionContext(ctx context.Context, runtime 
 		result["audio_plan"] = composerAudioPlanContext(audioPlan)
 	}
 	return result, nil
+}
+
+func (p ToolContextProvider) sourceUploadAsset(ctx context.Context, workspaceID pgtype.UUID, sourceNodeID pgtype.UUID) (map[string]any, bool, error) {
+	if !sourceNodeID.Valid {
+		return nil, false, nil
+	}
+	node, err := p.store.GetMediaNodeByID(ctx, sourceNodeID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if node.WorkspaceID != workspaceID || !node.AssetID.Valid {
+		return nil, false, nil
+	}
+	asset, err := p.store.GetMediaAssetByID(ctx, node.AssetID)
+	if err != nil {
+		return nil, false, err
+	}
+	if asset.WorkspaceID != workspaceID {
+		return nil, false, nil
+	}
+	role := "still"
+	if node.NodeType == db.NodeTypeVideo {
+		role = "clip"
+	}
+	return map[string]any{
+		"role":       role,
+		"node_id":    uuidString(node.ID),
+		"node_ref":   defaultComposerRef(node.SemanticKey, uuidString(node.ID)),
+		"title":      node.Title,
+		"asset_id":   uuidString(asset.ID),
+		"source_url": asset.StorageUrl.String,
+		"mime_type":  asset.Mime,
+		"file_name":  safeComposerAssetFileName(firstNonEmpty(node.Title, firstNonEmpty(composerAssetFilename(asset.Metadata), "source-upload")), asset.Mime),
+		"metadata":   composerMediaAssetMetadata(asset.Metadata),
+	}, true, nil
+}
+
+func prependUniqueComposerAsset(assets []map[string]any, source map[string]any) []map[string]any {
+	assetID := strings.TrimSpace(composerString(source["asset_id"]))
+	if assetID == "" {
+		return assets
+	}
+	for _, asset := range assets {
+		if strings.TrimSpace(composerString(asset["asset_id"])) == assetID {
+			return assets
+		}
+	}
+	return append([]map[string]any{source}, assets...)
 }
 
 func (p ToolContextProvider) currentShotVideoAssets(ctx context.Context, workspaceID pgtype.UUID) ([]map[string]any, error) {
@@ -399,4 +457,20 @@ func safeComposerAssetFileName(title string, mime string) string {
 		}
 	}
 	return strings.TrimSuffix(name, path.Ext(name)) + ext
+}
+
+func composerAssetFilename(raw []byte) string {
+	metadata := composerMediaAssetMetadata(raw)
+	return strings.TrimSpace(composerString(metadata["filename"]))
+}
+
+func composerMediaAssetMetadata(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
 }
